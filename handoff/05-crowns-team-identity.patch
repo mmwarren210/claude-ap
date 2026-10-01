@@ -1,0 +1,470 @@
+diff --git a/.env.example b/.env.example
+index ad17884..cfffc87 100644
+--- a/.env.example
++++ b/.env.example
+@@ -51,6 +51,8 @@ CROWNIQ_SELECTIONS_FILE=
+ CROWNIQ_BOARD_CACHE_FILE=tmp/board-cache.json
+ # Last paid-pull job record (status, credits spent); reports pulls interrupted by a restart.
+ CROWNIQ_OWNER_JOB_FILE=tmp/owner-pull-job.json
++# Crown correlation rules for saving and sharing Crowns: conservative (default) or none (saves stay disabled).
++CROWNIQ_CROWN_CORRELATION_POLICY=conservative
+ CROWNIQ_PRODUCT_LEDGER_FILE=tmp/product-ledger.json
+ # Durable CrownIQ-owned historical observations. Seed backfills and live graded outcomes stay separate.
+ CROWNIQ_INTERNAL_HISTORY_FILE=tmp/internal-history.json
+diff --git a/README.md b/README.md
+index 1f2b84c..e1b6cd2 100644
+--- a/README.md
++++ b/README.md
+@@ -42,6 +42,8 @@ curl http://127.0.0.1:3000/health
+ 
+ Every paid pull, from the app or a terminal, runs as one server job: a second request while one is running gets `409 PULL_RUNNING` (admin) or `started: false` (owner). Admin pulls require the `x-confirm-provider-cost: yes` header and return `428` without it. The job record, including Odds API credits spent and remaining, is saved to `CROWNIQ_OWNER_JOB_FILE` (default `tmp/owner-pull-job.json`); if the server stops mid-pull, the next start reports the job as failed with `INTERRUPTED_BY_RESTART`.
+ 
++Crowns are checked against `CROWNIQ_CROWN_CORRELATION_POLICY` (default `conservative`: at most two legs from one game, and no quarterback paired with his own team's receiver in the same direction) plus the existing same-player, same-team and minimum-score rules. A Crown also needs every leg's team confirmed: the server sets a line's team only when an exact source match (Sleeper for NFL, the MLB Stats API boxscore) names one of that game's two sides, and the same match supplies the player's photo link. A rejected save returns the failed rule codes in `issues`.
++
+ After a restart, CrownIQ restores the saved board immediately and rebuilds expired historical evidence in the background from its local internal-history store. Startup recovery uses no Odds API or external research calls; it preserves the original board fetch time and never extends expired availability, lineup or other current facts. Owner Board Analysis reports active/expired evidence and recovery status, with a diagnostics reload control. Rankings reloads after saved-board reanalysis, on tab focus and every minute while visible, with retry controls for failed reads.
+ 
+ For an existing saved board, the signed-in owner can use **Settings → Owner Board Analysis** (or `GET /v1/owner/board/diagnostics`) to inspect board age, support/approval/pass-reason counts, evidence, Second Look and fresh-context health without dumping thousands of lines. The screen's **Reanalyze saved board** action calls `POST /v1/owner/board/reanalyze` with explicit research-cost acknowledgement. It reevaluates the saved board with **zero Odds API credits**; a configured research source such as Stat API may consume its own quota. After success the mobile app rereads the saved board. This action never calls the paid odds-provider refresh. Failed optional research does not erase the last validated evidence snapshot.
+diff --git a/apps/api/src/board-service.ts b/apps/api/src/board-service.ts
+index fb6a595..f091ba1 100644
+--- a/apps/api/src/board-service.ts
++++ b/apps/api/src/board-service.ts
+@@ -1,5 +1,5 @@
+ import { boardSchema, propLineSchema } from '@crowniq/contracts';
+-import type { Analysis, Board, BoardResponse, Evidence, PropLine, SecondLookAudit } from '@crowniq/contracts';
++import type { Analysis, Board, BoardResponse, Evidence, PlayerMedia, PropLine, SecondLookAudit } from '@crowniq/contracts';
+ import { collectResearch, effectiveEvidenceExpiry, evaluateBoard, ModelRegistry, researchTargetsFor } from '@crowniq/engine';
+ import type { OddsProvider, ResearchAdapter, ResearchHealth } from '@crowniq/engine';
+ import { classifyPrizePicksLineTypes, normalizeCachedPrizePicksLines } from './prizepicks-line-types.js';
+@@ -39,6 +39,7 @@ export class BoardService {
+   private webEvidence: readonly Evidence[] = [];
+   private evidence: readonly Evidence[] = [];
+   private secondLookAudits: Record<string,SecondLookAudit> = {};
++  private playerMedia: Record<string,PlayerMedia> = {};
+   private nextDeadline = Infinity;
+   private startupRecovery = {status:'NOT_NEEDED' as 'NOT_NEEDED'|'UNCONFIGURED'|'RUNNING'|'SUCCEEDED'|'PARTIAL'|'FAILED',
+     evidenceAdded:0,oddsCreditsUsed:0 as const,error:null as string|null};
+@@ -136,14 +137,40 @@ export class BoardService {
+ 
+   getEvidence(): readonly Evidence[] { this.getBoard(); return this.evidence; }
+ 
+-  private publish(board: Board, evidence: readonly Evidence[], now: Date): BoardResponse {
++  /**
++   * Team identity from exact source matches. A line gets a team only when the matched team is one
++   * of its own event's two sides; anything else is ignored rather than guessed.
++   */
++  private withIdentity(board: Board, evidence: readonly Evidence[], now: Date): Board {
++    const teams = new Map<string, string>();
++    for (const item of evidence) {
++      if (item.entityType !== 'PLAYER' || effectiveEvidenceExpiry(item) <= now.getTime()) continue;
++      if (item.kind === 'identity:team') teams.set(item.eventId + '|' + item.entityId, item.finding);
++      if (item.kind === 'identity:photo' && item.sourceUrl)
++        this.playerMedia[item.entityId] = { photoUrl: item.sourceUrl, source: item.sourceName };
++    }
++    let changed = false;
++    const lines = board.lines.map((line) => {
++      const team = teams.get(line.eventId + '|' + line.playerId);
++      if (line.team || !team || (team !== line.homeTeam && team !== line.awayTeam)) return line;
++      changed = true;
++      return { ...line, team, opponent: (team === line.homeTeam ? line.awayTeam : line.homeTeam) ?? null };
++    });
++    return changed ? { ...board, lines } : board;
++  }
++
++  private publish(source: Board, evidence: readonly Evidence[], now: Date): BoardResponse {
++    const board = this.withIdentity(source, evidence, now);
+     const result = evaluateBoard(board, evidence, this.models, now);
+     const analyses=result.analyses.map((analysis)=>{
+       const audit=this.secondLookAudits[analysis.lineId];
+       return audit?{...analysis,reviewStatus:'SECOND_LOOK' as const,secondLook:audit}:
+         {...analysis,reviewStatus:'STANDARD' as const,secondLook:null};
+     });
+-    this.snapshot = { board, analyses, rankedLineIds:result.rankedLineIds, builtAt: now.toISOString() };
++    const players = new Set(board.lines.map((line) => line.playerId));
++    const media = Object.fromEntries(Object.entries(this.playerMedia).filter(([playerId]) => players.has(playerId)));
++    this.snapshot = { board, analyses, rankedLineIds:result.rankedLineIds, builtAt: now.toISOString(),
++      ...(Object.keys(media).length ? { playerMedia: media } : {}) };
+     this.evidence = evidence;
+     this.nextDeadline = Infinity;
+     for (const line of board.lines) {
+diff --git a/apps/api/src/current-context.ts b/apps/api/src/current-context.ts
+index 52b602f..67b3b82 100644
+--- a/apps/api/src/current-context.ts
++++ b/apps/api/src/current-context.ts
+@@ -10,6 +10,17 @@ type CacheEntry={until:number;value:unknown};
+ const MLB_BASE='https://statsapi.mlb.com/api/v1';
+ const MLB_FEED_BASE='https://statsapi.mlb.com/api/v1.1';
+ const SLEEPER_NFL_PLAYERS='https://api.sleeper.app/v1/players/nfl';
++/** Sleeper team codes to the full names the odds feed uses for NFL events. */
++export const NFL_TEAMS:Readonly<Record<string,string>>={ARI:'Arizona Cardinals',ATL:'Atlanta Falcons',
++  BAL:'Baltimore Ravens',BUF:'Buffalo Bills',CAR:'Carolina Panthers',CHI:'Chicago Bears',CIN:'Cincinnati Bengals',
++  CLE:'Cleveland Browns',DAL:'Dallas Cowboys',DEN:'Denver Broncos',DET:'Detroit Lions',GB:'Green Bay Packers',
++  HOU:'Houston Texans',IND:'Indianapolis Colts',JAX:'Jacksonville Jaguars',KC:'Kansas City Chiefs',
++  LV:'Las Vegas Raiders',LAC:'Los Angeles Chargers',LAR:'Los Angeles Rams',MIA:'Miami Dolphins',
++  MIN:'Minnesota Vikings',NE:'New England Patriots',NO:'New Orleans Saints',NYG:'New York Giants',
++  NYJ:'New York Jets',PHI:'Philadelphia Eagles',PIT:'Pittsburgh Steelers',SF:'San Francisco 49ers',
++  SEA:'Seattle Seahawks',TB:'Tampa Bay Buccaneers',TEN:'Tennessee Titans',WAS:'Washington Commanders'};
++const sleeperPhoto=(id:string)=>`https://sleepercdn.com/content/nfl/players/${encodeURIComponent(id)}.jpg`;
++const mlbPhoto=(id:number)=>`https://img.mlbstatic.com/mlb-photos/image/upload/w_213,q_auto:best/v1/people/${id}/headshot/67/current`;
+ const MLB_MARKETS=new Set(['batter_hits_runs_rbis','batter_hits','batter_walks',
+   'batter_home_runs','pitcher_strikeouts']);
+ const NFL_MARKETS=new Set(['passing_yards','player_pass_attempts','player_pass_completions',
+@@ -225,22 +236,29 @@ export class CurrentContextResearch implements ResearchAdapter{
+     if(!targets.length)return[] as Evidence[];
+     const raw=await this.json(SLEEPER_NFL_PLAYERS,15*60_000,undefined,counters);
+     const root=object(raw);if(!root)throw new Error('CURRENT_NFL_STATUS_INVALID');
+-    const byName=new Map<string,SleeperPlayer[]>();
+-    for(const value of Object.values(root)){
++    const byName=new Map<string,{id:string;player:SleeperPlayer}[]>();
++    for(const [id,value] of Object.entries(root)){
+       const player=object(value) as SleeperPlayer|null;if(!player)continue;
+       const full=(player.full_name??[player.first_name,player.last_name].filter(Boolean).join(' ')).trim();
+       if(!full)continue;const key=normalizeName(full);
+-      byName.set(key,[...(byName.get(key)??[]),player]);
++      byName.set(key,[...(byName.get(key)??[]),{id,player}]);
+     }
+     const out:Evidence[]=[];
+     for(const target of targets){
+       let matches=byName.get(normalizeName(target.playerName))??[];
+-      if(target.team){
+-        const exact=matches.filter((item)=>normalizeName(item.team??'')===normalizeName(target.team!));
+-        if(exact.length)matches=exact;
++      // Prefer players on one of this game's two teams; this separates players who share a name.
++      const sides=[target.homeTeam,target.awayTeam].filter((side):side is string=>!!side);
++      if(sides.length){
++        const inGame=matches.filter((item)=>sides.includes(NFL_TEAMS[(item.player.team??'').toUpperCase()]??''));
++        if(inGame.length)matches=inGame;
+       }
+       if(matches.length!==1)continue;
+-      const player=matches[0],status=(player.status??'').trim().toLowerCase(),
++      const team=NFL_TEAMS[(matches[0].player.team??'').toUpperCase()];
++      if(team&&sides.includes(team))out.push(this.evidence(target,'identity:team',1,team,
++        'Sleeper public NFL player feed',SLEEPER_NFL_PLAYERS,'PUBLIC','MEDIUM',.8,30*60_000));
++      out.push(this.evidence(target,'identity:photo',1,'Player headshot',
++        'Sleeper player photos',sleeperPhoto(matches[0].id),'PUBLIC','MEDIUM',.8,30*60_000));
++      const player=matches[0].player,status=(player.status??'').trim().toLowerCase(),
+         injury=(player.injury_status??'').trim();
+       const available=(status===''||status==='active')&&!injury;
+       out.push(this.evidence(target,'status:player_available',available?1:0,
+@@ -258,7 +276,7 @@ export class CurrentContextResearch implements ResearchAdapter{
+   }
+ 
+   private async mlb(targets:readonly ResearchTarget[],counters:{searches:number;cacheHits:number}){
+-    const out:Evidence[]=[];const diagnostics:MlbDiagnostics={groups:0,gameMatchedTargets:0,
++    const out:Evidence[]=[],identity:Evidence[]=[];const diagnostics:MlbDiagnostics={groups:0,gameMatchedTargets:0,
+       boxscoreMatchedTargets:0,playerMatchedTargets:0,batterTargets:0,lineupPostedTargets:0,
+       starterContextTargets:0,evidenceTargets:0,sourceFailures:0,failedGroups:0};
+     if(!targets.length)return {evidence:out,diagnostics};
+@@ -314,6 +332,11 @@ export class CurrentContextResearch implements ResearchAdapter{
+             number(object(object(value)?.person)?.id)===playerId)?'home':null;
+         if(!side)continue;
+         const mine=side==='away'?away:home,other=side==='away'?'home':'away';
++        // The boxscore side is exact, so the team is the matching side of this event.
++        const team=side==='away'?target.awayTeam:target.homeTeam;
++        if(team)identity.push(this.evidence(target,'identity:team',1,team,'MLB Stats API',sourceUrl,'OFFICIAL','HIGH',.95,30*60_000));
++        identity.push(this.evidence(target,'identity:photo',1,'Player headshot','MLB player photos',mlbPhoto(playerId),
++          'OFFICIAL','HIGH',.95,30*60_000));
+         if(target.market==='pitcher_strikeouts'){
+           const starter=probableId(side);
+           if(starter){
+@@ -343,7 +366,8 @@ export class CurrentContextResearch implements ResearchAdapter{
+         if(out.length>beforeCount)diagnostics.evidenceTargets++;
+       }
+     }
+-    return {evidence:out,diagnostics};
++    // Identity is kept out of the context diagnostics, which count status findings only.
++    return {evidence:[...out,...identity],diagnostics};
+   }
+   private async nba(targets:readonly ResearchTarget[]){
+     const diagnostics:NbaDiagnostics={lookups:0,identityMatched:0,availabilityResolved:0,failures:0};
+diff --git a/apps/api/src/full-prizepicks-provider.ts b/apps/api/src/full-prizepicks-provider.ts
+index ad0d7c5..f54799b 100644
+--- a/apps/api/src/full-prizepicks-provider.ts
++++ b/apps/api/src/full-prizepicks-provider.ts
+@@ -238,6 +238,7 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
+       eventStartTime: event.commence_time,
+       playerId: sport.key + ':' + hash(outcome.description.trim().toLowerCase()),
+       playerName: outcome.description.trim(), team: null, opponent: null,
++      homeTeam: event.home_team ?? null, awayTeam: event.away_team ?? null,
+       market: normalizePrizePicksMarketKey(normalizedSport,marketKey),
+       threshold: outcome.point, availableDirections: [direction], lineType, fetchedAt,
+       ...(multiplier == null ? {} : { payoutMultiplier: multiplier }),
+diff --git a/apps/api/src/main.ts b/apps/api/src/main.ts
+index fd00fa2..f294057 100644
+--- a/apps/api/src/main.ts
++++ b/apps/api/src/main.ts
+@@ -1,5 +1,5 @@
+ import 'dotenv/config';
+-import { CompositeResearchAdapter, createGkrRegistry, statHistoryReadyVersions } from '@crowniq/engine';
++import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegistry, statHistoryReadyVersions } from '@crowniq/engine';
+ import { buildServer } from './server.js';
+ import { FullPrizePicksProvider } from './full-prizepicks-provider.js';
+ import { TheOddsApiProvider } from './the-odds-api-provider.js';
+@@ -72,8 +72,12 @@ const approvedModelKeys=Object.entries(models.requirements())
+   .filter(([,requirement])=>requirement.approved).map(([key])=>key);
+ const internalHistory=new InternalHistoryStore(process.env.CROWNIQ_INTERNAL_HISTORY_FILE ??
+   'tmp/internal-history.json');
++// Crown saves and shares need a correlation policy; 'none' keeps them fail-closed.
++const correlationSetting=process.env.CROWNIQ_CROWN_CORRELATION_POLICY ?? 'conservative';
++if(!['conservative','none'].includes(correlationSetting))throw new Error('Invalid CROWNIQ_CROWN_CORRELATION_POLICY');
+ const product=new ProductLedger(process.env.CROWNIQ_PRODUCT_LEDGER_FILE ??
+-  'tmp/product-ledger.json',band,()=>new Date(),undefined,internalHistory);
++  'tmp/product-ledger.json',band,()=>new Date(),
++  correlationSetting==='conservative'?conservativeCorrelationPolicy:undefined,internalHistory);
+ const statApiKey=process.env.STAT_API_KEY;
+ const ownerPublicId=process.env.CROWNIQ_OWNER_PUBLIC_ID;
+ const statDailyLimit=process.env.CROWNIQ_STAT_API_DAILY_RECORD_LIMIT
+diff --git a/apps/api/src/server.ts b/apps/api/src/server.ts
+index 2497279..90553be 100644
+--- a/apps/api/src/server.ts
++++ b/apps/api/src/server.ts
+@@ -171,6 +171,13 @@ export function buildServer(options: ServerOptions = {}) {
+     ? {...ownerBoardRefresh,refreshStage:service.getStatus().refreshStage}:ownerBoardRefresh;
+ 
+   // Public liveness only. Operating detail lives behind owner or admin auth.
++  // Which Crown rules failed, from the ledger's error message, for a readable app message.
++  const crownIssues=(error:unknown)=>{
++    const message=error instanceof Error?error.message:'';
++    const match=/^CROWN_CONSTRAINT_REJECTED:(.+)$/.exec(message);
++    return match?match[1].split(',').filter((code)=>/^[A-Z_]+$/.test(code)):
++      /^[A-Z_]+$/.test(message)?[message]:[];
++  };
+   app.get('/health', async () => ({ status: 'ok', boardAvailable: !!service.getBoard() }));
+   const username=z.string().trim().regex(/^[A-Za-z0-9_]{3,24}$/);
+   const email=z.email().max(254);
+@@ -529,7 +536,7 @@ export function buildServer(options: ServerOptions = {}) {
+     const board=service.getBoard();if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+     try{return reply.code(201).send(await options.product!.savePrivateCrown(user.accountId,
+       input.data.lineIds,board,service.getEvidence()));}
+-    catch{return reply.code(422).send({code:'CROWN_VALIDATION_FAILED'});}
++    catch(error){return reply.code(422).send({code:'CROWN_VALIDATION_FAILED',issues:crownIssues(error)});}
+   });
+   app.delete('/v1/me/crowns/:id',async(request,reply)=>{
+     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+@@ -659,7 +666,7 @@ export function buildServer(options: ServerOptions = {}) {
+       const board=service.getBoard();if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+       try{return reply.code(201).send(await options.product!.share((await actor(request))!,
+         parsed.data.lineIds,board,service.getEvidence()));}
+-      catch{return reply.code(422).send({code:'CROWN_SHARE_REJECTED'});}
++      catch(error){return reply.code(422).send({code:'CROWN_SHARE_REJECTED',issues:crownIssues(error)});}
+     });
+     social.delete('/crowns/:id',async(request,reply)=>{
+       const parsed=z.object({id:z.string().uuid()}).safeParse(request.params);
+diff --git a/apps/api/src/the-odds-api-provider.ts b/apps/api/src/the-odds-api-provider.ts
+index cc323df..23f48c5 100644
+--- a/apps/api/src/the-odds-api-provider.ts
++++ b/apps/api/src/the-odds-api-provider.ts
+@@ -155,7 +155,7 @@ export class TheOddsApiProvider implements OddsProvider<RawPrizePicksSelection>
+       eventStartTime: event.commence_time,
+       playerId: 'NFL:' + hash(outcome.description.trim().toLowerCase()),
+       playerName: outcome.description.trim(),
+-      team: null, opponent: null,
++      team: null, opponent: null, homeTeam: event.home_team, awayTeam: event.away_team,
+       market: marketNames[marketKey], threshold: outcome.point,
+       availableDirections: [direction], lineType, fetchedAt,
+       ...(multiplier == null ? {} : { payoutMultiplier: multiplier }),
+diff --git a/apps/api/test/identity.test.ts b/apps/api/test/identity.test.ts
+new file mode 100644
+index 0000000..71f1f00
+--- /dev/null
++++ b/apps/api/test/identity.test.ts
+@@ -0,0 +1,77 @@
++import assert from 'node:assert/strict';
++import { mkdtemp, rm } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import test from 'node:test';
++import { boardSchema, evidenceSchema, propLineSchema } from '@crowniq/contracts';
++import type { Evidence, PropLine } from '@crowniq/contracts';
++import { conservativeCorrelationPolicy, ModelRegistry } from '@crowniq/engine';
++import type { ResearchTarget } from '@crowniq/engine';
++import { BoardService } from '../src/board-service.js';
++import { CurrentContextResearch } from '../src/current-context.js';
++import { ProductLedger } from '../src/product-ledger.js';
++
++const now = new Date('2030-09-20T15:00:00.000Z');
++
++test('NFL identity uses the game sides to separate players who share a name', async () => {
++  const fetchFn: typeof fetch = async () => new Response(JSON.stringify({
++    '4984': { full_name: 'Josh Allen', position: 'QB', status: 'Active', injury_status: null, team: 'BUF' },
++    '3321': { full_name: 'Josh Allen', position: 'LB', status: 'Active', injury_status: null, team: 'JAX' },
++  }), { status: 200 });
++  const adapter = new CurrentContextResearch({ fetchFn, clock: () => now, allowedKeys: ['NFL:passing_yards'] });
++  const target: ResearchTarget = { eventId: 'buf-mia', eventName: 'Miami Dolphins @ Buffalo Bills',
++    eventStartTime: '2030-09-21T17:00:00.000Z', league: 'NFL', playerId: 'nfl:josh', playerName: 'Josh Allen',
++    team: null, opponent: null, homeTeam: 'Buffalo Bills', awayTeam: 'Miami Dolphins', market: 'passing_yards', sport: 'NFL' };
++  const evidence = await adapter.research([target]);
++  assert.equal(evidence.find((item) => item.kind === 'identity:team')?.finding, 'Buffalo Bills');
++  assert.equal(evidence.find((item) => item.kind === 'identity:photo')?.sourceUrl,
++    'https://sleepercdn.com/content/nfl/players/4984.jpg');
++  assert.equal(evidence.find((item) => item.kind === 'status:qb_available')?.numeric?.value, 1);
++  // Without game sides the shared name stays ambiguous, so nothing is emitted.
++  assert.equal((await adapter.research([{ ...target, homeTeam: null, awayTeam: null }])).length, 0);
++});
++
++const line = (id: string, playerId: string, eventId = 'buf-mia', market = 'player_points'): PropLine => propLineSchema.parse({
++  id, provider: 'prizepicks', sourceLineId: id, sport: 'NFL', league: 'NFL', eventId, eventName: 'Miami Dolphins @ Buffalo Bills',
++  eventStartTime: '2030-09-21T17:00:00.000Z', playerId, playerName: playerId, team: null, opponent: null,
++  homeTeam: 'Buffalo Bills', awayTeam: 'Miami Dolphins', market, threshold: 10.5, availableDirections: ['MORE'],
++  lineType: 'REGULAR', fetchedAt: now.toISOString() });
++const identity = (playerId: string, kind: string, finding: string, sourceUrl = 'https://example.org/source'): Evidence =>
++  evidenceSchema.parse({ id: `${kind}:${playerId}`, entityType: 'PLAYER', entityId: playerId, eventId: 'buf-mia', market: null,
++    kind, finding, sourceName: 'Fixture source', sourceUrl, sourceType: 'PUBLIC', retrievedAt: now.toISOString(),
++    expiresAt: '2030-09-20T15:30:00.000Z', quality: 'MEDIUM', confidence: 0.8, numeric: { value: 1 } });
++
++test('board service sets team only from a matching side and publishes player photos', async () => {
++  const board = boardSchema.parse({ provider: 'prizepicks', fetchedAt: now.toISOString(),
++    lines: [line('a', 'allen'), line('b', 'waddle'), line('c', 'stranger')] });
++  const research = { id: 'fixture', research: async () => [identity('allen', 'identity:team', 'Buffalo Bills'),
++    identity('allen', 'identity:photo', 'Player headshot', 'https://sleepercdn.com/content/nfl/players/4984.jpg'),
++    identity('waddle', 'identity:team', 'Miami Dolphins'), identity('stranger', 'identity:team', 'Kansas City Chiefs')] };
++  const service = new BoardService({ id: 'fixture-provider', fetchPrizePicksLines: async () => board.lines,
++    normalize: (raw) => raw as PropLine }, research, new ModelRegistry(), () => now);
++  const snapshot = await service.refresh();
++  const byId = new Map(snapshot.board.lines.map((item) => [item.id, item]));
++  assert.deepEqual([byId.get('a')!.team, byId.get('a')!.opponent], ['Buffalo Bills', 'Miami Dolphins']);
++  assert.deepEqual([byId.get('b')!.team, byId.get('b')!.opponent], ['Miami Dolphins', 'Buffalo Bills']);
++  // A team that is not one of this game's sides is ignored, never guessed.
++  assert.equal(byId.get('c')!.team, null);
++  assert.equal(snapshot.playerMedia?.allen?.photoUrl, 'https://sleepercdn.com/content/nfl/players/4984.jpg');
++});
++
++test('with team identity and the conservative policy, a valid Crown saves; a 3-leg single game does not', async (t) => {
++  const dir = await mkdtemp(join(tmpdir(), 'crowniq-crown-policy-'));
++  t.after(() => rm(dir, { recursive: true, force: true }));
++  const ledger = new ProductLedger(join(dir, 'ledger.json'), 'CROWN_STRONG', () => now, conservativeCorrelationPolicy);
++  const user = await ledger.register('crown@example.org', 'abcdefghijkl', 'Crown_user');
++  const legs = [line('x1', 'p1', 'g1'), line('x2', 'p2', 'g2'), line('x3', 'p3', 'g2'), line('x4', 'p4', 'g2')]
++    .map((item, index) => ({ ...item, team: index % 2 ? 'Buffalo Bills' : 'Miami Dolphins' }));
++  const analysis = (lineId: string) => ({ lineId, direction: 'MORE' as const, score: 90, scoreBreakdown: [], assessments: [],
++    evidenceIds: [], evidenceExpiresAt: null, evidenceQuality: 'HIGH' as const, dangerZone: false, ruleChecks: [],
++    supportingFactors: [], opposingFactors: [], rationale: 'Fixture.', reasonCode: null, modelVersion: 'FIXTURE-1',
++    scoreBand: 'CROWN_STRONG' as const });
++  const board = { board: boardSchema.parse({ provider: 'prizepicks', fetchedAt: now.toISOString(), lines: legs }),
++    analyses: legs.map((item) => analysis(item.id)), rankedLineIds: legs.map((item) => item.id), builtAt: now.toISOString() };
++  const account = (await ledger.authenticate(user.token))!.accountId;
++  assert.equal((await ledger.savePrivateCrown(account, ['x1', 'x2'], board, [])).alreadySaved, false);
++  await assert.rejects(() => ledger.savePrivateCrown(account, ['x2', 'x3', 'x4'], board, []), /SAME_EVENT_CONCENTRATION/);
++});
+diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
+index e30ec25..d630ead 100644
+--- a/packages/contracts/src/index.ts
++++ b/packages/contracts/src/index.ts
+@@ -31,6 +31,9 @@ export const propLineSchema = z.object({
+   playerName: identifier,
+   team: z.string().nullable(),
+   opponent: z.string().nullable(),
++  /** The event's two sides as the odds feed names them; team is only ever set to one of these. */
++  homeTeam: z.string().nullable().optional(),
++  awayTeam: z.string().nullable().optional(),
+   market: identifier,
+   threshold: z.number().finite(),
+   availableDirections: z.array(playableDirectionSchema).min(1).refine(
+diff --git a/packages/engine/src/analysis.ts b/packages/engine/src/analysis.ts
+index 3b0b816..b8251ea 100644
+--- a/packages/engine/src/analysis.ts
++++ b/packages/engine/src/analysis.ts
+@@ -51,7 +51,8 @@ export function evaluateLine(line: PropLine, evidence: readonly Evidence[], regi
+   const current = freshEvidenceFor(line, evidence, now);
+   // Web findings are AI-structured context for people to read. No model scores them, so
+   // they must not lower evidence quality or shorten the analysis's evidence expiry.
+-  const fresh = current.filter((item) => !isContextOnly(item));
++  // Identity findings (team, photo) describe who the player is, not how they will perform.
++  const fresh = current.filter((item) => !isContextOnly(item) && !item.kind.startsWith('identity:'));
+   const contextIds = current.filter(isContextOnly).map((item) => item.id);
+   const withContext = (analysis: Analysis): Analysis =>
+     contextIds.length ? { ...analysis, contextEvidenceIds: contextIds } : analysis;
+diff --git a/packages/engine/src/correlation.ts b/packages/engine/src/correlation.ts
+new file mode 100644
+index 0000000..3cfdc1b
+--- /dev/null
++++ b/packages/engine/src/correlation.ts
+@@ -0,0 +1,25 @@
++import type { CorrelationPolicy } from './interfaces.js';
++
++const PASSING = new Set(['passing_yards', 'player_pass_completions', 'player_pass_attempts', 'player_pass_tds']);
++const RECEIVING = new Set(['player_reception_yds', 'player_receptions', 'player_receiving_targets']);
++
++/**
++ * Conservative Crown correlation rules:
++ * - at most two legs from one event, so one game cannot decide most of an entry;
++ * - no same-direction pair of a quarterback's passing market with a teammate's receiving
++ *   market, whose outcomes move together.
++ * Same-player and same-team limits are already enforced by auditCrown.
++ */
++export const conservativeCorrelationPolicy: CorrelationPolicy = (picks) => {
++  const issues: string[] = [];
++  const perEvent = new Map<string, number>();
++  for (const { line } of picks) perEvent.set(line.eventId, (perEvent.get(line.eventId) ?? 0) + 1);
++  if ([...perEvent.values()].some((count) => count > 2)) issues.push('SAME_EVENT_CONCENTRATION');
++  for (const passer of picks) {
++    if (!PASSING.has(passer.line.market) || !passer.line.team) continue;
++    const stacked = picks.some((other) => other !== passer && RECEIVING.has(other.line.market) &&
++      other.line.team === passer.line.team && other.analysis.direction === passer.analysis.direction);
++    if (stacked) { issues.push('QB_RECEIVER_STACK'); break; }
++  }
++  return issues;
++};
+diff --git a/packages/engine/src/index.ts b/packages/engine/src/index.ts
+index b935fc5..3f1e39a 100644
+--- a/packages/engine/src/index.ts
++++ b/packages/engine/src/index.ts
+@@ -10,3 +10,4 @@ export * from './fantasy/registry.js';
+ export * from './fantasy/scoring.js';
+ export * from './selections.js';
+ export * from './grading.js';
++export * from './correlation.js';
+diff --git a/packages/engine/src/interfaces.ts b/packages/engine/src/interfaces.ts
+index 7c16469..da7b1ae 100644
+--- a/packages/engine/src/interfaces.ts
++++ b/packages/engine/src/interfaces.ts
+@@ -21,6 +21,9 @@ export interface ResearchTarget {
+   readonly playerName: string;
+   readonly team: string | null;
+   readonly opponent: string | null;
++  /** The event's sides as the odds feed names them, when known. */
++  readonly homeTeam?: string | null;
++  readonly awayTeam?: string | null;
+   readonly market: string;
+   readonly sport: Sport;
+ }
+diff --git a/packages/engine/src/research.ts b/packages/engine/src/research.ts
+index e6e4222..ac03c3f 100644
+--- a/packages/engine/src/research.ts
++++ b/packages/engine/src/research.ts
+@@ -44,9 +44,9 @@ export function freshEvidenceFor(line: PropLine, evidence: readonly Evidence[],
+ 
+ export function researchTargetsFor(board: Board): ResearchTarget[] {
+   const targets: ResearchTarget[] = board.lines.map(({ eventId, eventName, eventStartTime, league,
+-    playerId, playerName, team, opponent, market, sport }) => ({
++    playerId, playerName, team, opponent, market, sport, homeTeam, awayTeam }) => ({
+     eventId, eventName, eventStartTime, league, playerId, playerName,
+-    team, opponent, market, sport,
++    team, opponent, market, sport, homeTeam: homeTeam ?? null, awayTeam: awayTeam ?? null,
+   }));
+   return [...new Map(targets.map((target) => [
+     [target.eventId, target.playerId, target.market].join('|'), target,
+diff --git a/packages/engine/test/engine.test.ts b/packages/engine/test/engine.test.ts
+index 376889a..c38baa8 100644
+--- a/packages/engine/test/engine.test.ts
++++ b/packages/engine/test/engine.test.ts
+@@ -161,3 +161,20 @@ test('auto Crown only returns a complete audited combination', () => {
+   assert.deepEqual(partial.picks?.map((pick) => pick.line.id), [a.id]);
+   assert.ok(partial.issues.includes('INSUFFICIENT_QUALIFIED_PICKS'));
+ });
++
++test('conservative correlation policy limits one game and same-team QB stacks', async () => {
++  const { conservativeCorrelationPolicy } = await import('../src/correlation.js');
++  const pick = (eventId: string, market: string, team: string, direction: 'MORE' | 'LESS') => ({
++    line: { eventId, market, team } as never, analysis: { direction } as never });
++  assert.deepEqual(conservativeCorrelationPolicy([pick('a', 'passing_yards', 'BUF', 'MORE'),
++    pick('b', 'player_points', 'LAL', 'MORE')]), []);
++  assert.deepEqual(conservativeCorrelationPolicy([pick('a', 'player_points', 'X', 'MORE'),
++    pick('a', 'player_rebounds', 'Y', 'MORE'), pick('a', 'player_assists', 'Z', 'MORE')]), ['SAME_EVENT_CONCENTRATION']);
++  assert.deepEqual(conservativeCorrelationPolicy([pick('a', 'passing_yards', 'BUF', 'MORE'),
++    pick('a', 'player_reception_yds', 'BUF', 'MORE')]), ['QB_RECEIVER_STACK']);
++  // Opposite directions, or an opposing receiver, are not a stack.
++  assert.deepEqual(conservativeCorrelationPolicy([pick('a', 'passing_yards', 'BUF', 'MORE'),
++    pick('a', 'player_reception_yds', 'BUF', 'LESS')]), []);
++  assert.deepEqual(conservativeCorrelationPolicy([pick('a', 'passing_yards', 'BUF', 'MORE'),
++    pick('a', 'player_reception_yds', 'MIA', 'MORE')]), []);
++});
