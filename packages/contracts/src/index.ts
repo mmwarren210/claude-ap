@@ -216,11 +216,33 @@ export const rankingsResponseSchema = z.object({
   watchlist: z.array(secondLookCardSchema),
 });
 
+/** Display media for a player, resolved from an exact source match. Absent means initials. */
+export const playerMediaSchema = z.object({
+  photoUrl: z.url().nullable(),
+  source: z.string().nullable(),
+});
+
 export const boardResponseSchema = z.object({
   board: boardSchema,
   analyses: z.array(analysisSchema),
   rankedLineIds: z.array(identifier),
   builtAt: timestamp,
+  playerMedia: z.record(z.string(), playerMediaSchema).optional(),
+});
+
+/** Recent pre-event results for one player and market, newest first. Values are never inferred. */
+export const playerGameLogSchema = z.object({
+  sport: sportSchema,
+  playerId: identifier,
+  playerName: identifier,
+  market: identifier,
+  source: z.enum(['CROWNIQ_INTERNAL_HISTORY', 'DEMO']),
+  unit: z.string().nullable(),
+  games: z.array(z.object({
+    date: z.string().min(10),
+    opponent: z.string().nullable(),
+    value: z.number().finite(),
+  })).max(40),
 });
 
 export const savedSelectionSchema = z.object({
@@ -269,6 +291,8 @@ export type Direction = z.infer<typeof directionSchema>;
 export type PlayableDirection = z.infer<typeof playableDirectionSchema>;
 export type Sport = z.infer<typeof sportSchema>;
 export type BoardResponse = z.infer<typeof boardResponseSchema>;
+export type PlayerMedia = z.infer<typeof playerMediaSchema>;
+export type PlayerGameLog = z.infer<typeof playerGameLogSchema>;
 export type RankingCard = z.infer<typeof rankingCardSchema>;
 export type SecondLookCard = z.infer<typeof secondLookCardSchema>;
 export type RankingsResponse = z.infer<typeof rankingsResponseSchema>;

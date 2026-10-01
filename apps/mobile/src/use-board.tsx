@@ -7,9 +7,10 @@ import { loadBoard, saveBoard } from './local-store';
 import { freshness } from './state';
 import { reportMobileFailure } from './diagnostics';
 import { useAuth } from './auth';
+import { DEMO_NOW } from './demo/data';
 
 type BoardState={status:'loading'|'available'|'unavailable';data:BoardResponse|null;message:string;
-  freshness:'LIVE'|'FRESH'|'CACHED'|'SNAPSHOT'|'STALE'|'OFFLINE'|'UNREACHABLE'|'UNAVAILABLE';
+  freshness:'LIVE'|'FRESH'|'CACHED'|'SNAPSHOT'|'STALE'|'OFFLINE'|'UNREACHABLE'|'UNAVAILABLE'|'DEMO';
   researchStatus:string;gradingStatus:string;refreshing:boolean;nowMs:number;
   /** Free reread of the saved server board. Never spends provider credits. */
   reload:()=>void;
@@ -29,10 +30,12 @@ function responseMessage(status:number):string {
 }
 
 export function BoardProvider({children}:{children:ReactNode}) {
-  const {request}=useAuth();
+  const {request,demo}=useAuth();
+  // Demo mode reads bundled sample data, so it needs no server address.
+  const configured=!!apiBase||demo;
   const [data,setData]=useState<BoardResponse|null>(null);
-  const [status,setStatus]=useState<BoardState['status']>(apiBase?'loading':'unavailable');
-  const [message,setMessage]=useState(apiBase?'':'The CrownIQ API address is not configured.');
+  const [status,setStatus]=useState<BoardState['status']>(configured?'loading':'unavailable');
+  const [message,setMessage]=useState(configured?'':'The CrownIQ API address is not configured.');
   const [researchStatus,setResearchStatus]=useState('Unavailable');
   const [gradingStatus,setGradingStatus]=useState('Unavailable');
   const [reachable,setReachable]=useState(true);
@@ -54,13 +57,14 @@ export function BoardProvider({children}:{children:ReactNode}) {
   },[]);
   useEffect(()=>{
     let active=true;
+    if(demo)return;
     void loadBoard().then((cached)=>{if(active && cached){setData((current)=>current ?? cached);setStatus('available');}})
       .catch((error:unknown)=>reportMobileFailure('storage',error));
     return ()=>{active=false;};
-  },[]);
+  },[demo]);
   useEffect(()=>{
     let active=true;
-    if(!apiBase)return;
+    if(!configured)return;
     const controller=new AbortController();
     void (async()=>{
       try{
@@ -78,7 +82,7 @@ export function BoardProvider({children}:{children:ReactNode}) {
         const board=boardResponseSchema.parse(await response.json());
         if(!active)return;
         setData(board);setStatus('available');setMessage('');setNeedsBootstrap(false);
-        void saveBoard(board).catch((error:unknown)=>reportMobileFailure('storage',error));
+        if(!demo)void saveBoard(board).catch((error:unknown)=>reportMobileFailure('storage',error));
         try{
           const summaryResponse=await request('/v1/board/summary',{signal:controller.signal});
           if(!active || !summaryResponse.ok)return;
@@ -94,7 +98,7 @@ export function BoardProvider({children}:{children:ReactNode}) {
       }
     })();
     return ()=>{active=false;controller.abort();};
-  },[attempt,request]);
+  },[attempt,request,configured,demo]);
 
   const reload=useCallback(()=>{
     setStatus((previous)=>previous==='available'?'available':'loading');setAttempt((n)=>n+1);
@@ -147,8 +151,8 @@ export function BoardProvider({children}:{children:ReactNode}) {
   },[request,reload]);
 
   return <Context.Provider value={{status:data?'available':status,data,message,
-    researchStatus,gradingStatus,refreshing,nowMs:clock,
-    freshness:freshness(data,reachable,clock,offline),reload,needsBootstrap,bootstrapPull}}>
+    researchStatus,gradingStatus,refreshing,nowMs:demo?DEMO_NOW:clock,
+    freshness:demo?'DEMO':freshness(data,reachable,clock,offline),reload,needsBootstrap,bootstrapPull}}>
     {children}
   </Context.Provider>;
 }

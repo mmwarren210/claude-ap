@@ -25,7 +25,7 @@ function ProfileRouter(){
       </Stack.Protected>
       <Stack.Protected guard={!profile}><Stack.Screen name="sign-in" /></Stack.Protected>
     </Stack>;
-  return profile?<BoardProvider><DraftProvider key={profile.publicId} profileId={profile.publicId}>
+  return profile?<BoardProvider key={profile.publicId}><DraftProvider key={profile.publicId} profileId={profile.publicId}>
     {navigator}
   </DraftProvider></BoardProvider>:navigator;
 }
