@@ -1,0 +1,739 @@
+diff --git a/.env.example b/.env.example
+index 7291022..ad17884 100644
+--- a/.env.example
++++ b/.env.example
+@@ -49,6 +49,8 @@ NFLVERSE_MAPPING_FILE=
+ CROWNIQ_SELECTIONS_FILE=
+ # Durable server-side snapshots. Mount a persistent volume in deployment.
+ CROWNIQ_BOARD_CACHE_FILE=tmp/board-cache.json
++# Last paid-pull job record (status, credits spent); reports pulls interrupted by a restart.
++CROWNIQ_OWNER_JOB_FILE=tmp/owner-pull-job.json
+ CROWNIQ_PRODUCT_LEDGER_FILE=tmp/product-ledger.json
+ # Durable CrownIQ-owned historical observations. Seed backfills and live graded outcomes stay separate.
+ CROWNIQ_INTERNAL_HISTORY_FILE=tmp/internal-history.json
+diff --git a/README.md b/README.md
+index 7b551bd..4f31c87 100644
+--- a/README.md
++++ b/README.md
+@@ -29,16 +29,19 @@ In a second terminal:
+ npm run dev:mobile
+ ```
+ 
+-Set `EXPO_PUBLIC_API_URL` in `apps/mobile/.env` to the running API. On a phone, use your computer's reachable LAN IP and set `API_HOST=0.0.0.0` in `apps/api/.env`. Scan Expo's QR code with Expo Go. `http://127.0.0.1:3000/health` checks the backend. Create a profile in the app to reach the Board. If no server-side board exists yet, authenticated `/v1/board` returns `503 BOARD_UNAVAILABLE`; that is an available server with no snapshot, not a network outage. Set `CROWNIQ_OWNER_PUBLIC_ID` to the owner's profile UUID. When that profile taps **Refresh board** while the server has no board, CrownIQ starts one confirmed provider pull in the background and polls until the first board is published. Once a board exists, the same button only rereads the saved board and does not spend provider credits. `ADMIN_TOKEN` still protects terminal/admin endpoints and must never be copied into the mobile environment. Use HTTPS for real account credentials.
++Set `EXPO_PUBLIC_API_URL` in `apps/mobile/.env` to the running API. On a phone, use your computer's reachable LAN IP and set `API_HOST=0.0.0.0` in `apps/api/.env`. Scan Expo's QR code with Expo Go. `http://127.0.0.1:3000/health` checks the backend. Create a profile in the app to reach the Board. If no server-side board exists yet, authenticated `/v1/board` returns `503 BOARD_UNAVAILABLE`; that is an available server with no snapshot, not a network outage. Set `CROWNIQ_OWNER_PUBLIC_ID` to the owner's profile UUID. When the server reports it has no board, the Board button changes to **Pull first board** and asks the owner to confirm the credit cost. It calls `POST /v1/owner/board/bootstrap`, which the server refuses with `409 BOARD_EXISTS` once any board exists, so this path can never repeat a paid pull. **Refresh board** only rereads the saved board and never spends provider credits. `ADMIN_TOKEN` still protects terminal/admin endpoints and must never be copied into the mobile environment. Use HTTPS for real account credentials.
+ 
+ To connect The Odds API, put `THE_ODDS_API_KEY` in **the server's** `apps/api/.env` (or your deployed backend's environment). `ODDS_PROVIDER=auto` is the default and activates the PrizePicks adapter whenever that key exists; set `ODDS_PROVIDER=none` only when you intentionally want provider pulls disabled. Set `CROWNIQ_OWNER_PUBLIC_ID` for in-app first-board recovery, and optionally set a locally chosen `ADMIN_TOKEN` for terminal/admin endpoints. These values are never read from the mobile app. With the API running, you can also trigger an owner refresh from a terminal:
+ 
+ ```bash
+ curl -X POST http://127.0.0.1:3000/v1/admin/refresh \
+-  -H "Authorization: Bearer YOUR_LOCAL_ADMIN_TOKEN"
++  -H "Authorization: Bearer YOUR_LOCAL_ADMIN_TOKEN" \
++  -H "x-confirm-provider-cost: yes"
+ curl http://127.0.0.1:3000/health
+ ```
+ 
++Every paid pull, from the app or a terminal, runs as one server job: a second request while one is running gets `409 PULL_RUNNING` (admin) or `started: false` (owner). Admin pulls require the `x-confirm-provider-cost: yes` header and return `428` without it. The job record, including Odds API credits spent and remaining, is saved to `CROWNIQ_OWNER_JOB_FILE` (default `tmp/owner-pull-job.json`); if the server stops mid-pull, the next start reports the job as failed with `INTERRUPTED_BY_RESTART`.
++
+ After a restart, CrownIQ restores the saved board immediately and rebuilds expired historical evidence in the background from its local internal-history store. Startup recovery uses no Odds API or external research calls; it preserves the original board fetch time and never extends expired availability, lineup or other current facts. Owner Board Analysis reports active/expired evidence and recovery status, with a diagnostics reload control. Rankings reloads after saved-board reanalysis, on tab focus and every minute while visible, with retry controls for failed reads.
+ 
+ For an existing saved board, the signed-in owner can use **Settings → Owner Board Analysis** (or `GET /v1/owner/board/diagnostics`) to inspect board age, support/approval/pass-reason counts, evidence, Second Look and fresh-context health without dumping thousands of lines. The screen's **Reanalyze saved board** action calls `POST /v1/owner/board/reanalyze` with explicit research-cost acknowledgement. It reevaluates the saved board with **zero Odds API credits**; a configured research source such as Stat API may consume its own quota. After success the mobile app rereads the saved board. This action never calls the paid odds-provider refresh. Failed optional research does not erase the last validated evidence snapshot.
+diff --git a/apps/api/src/main.ts b/apps/api/src/main.ts
+index 2f6ab47..fd00fa2 100644
+--- a/apps/api/src/main.ts
++++ b/apps/api/src/main.ts
+@@ -9,6 +9,7 @@ import { WebResearchAdapter, WebResearchCatalog } from './web-research.js';
+ import { ProductLedger } from './product-ledger.js';
+ import { ProductGradingWorker } from './background-grading.js';
+ import { BoardCache } from './board-cache.js';
++import { OwnerPullJobStore } from './owner-pull-job.js';
+ import { ProviderIdentityVerifier } from './provider-identity.js';
+ import { StatApiOwnerResearch } from './stat-api-owner-research.js';
+ import { StatApiGkrEvidence } from './stat-api-gkr-evidence.js';
+@@ -129,6 +130,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, provider,
+   requireProfiles:true,identityVerifier,
+   allowedWebOrigins:(process.env.CROWNIQ_ALLOWED_WEB_ORIGINS??'').split(',')
+     .map((origin)=>origin.trim()).filter(Boolean),
++  ownerJobStore:new OwnerPullJobStore(process.env.CROWNIQ_OWNER_JOB_FILE ?? 'tmp/owner-pull-job.json'),
+   boardCache:new BoardCache(process.env.CROWNIQ_BOARD_CACHE_FILE ??
+     'tmp/board-cache.json'),
+   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,
+diff --git a/apps/api/src/owner-pull-job.ts b/apps/api/src/owner-pull-job.ts
+new file mode 100644
+index 0000000..4a07860
+--- /dev/null
++++ b/apps/api/src/owner-pull-job.ts
+@@ -0,0 +1,35 @@
++import { randomUUID } from 'node:crypto';
++import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
++import { dirname } from 'node:path';
++import { z } from 'zod';
++
++const countsSchema=z.object({providerReturned:z.number(),normalized:z.number(),saved:z.number(),
++  qualified:z.number(),exposed:z.number()});
++export const ownerPullJobSchema=z.object({
++  status:z.enum(['IDLE','RUNNING','SUCCEEDED','FAILED']),
++  startedAt:z.string().nullable(),finishedAt:z.string().nullable(),error:z.string().nullable(),
++  trackingStatus:z.enum(['PENDING','OK','FAILED','UNCONFIGURED']),tracked:z.number().default(0),
++  webResearchJob:z.string().nullable(),refreshStage:z.string().default('idle'),counts:countsSchema,
++  creditsSpent:z.number().nullable().default(null),creditsRemaining:z.number().nullable().default(null),
++});
++export type OwnerPullJob=z.infer<typeof ownerPullJobSchema>;
++
++export const idlePullJob=():OwnerPullJob=>({status:'IDLE',startedAt:null,finishedAt:null,error:null,
++  trackingStatus:'UNCONFIGURED',tracked:0,webResearchJob:null,refreshStage:'idle',
++  counts:{providerReturned:0,normalized:0,saved:0,qualified:0,exposed:0},
++  creditsSpent:null,creditsRemaining:null});
++
++/** The last paid pull's record survives restarts so a lost job is reported, never silent. */
++export class OwnerPullJobStore {
++  constructor(private readonly path:string){}
++  async load():Promise<OwnerPullJob|null>{
++    try{return ownerPullJobSchema.parse(JSON.parse(await readFile(this.path,'utf8')));}
++    catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return null;throw error;}
++  }
++  async save(job:OwnerPullJob):Promise<void>{
++    await mkdir(dirname(this.path),{recursive:true});
++    const temporary=`${this.path}.${randomUUID()}.tmp`;
++    try{await writeFile(temporary,JSON.stringify(job),{mode:0o600});await rename(temporary,this.path);}
++    finally{await rm(temporary,{force:true});}
++  }
++}
+diff --git a/apps/api/src/server.ts b/apps/api/src/server.ts
+index a7b2e82..56d7d1d 100644
+--- a/apps/api/src/server.ts
++++ b/apps/api/src/server.ts
+@@ -1,10 +1,13 @@
+ import { randomBytes, timingSafeEqual } from 'node:crypto';
+ import Fastify from 'fastify';
+-import type { FastifyRequest } from 'fastify';
++import type { FastifyReply, FastifyRequest } from 'fastify';
+ import { z } from 'zod';
+ import { nflPassingResultSchema } from '@crowniq/contracts';
+ import { ModelRegistry, routeResearch, snapshotSelection } from '@crowniq/engine';
+ import type { OddsProvider, ResearchAdapter } from '@crowniq/engine';
++import type { BoardResponse } from '@crowniq/contracts';
++import { idlePullJob } from './owner-pull-job.js';
++import type { OwnerPullJob, OwnerPullJobStore } from './owner-pull-job.js';
+ import { BoardService } from './board-service.js';
+ import type { SelectionLedger } from './selection-ledger.js';
+ import { summarizeNflPilot } from './selection-ledger.js';
+@@ -50,6 +53,8 @@ export interface ServerOptions {
+   startupResearch?: ResearchAdapter | null;
+   identityVerifier?: ProviderIdentityVerifier | null;
+   allowedWebOrigins?: readonly string[];
++  /** Persists the paid-pull job record across restarts. */
++  ownerJobStore?: OwnerPullJobStore | null;
+ }
+ 
+ function authorized(request: FastifyRequest, token?: string): boolean {
+@@ -95,6 +100,15 @@ export function buildServer(options: ServerOptions = {}) {
+   });
+   app.addHook('onReady',async()=>{
+     await service.restore();
++    const savedJob=await options.ownerJobStore?.load().catch(()=>null);
++    if(savedJob){
++      // A RUNNING record at startup means the server stopped mid-pull: report it, never hide it.
++      ownerBoardRefresh=savedJob.status==='RUNNING'
++        ? {...savedJob,status:'FAILED',finishedAt:now().toISOString(),error:'INTERRUPTED_BY_RESTART',
++          trackingStatus:savedJob.trackingStatus==='PENDING'?'FAILED':savedJob.trackingStatus}
++        : savedJob;
++      if(savedJob.status==='RUNNING')await saveJob();
++    }
+     // History reconstruction runs after restore without blocking Fastify startup.
+     void service.recoverStartupEvidence();
+     if(options.ownerNotebook && options.ownerPublicId){
+@@ -107,40 +121,53 @@ export function buildServer(options: ServerOptions = {}) {
+       async()=>service.persist()) : null;
+   app.addHook('onClose', async () => { webBuild?.cancel();options.ownerNotebook?.stop(); });
+ 
+-  type OwnerBoardRefreshJob = {
+-    status:'IDLE'|'RUNNING'|'SUCCEEDED'|'FAILED';startedAt:string|null;finishedAt:string|null;
+-    error:string|null;trackingStatus:'PENDING'|'OK'|'FAILED'|'UNCONFIGURED';
+-    webResearchJob:string|null;counts:{providerReturned:number;normalized:number;saved:number;
+-      qualified:number;exposed:number};
++  // Every paid provider pull runs through this one job, so two pulls can never overlap or
++  // queue back to back. The record is persisted so a restart mid-pull is reported.
++  let ownerBoardRefresh:OwnerPullJob=idlePullJob();
++  let pullDone:Promise<BoardResponse|null>=Promise.resolve(null);
++  const saveJob=async()=>{try{await options.ownerJobStore?.save(ownerBoardRefresh);}catch{/* status stays in memory */}};
++  const providerCredits=()=>{
++    const health=options.provider?.getHealth?.() as {creditsRemaining?:number|null;
++      coverage?:{creditsSpent?:number}|null}|undefined;
++    return {remaining:health?.creditsRemaining??null,spent:health?.coverage?.creditsSpent??null};
+   };
+-  let ownerBoardRefresh:OwnerBoardRefreshJob={status:'IDLE',startedAt:null,finishedAt:null,
+-    error:null,trackingStatus:'UNCONFIGURED',webResearchJob:null,
+-    counts:{providerReturned:0,normalized:0,saved:0,qualified:0,exposed:0}};
+   const startOwnerBoardRefresh=()=>{
+     if(ownerBoardRefresh.status==='RUNNING')return false;
+-    ownerBoardRefresh={status:'RUNNING',startedAt:now().toISOString(),finishedAt:null,error:null,
+-      trackingStatus:options.product?'PENDING':'UNCONFIGURED',webResearchJob:null,
+-      counts:{...service.getStatus().refreshCounts}};
+-    void (async()=>{
++    const before=providerCredits().remaining;
++    ownerBoardRefresh={...idlePullJob(),status:'RUNNING',startedAt:now().toISOString(),
++      trackingStatus:options.product?'PENDING':'UNCONFIGURED',refreshStage:'provider',
++      counts:{...service.getStatus().refreshCounts},creditsRemaining:before};
++    void saveJob();
++    const credits=()=>{const after=providerCredits();
++      return {creditsRemaining:after.remaining,
++        creditsSpent:after.spent??(before!==null&&after.remaining!==null?before-after.remaining:null)};};
++    pullDone=(async()=>{
+       try{
+         const snapshot=await service.refresh();
+-        let trackingStatus:OwnerBoardRefreshJob['trackingStatus']=options.product?'OK':'UNCONFIGURED';
+-        if(options.product){try{await options.product.track(snapshot,service.getEvidence());}
++        let trackingStatus:OwnerPullJob['trackingStatus']=options.product?'OK':'UNCONFIGURED',tracked=0;
++        if(options.product){try{tracked=await options.product.track(snapshot,service.getEvidence());}
+           catch{trackingStatus='FAILED';}}
+         const webResearchJob=webBuild?.start(snapshot.board).id??null;
+-        ownerBoardRefresh={status:'SUCCEEDED',startedAt:ownerBoardRefresh.startedAt,
+-          finishedAt:now().toISOString(),error:null,trackingStatus,webResearchJob,
+-          counts:{...service.getStatus().refreshCounts}};
++        const status=service.getStatus();
++        ownerBoardRefresh={...ownerBoardRefresh,status:'SUCCEEDED',finishedAt:now().toISOString(),
++          error:null,trackingStatus,tracked,webResearchJob,refreshStage:status.refreshStage,
++          counts:{...status.refreshCounts},...credits()};
++        await saveJob();
++        return snapshot;
+       }catch{
+         const status=service.getStatus();
+-        ownerBoardRefresh={status:'FAILED',startedAt:ownerBoardRefresh.startedAt,
+-          finishedAt:now().toISOString(),error:status.lastError??'BOARD_REFRESH_FAILED',
++        ownerBoardRefresh={...ownerBoardRefresh,status:'FAILED',finishedAt:now().toISOString(),
++          error:status.lastError??'BOARD_REFRESH_FAILED',
+           trackingStatus:options.product?'FAILED':'UNCONFIGURED',webResearchJob:null,
+-          counts:{...status.refreshCounts}};
++          refreshStage:status.refreshStage,counts:{...status.refreshCounts},...credits()};
++        await saveJob();
++        return null;
+       }
+     })();
+     return true;
+   };
++  const currentJob=()=>ownerBoardRefresh.status==='RUNNING'
++    ? {...ownerBoardRefresh,refreshStage:service.getStatus().refreshStage}:ownerBoardRefresh;
+ 
+   app.get('/health', async () => {
+     const { providerHealth: _privateHealth, modelRequirements: _privateRequirements,
+@@ -187,7 +214,7 @@ export function buildServer(options: ServerOptions = {}) {
+       const snapshot=service.getBoard(),status=service.getStatus();
+       return {providerConfigured:!!options.provider,boardAvailable:!!snapshot,
+         lineCount:snapshot?.board.lines.length??0,rankedCount:snapshot?.rankedLineIds.length??0,
+-        lastError:status.lastError,refreshStage:status.refreshStage,job:ownerBoardRefresh};
++        lastError:status.lastError,refreshStage:status.refreshStage,job:currentJob()};
+     });
+     ownerBoard.get('/diagnostics',async(_request,reply)=>{
+       const snapshot=service.getBoard();
+@@ -252,7 +279,17 @@ export function buildServer(options: ServerOptions = {}) {
+       if(!input.success)return reply.code(428).send({code:'PROVIDER_CREDITS_CONFIRMATION_REQUIRED',
+         message:'A PrizePicks provider refresh may consume credits.'});
+       const started=startOwnerBoardRefresh();
+-      return reply.code(202).send({started,job:ownerBoardRefresh});
++      return reply.code(202).send({started,job:currentJob()});
++    });
++    // First-board recovery from the Board tab. It can only spend credits when no board exists.
++    ownerBoard.post('/bootstrap',async(request,reply)=>{
++      if(!options.provider)return reply.code(503).send({code:'ODDS_PROVIDER_UNCONFIGURED'});
++      const input=z.object({acknowledgeProviderCost:z.literal(true)}).strict().safeParse(request.body);
++      if(!input.success)return reply.code(428).send({code:'PROVIDER_CREDITS_CONFIRMATION_REQUIRED',
++        message:'A PrizePicks provider refresh may consume credits.'});
++      if(service.getBoard())return reply.code(409).send({code:'BOARD_EXISTS'});
++      const started=startOwnerBoardRefresh();
++      return reply.code(202).send({started,job:currentJob()});
+     });
+   },{prefix:'/v1/owner/board'});
+ 
+@@ -644,20 +681,21 @@ export function buildServer(options: ServerOptions = {}) {
+     admin.post('/research/cancel', async (_request, reply) => webBuild
+       ? { job: webBuild.cancel() }
+       : reply.code(503).send({ code: 'WEB_RESEARCH_UNCONFIGURED' }));
+-    admin.post('/refresh', async (_request, reply) => {
+-      if (!options.provider) return reply.code(503).send({ code: 'ODDS_PROVIDER_UNCONFIGURED' });
+-      try {
+-        const snapshot = await service.refresh();
+-        let tracked=0,trackingStatus='OK';
+-        try {tracked=await options.product?.track(snapshot,service.getEvidence())??0;}
+-        catch {trackingStatus='FAILED';}
+-        return { builtAt: snapshot.builtAt, lineCount: snapshot.board.lines.length,
+-          rankedCount: snapshot.rankedLineIds.length, research: service.getStatus().research,
+-          webResearchJob: webBuild?.start(snapshot.board).id ?? null,tracked,trackingStatus };
+-      } catch {
+-        return reply.code(502).send({ code: 'BOARD_REFRESH_FAILED' });
+-      }
+-    });
++    // Admin pulls share the owner job: same cost confirmation, same single-pull lock.
++    const adminPull=async(request:FastifyRequest,reply:FastifyReply)=>{
++      if(request.headers['x-confirm-provider-cost']!=='yes')return reply.code(428).send({
++        code:'PROVIDER_CREDITS_CONFIRMATION_REQUIRED',message:'A provider refresh may consume credits.'});
++      if(!options.provider)return reply.code(503).send({code:'ODDS_PROVIDER_UNCONFIGURED'});
++      if(!startOwnerBoardRefresh())return reply.code(409).send({code:'PULL_RUNNING',job:currentJob()});
++      const snapshot=await pullDone;
++      if(!snapshot)return reply.code(502).send({code:'BOARD_REFRESH_FAILED'});
++      return {builtAt:snapshot.builtAt,lineCount:snapshot.board.lines.length,
++        rankedCount:snapshot.rankedLineIds.length,research:service.getStatus().research,
++        webResearchJob:ownerBoardRefresh.webResearchJob,tracked:ownerBoardRefresh.tracked,
++        trackingStatus:ownerBoardRefresh.trackingStatus,creditsSpent:ownerBoardRefresh.creditsSpent,
++        creditsRemaining:ownerBoardRefresh.creditsRemaining};
++    };
++    admin.post('/refresh',adminPull);
+     admin.post('/reanalyze', async (request, reply) => {
+       const input=z.object({acknowledgeResearchCost:z.boolean().optional()}).strict()
+         .safeParse(request.body??{});
+@@ -674,16 +712,7 @@ export function buildServer(options: ServerOptions = {}) {
+           research: service.getStatus().research, oddsCreditsUsed: 0,tracked,trackingStatus };
+       } catch { return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' }); }
+     });
+-    admin.post('/force-provider-refresh',async(request,reply)=>{
+-      if(request.headers['x-confirm-provider-cost']!=='yes')return reply.code(428).send({
+-        code:'PROVIDER_CREDITS_CONFIRMATION_REQUIRED',message:'A provider refresh may consume credits.'});
+-      if(!options.provider)return reply.code(503).send({code:'ODDS_PROVIDER_UNCONFIGURED'});
+-      try {const snapshot=await service.refresh();
+-        let tracked=0;try{tracked=await options.product?.track(snapshot,service.getEvidence())??0;}catch{}
+-        return {builtAt:snapshot.builtAt,lineCount:snapshot.board.lines.length,tracked,
+-          webResearchJob:webBuild?.start(snapshot.board).id??null};
+-      } catch{return reply.code(502).send({code:'BOARD_REFRESH_FAILED'});}
+-    });
++    admin.post('/force-provider-refresh',adminPull);
+     admin.get('/tracked-decisions',async(request,reply)=>{
+       if(!options.product)return reply.code(503).send({code:'TRACKING_UNCONFIGURED'});
+       const parsed=z.object({offset:z.coerce.number().int().nonnegative().default(0),
+diff --git a/apps/api/test/nfl-pilot.test.ts b/apps/api/test/nfl-pilot.test.ts
+index db12fa3..8e0d427 100644
+--- a/apps/api/test/nfl-pilot.test.ts
++++ b/apps/api/test/nfl-pilot.test.ts
+@@ -12,7 +12,7 @@ import { NflverseResultsFeed, parseNflverseStats } from '../src/nflverse-results
+ import { buildServer } from '../src/server.js';
+ 
+ const later = new Date('2030-09-25T06:00:00.000Z');
+-const auth = { authorization: 'Bearer synthetic-owner-token' };
++const auth = { authorization: 'Bearer synthetic-owner-token', 'x-confirm-provider-cost': 'yes' };
+ const status = (overrides: Record<string, unknown> = {}) => ({
+   id: 'fixture-availability', entityType: 'PLAYER', entityId: 'test-player-1',
+   eventId: 'test-event', market: null, kind: 'status:qb_available',
+diff --git a/apps/api/test/owner-board-refresh.test.ts b/apps/api/test/owner-board-refresh.test.ts
+index 4c40472..e5d9758 100644
+--- a/apps/api/test/owner-board-refresh.test.ts
++++ b/apps/api/test/owner-board-refresh.test.ts
+@@ -119,3 +119,81 @@ test('configured owner can bootstrap the first board from the app',async()=>{
+     }finally{await app.close();}
+   }finally{await rm(folder,{recursive:true,force:true});}
+ });
++
++test('paid pulls: bootstrap only without a board, one pull at a time, confirmed admin pulls, restart reported',async()=>{
++  const folder=await mkdtemp(join(tmpdir(),'crowniq-pull-guard-'));
++  try{
++    const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>now);
++    const owner=await ledger.register('pull-owner@example.org','abcdefghijkl','Pull_owner');
++    let pulls=0,credits=500,release:()=>void=()=>undefined;
++    let gate=Promise.resolve();
++    // Synthetic provider: each pull spends 7 fake credits and can be held open by the test.
++    const provider:OddsProvider={id:'fixture-prizepicks',
++      fetchPrizePicksLines:async()=>{pulls++;await gate;credits-=7;return [{}];},
++      normalize:(_raw,fetchedAt)=>fixtureLine({id:'guard-line',sourceLineId:'guard-source',
++        fetchedAt,eventStartTime:'2030-09-25T00:00:00Z'}),
++      getHealth:()=>({creditsRemaining:credits,lastRequestCost:7,lastHttpStatus:200})};
++    const jobFile=join(folder,'owner-pull-job.json');
++    const { OwnerPullJobStore }=await import('../src/owner-pull-job.js');
++    const app=buildServer({product:ledger,provider,requireProfiles:true,adminToken:'admin-fixture',
++      ownerPublicId:owner.profile.publicId,clock:()=>now,ownerJobStore:new OwnerPullJobStore(jobFile)});
++    const ownerHeaders={authorization:['Bearer',owner.token].join(' ')};
++    const admin={authorization:'Bearer admin-fixture'};
++    const waitForJob=async()=>{
++      for(let attempt=0;attempt<50;attempt++){
++        const state=(await app.inject({url:'/v1/owner/board/status',headers:ownerHeaders})).json();
++        if(state.job.status!=='RUNNING')return state.job;
++        await new Promise<void>((resolve)=>setImmediate(resolve));
++      }
++      throw new Error('job did not finish');
++    };
++    try{
++      assert.equal((await app.inject({method:'POST',url:'/v1/owner/board/bootstrap',headers:ownerHeaders,
++        payload:{}})).statusCode,428);
++      gate=new Promise<void>((resolve)=>{release=resolve;});
++      const first=await app.inject({method:'POST',url:'/v1/owner/board/bootstrap',headers:ownerHeaders,
++        payload:{acknowledgeProviderCost:true}});
++      assert.equal(first.statusCode,202);
++      assert.equal(first.json().started,true);
++      // While the pull runs, nothing can start a second one.
++      const again=await app.inject({method:'POST',url:'/v1/owner/board/refresh',headers:ownerHeaders,
++        payload:{acknowledgeProviderCost:true}});
++      assert.equal(again.json().started,false);
++      assert.equal((await app.inject({method:'POST',url:'/v1/admin/refresh',headers:admin})).statusCode,428);
++      assert.equal((await app.inject({method:'POST',url:'/v1/admin/refresh',
++        headers:{...admin,'x-confirm-provider-cost':'yes'}})).statusCode,409);
++      release();
++      const done=await waitForJob();
++      assert.equal(done.status,'SUCCEEDED');
++      assert.equal(done.creditsSpent,7);
++      assert.equal(done.creditsRemaining,493);
++      assert.equal(pulls,1);
++      // A board now exists, so the Board tab's recovery path cannot spend credits.
++      const blocked=await app.inject({method:'POST',url:'/v1/owner/board/bootstrap',headers:ownerHeaders,
++        payload:{acknowledgeProviderCost:true}});
++      assert.equal(blocked.statusCode,409);
++      assert.equal(blocked.json().code,'BOARD_EXISTS');
++      assert.equal(pulls,1);
++      const confirmed=await app.inject({method:'POST',url:'/v1/admin/refresh',
++        headers:{...admin,'x-confirm-provider-cost':'yes'}});
++      assert.equal(confirmed.statusCode,200);
++      assert.equal(confirmed.json().creditsSpent,7);
++      assert.equal(pulls,2);
++    }finally{await app.close();}
++
++    // Simulate a server that stopped mid-pull: the next start reports it instead of showing IDLE.
++    await writeFile(jobFile,JSON.stringify({status:'RUNNING',startedAt:now.toISOString(),finishedAt:null,
++      error:null,trackingStatus:'PENDING',tracked:0,webResearchJob:null,refreshStage:'provider',
++      counts:{providerReturned:0,normalized:0,saved:0,qualified:0,exposed:0},
++      creditsSpent:null,creditsRemaining:493}));
++    const restarted=buildServer({product:ledger,provider,requireProfiles:true,
++      ownerPublicId:owner.profile.publicId,clock:()=>now,ownerJobStore:new OwnerPullJobStore(jobFile)});
++    try{
++      await restarted.ready();
++      const state=(await restarted.inject({url:'/v1/owner/board/status',headers:ownerHeaders})).json();
++      assert.equal(state.job.status,'FAILED');
++      assert.equal(state.job.error,'INTERRUPTED_BY_RESTART');
++      assert.equal(state.job.trackingStatus,'FAILED');
++    }finally{await restarted.close();}
++  }finally{await rm(folder,{recursive:true,force:true});}
++});
+diff --git a/apps/api/test/product-routes.test.ts b/apps/api/test/product-routes.test.ts
+index 7583658..8d82889 100644
+--- a/apps/api/test/product-routes.test.ts
++++ b/apps/api/test/product-routes.test.ts
+@@ -53,7 +53,7 @@ test('the saved board survives a restart without a paid refresh and stays accura
+     adminToken:'owner-only'});
+   try {
+     await original.inject({method:'POST',url:'/v1/admin/refresh',
+-      headers:{authorization:'Bearer owner-only'}});
++      headers:{authorization:'Bearer owner-only','x-confirm-provider-cost':'yes'}});
+     assert.equal(calls,1);
+   }finally{await original.close();}
+   clock=new Date('2030-09-24T13:00:00Z');
+diff --git a/apps/api/test/server.test.ts b/apps/api/test/server.test.ts
+index b349944..02ac51c 100644
+--- a/apps/api/test/server.test.ts
++++ b/apps/api/test/server.test.ts
+@@ -25,7 +25,7 @@ test('admin token gates refresh; provider failure preserves the last validated b
+     normalize: (_raw, fetchedAt) => fixtureLine({ fetchedAt }),
+   };
+   const app = buildServer({ provider, adminToken: 'fixture-owner-token' });
+-  const auth = { authorization: 'Bearer fixture-owner-token' };
++  const auth = { authorization: 'Bearer fixture-owner-token', 'x-confirm-provider-cost': 'yes' };
+   try {
+     assert.equal((await app.inject({ method: 'POST', url: '/v1/admin/refresh',
+       headers: { authorization: 'Bearer wrong' } })).statusCode, 401);
+@@ -60,7 +60,7 @@ test('owner refresh publishes a normalized PrizePicks board and keeps quota data
+   } });
+   const app = buildServer({ provider, adminToken: 'fixture-owner-token' });
+   try {
+-    const auth = { authorization: 'Bearer fixture-owner-token' };
++    const auth = { authorization: 'Bearer fixture-owner-token', 'x-confirm-provider-cost': 'yes' };
+     const refreshed = await app.inject({ method: 'POST', url: '/v1/admin/refresh', headers: auth });
+     assert.equal(refreshed.statusCode, 200);
+     assert.equal(refreshed.json().lineCount, 3);
+diff --git a/apps/api/test/web-research.test.ts b/apps/api/test/web-research.test.ts
+index 12ae830..b7330df 100644
+--- a/apps/api/test/web-research.test.ts
++++ b/apps/api/test/web-research.test.ts
+@@ -128,7 +128,7 @@ test('owner refresh runs web research in background; public reads never search',
+     } });
+   const app = buildServer({ provider, adminToken: 'fixture-owner-token', webResearch: adapter,
+     clock: () => at });
+-  const headers = { authorization: 'Bearer fixture-owner-token' };
++  const headers = { authorization: 'Bearer fixture-owner-token', 'x-confirm-provider-cost': 'yes' };
+   try {
+     assert.equal((await app.inject('/v1/admin/research/catalog')).statusCode, 401);
+     const refreshed = await app.inject({ method: 'POST', url: '/v1/admin/refresh', headers });
+diff --git a/apps/mobile/src/app/owner/board.tsx b/apps/mobile/src/app/owner/board.tsx
+index 87ceb2a..9fdaaa7 100644
+--- a/apps/mobile/src/app/owner/board.tsx
++++ b/apps/mobile/src/app/owner/board.tsx
+@@ -1,4 +1,4 @@
+-import { useCallback, useState } from 'react';
++import { useCallback, useRef, useState } from 'react';
+ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+ import { router, useFocusEffect } from 'expo-router';
+ import { Notice, Screen } from '../../components/Screen';
+@@ -31,7 +31,19 @@ type ReanalyzeResult={
+ };
+ type PullStatus={refreshStage:string;job:{status:'IDLE'|'RUNNING'|'SUCCEEDED'|'FAILED';
+   startedAt:string|null;finishedAt:string|null;error:string|null;
+-  trackingStatus:string;counts:{saved:number;qualified:number;exposed:number}}};
++  trackingStatus:string;counts:{saved:number;qualified:number;exposed:number};
++  creditsSpent?:number|null;creditsRemaining?:number|null}};
++function pullError(error:string|null){
++  return error==='INTERRUPTED_BY_RESTART'
++    ? 'Interrupted by a server restart. Credits may have been spent; nothing new was saved'
++    : error??'Provider connection failed';
++}
++function creditsLine(job:PullStatus['job']){
++  const parts=[];
++  if(job.creditsSpent!=null)parts.push(`${job.creditsSpent.toLocaleString()} Odds API credits used`);
++  if(job.creditsRemaining!=null)parts.push(`${job.creditsRemaining.toLocaleString()} remaining`);
++  return parts.length?' · '+parts.join(' · '):'';
++}
+ const pullStages=['provider','normalize','research','persist','publish','complete'] as const;
+ function pullStageLabel(stage:string){
+   return ({provider:'Fetching PrizePicks lines',normalize:'Checking line data',
+@@ -48,7 +60,9 @@ async function json<T>(response:Response):Promise<T>{
+ 
+ export default function OwnerBoardScreen(){
+   const {request}=useAuth();
+-  const {retry}=useBoard();
++  const {reload}=useBoard();
++  // Kept in a ref so re-renders never reset completion detection.
++  const previousJob=useRef<string|null>(null);
+   const [diagnostics,setDiagnostics]=useState<Diagnostics|null>(null);
+   const [access,setAccess]=useState<'CHECKING'|'ALLOWED'|'DENIED'>('CHECKING');
+   const [busy,setBusy]=useState(false);
+@@ -73,7 +87,6 @@ export default function OwnerBoardScreen(){
+   useFocusEffect(useCallback(()=>{
+     void load();
+     let active=true;
+-    let previousJob:string|null=null;
+     let timer:ReturnType<typeof setTimeout>;
+     const poll=async()=>{
+       let delay=3000;
+@@ -81,11 +94,11 @@ export default function OwnerBoardScreen(){
+         const status=await json<PullStatus>(await request('/v1/owner/board/status'));
+         if(!active)return;
+         setPullStatus(status);setCheckingPull(false);
+-        if(previousJob==='RUNNING' && status.job.status==='SUCCEEDED'){
++        if(previousJob.current==='RUNNING' && status.job.status==='SUCCEEDED'){
+           setMessage(`PrizePicks snapshot saved · ${status.job.counts.saved.toLocaleString()} lines · ${status.job.counts.qualified} qualified.`);
+-          retry();void load();
++          reload();void load();
+         }
+-        previousJob=status.job.status;
++        previousJob.current=status.job.status;
+         delay=status.job.status==='RUNNING'?3000:10000;
+       }catch(cause){
+         if(!active)return;
+@@ -96,7 +109,7 @@ export default function OwnerBoardScreen(){
+     };
+     void poll();
+     return()=>{active=false;clearTimeout(timer);};
+-  },[request,retry,load]));
++  },[request,reload,load]));
+ 
+   const pulling=pullStatus?.job.status==='RUNNING';
+ 
+@@ -126,7 +139,7 @@ export default function OwnerBoardScreen(){
+       }));
+       const upgrades=result.secondLook?.upgraded??0;
+       setMessage(`Analysis refreshed · ${result.rankedCount} primary rankings · ${upgrades} Second Look upgrades · ${result.oddsCreditsUsed} Odds credits.`);
+-      retry();
++      reload();
+       await load();
+     }catch(cause){
+       setError(cause instanceof Error?cause.message:'Analysis refresh failed.');
+@@ -161,9 +174,9 @@ export default function OwnerBoardScreen(){
+         <Text style={styles.hint}>Started {pullStatus.job.startedAt?new Date(pullStatus.job.startedAt).toLocaleString():'just now'}. Safe to leave; progress resumes when you return.</Text>
+       </View>}
+       {pullStatus?.job.status==='SUCCEEDED'&&<Notice title="DFS snapshot complete"
+-        detail={`${pullStatus.job.counts.saved.toLocaleString()} lines saved · ${pullStatus.job.counts.qualified} qualified · finished ${pullStatus.job.finishedAt?new Date(pullStatus.job.finishedAt).toLocaleString():'recently'}.`}/>}
++        detail={`${pullStatus.job.counts.saved.toLocaleString()} lines saved · ${pullStatus.job.counts.qualified} qualified · finished ${pullStatus.job.finishedAt?new Date(pullStatus.job.finishedAt).toLocaleString():'recently'}${creditsLine(pullStatus.job)}.`}/>}
+       {pullStatus?.job.status==='FAILED'&&<Notice title="DFS pull failed"
+-        detail={`${pullStatus.job.error??'Provider connection failed.'} The prior saved board remains available. You may try another pull.`}/>}
++        detail={`${pullError(pullStatus.job.error)}${creditsLine(pullStatus.job)}. The prior saved board remains available. You may try another pull.`}/>}
+       <Notice title="Research-only refresh"
+         detail="Reanalyze uses the saved PrizePicks board. It uses 0 Odds API credits, but configured research providers such as Stat API may consume their own quota."/>
+       {diagnostics?<>
+diff --git a/apps/mobile/src/components/BoardView.tsx b/apps/mobile/src/components/BoardView.tsx
+index d4a55ef..61901a9 100644
+--- a/apps/mobile/src/components/BoardView.tsx
++++ b/apps/mobile/src/components/BoardView.tsx
+@@ -7,6 +7,7 @@ import { FilterSheet } from './FilterSheet';
+ import { LineLadder } from './LineLadder';
+ import { ViewModeSwitch } from './ViewModeSwitch';
+ import { Notice } from './Screen';
++import { Sheet } from './Sheet';
+ import { palette } from '../theme';
+ import { useBoard } from '../use-board';
+ import { useDraft } from '../use-draft';
+@@ -21,10 +22,11 @@ const gradingLabel=(status:string)=>({
+ 
+ export default function BoardView() {
+   const {request}=useAuth();
+-  const {status,data,message,freshness,researchStatus,gradingStatus,refreshing,nowMs,retry}=useBoard();
++  const {status,data,message,freshness,researchStatus,gradingStatus,refreshing,nowMs,reload,needsBootstrap,bootstrapPull}=useBoard();
+   const {filters,setFilters,viewMode,setViewMode,ready,add}=useDraft();
+   const [filterOpen,setFilterOpen]=useState(false),[ladder,setLadder]=useState<PropLine|null>(null);
+   const [chosen,setChosen]=useState<Record<string,string>>({}),[notice,setNotice]=useState('');
++  const [confirmPull,setConfirmPull]=useState(false);
+   const lines=useMemo(()=>data&&ready?boardLinesForMode(data,filters,viewMode,nowMs):[],
+     [data,filters,viewMode,ready,nowMs]);
+   const analyses=useMemo(()=>new Map(data?.analyses.map((item)=>[item.lineId,item])),[data]);
+@@ -74,7 +76,10 @@ export default function BoardView() {
+         {viewMode==='FULL' && <Text style={styles.meta}>Research: {researchStatus} · Grading: {gradingLabel(gradingStatus)}</Text>}
+         {message && data && <Text style={styles.warning}>{message} Showing last saved board.</Text>}
+         <View style={styles.actions}><Pressable style={styles.action} onPress={()=>setFilterOpen(true)}><Text style={styles.actionText}>Filters</Text></Pressable>
+-          <Pressable style={styles.action} onPress={retry} disabled={refreshing}><Text style={styles.actionText}>{refreshing?'Building board…':'Refresh board'}</Text></Pressable></View>
++          <Pressable style={styles.action} accessibilityRole="button"
++            onPress={()=>needsBootstrap?setConfirmPull(true):reload()}
++            disabled={refreshing||status==='loading'}><Text style={styles.actionText}>{refreshing?'Building board…':
++              status==='loading'?'Loading board…':needsBootstrap?'Pull first board':'Refresh board'}</Text></Pressable></View>
+         {!!notice && <Text accessibilityRole="alert" style={styles.warning}>{notice}</Text>}
+       </View>}
+       ListEmptyComponent={<Notice title={!ready||status==='loading'?'Loading board':data&&viewMode==='LITE'?
+@@ -83,6 +88,15 @@ export default function BoardView() {
+           data&&viewMode==='LITE'?'The current board has no qualified ranked lines for these filters. Full shows every line, including PASS.':
+             data?'Reset filters or try another sport.':message} />}
+     />
++    <Sheet visible={confirmPull} title="Pull the first board?" onClose={()=>setConfirmPull(false)}>
++      <Text style={styles.snapshot}>The server has no PrizePicks board yet. Pulling one uses Odds API credits. Only the owner profile can start it, and the server refuses once any board exists.</Text>
++      <View style={styles.actions}>
++        <Pressable style={styles.action} accessibilityRole="button" onPress={()=>{setConfirmPull(false);bootstrapPull();}}>
++          <Text style={styles.actionText}>Use credits and pull</Text></Pressable>
++        <Pressable style={styles.action} accessibilityRole="button" onPress={()=>setConfirmPull(false)}>
++          <Text style={styles.actionText}>Cancel</Text></Pressable>
++      </View>
++    </Sheet>
+     {data && <>{filterOpen && <FilterSheet visible={filterOpen} onClose={()=>setFilterOpen(false)}
+       mode={viewMode} data={data} value={filters} onApply={setFilters} />}
+       {viewMode==='FULL' && ladder && <LineLadder visible={!!ladder} onClose={()=>setLadder(null)} data={data}
+diff --git a/apps/mobile/src/use-board.tsx b/apps/mobile/src/use-board.tsx
+index 1e17275..af74a00 100644
+--- a/apps/mobile/src/use-board.tsx
++++ b/apps/mobile/src/use-board.tsx
+@@ -1,6 +1,6 @@
+ import { boardResponseSchema } from '@crowniq/contracts';
+ import type { BoardResponse } from '@crowniq/contracts';
+-import { createContext, useContext, useEffect, useState } from 'react';
++import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+ import type { ReactNode } from 'react';
+ import { Platform } from 'react-native';
+ import { loadBoard, saveBoard } from './local-store';
+@@ -10,7 +10,13 @@ import { useAuth } from './auth';
+ 
+ type BoardState={status:'loading'|'available'|'unavailable';data:BoardResponse|null;message:string;
+   freshness:'LIVE'|'FRESH'|'CACHED'|'SNAPSHOT'|'STALE'|'OFFLINE'|'UNREACHABLE'|'UNAVAILABLE';
+-  researchStatus:string;gradingStatus:string;refreshing:boolean;nowMs:number;retry:()=>void};
++  researchStatus:string;gradingStatus:string;refreshing:boolean;nowMs:number;
++  /** Free reread of the saved server board. Never spends provider credits. */
++  reload:()=>void;
++  /** True only after the server answered that it has no board yet. */
++  needsBootstrap:boolean;
++  /** Paid first-board pull. Call only after the owner confirms the credit cost. */
++  bootstrapPull:()=>void};
+ type OwnerRefreshStatus={job?:{status?:'IDLE'|'RUNNING'|'SUCCEEDED'|'FAILED';error?:string|null}};
+ const Context=createContext<BoardState|null>(null);
+ const apiBase=process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/,'');
+@@ -90,40 +96,28 @@ export function BoardProvider({children}:{children:ReactNode}) {
+     return ()=>{active=false;controller.abort();};
+   },[attempt,request]);
+ 
+-  const retry=()=>{
+-    if(refreshing)return;
+-    // Once the server has a board, Refresh is a credit-free reread. A paid provider
+-    // refresh is reserved for recovering a missing first/server-side board.
+-    if(!needsBootstrap && data){
+-      setStatus('available');setAttempt((n)=>n+1);return;
+-    }
+-    setRefreshing(true);setReachable(true);setStatus(data?'available':'loading');
+-    setMessage('Starting the first PrizePicks board refresh…');
++  const reload=useCallback(()=>{
++    setStatus((previous)=>previous==='available'?'available':'loading');setAttempt((n)=>n+1);
++  },[]);
++  const pulling=useRef(false);
++  const bootstrapPull=useCallback(()=>{
++    if(pulling.current)return;
++    pulling.current=true;setRefreshing(true);setReachable(true);
++    setMessage('Starting the first PrizePicks board pull…');
++    const settle=(text:string)=>{setStatus((previous)=>previous==='available'?'available':'unavailable');
++      setMessage(text);};
+     void (async()=>{
+       try{
+-        const start=await request('/v1/owner/board/refresh',{method:'POST',
++        // The server refuses this route once any board exists, so it can never repeat a pull.
++        const start=await request('/v1/owner/board/bootstrap',{method:'POST',
+           headers:{'content-type':'application/json'},
+           body:JSON.stringify({acknowledgeProviderCost:true})});
+         setReachable(true);
+-        if(start.status===404){
+-          setStatus(data?'available':'unavailable');
+-          setMessage('Waiting for the first PrizePicks board. The signed-in owner must publish it.');
+-          return;
+-        }
+-        if(start.status===503){
+-          setStatus(data?'available':'unavailable');
+-          setMessage('PrizePicks provider is not configured on this CrownIQ server.');
+-          return;
+-        }
+-        if(start.status===428){
+-          setStatus(data?'available':'unavailable');
+-          setMessage('Provider refresh confirmation was rejected.');
+-          return;
+-        }
+-        if(!start.ok){
+-          setStatus(data?'available':'unavailable');setMessage('Could not start the PrizePicks board refresh.');
+-          return;
+-        }
++        if(start.status===409){setNeedsBootstrap(false);reload();setMessage('');return;}
++        if(start.status===404){settle('Waiting for the first PrizePicks board. The signed-in owner must publish it.');return;}
++        if(start.status===503){settle('PrizePicks provider is not configured on this CrownIQ server.');return;}
++        if(start.status===428){settle('Provider pull confirmation was rejected.');return;}
++        if(!start.ok){settle('Could not start the PrizePicks board pull.');return;}
+         setMessage('Building the PrizePicks board. This can take a few minutes…');
+         for(let poll=0;poll<150;poll++){
+           await sleep(2000);
+@@ -133,38 +127,28 @@ export function BoardProvider({children}:{children:ReactNode}) {
+             const board=boardResponseSchema.parse(await boardResponse.json());
+             setData(board);setStatus('available');setMessage('');setNeedsBootstrap(false);
+             void saveBoard(board).catch((error:unknown)=>reportMobileFailure('storage',error));
+-            setAttempt((n)=>n+1);
+-            return;
+-          }
+-          if(boardResponse.status===401){
+-            setStatus(data?'available':'unavailable');
+-            setMessage('Session expired. Sign out and sign in again.');
+             return;
+           }
++          if(boardResponse.status===401){settle('Session expired. Sign out and sign in again.');return;}
+           const ownerStatus=await request('/v1/owner/board/status');
+           if(ownerStatus.ok){
+             const payload=await ownerStatus.json() as OwnerRefreshStatus;
+             if(payload.job?.status==='FAILED'){
+-              setStatus(data?'available':'unavailable');
+-              setMessage('PrizePicks board refresh failed' +
+-                (payload.job.error?': '+payload.job.error:'.'));
+-              return;
++              settle('PrizePicks board pull failed'+(payload.job.error?': '+payload.job.error:'.'));return;
+             }
+           }
+         }
+-        setStatus(data?'available':'unavailable');
+-        setMessage('The PrizePicks board is still building. Tap Refresh board again in a moment.');
++        settle('The PrizePicks board is still building. Check back in a moment.');
+       }catch(error){
+         reportMobileFailure('board',error);
+-        setReachable(false);setStatus(data?'available':'unavailable');
+-        setMessage(error instanceof Error?error.message:'Server unreachable.');
+-      }finally{setRefreshing(false);}
++        setReachable(false);settle(error instanceof Error?error.message:'Server unreachable.');
++      }finally{pulling.current=false;setRefreshing(false);}
+     })();
+-  };
++  },[request,reload]);
+ 
+   return <Context.Provider value={{status:data?'available':status,data,message,
+     researchStatus,gradingStatus,refreshing,nowMs:clock,
+-    freshness:freshness(data,reachable,clock,offline),retry}}>
++    freshness:freshness(data,reachable,clock,offline),reload,needsBootstrap,bootstrapPull}}>
+     {children}
+   </Context.Provider>;
+ }
+diff --git a/docs/PRODUCT_TRACKING_SOCIAL.md b/docs/PRODUCT_TRACKING_SOCIAL.md
+index 4f3cb25..8346309 100644
+--- a/docs/PRODUCT_TRACKING_SOCIAL.md
++++ b/docs/PRODUCT_TRACKING_SOCIAL.md
+@@ -6,7 +6,7 @@ The mobile refresh action reads `GET /v1/board` and `GET /v1/board/summary` from
+ 
+ The app labels an available response LIVE if fetched within one minute, FRESH through five minutes, CACHED through 30 minutes and STALE thereafter. OFFLINE requires the platform to report disconnection; UNREACHABLE means the server request failed. These labels describe **the age of the provider board**, not a guarantee of live odds. The summary includes research and tracking readiness. A stale board remains visible with its age; GKR reevaluation drops rankings when event or evidence expires.
+ 
+-The signed-in owner can start a paid `POST /v1/owner/board/refresh` from Settings → Owner Board Analysis. It requires `acknowledgeProviderCost: true`, reports progress through `/v1/owner/board/status`, and preserves the prior board on failure. An optional admin token can also call paid `POST /v1/admin/refresh`; `POST /v1/admin/force-provider-refresh` requires `x-confirm-provider-cost: yes` and returns a 428 warning if omitted. The legacy admin refresh route remains for existing scripts and may still incur provider credits. There is **no automatic paid refresh schedule**; owner-controlled orchestration can later choose its own 10–15 minute cadence (or targeted near-event requests) within provider budgets. Ordinary app use will not schedule a 2-minute full-board pull. `POST /v1/admin/reanalyze` reuses odds already in memory and costs zero Odds API credits.
++The signed-in owner can start a paid `POST /v1/owner/board/refresh` from Settings → Owner Board Analysis. It requires `acknowledgeProviderCost: true`, reports progress through `/v1/owner/board/status`, and preserves the prior board on failure. An optional admin token can also call paid `POST /v1/admin/refresh` or `POST /v1/admin/force-provider-refresh`; both require `x-confirm-provider-cost: yes` (428 without it) and share the owner job, so they return 409 while another pull runs. The Board tab's first-board recovery uses `POST /v1/owner/board/bootstrap`, which refuses with 409 once any board exists. There is **no automatic paid refresh schedule**; owner-controlled orchestration can later choose its own 10–15 minute cadence (or targeted near-event requests) within provider budgets. Ordinary app use will not schedule a 2-minute full-board pull. `POST /v1/admin/reanalyze` reuses odds already in memory and costs zero Odds API credits.
+ 
+ ## Automatic decisions, grading and history
+ 
