@@ -566,6 +566,19 @@ export function buildServer(options: ServerOptions = {}) {
         ? 'NFL_AUTO_GRADING':'AWAITING_VERIFIED_RESULTS',
       providerRefreshCost:0};
   });
+  // Recent logged games for one player and market, from CrownIQ's internal history.
+  // Values come from attributed stat rows only; nothing is filled in or inferred.
+  app.get('/v1/players/:sport/:playerId/:market/games', async(request,reply)=>{
+    const parsed=z.object({sport:z.string().min(1).max(20),playerId:z.string().min(1).max(200),
+      market:z.string().min(1).max(80)}).safeParse(request.params);
+    if(!parsed.success)return reply.code(400).send({code:'INVALID_GAME_LOG_REQUEST'});
+    if(!options.internalHistory)return reply.code(404).send({code:'NO_HISTORY'});
+    const line=service.getBoard()?.board.lines.find((item)=>item.playerId===parsed.data.playerId&&
+      item.sport===parsed.data.sport);
+    const log=await options.internalHistory.gameLog(parsed.data.sport,parsed.data.playerId,
+      line?.playerName??null,parsed.data.market,now());
+    return log&&log.games.length?log:reply.code(404).send({code:'NO_HISTORY'});
+  });
   app.get('/v1/history/:sport/:playerId/:market', async(request,reply)=>{
     if(!options.product)return reply.code(503).send({code:'TRACKING_UNCONFIGURED'});
     const parsed=z.object({sport:z.string().min(1),playerId:z.string().min(1),

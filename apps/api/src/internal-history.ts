@@ -196,6 +196,21 @@ export class InternalHistoryStore {
       return result;
     });
   }
+  /** Up to 15 most recent pre-`before` values for one player and market, newest first. */
+  async gameLog(sport:string,playerId:string,playerName:string|null,market:string,before:Date){
+    const spec=internalHistorySpecs[sport as InternalHistorySport]?.[market];
+    if(!spec)return null;
+    const rows=await this.rowsFor({sport:sport as InternalHistorySport,playerId,playerName:playerName??'',
+      eventStartTime:before.toISOString(),eventId:'game-log',eventName:'game-log',league:sport,
+      team:null,opponent:null,market},40);
+    // One value per game day: a graded result and a stat row for the same game count once.
+    const seen=new Set<string>();
+    const games=rows.flatMap((row)=>{const value=spec.value(row),date=row.occurredAt.slice(0,10);
+      if(value===null||!Number.isFinite(value)||seen.has(date))return [];
+      seen.add(date);return [{date,opponent:null,value}];}).slice(0,15);
+    return {sport,playerId,playerName:playerName??rows[0]?.playerName??playerId,market,
+      source:'CROWNIQ_INTERNAL_HISTORY' as const,unit:spec.unit,games};
+  }
   async hasMinimumSamples(target:ResearchTarget,minSamples=5,recentSamples=10):Promise<boolean>{
     const spec=internalHistorySpecs[target.sport as InternalHistorySport]?.[target.market];
     if(!spec)return false;
