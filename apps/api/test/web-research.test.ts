@@ -128,7 +128,7 @@ test('owner refresh runs web research in background; public reads never search',
     } });
   const app = buildServer({ provider, adminToken: 'fixture-owner-token', webResearch: adapter,
     clock: () => at });
-  const headers = { authorization: 'Bearer fixture-owner-token' };
+  const headers = { authorization: 'Bearer fixture-owner-token', 'x-confirm-provider-cost': 'yes' };
   try {
     assert.equal((await app.inject('/v1/admin/research/catalog')).statusCode, 401);
     const refreshed = await app.inject({ method: 'POST', url: '/v1/admin/refresh', headers });

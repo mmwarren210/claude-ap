@@ -1,6 +1,6 @@
 import { boardResponseSchema } from '@crowniq/contracts';
 import type { BoardResponse } from '@crowniq/contracts';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Platform } from 'react-native';
 import { loadBoard, saveBoard } from './local-store';
@@ -10,7 +10,13 @@ import { useAuth } from './auth';
 
 type BoardState={status:'loading'|'available'|'unavailable';data:BoardResponse|null;message:string;
   freshness:'LIVE'|'FRESH'|'CACHED'|'SNAPSHOT'|'STALE'|'OFFLINE'|'UNREACHABLE'|'UNAVAILABLE';
-  researchStatus:string;gradingStatus:string;refreshing:boolean;nowMs:number;retry:()=>void};
+  researchStatus:string;gradingStatus:string;refreshing:boolean;nowMs:number;
+  /** Free reread of the saved server board. Never spends provider credits. */
+  reload:()=>void;
+  /** True only after the server answered that it has no board yet. */
+  needsBootstrap:boolean;
+  /** Paid first-board pull. Call only after the owner confirms the credit cost. */
+  bootstrapPull:()=>void};
 type OwnerRefreshStatus={job?:{status?:'IDLE'|'RUNNING'|'SUCCEEDED'|'FAILED';error?:string|null}};
 const Context=createContext<BoardState|null>(null);
 const apiBase=process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/,'');
@@ -90,40 +96,28 @@ export function BoardProvider({children}:{children:ReactNode}) {
     return ()=>{active=false;controller.abort();};
   },[attempt,request]);
 
-  const retry=()=>{
-    if(refreshing)return;
-    // Once the server has a board, Refresh is a credit-free reread. A paid provider
-    // refresh is reserved for recovering a missing first/server-side board.
-    if(!needsBootstrap && data){
-      setStatus('available');setAttempt((n)=>n+1);return;
-    }
-    setRefreshing(true);setReachable(true);setStatus(data?'available':'loading');
-    setMessage('Starting the first PrizePicks board refresh…');
+  const reload=useCallback(()=>{
+    setStatus((previous)=>previous==='available'?'available':'loading');setAttempt((n)=>n+1);
+  },[]);
+  const pulling=useRef(false);
+  const bootstrapPull=useCallback(()=>{
+    if(pulling.current)return;
+    pulling.current=true;setRefreshing(true);setReachable(true);
+    setMessage('Starting the first PrizePicks board pull…');
+    const settle=(text:string)=>{setStatus((previous)=>previous==='available'?'available':'unavailable');
+      setMessage(text);};
     void (async()=>{
       try{
-        const start=await request('/v1/owner/board/refresh',{method:'POST',
+        // The server refuses this route once any board exists, so it can never repeat a pull.
+        const start=await request('/v1/owner/board/bootstrap',{method:'POST',
           headers:{'content-type':'application/json'},
           body:JSON.stringify({acknowledgeProviderCost:true})});
         setReachable(true);
-        if(start.status===404){
-          setStatus(data?'available':'unavailable');
-          setMessage('Waiting for the first PrizePicks board. The signed-in owner must publish it.');
-          return;
-        }
-        if(start.status===503){
-          setStatus(data?'available':'unavailable');
-          setMessage('PrizePicks provider is not configured on this CrownIQ server.');
-          return;
-        }
-        if(start.status===428){
-          setStatus(data?'available':'unavailable');
-          setMessage('Provider refresh confirmation was rejected.');
-          return;
-        }
-        if(!start.ok){
-          setStatus(data?'available':'unavailable');setMessage('Could not start the PrizePicks board refresh.');
-          return;
-        }
+        if(start.status===409){setNeedsBootstrap(false);reload();setMessage('');return;}
+        if(start.status===404){settle('Waiting for the first PrizePicks board. The signed-in owner must publish it.');return;}
+        if(start.status===503){settle('PrizePicks provider is not configured on this CrownIQ server.');return;}
+        if(start.status===428){settle('Provider pull confirmation was rejected.');return;}
+        if(!start.ok){settle('Could not start the PrizePicks board pull.');return;}
         setMessage('Building the PrizePicks board. This can take a few minutes…');
         for(let poll=0;poll<150;poll++){
           await sleep(2000);
@@ -133,38 +127,28 @@ export function BoardProvider({children}:{children:ReactNode}) {
             const board=boardResponseSchema.parse(await boardResponse.json());
             setData(board);setStatus('available');setMessage('');setNeedsBootstrap(false);
             void saveBoard(board).catch((error:unknown)=>reportMobileFailure('storage',error));
-            setAttempt((n)=>n+1);
             return;
           }
-          if(boardResponse.status===401){
-            setStatus(data?'available':'unavailable');
-            setMessage('Session expired. Sign out and sign in again.');
-            return;
-          }
+          if(boardResponse.status===401){settle('Session expired. Sign out and sign in again.');return;}
           const ownerStatus=await request('/v1/owner/board/status');
           if(ownerStatus.ok){
             const payload=await ownerStatus.json() as OwnerRefreshStatus;
             if(payload.job?.status==='FAILED'){
-              setStatus(data?'available':'unavailable');
-              setMessage('PrizePicks board refresh failed' +
-                (payload.job.error?': '+payload.job.error:'.'));
-              return;
+              settle('PrizePicks board pull failed'+(payload.job.error?': '+payload.job.error:'.'));return;
             }
           }
         }
-        setStatus(data?'available':'unavailable');
-        setMessage('The PrizePicks board is still building. Tap Refresh board again in a moment.');
+        settle('The PrizePicks board is still building. Check back in a moment.');
       }catch(error){
         reportMobileFailure('board',error);
-        setReachable(false);setStatus(data?'available':'unavailable');
-        setMessage(error instanceof Error?error.message:'Server unreachable.');
-      }finally{setRefreshing(false);}
+        setReachable(false);settle(error instanceof Error?error.message:'Server unreachable.');
+      }finally{pulling.current=false;setRefreshing(false);}
     })();
-  };
+  },[request,reload]);
 
   return <Context.Provider value={{status:data?'available':status,data,message,
     researchStatus,gradingStatus,refreshing,nowMs:clock,
-    freshness:freshness(data,reachable,clock,offline),retry}}>
+    freshness:freshness(data,reachable,clock,offline),reload,needsBootstrap,bootstrapPull}}>
     {children}
   </Context.Provider>;
 }

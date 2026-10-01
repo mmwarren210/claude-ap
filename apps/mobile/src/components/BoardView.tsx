@@ -7,6 +7,7 @@ import { FilterSheet } from './FilterSheet';
 import { LineLadder } from './LineLadder';
 import { ViewModeSwitch } from './ViewModeSwitch';
 import { Notice } from './Screen';
+import { Sheet } from './Sheet';
 import { palette } from '../theme';
 import { useBoard } from '../use-board';
 import { useDraft } from '../use-draft';
@@ -21,10 +22,11 @@ const gradingLabel=(status:string)=>({
 
 export default function BoardView() {
   const {request}=useAuth();
-  const {status,data,message,freshness,researchStatus,gradingStatus,refreshing,nowMs,retry}=useBoard();
+  const {status,data,message,freshness,researchStatus,gradingStatus,refreshing,nowMs,reload,needsBootstrap,bootstrapPull}=useBoard();
   const {filters,setFilters,viewMode,setViewMode,ready,add}=useDraft();
   const [filterOpen,setFilterOpen]=useState(false),[ladder,setLadder]=useState<PropLine|null>(null);
   const [chosen,setChosen]=useState<Record<string,string>>({}),[notice,setNotice]=useState('');
+  const [confirmPull,setConfirmPull]=useState(false);
   const lines=useMemo(()=>data&&ready?boardLinesForMode(data,filters,viewMode,nowMs):[],
     [data,filters,viewMode,ready,nowMs]);
   const analyses=useMemo(()=>new Map(data?.analyses.map((item)=>[item.lineId,item])),[data]);
@@ -74,7 +76,10 @@ export default function BoardView() {
         {viewMode==='FULL' && <Text style={styles.meta}>Research: {researchStatus} · Grading: {gradingLabel(gradingStatus)}</Text>}
         {message && data && <Text style={styles.warning}>{message} Showing last saved board.</Text>}
         <View style={styles.actions}><Pressable style={styles.action} onPress={()=>setFilterOpen(true)}><Text style={styles.actionText}>Filters</Text></Pressable>
-          <Pressable style={styles.action} onPress={retry} disabled={refreshing}><Text style={styles.actionText}>{refreshing?'Building board…':'Refresh board'}</Text></Pressable></View>
+          <Pressable style={styles.action} accessibilityRole="button"
+            onPress={()=>needsBootstrap?setConfirmPull(true):reload()}
+            disabled={refreshing||status==='loading'}><Text style={styles.actionText}>{refreshing?'Building board…':
+              status==='loading'?'Loading board…':needsBootstrap?'Pull first board':'Refresh board'}</Text></Pressable></View>
         {!!notice && <Text accessibilityRole="alert" style={styles.warning}>{notice}</Text>}
       </View>}
       ListEmptyComponent={<Notice title={!ready||status==='loading'?'Loading board':data&&viewMode==='LITE'?
@@ -83,6 +88,15 @@ export default function BoardView() {
           data&&viewMode==='LITE'?'The current board has no qualified ranked lines for these filters. Full shows every line, including PASS.':
             data?'Reset filters or try another sport.':message} />}
     />
+    <Sheet visible={confirmPull} title="Pull the first board?" onClose={()=>setConfirmPull(false)}>
+      <Text style={styles.snapshot}>The server has no PrizePicks board yet. Pulling one uses Odds API credits. Only the owner profile can start it, and the server refuses once any board exists.</Text>
+      <View style={styles.actions}>
+        <Pressable style={styles.action} accessibilityRole="button" onPress={()=>{setConfirmPull(false);bootstrapPull();}}>
+          <Text style={styles.actionText}>Use credits and pull</Text></Pressable>
+        <Pressable style={styles.action} accessibilityRole="button" onPress={()=>setConfirmPull(false)}>
+          <Text style={styles.actionText}>Cancel</Text></Pressable>
+      </View>
+    </Sheet>
     {data && <>{filterOpen && <FilterSheet visible={filterOpen} onClose={()=>setFilterOpen(false)}
       mode={viewMode} data={data} value={filters} onApply={setFilters} />}
       {viewMode==='FULL' && ladder && <LineLadder visible={!!ladder} onClose={()=>setLadder(null)} data={data}

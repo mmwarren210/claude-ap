@@ -1,10 +1,13 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import Fastify from 'fastify';
-import type { FastifyRequest } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { nflPassingResultSchema } from '@crowniq/contracts';
 import { ModelRegistry, routeResearch, snapshotSelection } from '@crowniq/engine';
 import type { OddsProvider, ResearchAdapter } from '@crowniq/engine';
+import type { BoardResponse } from '@crowniq/contracts';
+import { idlePullJob } from './owner-pull-job.js';
+import type { OwnerPullJob, OwnerPullJobStore } from './owner-pull-job.js';
 import { BoardService } from './board-service.js';
 import type { SelectionLedger } from './selection-ledger.js';
 import { summarizeNflPilot } from './selection-ledger.js';
@@ -50,6 +53,8 @@ export interface ServerOptions {
   startupResearch?: ResearchAdapter | null;
   identityVerifier?: ProviderIdentityVerifier | null;
   allowedWebOrigins?: readonly string[];
+  /** Persists the paid-pull job record across restarts. */
+  ownerJobStore?: OwnerPullJobStore | null;
 }
 
 function authorized(request: FastifyRequest, token?: string): boolean {
@@ -95,6 +100,15 @@ export function buildServer(options: ServerOptions = {}) {
   });
   app.addHook('onReady',async()=>{
     await service.restore();
+    const savedJob=await options.ownerJobStore?.load().catch(()=>null);
+    if(savedJob){
+      // A RUNNING record at startup means the server stopped mid-pull: report it, never hide it.
+      ownerBoardRefresh=savedJob.status==='RUNNING'
+        ? {...savedJob,status:'FAILED',finishedAt:now().toISOString(),error:'INTERRUPTED_BY_RESTART',
+          trackingStatus:savedJob.trackingStatus==='PENDING'?'FAILED':savedJob.trackingStatus}
+        : savedJob;
+      if(savedJob.status==='RUNNING')await saveJob();
+    }
     // History reconstruction runs after restore without blocking Fastify startup.
     void service.recoverStartupEvidence();
     if(options.ownerNotebook && options.ownerPublicId){
@@ -107,40 +121,53 @@ export function buildServer(options: ServerOptions = {}) {
       async()=>service.persist()) : null;
   app.addHook('onClose', async () => { webBuild?.cancel();options.ownerNotebook?.stop(); });
 
-  type OwnerBoardRefreshJob = {
-    status:'IDLE'|'RUNNING'|'SUCCEEDED'|'FAILED';startedAt:string|null;finishedAt:string|null;
-    error:string|null;trackingStatus:'PENDING'|'OK'|'FAILED'|'UNCONFIGURED';
-    webResearchJob:string|null;counts:{providerReturned:number;normalized:number;saved:number;
-      qualified:number;exposed:number};
+  // Every paid provider pull runs through this one job, so two pulls can never overlap or
+  // queue back to back. The record is persisted so a restart mid-pull is reported.
+  let ownerBoardRefresh:OwnerPullJob=idlePullJob();
+  let pullDone:Promise<BoardResponse|null>=Promise.resolve(null);
+  const saveJob=async()=>{try{await options.ownerJobStore?.save(ownerBoardRefresh);}catch{/* status stays in memory */}};
+  const providerCredits=()=>{
+    const health=options.provider?.getHealth?.() as {creditsRemaining?:number|null;
+      coverage?:{creditsSpent?:number}|null}|undefined;
+    return {remaining:health?.creditsRemaining??null,spent:health?.coverage?.creditsSpent??null};
   };
-  let ownerBoardRefresh:OwnerBoardRefreshJob={status:'IDLE',startedAt:null,finishedAt:null,
-    error:null,trackingStatus:'UNCONFIGURED',webResearchJob:null,
-    counts:{providerReturned:0,normalized:0,saved:0,qualified:0,exposed:0}};
   const startOwnerBoardRefresh=()=>{
     if(ownerBoardRefresh.status==='RUNNING')return false;
-    ownerBoardRefresh={status:'RUNNING',startedAt:now().toISOString(),finishedAt:null,error:null,
-      trackingStatus:options.product?'PENDING':'UNCONFIGURED',webResearchJob:null,
-      counts:{...service.getStatus().refreshCounts}};
-    void (async()=>{
+    const before=providerCredits().remaining;
+    ownerBoardRefresh={...idlePullJob(),status:'RUNNING',startedAt:now().toISOString(),
+      trackingStatus:options.product?'PENDING':'UNCONFIGURED',refreshStage:'provider',
+      counts:{...service.getStatus().refreshCounts},creditsRemaining:before};
+    void saveJob();
+    const credits=()=>{const after=providerCredits();
+      return {creditsRemaining:after.remaining,
+        creditsSpent:after.spent??(before!==null&&after.remaining!==null?before-after.remaining:null)};};
+    pullDone=(async()=>{
       try{
         const snapshot=await service.refresh();
-        let trackingStatus:OwnerBoardRefreshJob['trackingStatus']=options.product?'OK':'UNCONFIGURED';
-        if(options.product){try{await options.product.track(snapshot,service.getEvidence());}
+        let trackingStatus:OwnerPullJob['trackingStatus']=options.product?'OK':'UNCONFIGURED',tracked=0;
+        if(options.product){try{tracked=await options.product.track(snapshot,service.getEvidence());}
           catch{trackingStatus='FAILED';}}
         const webResearchJob=webBuild?.start(snapshot.board).id??null;
-        ownerBoardRefresh={status:'SUCCEEDED',startedAt:ownerBoardRefresh.startedAt,
-          finishedAt:now().toISOString(),error:null,trackingStatus,webResearchJob,
-          counts:{...service.getStatus().refreshCounts}};
+        const status=service.getStatus();
+        ownerBoardRefresh={...ownerBoardRefresh,status:'SUCCEEDED',finishedAt:now().toISOString(),
+          error:null,trackingStatus,tracked,webResearchJob,refreshStage:status.refreshStage,
+          counts:{...status.refreshCounts},...credits()};
+        await saveJob();
+        return snapshot;
       }catch{
         const status=service.getStatus();
-        ownerBoardRefresh={status:'FAILED',startedAt:ownerBoardRefresh.startedAt,
-          finishedAt:now().toISOString(),error:status.lastError??'BOARD_REFRESH_FAILED',
+        ownerBoardRefresh={...ownerBoardRefresh,status:'FAILED',finishedAt:now().toISOString(),
+          error:status.lastError??'BOARD_REFRESH_FAILED',
           trackingStatus:options.product?'FAILED':'UNCONFIGURED',webResearchJob:null,
-          counts:{...status.refreshCounts}};
+          refreshStage:status.refreshStage,counts:{...status.refreshCounts},...credits()};
+        await saveJob();
+        return null;
       }
     })();
     return true;
   };
+  const currentJob=()=>ownerBoardRefresh.status==='RUNNING'
+    ? {...ownerBoardRefresh,refreshStage:service.getStatus().refreshStage}:ownerBoardRefresh;
 
   app.get('/health', async () => {
     const { providerHealth: _privateHealth, modelRequirements: _privateRequirements,
@@ -187,7 +214,7 @@ export function buildServer(options: ServerOptions = {}) {
       const snapshot=service.getBoard(),status=service.getStatus();
       return {providerConfigured:!!options.provider,boardAvailable:!!snapshot,
         lineCount:snapshot?.board.lines.length??0,rankedCount:snapshot?.rankedLineIds.length??0,
-        lastError:status.lastError,refreshStage:status.refreshStage,job:ownerBoardRefresh};
+        lastError:status.lastError,refreshStage:status.refreshStage,job:currentJob()};
     });
     ownerBoard.get('/diagnostics',async(_request,reply)=>{
       const snapshot=service.getBoard();
@@ -252,7 +279,17 @@ export function buildServer(options: ServerOptions = {}) {
       if(!input.success)return reply.code(428).send({code:'PROVIDER_CREDITS_CONFIRMATION_REQUIRED',
         message:'A PrizePicks provider refresh may consume credits.'});
       const started=startOwnerBoardRefresh();
-      return reply.code(202).send({started,job:ownerBoardRefresh});
+      return reply.code(202).send({started,job:currentJob()});
+    });
+    // First-board recovery from the Board tab. It can only spend credits when no board exists.
+    ownerBoard.post('/bootstrap',async(request,reply)=>{
+      if(!options.provider)return reply.code(503).send({code:'ODDS_PROVIDER_UNCONFIGURED'});
+      const input=z.object({acknowledgeProviderCost:z.literal(true)}).strict().safeParse(request.body);
+      if(!input.success)return reply.code(428).send({code:'PROVIDER_CREDITS_CONFIRMATION_REQUIRED',
+        message:'A PrizePicks provider refresh may consume credits.'});
+      if(service.getBoard())return reply.code(409).send({code:'BOARD_EXISTS'});
+      const started=startOwnerBoardRefresh();
+      return reply.code(202).send({started,job:currentJob()});
     });
   },{prefix:'/v1/owner/board'});
 
@@ -644,20 +681,21 @@ export function buildServer(options: ServerOptions = {}) {
     admin.post('/research/cancel', async (_request, reply) => webBuild
       ? { job: webBuild.cancel() }
       : reply.code(503).send({ code: 'WEB_RESEARCH_UNCONFIGURED' }));
-    admin.post('/refresh', async (_request, reply) => {
-      if (!options.provider) return reply.code(503).send({ code: 'ODDS_PROVIDER_UNCONFIGURED' });
-      try {
-        const snapshot = await service.refresh();
-        let tracked=0,trackingStatus='OK';
-        try {tracked=await options.product?.track(snapshot,service.getEvidence())??0;}
-        catch {trackingStatus='FAILED';}
-        return { builtAt: snapshot.builtAt, lineCount: snapshot.board.lines.length,
-          rankedCount: snapshot.rankedLineIds.length, research: service.getStatus().research,
-          webResearchJob: webBuild?.start(snapshot.board).id ?? null,tracked,trackingStatus };
-      } catch {
-        return reply.code(502).send({ code: 'BOARD_REFRESH_FAILED' });
-      }
-    });
+    // Admin pulls share the owner job: same cost confirmation, same single-pull lock.
+    const adminPull=async(request:FastifyRequest,reply:FastifyReply)=>{
+      if(request.headers['x-confirm-provider-cost']!=='yes')return reply.code(428).send({
+        code:'PROVIDER_CREDITS_CONFIRMATION_REQUIRED',message:'A provider refresh may consume credits.'});
+      if(!options.provider)return reply.code(503).send({code:'ODDS_PROVIDER_UNCONFIGURED'});
+      if(!startOwnerBoardRefresh())return reply.code(409).send({code:'PULL_RUNNING',job:currentJob()});
+      const snapshot=await pullDone;
+      if(!snapshot)return reply.code(502).send({code:'BOARD_REFRESH_FAILED'});
+      return {builtAt:snapshot.builtAt,lineCount:snapshot.board.lines.length,
+        rankedCount:snapshot.rankedLineIds.length,research:service.getStatus().research,
+        webResearchJob:ownerBoardRefresh.webResearchJob,tracked:ownerBoardRefresh.tracked,
+        trackingStatus:ownerBoardRefresh.trackingStatus,creditsSpent:ownerBoardRefresh.creditsSpent,
+        creditsRemaining:ownerBoardRefresh.creditsRemaining};
+    };
+    admin.post('/refresh',adminPull);
     admin.post('/reanalyze', async (request, reply) => {
       const input=z.object({acknowledgeResearchCost:z.boolean().optional()}).strict()
         .safeParse(request.body??{});
@@ -674,16 +712,7 @@ export function buildServer(options: ServerOptions = {}) {
           research: service.getStatus().research, oddsCreditsUsed: 0,tracked,trackingStatus };
       } catch { return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' }); }
     });
-    admin.post('/force-provider-refresh',async(request,reply)=>{
-      if(request.headers['x-confirm-provider-cost']!=='yes')return reply.code(428).send({
-        code:'PROVIDER_CREDITS_CONFIRMATION_REQUIRED',message:'A provider refresh may consume credits.'});
-      if(!options.provider)return reply.code(503).send({code:'ODDS_PROVIDER_UNCONFIGURED'});
-      try {const snapshot=await service.refresh();
-        let tracked=0;try{tracked=await options.product?.track(snapshot,service.getEvidence())??0;}catch{}
-        return {builtAt:snapshot.builtAt,lineCount:snapshot.board.lines.length,tracked,
-          webResearchJob:webBuild?.start(snapshot.board).id??null};
-      } catch{return reply.code(502).send({code:'BOARD_REFRESH_FAILED'});}
-    });
+    admin.post('/force-provider-refresh',adminPull);
     admin.get('/tracked-decisions',async(request,reply)=>{
       if(!options.product)return reply.code(503).send({code:'TRACKING_UNCONFIGURED'});
       const parsed=z.object({offset:z.coerce.number().int().nonnegative().default(0),

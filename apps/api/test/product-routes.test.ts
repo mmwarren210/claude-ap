@@ -53,7 +53,7 @@ test('the saved board survives a restart without a paid refresh and stays accura
     adminToken:'owner-only'});
   try {
     await original.inject({method:'POST',url:'/v1/admin/refresh',
-      headers:{authorization:'Bearer owner-only'}});
+      headers:{authorization:'Bearer owner-only','x-confirm-provider-cost':'yes'}});
     assert.equal(calls,1);
   }finally{await original.close();}
   clock=new Date('2030-09-24T13:00:00Z');

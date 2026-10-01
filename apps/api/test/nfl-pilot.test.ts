@@ -12,7 +12,7 @@ import { NflverseResultsFeed, parseNflverseStats } from '../src/nflverse-results
 import { buildServer } from '../src/server.js';
 
 const later = new Date('2030-09-25T06:00:00.000Z');
-const auth = { authorization: 'Bearer synthetic-owner-token' };
+const auth = { authorization: 'Bearer synthetic-owner-token', 'x-confirm-provider-cost': 'yes' };
 const status = (overrides: Record<string, unknown> = {}) => ({
   id: 'fixture-availability', entityType: 'PLAYER', entityId: 'test-player-1',
   eventId: 'test-event', market: null, kind: 'status:qb_available',

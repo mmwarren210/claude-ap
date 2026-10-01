@@ -29,15 +29,18 @@ In a second terminal:
 npm run dev:mobile
 ```
 
-Set `EXPO_PUBLIC_API_URL` in `apps/mobile/.env` to the running API. On a phone, use your computer's reachable LAN IP and set `API_HOST=0.0.0.0` in `apps/api/.env`. Scan Expo's QR code with Expo Go. `http://127.0.0.1:3000/health` checks the backend. Create a profile in the app to reach the Board. If no server-side board exists yet, authenticated `/v1/board` returns `503 BOARD_UNAVAILABLE`; that is an available server with no snapshot, not a network outage. Set `CROWNIQ_OWNER_PUBLIC_ID` to the owner's profile UUID. When that profile taps **Refresh board** while the server has no board, CrownIQ starts one confirmed provider pull in the background and polls until the first board is published. Once a board exists, the same button only rereads the saved board and does not spend provider credits. `ADMIN_TOKEN` still protects terminal/admin endpoints and must never be copied into the mobile environment. Use HTTPS for real account credentials.
+Set `EXPO_PUBLIC_API_URL` in `apps/mobile/.env` to the running API. On a phone, use your computer's reachable LAN IP and set `API_HOST=0.0.0.0` in `apps/api/.env`. Scan Expo's QR code with Expo Go. `http://127.0.0.1:3000/health` checks the backend. Create a profile in the app to reach the Board. If no server-side board exists yet, authenticated `/v1/board` returns `503 BOARD_UNAVAILABLE`; that is an available server with no snapshot, not a network outage. Set `CROWNIQ_OWNER_PUBLIC_ID` to the owner's profile UUID. When the server reports it has no board, the Board button changes to **Pull first board** and asks the owner to confirm the credit cost. It calls `POST /v1/owner/board/bootstrap`, which the server refuses with `409 BOARD_EXISTS` once any board exists, so this path can never repeat a paid pull. **Refresh board** only rereads the saved board and never spends provider credits. `ADMIN_TOKEN` still protects terminal/admin endpoints and must never be copied into the mobile environment. Use HTTPS for real account credentials.
 
 To connect The Odds API, put `THE_ODDS_API_KEY` in **the server's** `apps/api/.env` (or your deployed backend's environment). `ODDS_PROVIDER=auto` is the default and activates the PrizePicks adapter whenever that key exists; set `ODDS_PROVIDER=none` only when you intentionally want provider pulls disabled. Set `CROWNIQ_OWNER_PUBLIC_ID` for in-app first-board recovery, and optionally set a locally chosen `ADMIN_TOKEN` for terminal/admin endpoints. These values are never read from the mobile app. With the API running, you can also trigger an owner refresh from a terminal:
 
 ```bash
 curl -X POST http://127.0.0.1:3000/v1/admin/refresh \
-  -H "Authorization: Bearer YOUR_LOCAL_ADMIN_TOKEN"
+  -H "Authorization: Bearer YOUR_LOCAL_ADMIN_TOKEN" \
+  -H "x-confirm-provider-cost: yes"
 curl http://127.0.0.1:3000/health
 ```
+
+Every paid pull, from the app or a terminal, runs as one server job: a second request while one is running gets `409 PULL_RUNNING` (admin) or `started: false` (owner). Admin pulls require the `x-confirm-provider-cost: yes` header and return `428` without it. The job record, including Odds API credits spent and remaining, is saved to `CROWNIQ_OWNER_JOB_FILE` (default `tmp/owner-pull-job.json`); if the server stops mid-pull, the next start reports the job as failed with `INTERRUPTED_BY_RESTART`.
 
 After a restart, CrownIQ restores the saved board immediately and rebuilds expired historical evidence in the background from its local internal-history store. Startup recovery uses no Odds API or external research calls; it preserves the original board fetch time and never extends expired availability, lineup or other current facts. Owner Board Analysis reports active/expired evidence and recovery status, with a diagnostics reload control. Rankings reloads after saved-board reanalysis, on tab focus and every minute while visible, with retry controls for failed reads.
 

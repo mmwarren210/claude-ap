@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Notice, Screen } from '../../components/Screen';
@@ -31,7 +31,19 @@ type ReanalyzeResult={
 };
 type PullStatus={refreshStage:string;job:{status:'IDLE'|'RUNNING'|'SUCCEEDED'|'FAILED';
   startedAt:string|null;finishedAt:string|null;error:string|null;
-  trackingStatus:string;counts:{saved:number;qualified:number;exposed:number}}};
+  trackingStatus:string;counts:{saved:number;qualified:number;exposed:number};
+  creditsSpent?:number|null;creditsRemaining?:number|null}};
+function pullError(error:string|null){
+  return error==='INTERRUPTED_BY_RESTART'
+    ? 'Interrupted by a server restart. Credits may have been spent; nothing new was saved'
+    : error??'Provider connection failed';
+}
+function creditsLine(job:PullStatus['job']){
+  const parts=[];
+  if(job.creditsSpent!=null)parts.push(`${job.creditsSpent.toLocaleString()} Odds API credits used`);
+  if(job.creditsRemaining!=null)parts.push(`${job.creditsRemaining.toLocaleString()} remaining`);
+  return parts.length?' · '+parts.join(' · '):'';
+}
 const pullStages=['provider','normalize','research','persist','publish','complete'] as const;
 function pullStageLabel(stage:string){
   return ({provider:'Fetching PrizePicks lines',normalize:'Checking line data',
@@ -48,7 +60,9 @@ async function json<T>(response:Response):Promise<T>{
 
 export default function OwnerBoardScreen(){
   const {request}=useAuth();
-  const {retry}=useBoard();
+  const {reload}=useBoard();
+  // Kept in a ref so re-renders never reset completion detection.
+  const previousJob=useRef<string|null>(null);
   const [diagnostics,setDiagnostics]=useState<Diagnostics|null>(null);
   const [access,setAccess]=useState<'CHECKING'|'ALLOWED'|'DENIED'>('CHECKING');
   const [busy,setBusy]=useState(false);
@@ -73,7 +87,6 @@ export default function OwnerBoardScreen(){
   useFocusEffect(useCallback(()=>{
     void load();
     let active=true;
-    let previousJob:string|null=null;
     let timer:ReturnType<typeof setTimeout>;
     const poll=async()=>{
       let delay=3000;
@@ -81,11 +94,11 @@ export default function OwnerBoardScreen(){
         const status=await json<PullStatus>(await request('/v1/owner/board/status'));
         if(!active)return;
         setPullStatus(status);setCheckingPull(false);
-        if(previousJob==='RUNNING' && status.job.status==='SUCCEEDED'){
+        if(previousJob.current==='RUNNING' && status.job.status==='SUCCEEDED'){
           setMessage(`PrizePicks snapshot saved · ${status.job.counts.saved.toLocaleString()} lines · ${status.job.counts.qualified} qualified.`);
-          retry();void load();
+          reload();void load();
         }
-        previousJob=status.job.status;
+        previousJob.current=status.job.status;
         delay=status.job.status==='RUNNING'?3000:10000;
       }catch(cause){
         if(!active)return;
@@ -96,7 +109,7 @@ export default function OwnerBoardScreen(){
     };
     void poll();
     return()=>{active=false;clearTimeout(timer);};
-  },[request,retry,load]));
+  },[request,reload,load]));
 
   const pulling=pullStatus?.job.status==='RUNNING';
 
@@ -126,7 +139,7 @@ export default function OwnerBoardScreen(){
       }));
       const upgrades=result.secondLook?.upgraded??0;
       setMessage(`Analysis refreshed · ${result.rankedCount} primary rankings · ${upgrades} Second Look upgrades · ${result.oddsCreditsUsed} Odds credits.`);
-      retry();
+      reload();
       await load();
     }catch(cause){
       setError(cause instanceof Error?cause.message:'Analysis refresh failed.');
@@ -161,9 +174,9 @@ export default function OwnerBoardScreen(){
         <Text style={styles.hint}>Started {pullStatus.job.startedAt?new Date(pullStatus.job.startedAt).toLocaleString():'just now'}. Safe to leave; progress resumes when you return.</Text>
       </View>}
       {pullStatus?.job.status==='SUCCEEDED'&&<Notice title="DFS snapshot complete"
-        detail={`${pullStatus.job.counts.saved.toLocaleString()} lines saved · ${pullStatus.job.counts.qualified} qualified · finished ${pullStatus.job.finishedAt?new Date(pullStatus.job.finishedAt).toLocaleString():'recently'}.`}/>}
+        detail={`${pullStatus.job.counts.saved.toLocaleString()} lines saved · ${pullStatus.job.counts.qualified} qualified · finished ${pullStatus.job.finishedAt?new Date(pullStatus.job.finishedAt).toLocaleString():'recently'}${creditsLine(pullStatus.job)}.`}/>}
       {pullStatus?.job.status==='FAILED'&&<Notice title="DFS pull failed"
-        detail={`${pullStatus.job.error??'Provider connection failed.'} The prior saved board remains available. You may try another pull.`}/>}
+        detail={`${pullError(pullStatus.job.error)}${creditsLine(pullStatus.job)}. The prior saved board remains available. You may try another pull.`}/>}
       <Notice title="Research-only refresh"
         detail="Reanalyze uses the saved PrizePicks board. It uses 0 Odds API credits, but configured research providers such as Stat API may consume their own quota."/>
       {diagnostics?<>

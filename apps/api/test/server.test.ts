@@ -25,7 +25,7 @@ test('admin token gates refresh; provider failure preserves the last validated b
     normalize: (_raw, fetchedAt) => fixtureLine({ fetchedAt }),
   };
   const app = buildServer({ provider, adminToken: 'fixture-owner-token' });
-  const auth = { authorization: 'Bearer fixture-owner-token' };
+  const auth = { authorization: 'Bearer fixture-owner-token', 'x-confirm-provider-cost': 'yes' };
   try {
     assert.equal((await app.inject({ method: 'POST', url: '/v1/admin/refresh',
       headers: { authorization: 'Bearer wrong' } })).statusCode, 401);
@@ -60,7 +60,7 @@ test('owner refresh publishes a normalized PrizePicks board and keeps quota data
   } });
   const app = buildServer({ provider, adminToken: 'fixture-owner-token' });
   try {
-    const auth = { authorization: 'Bearer fixture-owner-token' };
+    const auth = { authorization: 'Bearer fixture-owner-token', 'x-confirm-provider-cost': 'yes' };
     const refreshed = await app.inject({ method: 'POST', url: '/v1/admin/refresh', headers: auth });
     assert.equal(refreshed.statusCode, 200);
     assert.equal(refreshed.json().lineCount, 3);

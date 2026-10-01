@@ -119,3 +119,81 @@ test('configured owner can bootstrap the first board from the app',async()=>{
     }finally{await app.close();}
   }finally{await rm(folder,{recursive:true,force:true});}
 });
+
+test('paid pulls: bootstrap only without a board, one pull at a time, confirmed admin pulls, restart reported',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-pull-guard-'));
+  try{
+    const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>now);
+    const owner=await ledger.register('pull-owner@example.org','abcdefghijkl','Pull_owner');
+    let pulls=0,credits=500,release:()=>void=()=>undefined;
+    let gate=Promise.resolve();
+    // Synthetic provider: each pull spends 7 fake credits and can be held open by the test.
+    const provider:OddsProvider={id:'fixture-prizepicks',
+      fetchPrizePicksLines:async()=>{pulls++;await gate;credits-=7;return [{}];},
+      normalize:(_raw,fetchedAt)=>fixtureLine({id:'guard-line',sourceLineId:'guard-source',
+        fetchedAt,eventStartTime:'2030-09-25T00:00:00Z'}),
+      getHealth:()=>({creditsRemaining:credits,lastRequestCost:7,lastHttpStatus:200})};
+    const jobFile=join(folder,'owner-pull-job.json');
+    const { OwnerPullJobStore }=await import('../src/owner-pull-job.js');
+    const app=buildServer({product:ledger,provider,requireProfiles:true,adminToken:'admin-fixture',
+      ownerPublicId:owner.profile.publicId,clock:()=>now,ownerJobStore:new OwnerPullJobStore(jobFile)});
+    const ownerHeaders={authorization:['Bearer',owner.token].join(' ')};
+    const admin={authorization:'Bearer admin-fixture'};
+    const waitForJob=async()=>{
+      for(let attempt=0;attempt<50;attempt++){
+        const state=(await app.inject({url:'/v1/owner/board/status',headers:ownerHeaders})).json();
+        if(state.job.status!=='RUNNING')return state.job;
+        await new Promise<void>((resolve)=>setImmediate(resolve));
+      }
+      throw new Error('job did not finish');
+    };
+    try{
+      assert.equal((await app.inject({method:'POST',url:'/v1/owner/board/bootstrap',headers:ownerHeaders,
+        payload:{}})).statusCode,428);
+      gate=new Promise<void>((resolve)=>{release=resolve;});
+      const first=await app.inject({method:'POST',url:'/v1/owner/board/bootstrap',headers:ownerHeaders,
+        payload:{acknowledgeProviderCost:true}});
+      assert.equal(first.statusCode,202);
+      assert.equal(first.json().started,true);
+      // While the pull runs, nothing can start a second one.
+      const again=await app.inject({method:'POST',url:'/v1/owner/board/refresh',headers:ownerHeaders,
+        payload:{acknowledgeProviderCost:true}});
+      assert.equal(again.json().started,false);
+      assert.equal((await app.inject({method:'POST',url:'/v1/admin/refresh',headers:admin})).statusCode,428);
+      assert.equal((await app.inject({method:'POST',url:'/v1/admin/refresh',
+        headers:{...admin,'x-confirm-provider-cost':'yes'}})).statusCode,409);
+      release();
+      const done=await waitForJob();
+      assert.equal(done.status,'SUCCEEDED');
+      assert.equal(done.creditsSpent,7);
+      assert.equal(done.creditsRemaining,493);
+      assert.equal(pulls,1);
+      // A board now exists, so the Board tab's recovery path cannot spend credits.
+      const blocked=await app.inject({method:'POST',url:'/v1/owner/board/bootstrap',headers:ownerHeaders,
+        payload:{acknowledgeProviderCost:true}});
+      assert.equal(blocked.statusCode,409);
+      assert.equal(blocked.json().code,'BOARD_EXISTS');
+      assert.equal(pulls,1);
+      const confirmed=await app.inject({method:'POST',url:'/v1/admin/refresh',
+        headers:{...admin,'x-confirm-provider-cost':'yes'}});
+      assert.equal(confirmed.statusCode,200);
+      assert.equal(confirmed.json().creditsSpent,7);
+      assert.equal(pulls,2);
+    }finally{await app.close();}
+
+    // Simulate a server that stopped mid-pull: the next start reports it instead of showing IDLE.
+    await writeFile(jobFile,JSON.stringify({status:'RUNNING',startedAt:now.toISOString(),finishedAt:null,
+      error:null,trackingStatus:'PENDING',tracked:0,webResearchJob:null,refreshStage:'provider',
+      counts:{providerReturned:0,normalized:0,saved:0,qualified:0,exposed:0},
+      creditsSpent:null,creditsRemaining:493}));
+    const restarted=buildServer({product:ledger,provider,requireProfiles:true,
+      ownerPublicId:owner.profile.publicId,clock:()=>now,ownerJobStore:new OwnerPullJobStore(jobFile)});
+    try{
+      await restarted.ready();
+      const state=(await restarted.inject({url:'/v1/owner/board/status',headers:ownerHeaders})).json();
+      assert.equal(state.job.status,'FAILED');
+      assert.equal(state.job.error,'INTERRUPTED_BY_RESTART');
+      assert.equal(state.job.trackingStatus,'FAILED');
+    }finally{await restarted.close();}
+  }finally{await rm(folder,{recursive:true,force:true});}
+});

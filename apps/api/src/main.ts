@@ -9,6 +9,7 @@ import { WebResearchAdapter, WebResearchCatalog } from './web-research.js';
 import { ProductLedger } from './product-ledger.js';
 import { ProductGradingWorker } from './background-grading.js';
 import { BoardCache } from './board-cache.js';
+import { OwnerPullJobStore } from './owner-pull-job.js';
 import { ProviderIdentityVerifier } from './provider-identity.js';
 import { StatApiOwnerResearch } from './stat-api-owner-research.js';
 import { StatApiGkrEvidence } from './stat-api-gkr-evidence.js';
@@ -129,6 +130,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, provider,
   requireProfiles:true,identityVerifier,
   allowedWebOrigins:(process.env.CROWNIQ_ALLOWED_WEB_ORIGINS??'').split(',')
     .map((origin)=>origin.trim()).filter(Boolean),
+  ownerJobStore:new OwnerPullJobStore(process.env.CROWNIQ_OWNER_JOB_FILE ?? 'tmp/owner-pull-job.json'),
   boardCache:new BoardCache(process.env.CROWNIQ_BOARD_CACHE_FILE ??
     'tmp/board-cache.json'),
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,
