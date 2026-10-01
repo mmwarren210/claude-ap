@@ -1,85 +1,179 @@
-import { useEffect, useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, TextInput } from 'react-native';
-import { router } from 'expo-router';
-import { Notice, Screen } from '../../components/Screen';
-import { palette } from '../../theme';
+import { router, useFocusEffect } from 'expo-router';
+import type { Href } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../auth';
+import { Sheet } from '../../components/Sheet';
+import { AppHeader } from '../../components/ui/AppHeader';
+import { alpha } from '../../components/ui/color';
+import { PrimaryButton } from '../../components/ui/Controls';
+import type { IconName } from '../../components/ui/Icon';
+import { Icon } from '../../components/ui/Icon';
+import { flexPayouts } from '../../insights';
+import { colors, radius } from '../../theme';
 import { useDraft } from '../../use-draft';
-import { ViewModeSwitch } from '../../components/ViewModeSwitch';
 
 const helpUrl = 'https://www.ncpgambling.org/help-treatment/about-the-national-problem-gambling-helpline/';
 
-export default function SettingsScreen() {
-  const {profile,logout,request,setUsername}=useAuth();
-  const {viewMode,setViewMode,ready}=useDraft();
-  const [name,setName]=useState(profile?.username??''),[message,setMessage]=useState('');
-  const [ownerResearch,setOwnerResearch]=useState(false);
-  useEffect(()=>{
-    let active=true;
-    void request('/v1/owner/research/status').then((response)=>{
-      if(active)setOwnerResearch(response.ok);
-    }).catch(()=>{if(active)setOwnerResearch(false);});
-    return ()=>{active=false;};
-  },[profile?.publicId,request]);
-  const rename=async()=>{
-    try{const response=await request('/v1/social/profile',{method:'POST',
-      headers:{'content-type':'application/json'},body:JSON.stringify({displayName:name.trim()})});
-      if(!response.ok)throw new Error('Taken or invalid');
-      setUsername(name.trim());setMessage('Display username updated.');}
-    catch{setMessage('That username is unavailable. Try a different one.');}
+function Row({ icon, title, detail, onPress, locked, last }: { icon: IconName; title: string; detail?: string;
+  onPress?: () => void; locked?: boolean; last?: boolean }) {
+  return <Pressable accessibilityRole="button" disabled={locked || !onPress} onPress={onPress}
+    style={[styles.row, !last && styles.rowDivider, locked && styles.locked]}>
+    <Icon name={icon} size={24} color={colors.mint} />
+    <Text style={styles.rowTitle}>{title}</Text>
+    {locked && <Icon name="lock" size={16} color={colors.gold} />}
+    <Text style={styles.rowDetail} numberOfLines={1}>{detail}</Text>
+    {!locked && onPress && <Icon name="chevron-right" size={22} color={colors.textMuted} />}
+  </Pressable>;
+}
+
+export default function MoreScreen() {
+  const { profile, logout, request, setUsername, demo } = useAuth();
+  const { viewMode, setViewMode, ready } = useDraft();
+  const [owner, setOwner] = useState(false);
+  const [stats, setStats] = useState<{ picks: number; crowns: number; rate: number | null } | null>(null);
+  const [sheet, setSheet] = useState<'account' | 'payouts' | null>(null);
+  const [name, setName] = useState(profile?.username ?? ''), [message, setMessage] = useState('');
+  useEffect(() => {
+    let active = true;
+    if (demo) return;
+    void request('/v1/owner/research/status').then((response) => { if (active) setOwner(response.ok); })
+      .catch(() => { if (active) setOwner(false); });
+    return () => { active = false; };
+  }, [profile?.publicId, request, demo]);
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    void Promise.all([request('/v1/me/picks?limit=50'), request('/v1/me/crowns')]).then(async ([picks, crowns]) => {
+      if (!picks.ok || !crowns.ok) return;
+      const [p, c] = await Promise.all([picks.json(), crowns.json()]) as [{ total: number; picks: { result: string }[] },
+        { crowns: unknown[] }];
+      const graded = p.picks.filter((pick) => pick.result === 'WIN' || pick.result === 'LOSS');
+      if (active) setStats({ picks: p.total, crowns: c.crowns.length,
+        rate: graded.length ? graded.filter((pick) => pick.result === 'WIN').length / graded.length : null });
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [request]));
+  const rename = async () => {
+    try {
+      const response = await request('/v1/social/profile', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ displayName: name.trim() }) });
+      if (response.status === 403) { setMessage('Demo mode is read-only. Sign in to change your username.'); return; }
+      if (!response.ok) throw new Error('Taken or invalid');
+      setUsername(name.trim()); setMessage('Display username updated.');
+    } catch { setMessage('That username is unavailable. Try a different one.'); }
   };
-  return <Screen eyebrow="CROWNIQ  /  ACCOUNT" title="Settings">
-    <Notice title={profile?.username??'Your profile'}
-      detail={`${profile?.email??'Provider sign-in'} · ${profile?.plan??'FREE'} plan · Saved picks are private unless you share a Crown to Social.`} />
-    <Text selectable style={styles.note}>Your profile ID: {profile?.publicId}</Text>
-    {ownerResearch && <>
-      <Pressable accessibilityRole="button"
-        accessibilityLabel="Open owner board analysis"
-        onPress={()=>router.push('../owner/board')} style={styles.link}>
-        <Text style={styles.linkTitle}>Owner Board Analysis →</Text>
-        <Text style={styles.linkDetail}>Refresh GKR research against the saved board with 0 Odds API credits.</Text>
+  const go = (path: Href) => router.push(path);
+  const plan = profile?.plan === 'DEMO' ? 'Demo' : profile?.plan === 'FREE' ? 'Free Plan' : profile?.plan ?? 'Free Plan';
+  return <SafeAreaView style={styles.safe} edges={['top']}>
+    <ScrollView contentContainerStyle={styles.content}>
+      <AppHeader subtitle="Settings & Account" />
+      <View style={styles.profile}>
+        <View style={styles.avatar}><Text style={styles.avatarText}>{(profile?.username ?? '?').slice(0, 1).toUpperCase()}</Text></View>
+        <View style={styles.profileCopy}>
+          <Pressable accessibilityRole="button" onPress={() => setSheet('account')} style={styles.nameRow}>
+            <Text style={styles.name} numberOfLines={1}>{profile?.username ?? 'Your profile'}</Text>
+            <Icon name="pencil-outline" size={18} color={colors.textMuted} /></Pressable>
+          <Text style={styles.email} numberOfLines={1}>{profile?.email ?? (demo ? 'No account in demo mode' : 'Provider sign-in')}</Text>
+          <View style={styles.plan}><Icon name="crown" size={16} color={colors.neon} /><Text style={styles.planText}>{plan}</Text></View>
+        </View>
+      </View>
+      <View style={styles.stats}>
+        <View style={styles.stat}><Text style={styles.statValue}>{stats?.picks ?? '—'}</Text><Text style={styles.statLabel}>Saved picks</Text></View>
+        <View style={[styles.stat, styles.statDivider]}><Text style={styles.statValue}>{stats?.crowns ?? '—'}</Text>
+          <Text style={styles.statLabel}>Crowns</Text></View>
+        <View style={[styles.stat, styles.statDivider]}><Text style={styles.statValue}>
+          {stats?.rate === null || !stats ? '—' : `${Math.round(stats.rate * 100)}%`}</Text><Text style={styles.statLabel}>Hit rate</Text></View>
+      </View>
+
+      <Text style={styles.heading}>App Settings</Text>
+      <View style={styles.group}>
+        <Row icon="account-outline" title="Account" detail="Display username" onPress={() => setSheet('account')} />
+        <Row icon="view-grid-outline" title="Board view" detail={viewMode === 'LITE' ? 'Lite · top qualified' : 'Full · every line'}
+          onPress={ready ? () => setViewMode(viewMode === 'LITE' ? 'FULL' : 'LITE') : undefined} />
+        <Row icon="cash-multiple" title="Payout estimates" detail="Flex table" onPress={() => setSheet('payouts')} />
+        <Row icon="account-group-outline" title="Social" detail="Top 10 and Crowns" onPress={() => go('/(tabs)/social')} />
+        <Row icon="lifebuoy" title="Play responsibly" detail="1-800-MY-RESET" last onPress={() => void Linking.openURL(helpUrl)} />
+      </View>
+
+      <View style={styles.adminHead}><Text style={styles.heading}>Admin Tools</Text>
+        {!owner && <View style={styles.ownerOnly}><Icon name="lock" size={16} color={colors.gold} />
+          <Text style={styles.ownerText}>Owner only</Text></View>}</View>
+      <View style={styles.group}>
+        <Row icon="database-outline" title="Data health" detail="Board diagnostics" locked={!owner} onPress={() => go('/owner/board')} />
+        <Row icon="refresh" title="Refresh boards" detail="Pull or reanalyze" locked={!owner} onPress={() => go('/owner/board')} />
+        <Row icon="magnify" title="Research desk" detail="Private stat research" locked={!owner} onPress={() => go('/owner/research')} />
+        <Row icon="pulse" title="Learning" detail="Tracked outcomes" locked={!owner} last onPress={() => go('/owner/learning')} />
+      </View>
+
+      <Pressable accessibilityRole="button" onPress={() => void logout()} style={styles.logout}>
+        <Icon name="logout" size={22} color={colors.red} /><Text style={styles.logoutText}>{demo ? 'Exit demo' : 'Log Out'}</Text>
       </Pressable>
-      <Pressable accessibilityRole="button"
-        accessibilityLabel="Open private owner research desk"
-        onPress={()=>router.push('/owner/research')} style={styles.link}>
-        <Text style={styles.linkTitle}>Owner Research Desk →</Text>
-        <Text style={styles.linkDetail}>Private stat-api research and usage. Separate from the public board.</Text>
-      </Pressable>
-      <Pressable accessibilityRole="button"
-        accessibilityLabel="Open owner learning diagnostics"
-        onPress={()=>router.push('../owner/learning')} style={styles.link}>
-        <Text style={styles.linkTitle}>Owner Learning →</Text>
-        <Text style={styles.linkDetail}>Tracked outcome and calibration diagnostics. Read-only; model weights never change automatically.</Text>
-      </Pressable>
-    </>}
-    <Text style={styles.label}>Board view</Text>
-    {ready && <ViewModeSwitch value={viewMode} onChange={setViewMode} />}
-    <Text style={styles.note}>Lite shows the top qualified lines. Full shows the entire board and detailed analysis. Your choice is saved for this profile on this device.</Text>
-    <Text style={styles.label}>Display username</Text>
-    <TextInput accessibilityLabel="Display username" autoCapitalize="none" autoCorrect={false}
-      value={name} onChangeText={setName} style={styles.input}
-      placeholderTextColor={palette.muted} placeholder="Your public username" />
-    <Pressable accessibilityRole="button" onPress={()=>void rename()} style={styles.link}>
-      <Text style={styles.linkTitle}>Update display username</Text></Pressable>
-    {!!message && <Text accessibilityRole="alert" style={styles.note}>{message}</Text>}
-    <Pressable accessibilityRole="button" onPress={()=>void logout()} style={styles.link}>
-      <Text style={styles.linkTitle}>Sign out</Text></Pressable>
-    <Notice title="Play responsibly" detail="CrownIQ analysis is uncertain. No selection is guaranteed. Set limits and take a break when you need one." />
-    <Pressable onPress={() => Linking.openURL(helpUrl)} style={styles.link}>
-      <Text style={styles.linkTitle}>Get confidential help ↗</Text>
-      <Text style={styles.linkDetail}>Call or text 1-800-MY-RESET · National Problem Gambling Helpline</Text>
-    </Pressable>
-    <Text style={styles.note}>The owner console is separate from this public app.</Text>
-  </Screen>;
+      <Text style={styles.footnote}>CrownIQ analysis is uncertain and no selection is guaranteed. Set limits and take a
+        break when you need one. Confidential help: call or text 1-800-MY-RESET.</Text>
+    </ScrollView>
+
+    <Sheet visible={sheet === 'account'} title="Account" onClose={() => setSheet(null)}>
+      <Text style={styles.sheetLabel}>Display username</Text>
+      <TextInput accessibilityLabel="Display username" autoCapitalize="none" autoCorrect={false} value={name}
+        onChangeText={setName} style={styles.input} placeholder="Your public username" placeholderTextColor={colors.textFaint} />
+      <PrimaryButton label="Update username" onPress={() => void rename()} />
+      {!!message && <Text style={styles.sheetNote}>{message}</Text>}
+      {!!profile?.publicId && !demo && <Text selectable style={styles.sheetNote}>Profile ID: {profile.publicId}</Text>}
+    </Sheet>
+    <Sheet visible={sheet === 'payouts'} title="Payout estimates" onClose={() => setSheet(null)}>
+      <Text style={styles.sheetNote}>Results estimate units with these default PrizePicks Flex multipliers at 1 unit per Crown.
+        PrizePicks sets the real payouts and changes them for Goblins and Demons.</Text>
+      {Object.entries(flexPayouts).map(([legs, table]) => <View key={legs} style={styles.payoutRow}>
+        <Text style={styles.payoutLegs}>{legs} legs</Text>
+        <Text style={styles.payoutValues}>{Object.entries(table).sort((a, b) => Number(b[0]) - Number(a[0]))
+          .map(([hits, multiplier]) => `${hits}/${legs}: ${multiplier}x`).join('   ')}</Text>
+      </View>)}
+    </Sheet>
+  </SafeAreaView>;
 }
 
 const styles = StyleSheet.create({
-  link: { padding: 18, borderColor: palette.green, borderWidth: 1, borderRadius: 18,
-    backgroundColor: palette.greenDim, gap: 8 },
-  linkTitle: { color: palette.green, fontSize: 16, fontWeight: '800' },
-  linkDetail: { color: palette.text, fontSize: 13, lineHeight: 20 },
-  note: { color: palette.muted, fontSize: 12, marginTop: 10 },
-  label:{color:palette.text,fontSize:14,fontWeight:'700'},
-  input:{borderColor:palette.border,borderWidth:1,borderRadius:12,color:palette.text,
-    backgroundColor:palette.card,padding:14,minHeight:48},
+  safe: { flex: 1, backgroundColor: colors.background },
+  content: { paddingHorizontal: 16, paddingBottom: 32, gap: 12 },
+  profile: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.surface, borderWidth: 1.5,
+    borderColor: alpha(colors.mint, 0.5), borderRadius: radius.lg, padding: 14 },
+  avatar: { width: 76, height: 76, borderRadius: 38, borderWidth: 2.5, borderColor: colors.mint, alignItems: 'center',
+    justifyContent: 'center', backgroundColor: colors.mintWash },
+  avatarText: { color: colors.text, fontSize: 32, fontWeight: '800' },
+  profileCopy: { flex: 1, minWidth: 0, gap: 4 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  name: { color: colors.text, fontSize: 23, fontWeight: '900', flexShrink: 1 },
+  email: { color: colors.textMuted, fontSize: 13 },
+  plan: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', borderWidth: 1, borderColor: colors.mint,
+    borderRadius: radius.sm, paddingHorizontal: 10, paddingVertical: 4 },
+  planText: { color: colors.mint, fontSize: 13, fontWeight: '800' },
+  stats: { flexDirection: 'row', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg,
+    paddingVertical: 12 },
+  stat: { flex: 1, alignItems: 'center', gap: 2 },
+  statDivider: { borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.borderStrong },
+  statValue: { color: colors.mint, fontSize: 21, fontWeight: '900' },
+  statLabel: { color: colors.textMuted, fontSize: 12 },
+  heading: { color: colors.text, fontSize: 19, fontWeight: '800', marginTop: 6 },
+  group: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, minHeight: 58 },
+  rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderStrong },
+  locked: { opacity: 0.6 },
+  rowTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
+  rowDetail: { flex: 1, color: colors.textMuted, fontSize: 13, textAlign: 'right' },
+  adminHead: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
+  ownerOnly: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  ownerText: { color: colors.gold, fontSize: 13, fontWeight: '700' },
+  logout: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, minHeight: 54, borderWidth: 1.5,
+    borderColor: alpha(colors.red, 0.6), borderRadius: radius.md, backgroundColor: alpha(colors.red, 0.06), marginTop: 6 },
+  logoutText: { color: colors.red, fontSize: 16, fontWeight: '800' },
+  footnote: { color: colors.textMuted, fontSize: 11.5, lineHeight: 17, textAlign: 'center' },
+  sheetLabel: { color: colors.text, fontSize: 14, fontWeight: '700' },
+  input: { backgroundColor: colors.surfaceSunken, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.md,
+    color: colors.text, fontSize: 16, paddingHorizontal: 14, minHeight: 50 },
+  sheetNote: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
+  payoutRow: { flexDirection: 'row', gap: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.borderStrong },
+  payoutLegs: { color: colors.text, fontSize: 14, fontWeight: '800', width: 60 },
+  payoutValues: { color: colors.textMuted, fontSize: 13, flex: 1 },
 });

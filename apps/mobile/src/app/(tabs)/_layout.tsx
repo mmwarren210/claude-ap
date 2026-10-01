@@ -17,7 +17,7 @@ export default function TabLayout() {
   return <Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.mint,
     tabBarInactiveTintColor: colors.textMuted,
     tabBarStyle: { backgroundColor: colors.background, borderTopColor: colors.border },
-    tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
+    tabBarLabelStyle: { fontSize: 10, fontWeight: '700' },
     tabBarBadgeStyle: { backgroundColor: colors.mint, color: colors.mintInk, fontWeight: '900', fontSize: 11 } }}>
     <Tabs.Screen name="index" options={{ title: 'Board', tabBarIcon: icon('view-grid-outline', 'view-grid') }} />
     <Tabs.Screen name="top-picks" options={{ title: 'Top Picks', tabBarIcon: icon('star-outline', 'star') }} />

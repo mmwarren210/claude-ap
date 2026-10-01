@@ -81,3 +81,20 @@ export function shareCrown(legs: readonly CrownLeg[]): string {
     ...legs.map((leg,index) => `${index+1}. ${leg.line.playerName} · ${leg.line.market} ${leg.direction} ${leg.line.threshold} (${leg.line.lineType}) · GKR ${leg.score}`),
     'Check current lines before playing. Play responsibly.'].join('\n');
 }
+
+/**
+ * Builds a Crown of `size` legs from ranked candidates, starting at `offset` so repeated
+ * calls produce different Crowns. Every leg passes addLeg and the Crown minimum score.
+ */
+export function autoCrown(candidates:readonly {line:PropLine;analysis:Analysis}[],size:number,
+  minimumScore:number,offset=0,nowMs=Date.now()):CrownLeg[]{
+  let legs:CrownLeg[]=[];
+  const ordered=[...candidates.slice(offset),...candidates.slice(0,offset)];
+  for(const {line,analysis} of ordered){
+    if(legs.length===size)break;
+    if(analysis.direction==='PASS'||(analysis.score??0)<minimumScore)continue;
+    const result=addLeg(legs,line,analysis,analysis.direction,nowMs);
+    if(!result.error)legs=result.legs;
+  }
+  return legs;
+}

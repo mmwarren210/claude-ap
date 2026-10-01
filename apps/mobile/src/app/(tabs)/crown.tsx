@@ -1,47 +1,247 @@
-import { Share, Pressable, StyleSheet, Text } from 'react-native';
-import { useState } from 'react';
-import { Notice, Screen } from '../../components/Screen';
-import { useDraft } from '../../use-draft';
-import { shareCrown } from '../../state';
-import { palette } from '../../theme';
+import type { Analysis, PropLine } from '@crowniq/contracts';
+import { router } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
+import { Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../auth';
+import { matchup } from '../../components/BoardCard';
+import { AppHeader } from '../../components/ui/AppHeader';
+import { alpha } from '../../components/ui/color';
+import { GhostButton, PrimaryButton, Segmented } from '../../components/ui/Controls';
+import { GlowCard } from '../../components/ui/GlowCard';
+import { Icon } from '../../components/ui/Icon';
+import { LineBadge } from '../../components/ui/LineBadge';
+import { PlayerAvatar } from '../../components/ui/PlayerAvatar';
+import { ScoreRing } from '../../components/ui/ScoreRing';
+import { crownMinimumLineScore, formatLine, fullHitMultiplier, gameTime, lineStats, marketLabel, signed } from '../../insights';
+import { addLeg, autoCrown, shareCrown } from '../../state';
+import type { CrownLeg } from '../../state';
+import { colors, lineStyleOf, radius, rankAccents } from '../../theme';
+import { useBoard } from '../../use-board';
+import { useDraft } from '../../use-draft';
+import { usePlayerGames } from '../../use-player-games';
+import { useRankings } from '../../use-rankings';
 
-export default function CrownsScreen() {
-  const {request}=useAuth();
-  const {legs,remove}=useDraft();
-  const [message,setMessage]=useState('');
-  const savePrivate=async()=>{
-    try{const response=await request('/v1/me/crowns',{method:'POST',
-      headers:{'content-type':'application/json'},
-      body:JSON.stringify({lineIds:legs.map((leg)=>leg.line.id)})});
-      setMessage(response.ok?'Saved privately to your profile. View it in My Picks.':
-        'Could not validate this Crown. Refresh the Board and check its current lines.');
-    }catch{setMessage('Could not save this Crown. Your device draft remains available.');}
-  };
-  const shareToSocial=async()=>{
-    try {const response=await request('/v1/social/crowns',
-      {method:'POST',headers:{'content-type':'application/json'},
-        body:JSON.stringify({lineIds:legs.map((leg)=>leg.line.id)})});
-      setMessage(response.ok?'Shared to Social.':'Social sharing requires a signed-in account and current valid lines.');
-    }catch{setMessage('Unable to reach Social. Your Crown draft is still private.');}
-  };
-  return <Screen eyebrow="CROWNIQ  /  BUILDER" title="Crowns">
-    <Notice title={`${legs.length} draft ${legs.length===1?'leg':'legs'}`}
-      detail="This draft is private to your profile on this device. Save it to your profile after server validation to access it on other devices." />
-    {legs.map((leg)=><Pressable key={leg.line.id} style={styles.leg} accessibilityRole="button"
-      onPress={()=>remove(leg.line.id)} accessibilityLabel={`Remove ${leg.line.playerName}`}>
-      <Text style={styles.name}>{leg.line.playerName} · {leg.line.market}</Text>
-      <Text style={styles.detail}>{leg.direction} {leg.line.threshold} · {leg.line.lineType} · GKR {leg.score} · Remove</Text>
-    </Pressable>)}
-    {!!legs.length && <Pressable style={styles.leg} onPress={()=>void Share.share({message:shareCrown(legs)})}>
-      <Text style={styles.name}>Share Crown draft</Text></Pressable>}
-    {legs.length>=2 && <Pressable style={styles.leg} onPress={()=>void savePrivate()}>
-      <Text style={styles.name}>Save private Crown</Text></Pressable>}
-    {legs.length>=2 && <Pressable style={styles.leg} onPress={()=>void shareToSocial()}>
-      <Text style={styles.name}>Share to Social (public)</Text></Pressable>}
-    {!!message && <Text accessibilityRole="alert" style={styles.detail}>{message}</Text>}
-  </Screen>;
+const sizes = [2, 3, 4, 5, 6].map((value) => ({ value, label: `Top ${value}` }));
+
+function defaultName(legs: readonly CrownLeg[]): string {
+  const counts = { KINGS: 0, GOBLIN: 0, DEMON: 0, UNKNOWN: 0 };
+  for (const leg of legs) counts[lineStyleOf(leg.line.lineType)]++;
+  if (counts.DEMON > legs.length / 2) return 'Demon Line';
+  if (counts.GOBLIN > legs.length / 2) return 'Goblin Line';
+  return "King's Crown";
 }
-const styles=StyleSheet.create({leg:{padding:16,borderWidth:1,borderColor:palette.border,
-  backgroundColor:palette.card,borderRadius:16,minHeight:56,gap:6},
-  name:{color:palette.text,fontWeight:'700'},detail:{color:palette.muted,fontSize:12}});
+
+function LegCard({ leg, accent, photoUrl, minimum, onRemove, onEdge }: { leg: CrownLeg; accent: string;
+  photoUrl: string | null | undefined; minimum: number; onRemove: () => void; onEdge: (edge: number | null) => void }) {
+  const { log } = usePlayerGames(leg.line);
+  const edge = lineStats(log, leg.line.threshold, leg.direction, 'L10').edge;
+  useEffect(() => { onEdge(edge); }, [edge, onEdge]);
+  const below = leg.score < minimum;
+  return <View style={[styles.leg, { borderColor: alpha(accent, 0.55) }]}>
+    <PlayerAvatar name={leg.line.playerName} photoUrl={photoUrl} ring={accent} size={58} />
+    <Pressable accessibilityRole="button" style={styles.legBody}
+      onPress={() => router.push({ pathname: '/player/[lineId]', params: { lineId: leg.line.id } })}>
+      <Text style={styles.legName} numberOfLines={1}>{leg.line.playerName}</Text>
+      <Text style={styles.legMeta} numberOfLines={1}>{leg.line.team ? `${leg.line.team} · ` : ''}{matchup(leg.line)} ·{' '}
+        {gameTime(leg.line.eventStartTime)}</Text>
+      <View style={styles.legPick}><Text style={styles.legMarket}>{marketLabel(leg.line.market)}</Text>
+        <Text style={styles.legLine}>{leg.direction} {formatLine(leg.line.threshold)}</Text></View>
+      {below && <Text style={styles.legWarn}>Below the {minimum} minimum for this Crown size</Text>}
+    </Pressable>
+    <View style={styles.legSide}>
+      <LineBadge lineType={leg.line.lineType} compact />
+      <ScoreRing score={leg.score} band={leg.score >= 92 ? 'CROWN_ELITE' : leg.score >= 86 ? 'CROWN_STRONG' : leg.score >= 80
+        ? 'PLAYABLE' : leg.score >= 74 ? 'LEAN' : 'WEAK'} size={54} />
+    </View>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${leg.line.playerName}`} onPress={onRemove}
+      hitSlop={8} style={styles.remove}><Icon name="close" size={18} color={colors.textMuted} /></Pressable>
+  </View>;
+}
+
+function Suggestion({ line, analysis, photoUrl, onAdd }: { line: PropLine; analysis: Analysis; photoUrl: string | null | undefined;
+  onAdd: () => void }) {
+  return <View style={styles.suggestion}>
+    <View style={styles.suggestionTop}>
+      <PlayerAvatar name={line.playerName} photoUrl={photoUrl} size={44} ring={colors.borderStrong} />
+      <View style={styles.legBody}><Text style={styles.suggestionName} numberOfLines={1}>{line.playerName}</Text>
+        <Text style={styles.legMeta} numberOfLines={1}>{marketLabel(line.market)}</Text>
+        <Text style={styles.suggestionLine}>{analysis.direction} {formatLine(line.threshold)}</Text></View>
+      <ScoreRing score={analysis.score} band={analysis.scoreBand} size={48} />
+    </View>
+    <GhostButton label="Add" icon="plus" onPress={onAdd} style={styles.suggestionAdd} />
+  </View>;
+}
+
+export default function CrownScreen() {
+  const { request, demo } = useAuth();
+  const { data: board, nowMs } = useBoard();
+  const { data: ranked } = useRankings();
+  const { legs, remove, add, replace } = useDraft();
+  const [size, setSize] = useState(4);
+  const [offset, setOffset] = useState(0);
+  const [built, setBuilt] = useState(false);
+  const [name, setName] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [edges, setEdges] = useState<Record<string, number | null>>({});
+  const [message, setMessage] = useState('');
+  const analyses = useMemo(() => new Map(board?.analyses.map((item) => [item.lineId, item])), [board]);
+  const lines = useMemo(() => new Map(board?.board.lines.map((item) => [item.id, item])), [board]);
+  const candidates = useMemo(() => (ranked?.rankings ?? []).flatMap((card) => {
+    const line = lines.get(card.lineId), analysis = analyses.get(card.lineId);
+    return line && analysis && Date.parse(line.eventStartTime) > nowMs ? [{ line, analysis }] : [];
+  }), [ranked, lines, analyses, nowMs]);
+  const minimum = crownMinimumLineScore[Math.max(2, Math.min(6, legs.length || size))] ?? 80;
+  const crownName = name ?? defaultName(legs);
+  const average = legs.length ? legs.reduce((sum, leg) => sum + leg.score, 0) / legs.length : null;
+  const elite = legs.filter((leg) => analyses.get(leg.line.id)?.evidenceQuality === 'HIGH').length;
+  const knownEdges = legs.map((leg) => edges[leg.line.id]).filter((edge): edge is number => typeof edge === 'number');
+  const avgEdge = knownEdges.length ? knownEdges.reduce((sum, edge) => sum + edge, 0) / knownEdges.length : null;
+  const confidence = average === null ? '—' : average >= 90 ? 'High' : average >= 85 ? 'Strong' : average >= 80 ? 'Solid' : 'Low';
+  const multiplier = fullHitMultiplier(legs.length);
+  const suggestions = candidates.filter(({ line }) => !legs.some((leg) => leg.line.id === line.id))
+    .filter(({ line, analysis }) => analysis.direction !== 'PASS' &&
+      !addLeg(legs, line, analysis, analysis.direction, nowMs).error).slice(0, 2);
+
+  const generate = () => {
+    const next = autoCrown(candidates, size, crownMinimumLineScore[size], built ? offset + 1 : 0, nowMs);
+    setOffset(built ? offset + 1 : 0); setBuilt(true); setName(null); replace(next);
+    setMessage(next.length < size ? `Only ${next.length} picks meet the ${crownMinimumLineScore[size]} minimum for a ` +
+      `${size}-leg Crown right now.` : '');
+  };
+  const save = async (path: string, done: string) => {
+    try {
+      const response = await request(path, { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ lineIds: legs.map((leg) => leg.line.id) }) });
+      if (response.ok) { setMessage(done); return; }
+      const body = await response.json().catch(() => ({})) as { code?: string };
+      setMessage(body.code === 'DEMO_READ_ONLY' ? 'Demo mode is read-only. Sign in to save Crowns.'
+        : 'This Crown did not pass validation. Check that every leg is still on the board and meets the minimum score.');
+    } catch { setMessage('Could not reach CrownIQ. Your draft is still on this device.'); }
+  };
+
+  return <SafeAreaView style={styles.safe} edges={['top']}>
+    <ScrollView contentContainerStyle={styles.content}>
+      <AppHeader subtitle="Your Crown" />
+      <Segmented label="Crown size" options={sizes} value={size} onChange={setSize} />
+      <GlowCard accent={colors.mint}>
+        <View style={styles.summary}>
+          <Icon name="crown" size={54} color={colors.neon} />
+          <View style={styles.summaryCopy}>
+            {editing ? <TextInput value={crownName} onChangeText={setName} onBlur={() => setEditing(false)} autoFocus
+              style={styles.nameInput} accessibilityLabel="Crown name" maxLength={30} />
+              : <Pressable accessibilityRole="button" onPress={() => setEditing(true)} style={styles.nameRow}>
+                <Text style={styles.crownName} numberOfLines={1}>{crownName}</Text>
+                <Icon name="pencil-outline" size={18} color={colors.textMuted} /></Pressable>}
+            <Text style={styles.summaryMeta}>{legs.length} {legs.length === 1 ? 'Leg' : 'Legs'} · {built ? 'Auto-built' : 'Hand-picked'}</Text>
+            <View style={styles.confidence}><Icon name="creation" size={15} color={colors.mint} />
+              <Text style={styles.confidenceText}>{confidence} confidence</Text></View>
+          </View>
+        </View>
+        <View style={styles.metrics}>
+          <View style={styles.metric}><Text style={styles.metricValue}>{average === null ? '—' : average.toFixed(1)}</Text>
+            <Text style={styles.metricLabel}>Avg GKR Score</Text></View>
+          <View style={[styles.metric, styles.metricDivider]}><Text style={styles.metricValue}>{elite}/{legs.length}</Text>
+            <Text style={styles.metricLabel}>Strong Evidence</Text></View>
+          <View style={[styles.metric, styles.metricDivider]}><Text style={styles.metricValue}>
+            {avgEdge === null ? '—' : `${signed(avgEdge * 100)}%`}</Text><Text style={styles.metricLabel}>Avg Edge</Text></View>
+        </View>
+      </GlowCard>
+
+      {legs.length === 0 && <View style={styles.empty}><Text style={styles.emptyTitle}>Your Crown is empty</Text>
+        <Text style={styles.emptyText}>Add picks from Top Picks or a player’s research screen, or let CrownIQ build one.</Text></View>}
+      {legs.map((leg, index) => <LegCard key={leg.line.id} leg={leg} accent={rankAccents[index % rankAccents.length]}
+        photoUrl={board?.playerMedia?.[leg.line.playerId]?.photoUrl} minimum={minimum} onRemove={() => remove(leg.line.id)}
+        onEdge={(edge) => setEdges((current) => current[leg.line.id] === edge ? current : { ...current, [leg.line.id]: edge })} />)}
+
+      {suggestions.length > 0 && legs.length < 6 && <View style={styles.panel}>
+        <View style={styles.panelHead}><Icon name="swap-horizontal" size={22} color={colors.mint} />
+          <View style={styles.legBody}><Text style={styles.panelTitle}>Swap Suggestions</Text>
+            <Text style={styles.legMeta}>Qualified picks that fit this Crown’s rules</Text></View>
+          <Pressable accessibilityRole="button" onPress={() => router.push('/(tabs)/top-picks')}>
+            <Text style={styles.link}>View More</Text></Pressable></View>
+        <View style={styles.suggestions}>{suggestions.map(({ line, analysis }) => <Suggestion key={line.id} line={line}
+          analysis={analysis} photoUrl={board?.playerMedia?.[line.playerId]?.photoUrl}
+          onAdd={() => setMessage(add(line, analysis, analysis.direction as 'MORE' | 'LESS') ?? `Added ${line.playerName}.`)} />)}</View>
+      </View>}
+
+      <GlowCard accent={colors.mint}>
+        <View style={styles.panelHead}><Icon name="chart-bar" size={26} color={colors.mint} />
+          <View style={styles.legBody}><Text style={styles.panelTitle}>Projected Outcome</Text>
+            <Text style={styles.legMeta}>Estimated Flex payout if every leg hits</Text></View></View>
+        <View style={styles.metrics}>
+          <View style={styles.metric}><Text style={styles.metricValue}>{multiplier ? `${multiplier}x` : '—'}</Text>
+            <Text style={styles.metricLabel}>Est. Multiplier</Text></View>
+          <View style={[styles.metric, styles.metricDivider]}><Text style={styles.metricValue}>{legs.length || '—'}</Text>
+            <Text style={styles.metricLabel}>Legs</Text></View>
+          <View style={[styles.metric, styles.metricDivider]}><Text style={styles.metricValue}>{confidence}</Text>
+            <Text style={styles.metricLabel}>Confidence</Text></View>
+        </View>
+        <Text style={styles.disclaimer}>No win probability is shown: CrownIQ’s model is not calibrated yet. Payouts are
+          estimates; PrizePicks sets the real multiplier, which changes for Goblins and Demons.</Text>
+        <View style={styles.actions}>
+          <PrimaryButton label={built ? 'Generate New' : 'Generate'} icon="shuffle-variant" onPress={generate}
+            style={styles.action} disabled={!candidates.length} />
+          <GhostButton label="Save Crown" icon="crown" onPress={() => void save('/v1/me/crowns',
+            'Saved privately to your profile. Track it in Results.')} disabled={legs.length < 2} style={styles.action} />
+        </View>
+      </GlowCard>
+      {!!message && <Text accessibilityRole="alert" style={styles.message}>{message}</Text>}
+      {legs.length >= 2 && <View style={styles.actions}>
+        <GhostButton label="Share text" icon="share-variant-outline" onPress={() => void Share.share({ message: shareCrown(legs) })}
+          style={styles.action} />
+        <GhostButton label={demo ? 'Share (sign in)' : 'Share to Social'} icon="account-group-outline" style={styles.action}
+          onPress={() => void save('/v1/social/crowns', 'Shared to Social.')} />
+      </View>}
+    </ScrollView>
+  </SafeAreaView>;
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: colors.background },
+  content: { paddingHorizontal: 16, paddingBottom: 32, gap: 14 },
+  summary: { flexDirection: 'row', gap: 12, alignItems: 'center' },
+  summaryCopy: { flex: 1, minWidth: 0, gap: 3 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  crownName: { color: colors.text, fontSize: 23, fontWeight: '900', flexShrink: 1 },
+  nameInput: { color: colors.text, fontSize: 21, fontWeight: '800', borderBottomWidth: 1, borderColor: colors.mint, paddingVertical: 2 },
+  summaryMeta: { color: colors.textMuted, fontSize: 14 },
+  confidence: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  confidenceText: { color: colors.mint, fontSize: 13, fontWeight: '700' },
+  metrics: { flexDirection: 'row', marginTop: 14 },
+  metric: { flex: 1, alignItems: 'center', gap: 2 },
+  metricDivider: { borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.borderStrong },
+  metricValue: { color: colors.text, fontSize: 20, fontWeight: '900' },
+  metricLabel: { color: colors.textMuted, fontSize: 12 },
+  empty: { alignItems: 'center', gap: 6, paddingVertical: 14 },
+  emptyTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
+  emptyText: { color: colors.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 19 },
+  leg: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: colors.surface, borderWidth: 1.5,
+    borderRadius: radius.lg, padding: 12 },
+  legBody: { flex: 1, minWidth: 0, gap: 2 },
+  legName: { color: colors.text, fontSize: 17, fontWeight: '800' },
+  legMeta: { color: colors.textMuted, fontSize: 12.5 },
+  legPick: { marginTop: 4, alignSelf: 'flex-start', borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
+    paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.surfaceSunken },
+  legMarket: { color: colors.text, fontSize: 12.5, fontWeight: '700' },
+  legLine: { color: colors.mint, fontSize: 19, fontWeight: '900' },
+  legWarn: { color: colors.amber, fontSize: 11.5, marginTop: 2 },
+  legSide: { alignItems: 'center', gap: 6, marginRight: 18 },
+  remove: { position: 'absolute', top: 10, right: 8 },
+  panel: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg,
+    padding: 12, gap: 12 },
+  panelHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  panelTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
+  link: { color: colors.mint, fontSize: 13, fontWeight: '800' },
+  suggestions: { gap: 8 },
+  suggestion: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.md, padding: 10,
+    gap: 8, backgroundColor: colors.surfaceSunken },
+  suggestionTop: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  suggestionName: { color: colors.text, fontSize: 14, fontWeight: '800' },
+  suggestionLine: { color: colors.mint, fontSize: 15, fontWeight: '900' },
+  suggestionAdd: { minHeight: 40, paddingHorizontal: 12 },
+  disclaimer: { color: colors.textMuted, fontSize: 11.5, lineHeight: 16, marginTop: 12 },
+  actions: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  action: { flex: 1 },
+  message: { color: colors.mint, fontSize: 13, fontWeight: '700' },
+});

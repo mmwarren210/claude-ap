@@ -10,7 +10,9 @@ import { useBoard } from './use-board';
 type DraftContext={legs:CrownLeg[];filters:Filters;setFilters:(next:Filters)=>void;
   viewMode:ViewMode;setViewMode:(mode:ViewMode)=>void;ready:boolean;
   add:(line:PropLine,analysis:Analysis,direction:PlayableDirection)=>string|null;
-  remove:(lineId:string)=>void};
+  remove:(lineId:string)=>void;
+  /** Replace every leg at once, e.g. with an auto-built Crown. */
+  replace:(next:CrownLeg[])=>void};
 const Context=createContext<DraftContext|null>(null);
 export function DraftProvider({children,profileId}:{children:ReactNode;profileId:string}) {
   const [legs,setLegs]=useState<CrownLeg[]>([]);
@@ -32,7 +34,8 @@ export function DraftProvider({children,profileId}:{children:ReactNode;profileId
       const result=addLeg(legs,line,analysis,direction,nowMs);
       if(!result.error)setLegs(result.legs);
       return result.error;
-    },remove:(lineId)=>setLegs((current)=>current.filter((leg)=>leg.line.id!==lineId))}}>
+    },remove:(lineId)=>setLegs((current)=>current.filter((leg)=>leg.line.id!==lineId)),
+    replace:(next)=>setLegs(next)}}>
     {children}
   </Context.Provider>;
 }
