@@ -1,0 +1,28 @@
+{
+  "name": "@crowniq/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@crowniq/contracts": "0.1.0",
+    "@crowniq/engine": "0.1.0",
+    "dotenv": "^17.2.0",
+    "fastify": "^5.12.5",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "dev": "node --import tsx --watch src/main.ts",
+    "start": "node --import tsx src/main.ts",
+    "pull:prizepicks": "node --import tsx scripts/pull-prizepicks.ts",
+    "audit:nfl": "node --import tsx scripts/audit-nfl-passing.ts",
+    "plan:research": "node --import tsx scripts/plan-web-research.ts",
+    "run:research": "node --import tsx scripts/run-web-research.ts",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "crowniq-ai",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:mobile": "npm run start -w @crowniq/mobile",
+    "dev:api": "npm run dev -w @crowniq/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint -w @crowniq/mobile",
+    "doctor": "npm exec -w @crowniq/mobile -- expo-doctor"
+  },
+  "engines": { "node": ">=22.13.0" }
+}

@@ -1,0 +1,586 @@
+import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import type { Analysis, BoardResponse, Evidence, PropLine } from '@crowniq/contracts';
+import { auditCrown } from '@crowniq/engine';
+import type { CorrelationPolicy, CrownSize } from '@crowniq/engine';
+import { z } from 'zod';
+
+export const resultFactSchema=z.object({eventId:z.string().min(1),playerId:z.string().min(1),
+  market:z.string().min(1),status:z.enum(['FINAL','DNP','VOID']),
+  actual:z.number().finite().nullable(),sourceName:z.string().min(1),sourceUrl:z.url(),
+  completedAt:z.iso.datetime({offset:true})}).superRefine((value,ctx)=>{
+  if((value.status==='FINAL') !== (value.actual!==null)) ctx.addIssue({code:'custom',message:'FINAL requires actual; DNP/VOID cannot have an actual'});
+});
+export type ResultFact=z.infer<typeof resultFactSchema>;
+export type Outcome='PENDING'|'WIN'|'LOSS'|'PUSH'|'DNP'|'VOID';
+export interface TrackedDecision {
+  trackedPickId:string;playerId:string;playerName:string;sport:string;league:string;
+  team:string|null;opponent:string|null;eventId:string;eventStartTime:string;market:string;
+  exactLine:number;direction:'MORE'|'LESS';lineType:string;contextScore:number|null;
+  dataConfidence?:number|null;lineScore:number;boardRank:number|null;scoreBand:string;dangerZone:boolean;
+  thresholdCushion:number|null;evidenceQuality:string;evidenceFreshness:string|null;
+  modelVersion:string;researchSnapshotId:string;evidenceSnapshot:Evidence[];
+  createdAt:string;providerLineId:string;lineId:string;analysisSnapshot:Analysis;
+  lineSnapshot:PropLine;
+  grade:Outcome;actualResult:number|null;resultStatus:ResultFact['status']|null;
+  gradedAt:string|null;resultSourceName:string|null;resultSourceUrl:string|null;
+}
+export interface DecisionHistorySink {recordGradedDecision(decision:TrackedDecision):Promise<void>}
+export interface PublicProfile {publicId:string;actorKey:string;displayName:string;avatarUrl:string|null;
+  socialEnabled:boolean;profileVisible:boolean;isSuspended:boolean;createdAt:string}
+export interface PublicCrown {publicCrownId:string;ownerPublicId:string;createdAt:string;
+  legs:{trackedPickId:string;playerName:string;market:string;exactLine:number;
+    direction:'MORE'|'LESS';lineType:string;lineScore:number;modelVersion:string;
+    eventId:string;playerId:string;sport:string}[];unsharedAt:string|null}
+export interface Follow {followerPublicId:string;followedPublicId:string;createdAt:string}
+type IdentityProvider='GOOGLE'|'APPLE';
+interface Account {id:string;username:string;email:string|null;passwordSalt:string|null;
+  passwordHash:string|null;identities:{provider:IdentityProvider;subject:string}[];
+  createdAt:string;status:'FREE'|'SUSPENDED'}
+interface Session {hash:string;accountId:string;expiresAt:string;createdAt:string}
+interface SavedPick {accountId:string;trackedPickId:string;savedAt:string;removedAt:string|null}
+interface PrivateCrown {id:string;accountId:string;trackedPickIds:string[];savedAt:string;removedAt:string|null}
+interface LegacyData {version:1;decisions:TrackedDecision[];profiles:PublicProfile[];
+  crowns:PublicCrown[];follows:Follow[];publicCredits:{publicId:string;trackedPickId:string}[]}
+interface Data extends Omit<LegacyData,'version'> {version:2;accounts:Account[];sessions:Session[];
+  savedPicks:SavedPick[];privateCrowns:PrivateCrown[]}
+const blank=():Data=>({version:2,decisions:[],profiles:[],crowns:[],follows:[],
+  publicCredits:[],accounts:[],sessions:[],savedPicks:[],privateCrowns:[]});
+const passwordKey=(password:string,salt:string)=>new Promise<Buffer>((resolve,reject)=>
+  scrypt(password,Buffer.from(salt,'hex'),64,{N:16384,r:8,p:1},
+    (error,key)=>error?reject(error):resolve(key as Buffer)));
+const tokenHash=(token:string)=>createHash('sha256').update(token).digest('hex');
+const normalizedEmail=(email:string)=>email.trim().toLowerCase();
+const normalizedName=(name:string)=>name.trim().toLowerCase();
+type EvidenceLookup=readonly Evidence[]|Map<string,Evidence>;
+const selectedEvidence=(analysis:Analysis,evidence:EvidenceLookup)=>
+  (evidence instanceof Map ? analysis.evidenceIds.flatMap((id)=>{
+    const item=evidence.get(id);return item?[item]:[];
+  }) : evidence.filter((item)=>analysis.evidenceIds.includes(item.id)))
+    .sort((a,b)=>a.id.localeCompare(b.id));
+const signature=(line:PropLine,analysis:Analysis,evidence:EvidenceLookup)=>JSON.stringify([line.playerId,line.eventId,
+  line.market,line.threshold,analysis.direction,line.lineType,analysis.modelVersion,
+  analysis.score,analysis.contextScore,analysis.scoreBreakdown,selectedEvidence(analysis,evidence)]);
+const idFor=(line:PropLine,analysis:Analysis,evidence:EvidenceLookup)=>createHash('sha256')
+  .update(signature(line,analysis,evidence)).digest('hex');
+const eligible=(line:PropLine,analysis:Analysis)=>analysis.direction!=='PASS' &&
+  analysis.score!==null && !!analysis.modelVersion && line.lineType!=='UNKNOWN_ALTERNATE' &&
+  line.availableDirections.includes(analysis.direction) && analysis.lineId===line.id;
+
+function snapshot(line:PropLine,analysis:Analysis,evidence:EvidenceLookup,rank:number|null,
+  now:Date):TrackedDecision {
+  if(!eligible(line,analysis))throw new Error('INELIGIBLE_DECISION');
+  const selected=selectedEvidence(analysis,evidence);
+  return {trackedPickId:idFor(line,analysis,evidence),playerId:line.playerId,playerName:line.playerName,
+    sport:line.sport,league:line.league,team:line.team,opponent:line.opponent,eventId:line.eventId,
+    eventStartTime:line.eventStartTime,market:line.market,exactLine:line.threshold,
+    direction:analysis.direction as 'MORE'|'LESS',lineType:line.lineType,
+    contextScore:analysis.contextScore??null,dataConfidence:analysis.dataConfidence??null,
+    lineScore:analysis.score!,boardRank:rank,
+    scoreBand:analysis.scoreBand??'UNKNOWN',dangerZone:analysis.dangerZone,
+    thresholdCushion:analysis.thresholdCushion??null,evidenceQuality:analysis.evidenceQuality,
+    evidenceFreshness:analysis.evidenceExpiresAt??null,modelVersion:analysis.modelVersion!,
+    researchSnapshotId:createHash('sha256').update(JSON.stringify(selected)).digest('hex'),
+    evidenceSnapshot:selected.map((item)=>structuredClone(item)),createdAt:now.toISOString(),
+    providerLineId:line.sourceLineId,lineId:line.id,analysisSnapshot:structuredClone(analysis),
+    lineSnapshot:structuredClone(line),
+    grade:'PENDING',actualResult:null,resultStatus:null,gradedAt:null,
+    resultSourceName:null,resultSourceUrl:null};
+}
+
+function publicView(data:Data,crown:PublicCrown) {
+  return {publicCrownId:crown.publicCrownId,ownerPublicId:crown.ownerPublicId,
+    createdAt:crown.createdAt,legs:crown.legs.map((leg)=>({playerName:leg.playerName,
+      market:leg.market,exactLine:leg.exactLine,direction:leg.direction,
+      lineType:leg.lineType,lineScore:leg.lineScore,modelVersion:leg.modelVersion,
+      grade:data.decisions.find((decision)=>decision.trackedPickId===leg.trackedPickId)?.grade??'PENDING'}))};
+}
+function recordFor(data:Data,publicId:string) {
+  const credited=new Set(data.publicCredits.filter((item)=>item.publicId===publicId)
+    .map((item)=>item.trackedPickId));
+  const grades=data.decisions.filter((item)=>credited.has(item.trackedPickId)).map((item)=>item.grade);
+  const wins=grades.filter((grade)=>grade==='WIN').length,losses=grades.filter((grade)=>grade==='LOSS').length;
+  const pushes=grades.filter((grade)=>grade==='PUSH').length;
+  const dnp=grades.filter((grade)=>grade==='DNP').length,voids=grades.filter((grade)=>grade==='VOID').length;
+  return {wins,losses,pushes,dnp,voids,graded:wins+losses+pushes,
+    hitRate:wins+losses?wins/(wins+losses):null};
+}
+function leaders(data:Data){return data.profiles.filter((item)=>item.socialEnabled &&
+  item.profileVisible && !item.isSuspended).map((profile)=>({publicId:profile.publicId,
+    displayName:profile.displayName,avatarUrl:profile.avatarUrl,...recordFor(data,profile.publicId)}))
+  .filter((item)=>item.graded>=20).sort((a,b)=>b.wins-a.wins ||
+    (b.hitRate??0)-(a.hitRate??0) || b.graded-a.graded || a.publicId.localeCompare(b.publicId))
+  .slice(0,10);}
+
+/** Single-process durable JSON ledger; no separate DB or provider requests. */
+export class ProductLedger {
+  private chain:Promise<unknown>=Promise.resolve();
+  private authCache:{accounts:Map<string,Account>;profiles:Map<string,PublicProfile>;
+    sessions:Map<string,Session>}|null=null;
+  private topCache:{expires:number;value:unknown}|null=null;
+  private recentCache:{expires:number;value:ReturnType<typeof publicView>[]} |null=null;
+  constructor(private readonly path:string,private readonly minimumBand:'PLAYABLE'|'CROWN_STRONG'='CROWN_STRONG',
+    private readonly clock:()=>Date=()=>new Date(),
+    private readonly correlationPolicy?:CorrelationPolicy,
+    private readonly historySink?:DecisionHistorySink){}
+  private async read():Promise<Data> {
+    try {const value=JSON.parse(await readFile(this.path,'utf8')) as Data|LegacyData;
+      if((value.version!==1 && value.version!==2) || !Array.isArray(value.decisions) || !Array.isArray(value.profiles) ||
+        !Array.isArray(value.crowns) || !Array.isArray(value.follows) || !Array.isArray(value.publicCredits))
+        throw new Error('INVALID_PRODUCT_LEDGER');
+      if(value.version===1)return {...value,version:2,accounts:[],sessions:[],savedPicks:[],privateCrowns:[]};
+      if(!Array.isArray(value.accounts)||!Array.isArray(value.sessions)||
+        !Array.isArray(value.savedPicks)||!Array.isArray(value.privateCrowns))
+        throw new Error('INVALID_PRODUCT_LEDGER');
+      return value;
+    } catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return blank();throw error;}
+  }
+  private async write(value:Data){
+    await mkdir(dirname(this.path),{recursive:true});
+    const temporary=`${this.path}.${randomUUID()}.tmp`;
+    try {await writeFile(temporary,JSON.stringify(value),{mode:0o600});await rename(temporary,this.path);}
+    finally {await rm(temporary,{force:true});}
+    this.indexAuth(value);
+    this.topCache=null;
+    this.recentCache=null;
+  }
+  private indexAuth(data:Data){this.authCache={
+    accounts:new Map(data.accounts.map((item)=>[item.id,item])),
+    profiles:new Map(data.profiles.map((item)=>[item.actorKey,item])),
+    sessions:new Map(data.sessions.map((item)=>[item.hash,item])),
+  };}
+  private exclusive<T>(task:()=>Promise<T>):Promise<T>{
+    const result=this.chain.then(task);this.chain=result.catch(()=>undefined);return result;
+  }
+  private session(data:Data,account:Account){
+    const token=randomBytes(32).toString('base64url'),now=this.clock().toISOString();
+    const active=data.sessions.filter((item)=>Date.parse(item.expiresAt)>this.clock().getTime());
+    const recent=new Set(active.filter((item)=>item.accountId===account.id)
+      .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,9).map((item)=>item.hash));
+    data.sessions=active.filter((item)=>item.accountId!==account.id || recent.has(item.hash));
+    data.sessions.push({hash:tokenHash(token),accountId:account.id,createdAt:now,
+      expiresAt:new Date(this.clock().getTime()+30*24*60*60_000).toISOString()});
+    const profile=data.profiles.find((item)=>item.actorKey===account.id)!;
+    return {token,profile:{publicId:profile.publicId,username:account.username,
+      email:account.email,plan:account.status}};
+  }
+  async register(email:string,password:string,username:string){return this.exclusive(async()=>{
+    const data=await this.read(),name=username.trim(),address=normalizedEmail(email);
+    if(data.accounts.some((item)=>item.email===address))throw new Error('EMAIL_TAKEN');
+    if(data.profiles.some((item)=>normalizedName(item.displayName)===normalizedName(name)))
+      throw new Error('USERNAME_TAKEN');
+    const salt=randomBytes(16).toString('hex'),hash=(await passwordKey(password,salt)).toString('hex');
+    const account:Account={id:randomUUID(),username:name,email:address,passwordSalt:salt,
+      passwordHash:hash,identities:[],createdAt:this.clock().toISOString(),status:'FREE'};
+    data.accounts.push(account);data.profiles.push({publicId:randomUUID(),actorKey:account.id,
+      displayName:name,avatarUrl:null,socialEnabled:true,profileVisible:true,
+      isSuspended:false,createdAt:account.createdAt});
+    const result=this.session(data,account);await this.write(data);return result;
+  });}
+  async login(email:string,password:string){return this.exclusive(async()=>{
+    const data=await this.read(),account=data.accounts.find((item)=>item.email===normalizedEmail(email));
+    // Keep the work comparable for unknown emails and wrong passwords.
+    const actual=await passwordKey(password,account?.passwordSalt??'0'.repeat(32));
+    const stored=Buffer.from(account?.passwordHash??'0'.repeat(128),'hex');
+    if(!account?.passwordHash || !timingSafeEqual(actual,stored) || account.status==='SUSPENDED')
+      throw new Error('INVALID_CREDENTIALS');
+    const result=this.session(data,account);await this.write(data);return result;
+  });}
+  async loginWithProvider(provider:IdentityProvider,subject:string,email:string|null,username?:string){
+    return this.exclusive(async()=>{
+      const data=await this.read();let account=data.accounts.find((item)=>item.identities.some((identity)=>
+        identity.provider===provider && identity.subject===subject));
+      if(!account){
+        if(!username)throw new Error('USERNAME_REQUIRED');
+        if(email && data.accounts.some((item)=>item.email===normalizedEmail(email)))
+          throw new Error('ACCOUNT_LINK_REQUIRED');
+        if(data.profiles.some((item)=>normalizedName(item.displayName)===normalizedName(username)))
+          throw new Error('USERNAME_TAKEN');
+        account={id:randomUUID(),username:username.trim(),email:email?normalizedEmail(email):null,
+          passwordHash:null,passwordSalt:null,identities:[{provider,subject}],
+          createdAt:this.clock().toISOString(),status:'FREE'};
+        data.accounts.push(account);data.profiles.push({publicId:randomUUID(),actorKey:account.id,
+          displayName:account.username,avatarUrl:null,socialEnabled:true,profileVisible:true,
+          isSuspended:false,createdAt:account.createdAt});
+      }
+      if(account.status==='SUSPENDED')throw new Error('ACCOUNT_SUSPENDED');
+      const result=this.session(data,account);await this.write(data);return result;
+    });
+  }
+  async linkProvider(accountId:string,provider:IdentityProvider,subject:string){return this.exclusive(async()=>{
+    const data=await this.read(),account=data.accounts.find((item)=>item.id===accountId);
+    if(!account || data.accounts.some((item)=>item.identities.some((identity)=>
+      identity.provider===provider && identity.subject===subject)))throw new Error('IDENTITY_ALREADY_LINKED');
+    if(account.identities.some((item)=>item.provider===provider))throw new Error('PROVIDER_ALREADY_LINKED');
+    account.identities.push({provider,subject});await this.write(data);
+    return {linked:true,provider};
+  });}
+  async authenticate(token:string){return this.exclusive(async()=>{
+    if(token.length<32 || token.length>100)return null;
+    if(!this.authCache)this.indexAuth(await this.read());
+    const session=this.authCache!.sessions.get(tokenHash(token));
+    if(!session||Date.parse(session.expiresAt)<=this.clock().getTime())return null;
+    const account=this.authCache!.accounts.get(session.accountId);
+    if(!account)return null;
+    if(account.status==='SUSPENDED')return null;
+    const profile=this.authCache!.profiles.get(account.id);
+    return profile?{accountId:account.id,publicId:profile.publicId,username:account.username,
+      email:account.email,plan:account.status}:null;
+  });}
+  async logout(token:string){return this.exclusive(async()=>{
+    const data=await this.read(),before=data.sessions.length;
+    data.sessions=data.sessions.filter((item)=>item.hash!==tokenHash(token));
+    if(data.sessions.length!==before)await this.write(data);
+  });}
+  async saveUserPick(accountId:string,lineId:string,board:BoardResponse,evidence:readonly Evidence[]){
+    return this.exclusive(async()=>{
+      const data=await this.read(),account=data.accounts.find((item)=>item.id===accountId);
+      const line=board.board.lines.find((item)=>item.id===lineId),
+        analysis=board.analyses.find((item)=>item.lineId===lineId);
+      if(!account || account.status==='SUSPENDED' || !line || !analysis || !eligible(line,analysis) ||
+        Date.parse(line.eventStartTime)<=this.clock().getTime() ||
+        analysis.evidenceExpiresAt && Date.parse(analysis.evidenceExpiresAt)<=this.clock().getTime())
+        throw new Error('INVALID_OR_STALE_PICK');
+      const candidate=snapshot(line,analysis,evidence,
+        board.rankedLineIds.indexOf(lineId)<0?null:board.rankedLineIds.indexOf(lineId)+1,this.clock());
+      if(!data.decisions.some((item)=>item.trackedPickId===candidate.trackedPickId))
+        data.decisions.push(candidate);
+      let saved=data.savedPicks.find((item)=>item.accountId===accountId &&
+        item.trackedPickId===candidate.trackedPickId);
+      const alreadySaved=!!saved && !saved.removedAt;
+      if(saved?.removedAt){saved.removedAt=null;await this.write(data);}
+      else if(!saved){saved={accountId,trackedPickId:candidate.trackedPickId,
+        savedAt:this.clock().toISOString(),removedAt:null};data.savedPicks.push(saved);await this.write(data);}
+      return {saved:true,trackedPickId:candidate.trackedPickId,alreadySaved};
+    });
+  }
+  async userPicks(accountId:string,offset=0,limit=50){return this.exclusive(async()=>{
+    const data=await this.read(),items=data.savedPicks.filter((item)=>item.accountId===accountId &&
+      !item.removedAt).sort((a,b)=>b.savedAt.localeCompare(a.savedAt));
+    const decisions=new Map(data.decisions.map((item)=>[item.trackedPickId,item]));
+    return {total:items.length,picks:items.slice(offset,offset+limit).flatMap((item)=>{
+      const decision=decisions.get(item.trackedPickId);
+      return decision?[{id:item.trackedPickId,savedAt:item.savedAt,
+        playerName:decision.playerName,sport:decision.sport,market:decision.market,
+        eventStartTime:decision.eventStartTime,threshold:decision.exactLine,
+        direction:decision.direction,lineType:decision.lineType,lineScore:decision.lineScore,
+        modelVersion:decision.modelVersion,result:decision.grade,actual:decision.actualResult}]:[];
+    })};
+  });}
+  async removeUserPick(accountId:string,id:string){return this.exclusive(async()=>{
+    const data=await this.read(),saved=data.savedPicks.find((item)=>item.accountId===accountId &&
+      item.trackedPickId===id && !item.removedAt);
+    if(!saved)throw new Error('PICK_NOT_FOUND');
+    saved.removedAt=this.clock().toISOString();await this.write(data);
+  });}
+  async savePrivateCrown(accountId:string,lineIds:readonly string[],board:BoardResponse,
+    evidence:readonly Evidence[]){return this.exclusive(async()=>{
+      const data=await this.read();
+      if(!data.accounts.some((account)=>account.id===accountId && account.status!=='SUSPENDED')||
+        lineIds.length<2||lineIds.length>6||new Set(lineIds).size!==lineIds.length)
+        throw new Error('INVALID_PRIVATE_CROWN');
+      const items=lineIds.map((id)=>{
+        const line=board.board.lines.find((item)=>item.id===id),
+          analysis=board.analyses.find((item)=>item.lineId===id);
+        if(!line||!analysis||!eligible(line,analysis)||
+          Date.parse(line.eventStartTime)<=this.clock().getTime()||
+          analysis.evidenceExpiresAt && Date.parse(analysis.evidenceExpiresAt)<=this.clock().getTime())
+          throw new Error('INVALID_OR_STALE_CROWN');
+        return {line,analysis};
+      });
+      const issues=auditCrown(items,items.length as CrownSize,this.correlationPolicy,this.clock());
+      if(issues.length)throw new Error(`CROWN_CONSTRAINT_REJECTED:${issues.join(',')}`);
+      const decisions=items.map(({line,analysis})=>snapshot(line,analysis,evidence,
+        board.rankedLineIds.indexOf(line.id)+1,this.clock()));
+      const ids=decisions.map((item)=>item.trackedPickId);
+      const existing=data.privateCrowns.find((item)=>item.accountId===accountId &&
+        !item.removedAt && JSON.stringify(item.trackedPickIds)===JSON.stringify(ids));
+      if(existing)return {id:existing.id,alreadySaved:true};
+      for(const decision of decisions)if(!data.decisions.some((item)=>item.trackedPickId===decision.trackedPickId))
+        data.decisions.push(decision);
+      const crown:PrivateCrown={id:randomUUID(),accountId,trackedPickIds:ids,
+        savedAt:this.clock().toISOString(),removedAt:null};
+      data.privateCrowns.push(crown);await this.write(data);
+      return {id:crown.id,alreadySaved:false};
+    });}
+  async userCrowns(accountId:string){return this.exclusive(async()=>{
+    const data=await this.read(),decisions=new Map(data.decisions.map((item)=>[item.trackedPickId,item]));
+    return {crowns:data.privateCrowns.filter((item)=>item.accountId===accountId && !item.removedAt)
+      .sort((a,b)=>b.savedAt.localeCompare(a.savedAt)).slice(0,30).map((item)=>({id:item.id,
+        savedAt:item.savedAt,legs:item.trackedPickIds.flatMap((id)=>{
+          const decision=decisions.get(id);
+          return decision?[{playerName:decision.playerName,market:decision.market,
+            threshold:decision.exactLine,direction:decision.direction,lineType:decision.lineType,
+            score:decision.lineScore,grade:decision.grade}]:[];
+        })}))};
+  });}
+  async removeUserCrown(accountId:string,id:string){return this.exclusive(async()=>{
+    const data=await this.read(),crown=data.privateCrowns.find((item)=>item.accountId===accountId &&
+      item.id===id && !item.removedAt);
+    if(!crown)throw new Error('CROWN_NOT_FOUND');
+    crown.removedAt=this.clock().toISOString();await this.write(data);
+  });}
+  async track(board:BoardResponse,evidence:readonly Evidence[]):Promise<number>{
+    return this.exclusive(async()=>{
+      const data=await this.read(),before=data.decisions.length;
+      const analyses=new Map(board.analyses.map((item)=>[item.lineId,item]));
+      const ranks=new Map(board.rankedLineIds.map((id,index)=>[id,index+1]));
+      const known=new Set(data.decisions.map((item)=>item.trackedPickId));
+      const findings=new Map(evidence.map((item)=>[item.id,item]));
+      for(const line of board.board.lines){
+        const analysis=analyses.get(line.id);
+        if(!analysis || !eligible(line,analysis) ||
+          !(['CROWN_STRONG','CROWN_ELITE'].includes(analysis.scoreBand??'') ||
+            this.minimumBand==='PLAYABLE' && analysis.scoreBand==='PLAYABLE'))continue;
+        const next=snapshot(line,analysis,findings,ranks.get(line.id)??null,this.clock());
+        if(!known.has(next.trackedPickId)){known.add(next.trackedPickId);data.decisions.push(next);}
+      }
+      if(data.decisions.length!==before)await this.write(data);
+      return data.decisions.length-before;
+    });
+  }
+  async listDecisions(offset=0,limit=100){return this.exclusive(async()=>{
+    const data=await this.read();return {total:data.decisions.length,
+      decisions:data.decisions.slice().reverse().slice(offset,offset+limit)};
+  });}
+  async grade(facts:readonly ResultFact[]):Promise<{graded:number;unmatched:number}>{
+    return this.exclusive(async()=>{
+      const parsed=facts.map((fact)=>resultFactSchema.parse(fact));
+      const key=(value:{eventId:string;playerId:string;market:string})=>JSON.stringify([value.eventId,value.playerId,value.market]);
+      const keys=parsed.map(key);
+      if(new Set(keys).size!==keys.length)throw new Error('DUPLICATE_RESULT_FACT');
+      const lookup=new Map(parsed.map((fact)=>[key(fact),fact]));
+      const data=await this.read();let graded=0;const matched=new Set<string>();
+      const gradedDecisions:TrackedDecision[]=[];
+      for(const decision of data.decisions){
+        const identity=key(decision),fact=lookup.get(identity);
+        if(!fact || decision.grade!=='PENDING')continue;
+        if(Date.parse(fact.completedAt)>this.clock().getTime() ||
+          Date.parse(fact.completedAt)<Date.parse(decision.eventStartTime))
+          throw new Error('INVALID_RESULT_TIME');
+        decision.grade=fact.status==='DNP'?'DNP':fact.status==='VOID'?'VOID':
+          fact.actual===decision.exactLine?'PUSH':
+          ((fact.actual!>decision.exactLine)===(decision.direction==='MORE'))?'WIN':'LOSS';
+        decision.actualResult=fact.actual;decision.resultStatus=fact.status;
+        decision.resultSourceName=fact.sourceName;decision.resultSourceUrl=fact.sourceUrl;
+        decision.gradedAt=this.clock().toISOString();graded++;matched.add(identity);
+        gradedDecisions.push(structuredClone(decision));
+      }
+      if(graded)await this.write(data);
+      if(this.historySink&&gradedDecisions.length)
+        await Promise.allSettled(gradedDecisions.map((decision)=>this.historySink!.recordGradedDecision(decision)));
+      return {graded,unmatched:parsed.length-matched.size};
+    });
+  }
+  async learningSummary(){return this.exclusive(async()=>{
+    const data=await this.read(),graded=data.decisions.filter((item)=>
+      ['WIN','LOSS','PUSH'].includes(item.grade)&&item.actualResult!==null);
+    const buckets=new Map<string,{modelVersion:string;picks:number;wins:number;losses:number;pushes:number;
+      scoreSum:number;confidenceSum:number;confidenceCount:number;projectionAbsError:number;
+      projectionSignedError:number;projectionCount:number}>();
+    const factors=new Map<string,{samples:number;wins:number;losses:number;winContribution:number;
+      lossContribution:number}>();
+    for(const item of graded){
+      const model=buckets.get(item.modelVersion)??{modelVersion:item.modelVersion,picks:0,wins:0,losses:0,
+        pushes:0,scoreSum:0,confidenceSum:0,confidenceCount:0,projectionAbsError:0,
+        projectionSignedError:0,projectionCount:0};
+      model.picks++;model.scoreSum+=item.lineScore;
+      if(item.grade==='WIN')model.wins++;else if(item.grade==='LOSS')model.losses++;else model.pushes++;
+      const confidence=item.dataConfidence??item.analysisSnapshot.dataConfidence??null;
+      if(confidence!==null){model.confidenceSum+=confidence;model.confidenceCount++;}
+      const projection=item.evidenceSnapshot.find((e)=>e.kind==='projection:'+item.market)?.numeric?.value;
+      if(projection!==undefined&&item.actualResult!==null){
+        const error=projection-item.actualResult;model.projectionAbsError+=Math.abs(error);
+        model.projectionSignedError+=error;model.projectionCount++;
+      }
+      buckets.set(item.modelVersion,model);
+      if(item.grade==='WIN'||item.grade==='LOSS')for(const component of item.analysisSnapshot.contextBreakdown??[]){
+        if(['partial_coverage_adjustment','context_score_clamp'].includes(component.name))continue;
+        const key=item.modelVersion+'|'+component.name;
+        const factor=factors.get(key)??{samples:0,wins:0,losses:0,winContribution:0,lossContribution:0};
+        factor.samples++;
+        if(item.grade==='WIN'){factor.wins++;factor.winContribution+=component.contribution;}
+        else {factor.losses++;factor.lossContribution+=component.contribution;}
+        factors.set(key,factor);
+      }
+    }
+    const pending=data.decisions.filter((item)=>item.grade==='PENDING').length;
+    const dnpVoid=data.decisions.filter((item)=>item.grade==='DNP'||item.grade==='VOID').length;
+    return {source:'CROWNIQ_TRACKED_OUTCOMES',tracked:data.decisions.length,pending,
+      graded:graded.length,dnpVoid,
+      models:[...buckets.values()].map((m)=>({modelVersion:m.modelVersion,picks:m.picks,wins:m.wins,
+        losses:m.losses,pushes:m.pushes,hitRate:m.wins+m.losses?m.wins/(m.wins+m.losses):null,
+        averageLineScore:m.picks?m.scoreSum/m.picks:null,
+        averageDataConfidence:m.confidenceCount?m.confidenceSum/m.confidenceCount:null,
+        projectionMAE:m.projectionCount?m.projectionAbsError/m.projectionCount:null,
+        projectionBias:m.projectionCount?m.projectionSignedError/m.projectionCount:null,
+        projectionSamples:m.projectionCount})).sort((a,b)=>b.picks-a.picks),
+      factorDiagnostics:[...factors.entries()].map(([key,v])=>{
+        const split=key.indexOf('|');return {modelVersion:key.slice(0,split),factor:key.slice(split+1),
+          samples:v.samples,wins:v.wins,losses:v.losses,
+          averageContributionWins:v.wins?v.winContribution/v.wins:null,
+          averageContributionLosses:v.losses?v.lossContribution/v.losses:null};
+      }).sort((a,b)=>b.samples-a.samples)};
+  });}
+  async history(sport:string,playerId:string,market:string){return this.exclusive(async()=>{
+    const data=await this.read();const all=data.decisions.filter((item)=>item.sport===sport &&
+      item.playerId===playerId && item.market===market && item.grade!=='PENDING')
+      .sort((a,b)=>b.eventStartTime.localeCompare(a.eventStartTime)||b.createdAt.localeCompare(a.createdAt));
+    const seen=new Set<string>(),recent:TrackedDecision[]=[];
+    for(const item of all){if(seen.has(item.eventId))continue;seen.add(item.eventId);recent.push(item);if(recent.length===10)break;}
+    const numbers=recent.flatMap((item)=>item.actualResult===null?[]:[item.actualResult]);
+    const sorted=[...numbers].sort((a,b)=>a-b),mean=numbers.length?
+      numbers.reduce((sum,n)=>sum+n,0)/numbers.length:null;
+    const median=sorted.length? (sorted[Math.floor((sorted.length-1)/2)]+sorted[Math.floor(sorted.length/2)])/2:null;
+    return {source:'CROWNIQ_INTERNAL_HISTORY',sampleSize:recent.length,
+      actualSampleSize:numbers.length,label:`CrownIQ Tracked L${recent.length}`,
+      recent:recent.map((item)=>({eventDate:item.eventStartTime.slice(0,10),opponent:item.opponent,
+        market:item.market,line:item.exactLine,direction:item.direction,lineType:item.lineType,
+        actual:item.actualResult,grade:item.grade,contextScore:item.contextScore,
+        dataConfidence:item.dataConfidence??item.analysisSnapshot.dataConfidence??null,
+        lineScore:item.lineScore,modelVersion:item.modelVersion})),
+      internalOutcomeDistribution:numbers.length?{sampleSize:numbers.length,recentValues:numbers,
+        mean,median,variance:numbers.reduce((sum,n)=>sum+(n-mean!)**2,0)/numbers.length,
+        lowRange:sorted[0],highRange:sorted.at(-1)}:null,
+      fullArchiveCount:all.length};
+  });}
+  async upsertProfile(actorKey:string,displayName:string){return this.exclusive(async()=>{
+    const data=await this.read();let profile=data.profiles.find((item)=>item.actorKey===actorKey);
+    if(data.profiles.some((item)=>item.actorKey!==actorKey &&
+      normalizedName(item.displayName)===normalizedName(displayName)))throw new Error('USERNAME_TAKEN');
+    if(!profile){profile={publicId:randomUUID(),actorKey,displayName,avatarUrl:null,
+      socialEnabled:true,profileVisible:true,isSuspended:false,createdAt:this.clock().toISOString()};
+      data.profiles.push(profile);} else profile.displayName=displayName;
+    const account=data.accounts.find((item)=>item.id===actorKey);
+    if(account)account.username=displayName;
+    await this.write(data);return {publicId:profile.publicId,displayName:profile.displayName};
+  });}
+  async profileForActor(actorKey:string){return this.exclusive(async()=>{
+    const data=await this.read();return data.profiles.find((item)=>item.actorKey===actorKey)??null;
+  });}
+  async profile(publicId:string,viewerId:string|null=null){return this.exclusive(async()=>{
+    const data=await this.read(),profile=data.profiles.find((item)=>item.publicId===publicId &&
+      item.socialEnabled && item.profileVisible && !item.isSuspended);
+    if(!profile)return null;
+    return {publicId:profile.publicId,displayName:profile.displayName,avatarUrl:profile.avatarUrl,
+      ...recordFor(data,publicId),following:viewerId!==null && data.follows.some((item)=>
+        item.followerPublicId===viewerId && item.followedPublicId===publicId)};
+  });}
+  async topUsers(){return this.exclusive(async()=>{
+    if(this.topCache && this.topCache.expires>this.clock().getTime())return this.topCache.value;
+    const data=await this.read();const candidates=leaders(data);
+    const value={method:'wins, then wins/(wins+losses), then graded public selections',
+      minimumGraded:20,users:candidates};this.topCache={value,expires:this.clock().getTime()+180_000};
+    return value;
+  });}
+  async follow(actorKey:string,targetId:string,active:boolean){return this.exclusive(async()=>{
+    const data=await this.read(),actor=data.profiles.find((item)=>item.actorKey===actorKey),
+      target=data.profiles.find((item)=>item.publicId===targetId && item.socialEnabled &&
+        item.profileVisible && !item.isSuspended);
+    if(!actor||!target||actor.publicId===targetId)throw new Error('INVALID_FOLLOW');
+    data.follows=data.follows.filter((item)=>item.followerPublicId!==actor.publicId ||
+      item.followedPublicId!==targetId);
+    if(active)data.follows.push({followerPublicId:actor.publicId,followedPublicId:targetId,
+      createdAt:this.clock().toISOString()});
+    await this.write(data);return {following:active};
+  });}
+  async share(actorKey:string,lineIds:readonly string[],board:BoardResponse,evidence:readonly Evidence[]){return this.exclusive(async()=>{
+    const data=await this.read(),actor=data.profiles.find((item)=>item.actorKey===actorKey &&
+      item.socialEnabled && item.profileVisible && !item.isSuspended);
+    if(!actor || lineIds.length<2 || lineIds.length>6 || new Set(lineIds).size!==lineIds.length)
+      throw new Error('INVALID_SHARE');
+    const items=lineIds.map((id)=>{
+      const line=board.board.lines.find((entry)=>entry.id===id),
+        analysis=board.analyses.find((entry)=>entry.lineId===id);
+      if(!line || !analysis || !eligible(line,analysis) ||
+        Date.parse(line.eventStartTime)<=this.clock().getTime() ||
+        analysis.evidenceExpiresAt && Date.parse(analysis.evidenceExpiresAt)<=this.clock().getTime())
+        throw new Error('STALE_OR_INVALID_CROWN_LEG');
+      return {line,analysis};
+    });
+    // Reuse the engine's complete Crown audit. Without a trusted correlation policy,
+    // sharing fails closed rather than publishing a Crown that bypasses its rules.
+    const issues=auditCrown(items,items.length as CrownSize,this.correlationPolicy,this.clock());
+    if(issues.length)throw new Error(`CROWN_CONSTRAINT_REJECTED:${issues.join(',')}`);
+    const ids=items.map(({line,analysis})=>idFor(line,analysis,evidence));
+    if(data.crowns.some((item)=>item.ownerPublicId===actor.publicId && !item.unsharedAt &&
+      JSON.stringify(item.legs.map((leg)=>leg.trackedPickId))===JSON.stringify(ids)))
+      throw new Error('DUPLICATE_PUBLIC_CROWN');
+    const legs=items.map(({line,analysis})=>{
+      const decision=snapshot(line,analysis,evidence,board.rankedLineIds.indexOf(line.id)+1,
+        this.clock());
+      if(!data.decisions.some((item)=>item.trackedPickId===decision.trackedPickId))data.decisions.push(decision);
+      return {trackedPickId:decision.trackedPickId,playerName:line.playerName,market:line.market,
+        exactLine:line.threshold,direction:decision.direction,lineType:line.lineType,
+        lineScore:decision.lineScore,modelVersion:decision.modelVersion,eventId:line.eventId,
+        playerId:line.playerId,sport:line.sport};
+    });
+    const crown:PublicCrown={publicCrownId:randomUUID(),ownerPublicId:actor.publicId,
+      createdAt:this.clock().toISOString(),legs,unsharedAt:null};data.crowns.push(crown);
+    for(const leg of legs){if(!data.publicCredits.some((item)=>item.publicId===actor.publicId &&
+      item.trackedPickId===leg.trackedPickId))data.publicCredits.push({publicId:actor.publicId,
+        trackedPickId:leg.trackedPickId});}
+    await this.write(data);return publicView(data,crown);
+  });}
+  async unshare(actorKey:string,crownId:string){return this.exclusive(async()=>{
+    const data=await this.read(),actor=data.profiles.find((item)=>item.actorKey===actorKey),
+      crown=data.crowns.find((item)=>item.publicCrownId===crownId);
+    if(!actor || !crown || crown.ownerPublicId!==actor.publicId || crown.unsharedAt)
+      throw new Error('PUBLIC_CROWN_NOT_FOUND');
+    crown.unsharedAt=this.clock().toISOString();await this.write(data);
+  });}
+  async crownsFor(publicId:string,offset=0,limit=20){return this.exclusive(async()=>{
+    const data=await this.read(),profile=data.profiles.find((item)=>item.publicId===publicId &&
+      item.profileVisible && item.socialEnabled && !item.isSuspended);
+    if(!profile)return null;
+    const crowns=data.crowns.filter((item)=>item.ownerPublicId===publicId && !item.unsharedAt)
+      .sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+    return {total:crowns.length,crowns:crowns.slice(offset,offset+limit).map((item)=>publicView(data,item))};
+  });}
+  async followingCrowns(actorKey:string,limit=20){return this.exclusive(async()=>{
+    const data=await this.read(),actor=data.profiles.find((item)=>item.actorKey===actorKey);
+    if(!actor)return [];
+    const followed=new Set(data.follows.filter((item)=>item.followerPublicId===actor.publicId)
+      .map((item)=>item.followedPublicId));
+    const visible=new Set(data.profiles.filter((item)=>followed.has(item.publicId) && item.socialEnabled &&
+      item.profileVisible && !item.isSuspended).map((item)=>item.publicId));
+    return data.crowns.filter((item)=>!item.unsharedAt && visible.has(item.ownerPublicId))
+      .sort((a,b)=>b.createdAt.localeCompare(a.createdAt))
+      .slice(0,Math.max(1,Math.min(20,limit))).map((item)=>publicView(data,item));
+  });}
+  async recentTopCrowns(limit=10){return this.exclusive(async()=>{
+    if(this.recentCache && this.recentCache.expires>this.clock().getTime())
+      return this.recentCache.value.slice(0,limit);
+    const data=await this.read(),allowed=new Set(leaders(data).map((item)=>item.publicId));
+    const value=data.crowns.filter((item)=>!item.unsharedAt && allowed.has(item.ownerPublicId))
+      .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,10)
+      .map((item)=>publicView(data,item));
+    this.recentCache={expires:this.clock().getTime()+180_000,value};return value.slice(0,limit);
+  });}
+  async crown(crownId:string){return this.exclusive(async()=>{
+    const data=await this.read(),crown=data.crowns.find((item)=>item.publicCrownId===crownId &&
+      !item.unsharedAt && data.profiles.some((profile)=>profile.publicId===item.ownerPublicId &&
+        profile.profileVisible && profile.socialEnabled && !profile.isSuspended));
+    return crown?publicView(data,crown):null;
+  });}
+  async importPreview(crownId:string,board:BoardResponse){
+    const crown=await this.crown(crownId);if(!crown)return null;
+    const data=await this.read(),original=data.crowns.find((item)=>item.publicCrownId===crownId)!;
+    return {publicCrownId:crownId,legs:original.legs.map((leg)=>{
+      const matches=board.board.lines.filter((line)=>line.eventId===leg.eventId &&
+        line.playerId===leg.playerId && line.market===leg.market);
+      const exact=matches.find((line)=>line.threshold===leg.exactLine && line.lineType===leg.lineType &&
+        line.availableDirections.includes(leg.direction));
+      const analysis=board.analyses.find((item)=>item.lineId===exact?.id);
+      const valid=!!exact && !!analysis && analysis.direction===leg.direction &&
+        analysis.score!==null && !!analysis.modelVersion &&
+        Date.parse(exact.eventStartTime)>this.clock().getTime() &&
+        (!analysis.evidenceExpiresAt || Date.parse(analysis.evidenceExpiresAt)>this.clock().getTime());
+      return {shared:{playerName:leg.playerName,market:leg.market,threshold:leg.exactLine,
+        direction:leg.direction,lineType:leg.lineType},status:valid?'AVAILABLE':'CHANGED_OR_UNAVAILABLE',
+        currentOptions:matches.map((line)=>({lineId:line.id,threshold:line.threshold,
+          lineType:line.lineType,directions:line.availableDirections}))};
+    })};
+  }
+}
