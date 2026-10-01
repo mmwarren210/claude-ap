@@ -54,7 +54,7 @@ export default function OwnerLearningScreen(){
 
   return <Screen eyebrow="CROWNIQ  /  OWNER ONLY" title="Learning">
     <Pressable accessibilityRole="button"
-      onPress={()=>router.canGoBack()?router.back():router.replace('/(tabs)/settings')}>
+      onPress={()=>router.canGoBack()?router.back():router.replace('/(tabs)/more')}>
       <Text style={styles.back}>← Back to Settings</Text>
     </Pressable>
     {access==='CHECKING'&&<ActivityIndicator color={palette.green}/>}

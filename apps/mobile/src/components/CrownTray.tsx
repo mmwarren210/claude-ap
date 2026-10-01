@@ -20,7 +20,7 @@ export function CrownTray() {
       <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${leg.line.playerName}`}
         style={styles.button} onPress={()=>remove(leg.line.id)}><Text style={styles.label}>Remove</Text></Pressable>
     </View>)}
-    <Pressable accessibilityRole="button" style={styles.button} onPress={()=>{setOpen(false);router.push('/(tabs)/crowns');}}>
+    <Pressable accessibilityRole="button" style={styles.button} onPress={()=>{setOpen(false);router.push('/(tabs)/crown');}}>
       <Text style={styles.label}>Open Crowns →</Text></Pressable>
   </Sheet></>;
 }

@@ -3,10 +3,12 @@ import { StatusBar } from 'expo-status-bar';
 import { BoardProvider } from '../use-board';
 import { DraftProvider } from '../use-draft';
 import { AuthProvider, useAuth } from '../auth';
+import { colors } from '../theme';
 
 const crownTheme = {
   ...DarkTheme,
-  colors: { ...DarkTheme.colors, background: '#090E0B', card: '#111A14', primary: '#A9F35C', text: '#F3F7F0' },
+  colors: { ...DarkTheme.colors, background: colors.background, card: colors.surface, primary: colors.mint,
+    text: colors.text, border: colors.border },
 };
 
 function ProfileRouter(){

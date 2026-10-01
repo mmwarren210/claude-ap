@@ -1,21 +1,31 @@
 import { Tabs } from 'expo-router';
-import { Text } from 'react-native';
 import type { ColorValue } from 'react-native';
 import { CrownTray } from '../../components/CrownTray';
+import type { IconName } from '../../components/ui/Icon';
+import { Icon } from '../../components/ui/Icon';
+import { colors } from '../../theme';
+import { useDraft } from '../../use-draft';
 
-function Icon({ glyph, color }: { glyph: string; color: ColorValue }) {
-  return <Text style={{ color, fontSize: 22, fontWeight: '700' }}>{glyph}</Text>;
+function TabIcon({ name, active, color, focused }: { name: IconName; active: IconName; color: ColorValue;
+  focused: boolean }) {
+  return <Icon name={focused ? active : name} size={26} color={String(color)} />;
 }
+const icon = (name: IconName, active: IconName) => function tabIcon({ color, focused }: { color: ColorValue;
+  focused: boolean }) { return <TabIcon name={name} active={active} color={color} focused={focused} />; };
 
 export default function TabLayout() {
-  return <><Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: '#A9F35C',
-    tabBarInactiveTintColor: '#788879', tabBarStyle: { backgroundColor: '#101812', borderTopColor: '#25352A' },
-    tabBarLabelStyle: { fontSize: 10, fontWeight: '700' } }}>
-    <Tabs.Screen name="index" options={{ title: 'Board', tabBarIcon: ({ color }) => <Icon glyph="▣" color={color} /> }} />
-    <Tabs.Screen name="rankings" options={{ title: 'Rankings', tabBarIcon: ({ color }) => <Icon glyph="▥" color={color} /> }} />
-    <Tabs.Screen name="crowns" options={{ title: 'Crowns', tabBarIcon: ({ color }) => <Icon glyph="♛" color={color} /> }} />
-    <Tabs.Screen name="social" options={{ title: 'Social', tabBarIcon: ({ color }) => <Icon glyph="◉" color={color} /> }} />
-    <Tabs.Screen name="picks" options={{ title: 'My Picks', tabBarIcon: ({ color }) => <Icon glyph="✓" color={color} /> }} />
-    <Tabs.Screen name="settings" options={{ href:null,title:'Settings' }} />
+  const { legs } = useDraft();
+  return <><Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.mint,
+    tabBarInactiveTintColor: colors.textMuted,
+    tabBarStyle: { backgroundColor: colors.background, borderTopColor: colors.border, paddingTop: 6 },
+    tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
+    tabBarBadgeStyle: { backgroundColor: colors.mint, color: colors.mintInk, fontWeight: '900', fontSize: 11 } }}>
+    <Tabs.Screen name="index" options={{ title: 'Board', tabBarIcon: icon('view-grid-outline', 'view-grid') }} />
+    <Tabs.Screen name="top-picks" options={{ title: 'Top Picks', tabBarIcon: icon('star-outline', 'star') }} />
+    <Tabs.Screen name="crown" options={{ title: 'Crown', tabBarIcon: icon('crown-outline', 'crown'),
+      tabBarBadge: legs.length ? legs.length : undefined }} />
+    <Tabs.Screen name="results" options={{ title: 'Results', tabBarIcon: icon('chart-bar', 'chart-bar') }} />
+    <Tabs.Screen name="social" options={{ title: 'Social', tabBarIcon: icon('account-group-outline', 'account-group') }} />
+    <Tabs.Screen name="more" options={{ title: 'More', tabBarIcon: icon('menu', 'menu') }} />
   </Tabs><CrownTray /></>;
 }

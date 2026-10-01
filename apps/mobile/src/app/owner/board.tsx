@@ -167,7 +167,7 @@ export default function OwnerBoardScreen(){
   const step=Math.min(Math.max(stageIndex+1,1),5);
   return <Screen eyebrow="CROWNIQ  /  OWNER ONLY" title="Board Analysis">
     <Pressable accessibilityRole="button"
-      onPress={()=>router.canGoBack()?router.back():router.replace('/(tabs)/settings')}>
+      onPress={()=>router.canGoBack()?router.back():router.replace('/(tabs)/more')}>
       <Text style={styles.back}>← Back to Settings</Text>
     </Pressable>
     {access==='CHECKING'&&<ActivityIndicator color={palette.green}/>}

@@ -169,7 +169,7 @@ export default function OwnerResearchScreen(){
     }catch(cause){setError((cause as Error).message);}
   };
   return <Screen eyebrow="CROWNIQ  /  OWNER ONLY" title="Research Desk">
-    <Pressable accessibilityRole="button" onPress={()=>router.canGoBack()?router.back():router.replace('/(tabs)/settings')}>
+    <Pressable accessibilityRole="button" onPress={()=>router.canGoBack()?router.back():router.replace('/(tabs)/more')}>
       <Text style={styles.back}>← Back to Settings</Text>
     </Pressable>
     {access==='CHECKING' && <ActivityIndicator color={palette.green} />}

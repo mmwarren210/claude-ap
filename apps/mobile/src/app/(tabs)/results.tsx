@@ -55,7 +55,7 @@ export default function PicksScreen(){
       <Pressable accessibilityRole="button" onPress={()=>void remove(`/v1/me/crowns/${crown.id}`)}>
         <Text style={styles.link}>Remove private Crown</Text></Pressable>
     </View>)}
-    <Pressable accessibilityRole="button" onPress={()=>router.push('/(tabs)/settings')}>
+    <Pressable accessibilityRole="button" onPress={()=>router.push('/(tabs)/more')}>
       <Text style={styles.link}>Profile settings →</Text></Pressable>
   </Screen>;
 }
