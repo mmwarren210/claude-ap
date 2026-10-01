@@ -1,0 +1,109 @@
+diff --git a/README.md b/README.md
+index 4f31c87..1f2b84c 100644
+--- a/README.md
++++ b/README.md
+@@ -29,7 +29,7 @@ In a second terminal:
+ npm run dev:mobile
+ ```
+ 
+-Set `EXPO_PUBLIC_API_URL` in `apps/mobile/.env` to the running API. On a phone, use your computer's reachable LAN IP and set `API_HOST=0.0.0.0` in `apps/api/.env`. Scan Expo's QR code with Expo Go. `http://127.0.0.1:3000/health` checks the backend. Create a profile in the app to reach the Board. If no server-side board exists yet, authenticated `/v1/board` returns `503 BOARD_UNAVAILABLE`; that is an available server with no snapshot, not a network outage. Set `CROWNIQ_OWNER_PUBLIC_ID` to the owner's profile UUID. When the server reports it has no board, the Board button changes to **Pull first board** and asks the owner to confirm the credit cost. It calls `POST /v1/owner/board/bootstrap`, which the server refuses with `409 BOARD_EXISTS` once any board exists, so this path can never repeat a paid pull. **Refresh board** only rereads the saved board and never spends provider credits. `ADMIN_TOKEN` still protects terminal/admin endpoints and must never be copied into the mobile environment. Use HTTPS for real account credentials.
++Set `EXPO_PUBLIC_API_URL` in `apps/mobile/.env` to the running API. On a phone, use your computer's reachable LAN IP and set `API_HOST=0.0.0.0` in `apps/api/.env`. Scan Expo's QR code with Expo Go. `http://127.0.0.1:3000/health` checks the backend; it only reports liveness and whether a board exists. The owner profile reads full server status at `/v1/owner/board/health`, and the admin token at `/v1/admin/status`. Create a profile in the app to reach the Board. If no server-side board exists yet, authenticated `/v1/board` returns `503 BOARD_UNAVAILABLE`; that is an available server with no snapshot, not a network outage. Set `CROWNIQ_OWNER_PUBLIC_ID` to the owner's profile UUID. When the server reports it has no board, the Board button changes to **Pull first board** and asks the owner to confirm the credit cost. It calls `POST /v1/owner/board/bootstrap`, which the server refuses with `409 BOARD_EXISTS` once any board exists, so this path can never repeat a paid pull. **Refresh board** only rereads the saved board and never spends provider credits. `ADMIN_TOKEN` still protects terminal/admin endpoints and must never be copied into the mobile environment. Use HTTPS for real account credentials.
+ 
+ To connect The Odds API, put `THE_ODDS_API_KEY` in **the server's** `apps/api/.env` (or your deployed backend's environment). `ODDS_PROVIDER=auto` is the default and activates the PrizePicks adapter whenever that key exists; set `ODDS_PROVIDER=none` only when you intentionally want provider pulls disabled. Set `CROWNIQ_OWNER_PUBLIC_ID` for in-app first-board recovery, and optionally set a locally chosen `ADMIN_TOKEN` for terminal/admin endpoints. These values are never read from the mobile app. With the API running, you can also trigger an owner refresh from a terminal:
+ 
+diff --git a/apps/api/src/server.ts b/apps/api/src/server.ts
+index 56d7d1d..5f7bc49 100644
+--- a/apps/api/src/server.ts
++++ b/apps/api/src/server.ts
+@@ -169,11 +169,8 @@ export function buildServer(options: ServerOptions = {}) {
+   const currentJob=()=>ownerBoardRefresh.status==='RUNNING'
+     ? {...ownerBoardRefresh,refreshStage:service.getStatus().refreshStage}:ownerBoardRefresh;
+ 
+-  app.get('/health', async () => {
+-    const { providerHealth: _privateHealth, modelRequirements: _privateRequirements,
+-      ...publicStatus } = service.getStatus();
+-    return { status: 'ok', ...publicStatus };
+-  });
++  // Public liveness only. Operating detail lives behind owner or admin auth.
++  app.get('/health', async () => ({ status: 'ok', boardAvailable: !!service.getBoard() }));
+   const username=z.string().trim().regex(/^[A-Za-z0-9_]{3,24}$/);
+   const email=z.email().max(254);
+   const password=z.string().min(12).max(128);
+@@ -216,6 +213,11 @@ export function buildServer(options: ServerOptions = {}) {
+         lineCount:snapshot?.board.lines.length??0,rankedCount:snapshot?.rankedLineIds.length??0,
+         lastError:status.lastError,refreshStage:status.refreshStage,job:currentJob()};
+     });
++    ownerBoard.get('/health',async()=>{
++      const { providerHealth: _privateHealth, modelRequirements: _privateRequirements,
++        ...ownerStatus } = service.getStatus();
++      return { status: 'ok', ...ownerStatus };
++    });
+     ownerBoard.get('/diagnostics',async(_request,reply)=>{
+       const snapshot=service.getBoard();
+       if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+diff --git a/apps/api/test/owner-board-refresh.test.ts b/apps/api/test/owner-board-refresh.test.ts
+index e5d9758..55aafc7 100644
+--- a/apps/api/test/owner-board-refresh.test.ts
++++ b/apps/api/test/owner-board-refresh.test.ts
+@@ -80,6 +80,12 @@ test('configured owner can bootstrap the first board from the app',async()=>{
+       const board=await app.inject({url:'/v1/board',headers:ownerHeaders});
+       assert.equal(board.statusCode,200);
+       assert.equal(board.json().board.lines.length,1);
++      const ownerHealth=await app.inject({url:'/v1/owner/board/health',headers:ownerHeaders});
++      assert.equal(ownerHealth.statusCode,200);
++      assert.equal(ownerHealth.json().lineCount,1);
++      assert.equal(ownerHealth.json().providerHealth,undefined);
++      assert.equal((await app.inject({url:'/v1/owner/board/health',headers:guestHeaders})).statusCode,404);
++      assert.deepEqual((await app.inject('/health')).json(),{status:'ok',boardAvailable:true});
+       const diagnostics=await app.inject({url:'/v1/owner/board/diagnostics',headers:ownerHeaders});
+       assert.equal(diagnostics.statusCode,200);
+       assert.equal(diagnostics.json().lineCount,1);
+diff --git a/apps/api/test/server.test.ts b/apps/api/test/server.test.ts
+index 02ac51c..a1663a8 100644
+--- a/apps/api/test/server.test.ts
++++ b/apps/api/test/server.test.ts
+@@ -9,6 +9,8 @@ test('empty deployment exposes health but never pretends it has a live board or
+   const app = buildServer();
+   try {
+     assert.equal((await app.inject('/health')).statusCode, 200);
++    // Anonymous health exposes liveness only, never research, model or quota detail.
++    assert.deepEqual((await app.inject('/health')).json(), { status: 'ok', boardAvailable: false });
+     assert.deepEqual((await app.inject('/v1/board')).json(), { code: 'BOARD_UNAVAILABLE' });
+     assert.equal((await app.inject({ method: 'POST', url: '/v1/admin/refresh' })).statusCode, 503);
+   } finally { await app.close(); }
+@@ -72,7 +74,7 @@ test('owner refresh publishes a normalized PrizePicks board and keeps quota data
+       ['REGULAR', 'GOBLIN', 'DEMON']);
+     assert.equal(board.board.lines[1].payoutMultiplier, undefined);
+     assert.equal(board.analyses[0].reasonCode, 'MODEL_SUPPORT_INCOMPLETE');
+-    assert.equal((await app.inject('/health')).json().providerHealth, undefined);
++    assert.deepEqual((await app.inject('/health')).json(), { status: 'ok', boardAvailable: true });
+     assert.deepEqual((await app.inject({ url: '/v1/admin/status', headers: auth })).json()
+       .providerHealth, { creditsRemaining: 39, lastRequestCost: 1, lastHttpStatus: 200 });
+   } finally { await app.close(); }
+diff --git a/apps/api/test/startup-recovery.test.ts b/apps/api/test/startup-recovery.test.ts
+index b761a66..cff8528 100644
+--- a/apps/api/test/startup-recovery.test.ts
++++ b/apps/api/test/startup-recovery.test.ts
+@@ -133,10 +133,11 @@ test('API serves its restored board while local startup recovery is still runnin
+   let release!:(items:Evidence[])=>void;
+   const pending=new Promise<Evidence[]>((resolve)=>{release=resolve;});
+   const {buildServer}=await import('../src/server.js');
+-  const app=buildServer({boardCache:cache,models:models(),clock:()=>now,
++  const app=buildServer({boardCache:cache,models:models(),clock:()=>now,adminToken:'status-fixture',
+     startupResearch:{id:'deferred-local',research:()=>pending}});
++  const admin={authorization:'Bearer status-fixture'};
+   try{
+-    const response=await app.inject('/health');
++    const response=await app.inject({url:'/v1/admin/status',headers:admin});
+     assert.equal(response.statusCode,200);
+     assert.equal(response.json().lineCount,1);
+     assert.equal(response.json().startupRecovery.status,'RUNNING');
+@@ -145,7 +146,7 @@ test('API serves its restored board while local startup recovery is still runnin
+     let state=response.json();
+     for(let attempt=0;attempt<100&&state.startupRecovery.status==='RUNNING';attempt++){
+       await new Promise<void>((resolve)=>setTimeout(resolve,5));
+-      state=(await app.inject('/health')).json();
++      state=(await app.inject({url:'/v1/admin/status',headers:admin})).json();
+     }
+     assert.equal(state.startupRecovery.status,'SUCCEEDED');
+   }finally{await app.close();await rm(folder,{recursive:true,force:true});}
