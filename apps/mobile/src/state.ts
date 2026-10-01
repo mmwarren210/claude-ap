@@ -37,7 +37,12 @@ export function boardLinesForMode(data:BoardResponse,filters:Filters,mode:ViewMo
       !line.availableDirections.includes(analysis.direction)||
       Date.parse(line.eventStartTime)<=nowMs||
       (filters.sport!=='ALL'&&line.sport!==filters.sport)||
-      (filters.market!=='ALL'&&line.market!==filters.market))continue;
+      (filters.market!=='ALL'&&line.market!==filters.market)||
+      // The Board's line-style, evidence and date chips apply in both views; grade and
+      // direction stay Full-only so a stale Full filter never hides ranked plays.
+      (filters.lineType!=='ALL'&&line.lineType!==filters.lineType)||
+      (filters.evidence!=='ALL'&&analysis.evidenceQuality!==filters.evidence)||
+      (filters.date!=='ALL'&&line.eventStartTime.slice(0,10)!==filters.date))continue;
     ranked.push(line);
     if(ranked.length===LITE_LIMIT)break;
   }

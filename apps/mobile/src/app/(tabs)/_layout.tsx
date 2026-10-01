@@ -1,6 +1,5 @@
 import { Tabs } from 'expo-router';
 import type { ColorValue } from 'react-native';
-import { CrownTray } from '../../components/CrownTray';
 import type { IconName } from '../../components/ui/Icon';
 import { Icon } from '../../components/ui/Icon';
 import { colors } from '../../theme';
@@ -8,16 +7,16 @@ import { useDraft } from '../../use-draft';
 
 function TabIcon({ name, active, color, focused }: { name: IconName; active: IconName; color: ColorValue;
   focused: boolean }) {
-  return <Icon name={focused ? active : name} size={26} color={String(color)} />;
+  return <Icon name={focused ? active : name} size={24} color={String(color)} />;
 }
 const icon = (name: IconName, active: IconName) => function tabIcon({ color, focused }: { color: ColorValue;
   focused: boolean }) { return <TabIcon name={name} active={active} color={color} focused={focused} />; };
 
 export default function TabLayout() {
   const { legs } = useDraft();
-  return <><Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.mint,
+  return <Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.mint,
     tabBarInactiveTintColor: colors.textMuted,
-    tabBarStyle: { backgroundColor: colors.background, borderTopColor: colors.border, paddingTop: 6 },
+    tabBarStyle: { backgroundColor: colors.background, borderTopColor: colors.border },
     tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
     tabBarBadgeStyle: { backgroundColor: colors.mint, color: colors.mintInk, fontWeight: '900', fontSize: 11 } }}>
     <Tabs.Screen name="index" options={{ title: 'Board', tabBarIcon: icon('view-grid-outline', 'view-grid') }} />
@@ -27,5 +26,5 @@ export default function TabLayout() {
     <Tabs.Screen name="results" options={{ title: 'Results', tabBarIcon: icon('chart-bar', 'chart-bar') }} />
     <Tabs.Screen name="social" options={{ title: 'Social', tabBarIcon: icon('account-group-outline', 'account-group') }} />
     <Tabs.Screen name="more" options={{ title: 'More', tabBarIcon: icon('menu', 'menu') }} />
-  </Tabs><CrownTray /></>;
+  </Tabs>;
 }

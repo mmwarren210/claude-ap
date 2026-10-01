@@ -27,16 +27,19 @@ test('filters reset and select exact lines without modifying the provider board'
   assert.deepEqual(boardLinesForMode(board,emptyFilters,'LITE',eventStart),[]);
   assert.deepEqual(boardLinesForMode(board,emptyFilters,'FULL',eventStart),[]);
 });
-test('Lite follows GKR ranking, excludes PASS and respects only sport/market; Full keeps every line',()=>{
+test('Lite follows GKR ranking, excludes PASS and ignores Full-only grade/direction filters; Full keeps every line',()=>{
   const pass=analysisSchema.parse({...analysis,lineId:'two',direction:'PASS',score:null,
     scoreBand:'PASS',modelVersion:null});
   const suspicious=boardResponseSchema.parse({...board,analyses:[analysis,pass],
     rankedLineIds:['two','one']});
   assert.deepEqual(boardLinesForMode(suspicious,emptyFilters,'LITE').map((item)=>item.id),['one']);
   assert.deepEqual(boardLinesForMode(suspicious,emptyFilters,'FULL').map((item)=>item.id),['one','two']);
-  const hiddenFullFilter={...emptyFilters,lineType:'REGULAR',grade:'PASS'};
+  const hiddenFullFilter={...emptyFilters,direction:'PASS',grade:'PASS'};
   assert.deepEqual(boardLinesForMode(suspicious,hiddenFullFilter,'LITE').map((item)=>item.id),['one']);
   assert.deepEqual(boardLinesForMode(suspicious,hiddenFullFilter,'FULL').map((item)=>item.id),['two']);
+  // Line style is a Board chip, so it applies in Lite too.
+  assert.deepEqual(boardLinesForMode(suspicious,{...emptyFilters,lineType:'REGULAR'},'LITE'),[]);
+  assert.deepEqual(boardLinesForMode(suspicious,{...emptyFilters,lineType:'GOBLIN'},'LITE').map((item)=>item.id),['one']);
   assert.deepEqual(boardLinesForMode(suspicious,{...emptyFilters,sport:'NHL'},'LITE'),[]);
   assert.equal(suspicious.board.lines[1].threshold,30.5);
 });

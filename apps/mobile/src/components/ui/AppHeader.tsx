@@ -26,7 +26,7 @@ export function AppHeader({ subtitle, back = false, right }: { subtitle: string;
     <CrownLogo size={back ? 34 : 42} />
     <View style={styles.brand}>
       <Text style={[styles.word, back && styles.wordSmall]} numberOfLines={1}>Crown<Text style={styles.iq}>IQ</Text></Text>
-      <Text style={styles.subtitle} numberOfLines={1}>{subtitle}</Text>
+      <Text style={styles.subtitle} numberOfLines={2}>{subtitle}</Text>
     </View>
     {right ?? <View style={styles.tagline} accessibilityLabel="Smarter bets, bigger wins">
       <Icon name="crown" size={22} color={colors.neon} />
@@ -53,7 +53,7 @@ const styles = StyleSheet.create({
   word: { color: colors.text, fontSize: 32, fontWeight: '900', letterSpacing: -0.8, lineHeight: 36 },
   wordSmall: { fontSize: 27, lineHeight: 31 },
   iq: { color: colors.neon },
-  subtitle: { color: colors.textMuted, fontSize: 14, fontWeight: '500', marginTop: -1 },
+  subtitle: { color: colors.textMuted, fontSize: 13, fontWeight: '500', marginTop: -1, lineHeight: 17 },
   tagline: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: colors.borderStrong,
     backgroundColor: colors.surface, borderRadius: radius.md, paddingHorizontal: 9, paddingVertical: 6 },
   taglineText: { color: colors.text, fontSize: 10.5, fontWeight: '600', lineHeight: 13 },
