@@ -169,11 +169,8 @@ export function buildServer(options: ServerOptions = {}) {
   const currentJob=()=>ownerBoardRefresh.status==='RUNNING'
     ? {...ownerBoardRefresh,refreshStage:service.getStatus().refreshStage}:ownerBoardRefresh;
 
-  app.get('/health', async () => {
-    const { providerHealth: _privateHealth, modelRequirements: _privateRequirements,
-      ...publicStatus } = service.getStatus();
-    return { status: 'ok', ...publicStatus };
-  });
+  // Public liveness only. Operating detail lives behind owner or admin auth.
+  app.get('/health', async () => ({ status: 'ok', boardAvailable: !!service.getBoard() }));
   const username=z.string().trim().regex(/^[A-Za-z0-9_]{3,24}$/);
   const email=z.email().max(254);
   const password=z.string().min(12).max(128);
@@ -215,6 +212,11 @@ export function buildServer(options: ServerOptions = {}) {
       return {providerConfigured:!!options.provider,boardAvailable:!!snapshot,
         lineCount:snapshot?.board.lines.length??0,rankedCount:snapshot?.rankedLineIds.length??0,
         lastError:status.lastError,refreshStage:status.refreshStage,job:currentJob()};
+    });
+    ownerBoard.get('/health',async()=>{
+      const { providerHealth: _privateHealth, modelRequirements: _privateRequirements,
+        ...ownerStatus } = service.getStatus();
+      return { status: 'ok', ...ownerStatus };
     });
     ownerBoard.get('/diagnostics',async(_request,reply)=>{
       const snapshot=service.getBoard();

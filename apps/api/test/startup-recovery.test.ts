@@ -133,10 +133,11 @@ test('API serves its restored board while local startup recovery is still runnin
   let release!:(items:Evidence[])=>void;
   const pending=new Promise<Evidence[]>((resolve)=>{release=resolve;});
   const {buildServer}=await import('../src/server.js');
-  const app=buildServer({boardCache:cache,models:models(),clock:()=>now,
+  const app=buildServer({boardCache:cache,models:models(),clock:()=>now,adminToken:'status-fixture',
     startupResearch:{id:'deferred-local',research:()=>pending}});
+  const admin={authorization:'Bearer status-fixture'};
   try{
-    const response=await app.inject('/health');
+    const response=await app.inject({url:'/v1/admin/status',headers:admin});
     assert.equal(response.statusCode,200);
     assert.equal(response.json().lineCount,1);
     assert.equal(response.json().startupRecovery.status,'RUNNING');
@@ -145,7 +146,7 @@ test('API serves its restored board while local startup recovery is still runnin
     let state=response.json();
     for(let attempt=0;attempt<100&&state.startupRecovery.status==='RUNNING';attempt++){
       await new Promise<void>((resolve)=>setTimeout(resolve,5));
-      state=(await app.inject('/health')).json();
+      state=(await app.inject({url:'/v1/admin/status',headers:admin})).json();
     }
     assert.equal(state.startupRecovery.status,'SUCCEEDED');
   }finally{await app.close();await rm(folder,{recursive:true,force:true});}

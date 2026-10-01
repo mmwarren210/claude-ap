@@ -9,6 +9,8 @@ test('empty deployment exposes health but never pretends it has a live board or 
   const app = buildServer();
   try {
     assert.equal((await app.inject('/health')).statusCode, 200);
+    // Anonymous health exposes liveness only, never research, model or quota detail.
+    assert.deepEqual((await app.inject('/health')).json(), { status: 'ok', boardAvailable: false });
     assert.deepEqual((await app.inject('/v1/board')).json(), { code: 'BOARD_UNAVAILABLE' });
     assert.equal((await app.inject({ method: 'POST', url: '/v1/admin/refresh' })).statusCode, 503);
   } finally { await app.close(); }
@@ -72,7 +74,7 @@ test('owner refresh publishes a normalized PrizePicks board and keeps quota data
       ['REGULAR', 'GOBLIN', 'DEMON']);
     assert.equal(board.board.lines[1].payoutMultiplier, undefined);
     assert.equal(board.analyses[0].reasonCode, 'MODEL_SUPPORT_INCOMPLETE');
-    assert.equal((await app.inject('/health')).json().providerHealth, undefined);
+    assert.deepEqual((await app.inject('/health')).json(), { status: 'ok', boardAvailable: true });
     assert.deepEqual((await app.inject({ url: '/v1/admin/status', headers: auth })).json()
       .providerHealth, { creditsRemaining: 39, lastRequestCost: 1, lastHttpStatus: 200 });
   } finally { await app.close(); }

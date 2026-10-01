@@ -80,6 +80,12 @@ test('configured owner can bootstrap the first board from the app',async()=>{
       const board=await app.inject({url:'/v1/board',headers:ownerHeaders});
       assert.equal(board.statusCode,200);
       assert.equal(board.json().board.lines.length,1);
+      const ownerHealth=await app.inject({url:'/v1/owner/board/health',headers:ownerHeaders});
+      assert.equal(ownerHealth.statusCode,200);
+      assert.equal(ownerHealth.json().lineCount,1);
+      assert.equal(ownerHealth.json().providerHealth,undefined);
+      assert.equal((await app.inject({url:'/v1/owner/board/health',headers:guestHeaders})).statusCode,404);
+      assert.deepEqual((await app.inject('/health')).json(),{status:'ok',boardAvailable:true});
       const diagnostics=await app.inject({url:'/v1/owner/board/diagnostics',headers:ownerHeaders});
       assert.equal(diagnostics.statusCode,200);
       assert.equal(diagnostics.json().lineCount,1);
