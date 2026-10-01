@@ -44,9 +44,9 @@ export function freshEvidenceFor(line: PropLine, evidence: readonly Evidence[], 
 
 export function researchTargetsFor(board: Board): ResearchTarget[] {
   const targets: ResearchTarget[] = board.lines.map(({ eventId, eventName, eventStartTime, league,
-    playerId, playerName, team, opponent, market, sport }) => ({
+    playerId, playerName, team, opponent, market, sport, homeTeam, awayTeam }) => ({
     eventId, eventName, eventStartTime, league, playerId, playerName,
-    team, opponent, market, sport,
+    team, opponent, market, sport, homeTeam: homeTeam ?? null, awayTeam: awayTeam ?? null,
   }));
   return [...new Map(targets.map((target) => [
     [target.eventId, target.playerId, target.market].join('|'), target,

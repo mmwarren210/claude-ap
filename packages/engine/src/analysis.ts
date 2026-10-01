@@ -51,7 +51,8 @@ export function evaluateLine(line: PropLine, evidence: readonly Evidence[], regi
   const current = freshEvidenceFor(line, evidence, now);
   // Web findings are AI-structured context for people to read. No model scores them, so
   // they must not lower evidence quality or shorten the analysis's evidence expiry.
-  const fresh = current.filter((item) => !isContextOnly(item));
+  // Identity findings (team, photo) describe who the player is, not how they will perform.
+  const fresh = current.filter((item) => !isContextOnly(item) && !item.kind.startsWith('identity:'));
   const contextIds = current.filter(isContextOnly).map((item) => item.id);
   const withContext = (analysis: Analysis): Analysis =>
     contextIds.length ? { ...analysis, contextEvidenceIds: contextIds } : analysis;

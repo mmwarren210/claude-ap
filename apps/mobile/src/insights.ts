@@ -108,3 +108,28 @@ export function fullHitMultiplier(legs: number): number | null {
 
 /** Same minimum leg scores the server's Crown audit applies (packages/engine/src/crowns.ts). */
 export const crownMinimumLineScore: Readonly<Record<number, number>> = { 2: 88, 3: 86, 4: 84, 5: 82, 6: 80 };
+
+/** Plain reasons for the server's Crown rule codes. */
+const crownIssueTexts: Readonly<Record<string, string>> = {
+  TEAM_IDENTITY_UNAVAILABLE: 'a leg’s team is not confirmed yet (try again after the next reanalysis)',
+  CORRELATION_AUDIT_UNAVAILABLE: 'Crown saving is turned off on this server',
+  SAME_EVENT_CONCENTRATION: 'more than two legs come from one game',
+  QB_RECEIVER_STACK: 'a quarterback and his own receiver are picked in the same direction',
+  SAME_TEAM_CONCENTRATION: 'three legs come from one team',
+  BELOW_CROWN_MINIMUM: 'a leg is below the minimum score for this Crown size',
+  DUPLICATE_PLAYER: 'the same player appears twice',
+  STALE_OR_UNAVAILABLE_LINE: 'a game has already started',
+  STALE_MODEL_EVIDENCE: 'a leg’s evidence expired and needs reanalysis',
+  MISSING_MODEL_EVIDENCE: 'a leg has no attributed evidence',
+  INELIGIBLE_PICK: 'a leg is not playable',
+  INVALID_OR_STALE_CROWN: 'a leg is no longer on the board or its evidence expired',
+  STALE_OR_INVALID_CROWN_LEG: 'a leg is no longer on the board or its evidence expired',
+  DUPLICATE_PUBLIC_CROWN: 'you already shared this exact Crown',
+  APEX_SAME_TEAM: 'two Apex players come from one team',
+};
+
+export function crownIssueMessage(issues: readonly string[] | undefined): string {
+  const reasons = [...new Set((issues ?? []).map((code) => crownIssueTexts[code]).filter(Boolean))];
+  return reasons.length ? `This Crown was not saved: ${reasons.join('; ')}.`
+    : 'This Crown did not pass validation. Check that every leg is still on the board.';
+}

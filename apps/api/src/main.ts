@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { CompositeResearchAdapter, createGkrRegistry, statHistoryReadyVersions } from '@crowniq/engine';
+import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegistry, statHistoryReadyVersions } from '@crowniq/engine';
 import { buildServer } from './server.js';
 import { FullPrizePicksProvider } from './full-prizepicks-provider.js';
 import { TheOddsApiProvider } from './the-odds-api-provider.js';
@@ -72,8 +72,12 @@ const approvedModelKeys=Object.entries(models.requirements())
   .filter(([,requirement])=>requirement.approved).map(([key])=>key);
 const internalHistory=new InternalHistoryStore(process.env.CROWNIQ_INTERNAL_HISTORY_FILE ??
   'tmp/internal-history.json');
+// Crown saves and shares need a correlation policy; 'none' keeps them fail-closed.
+const correlationSetting=process.env.CROWNIQ_CROWN_CORRELATION_POLICY ?? 'conservative';
+if(!['conservative','none'].includes(correlationSetting))throw new Error('Invalid CROWNIQ_CROWN_CORRELATION_POLICY');
 const product=new ProductLedger(process.env.CROWNIQ_PRODUCT_LEDGER_FILE ??
-  'tmp/product-ledger.json',band,()=>new Date(),undefined,internalHistory);
+  'tmp/product-ledger.json',band,()=>new Date(),
+  correlationSetting==='conservative'?conservativeCorrelationPolicy:undefined,internalHistory);
 const statApiKey=process.env.STAT_API_KEY;
 const ownerPublicId=process.env.CROWNIQ_OWNER_PUBLIC_ID;
 const statDailyLimit=process.env.CROWNIQ_STAT_API_DAILY_RECORD_LIMIT

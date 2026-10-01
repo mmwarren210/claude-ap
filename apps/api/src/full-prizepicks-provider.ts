@@ -238,6 +238,7 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
       eventStartTime: event.commence_time,
       playerId: sport.key + ':' + hash(outcome.description.trim().toLowerCase()),
       playerName: outcome.description.trim(), team: null, opponent: null,
+      homeTeam: event.home_team ?? null, awayTeam: event.away_team ?? null,
       market: normalizePrizePicksMarketKey(normalizedSport,marketKey),
       threshold: outcome.point, availableDirections: [direction], lineType, fetchedAt,
       ...(multiplier == null ? {} : { payoutMultiplier: multiplier }),

@@ -31,6 +31,9 @@ export const propLineSchema = z.object({
   playerName: identifier,
   team: z.string().nullable(),
   opponent: z.string().nullable(),
+  /** The event's two sides as the odds feed names them; team is only ever set to one of these. */
+  homeTeam: z.string().nullable().optional(),
+  awayTeam: z.string().nullable().optional(),
   market: identifier,
   threshold: z.number().finite(),
   availableDirections: z.array(playableDirectionSchema).min(1).refine(

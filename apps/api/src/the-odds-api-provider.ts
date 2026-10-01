@@ -155,7 +155,7 @@ export class TheOddsApiProvider implements OddsProvider<RawPrizePicksSelection> 
       eventStartTime: event.commence_time,
       playerId: 'NFL:' + hash(outcome.description.trim().toLowerCase()),
       playerName: outcome.description.trim(),
-      team: null, opponent: null,
+      team: null, opponent: null, homeTeam: event.home_team, awayTeam: event.away_team,
       market: marketNames[marketKey], threshold: outcome.point,
       availableDirections: [direction], lineType, fetchedAt,
       ...(multiplier == null ? {} : { payoutMultiplier: multiplier }),

@@ -10,3 +10,4 @@ export * from './fantasy/registry.js';
 export * from './fantasy/scoring.js';
 export * from './selections.js';
 export * from './grading.js';
+export * from './correlation.js';

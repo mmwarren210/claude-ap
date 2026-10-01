@@ -10,6 +10,17 @@ type CacheEntry={until:number;value:unknown};
 const MLB_BASE='https://statsapi.mlb.com/api/v1';
 const MLB_FEED_BASE='https://statsapi.mlb.com/api/v1.1';
 const SLEEPER_NFL_PLAYERS='https://api.sleeper.app/v1/players/nfl';
+/** Sleeper team codes to the full names the odds feed uses for NFL events. */
+export const NFL_TEAMS:Readonly<Record<string,string>>={ARI:'Arizona Cardinals',ATL:'Atlanta Falcons',
+  BAL:'Baltimore Ravens',BUF:'Buffalo Bills',CAR:'Carolina Panthers',CHI:'Chicago Bears',CIN:'Cincinnati Bengals',
+  CLE:'Cleveland Browns',DAL:'Dallas Cowboys',DEN:'Denver Broncos',DET:'Detroit Lions',GB:'Green Bay Packers',
+  HOU:'Houston Texans',IND:'Indianapolis Colts',JAX:'Jacksonville Jaguars',KC:'Kansas City Chiefs',
+  LV:'Las Vegas Raiders',LAC:'Los Angeles Chargers',LAR:'Los Angeles Rams',MIA:'Miami Dolphins',
+  MIN:'Minnesota Vikings',NE:'New England Patriots',NO:'New Orleans Saints',NYG:'New York Giants',
+  NYJ:'New York Jets',PHI:'Philadelphia Eagles',PIT:'Pittsburgh Steelers',SF:'San Francisco 49ers',
+  SEA:'Seattle Seahawks',TB:'Tampa Bay Buccaneers',TEN:'Tennessee Titans',WAS:'Washington Commanders'};
+const sleeperPhoto=(id:string)=>`https://sleepercdn.com/content/nfl/players/${encodeURIComponent(id)}.jpg`;
+const mlbPhoto=(id:number)=>`https://img.mlbstatic.com/mlb-photos/image/upload/w_213,q_auto:best/v1/people/${id}/headshot/67/current`;
 const MLB_MARKETS=new Set(['batter_hits_runs_rbis','batter_hits','batter_walks',
   'batter_home_runs','pitcher_strikeouts']);
 const NFL_MARKETS=new Set(['passing_yards','player_pass_attempts','player_pass_completions',
@@ -225,22 +236,29 @@ export class CurrentContextResearch implements ResearchAdapter{
     if(!targets.length)return[] as Evidence[];
     const raw=await this.json(SLEEPER_NFL_PLAYERS,15*60_000,undefined,counters);
     const root=object(raw);if(!root)throw new Error('CURRENT_NFL_STATUS_INVALID');
-    const byName=new Map<string,SleeperPlayer[]>();
-    for(const value of Object.values(root)){
+    const byName=new Map<string,{id:string;player:SleeperPlayer}[]>();
+    for(const [id,value] of Object.entries(root)){
       const player=object(value) as SleeperPlayer|null;if(!player)continue;
       const full=(player.full_name??[player.first_name,player.last_name].filter(Boolean).join(' ')).trim();
       if(!full)continue;const key=normalizeName(full);
-      byName.set(key,[...(byName.get(key)??[]),player]);
+      byName.set(key,[...(byName.get(key)??[]),{id,player}]);
     }
     const out:Evidence[]=[];
     for(const target of targets){
       let matches=byName.get(normalizeName(target.playerName))??[];
-      if(target.team){
-        const exact=matches.filter((item)=>normalizeName(item.team??'')===normalizeName(target.team!));
-        if(exact.length)matches=exact;
+      // Prefer players on one of this game's two teams; this separates players who share a name.
+      const sides=[target.homeTeam,target.awayTeam].filter((side):side is string=>!!side);
+      if(sides.length){
+        const inGame=matches.filter((item)=>sides.includes(NFL_TEAMS[(item.player.team??'').toUpperCase()]??''));
+        if(inGame.length)matches=inGame;
       }
       if(matches.length!==1)continue;
-      const player=matches[0],status=(player.status??'').trim().toLowerCase(),
+      const team=NFL_TEAMS[(matches[0].player.team??'').toUpperCase()];
+      if(team&&sides.includes(team))out.push(this.evidence(target,'identity:team',1,team,
+        'Sleeper public NFL player feed',SLEEPER_NFL_PLAYERS,'PUBLIC','MEDIUM',.8,30*60_000));
+      out.push(this.evidence(target,'identity:photo',1,'Player headshot',
+        'Sleeper player photos',sleeperPhoto(matches[0].id),'PUBLIC','MEDIUM',.8,30*60_000));
+      const player=matches[0].player,status=(player.status??'').trim().toLowerCase(),
         injury=(player.injury_status??'').trim();
       const available=(status===''||status==='active')&&!injury;
       out.push(this.evidence(target,'status:player_available',available?1:0,
@@ -258,7 +276,7 @@ export class CurrentContextResearch implements ResearchAdapter{
   }
 
   private async mlb(targets:readonly ResearchTarget[],counters:{searches:number;cacheHits:number}){
-    const out:Evidence[]=[];const diagnostics:MlbDiagnostics={groups:0,gameMatchedTargets:0,
+    const out:Evidence[]=[],identity:Evidence[]=[];const diagnostics:MlbDiagnostics={groups:0,gameMatchedTargets:0,
       boxscoreMatchedTargets:0,playerMatchedTargets:0,batterTargets:0,lineupPostedTargets:0,
       starterContextTargets:0,evidenceTargets:0,sourceFailures:0,failedGroups:0};
     if(!targets.length)return {evidence:out,diagnostics};
@@ -314,6 +332,11 @@ export class CurrentContextResearch implements ResearchAdapter{
             number(object(object(value)?.person)?.id)===playerId)?'home':null;
         if(!side)continue;
         const mine=side==='away'?away:home,other=side==='away'?'home':'away';
+        // The boxscore side is exact, so the team is the matching side of this event.
+        const team=side==='away'?target.awayTeam:target.homeTeam;
+        if(team)identity.push(this.evidence(target,'identity:team',1,team,'MLB Stats API',sourceUrl,'OFFICIAL','HIGH',.95,30*60_000));
+        identity.push(this.evidence(target,'identity:photo',1,'Player headshot','MLB player photos',mlbPhoto(playerId),
+          'OFFICIAL','HIGH',.95,30*60_000));
         if(target.market==='pitcher_strikeouts'){
           const starter=probableId(side);
           if(starter){
@@ -343,7 +366,8 @@ export class CurrentContextResearch implements ResearchAdapter{
         if(out.length>beforeCount)diagnostics.evidenceTargets++;
       }
     }
-    return {evidence:out,diagnostics};
+    // Identity is kept out of the context diagnostics, which count status findings only.
+    return {evidence:[...out,...identity],diagnostics};
   }
   private async nba(targets:readonly ResearchTarget[]){
     const diagnostics:NbaDiagnostics={lookups:0,identityMatched:0,availabilityResolved:0,failures:0};

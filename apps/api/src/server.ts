@@ -171,6 +171,13 @@ export function buildServer(options: ServerOptions = {}) {
     ? {...ownerBoardRefresh,refreshStage:service.getStatus().refreshStage}:ownerBoardRefresh;
 
   // Public liveness only. Operating detail lives behind owner or admin auth.
+  // Which Crown rules failed, from the ledger's error message, for a readable app message.
+  const crownIssues=(error:unknown)=>{
+    const message=error instanceof Error?error.message:'';
+    const match=/^CROWN_CONSTRAINT_REJECTED:(.+)$/.exec(message);
+    return match?match[1].split(',').filter((code)=>/^[A-Z_]+$/.test(code)):
+      /^[A-Z_]+$/.test(message)?[message]:[];
+  };
   app.get('/health', async () => ({ status: 'ok', boardAvailable: !!service.getBoard() }));
   const username=z.string().trim().regex(/^[A-Za-z0-9_]{3,24}$/);
   const email=z.email().max(254);
@@ -529,7 +536,7 @@ export function buildServer(options: ServerOptions = {}) {
     const board=service.getBoard();if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
     try{return reply.code(201).send(await options.product!.savePrivateCrown(user.accountId,
       input.data.lineIds,board,service.getEvidence()));}
-    catch{return reply.code(422).send({code:'CROWN_VALIDATION_FAILED'});}
+    catch(error){return reply.code(422).send({code:'CROWN_VALIDATION_FAILED',issues:crownIssues(error)});}
   });
   app.delete('/v1/me/crowns/:id',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
@@ -659,7 +666,7 @@ export function buildServer(options: ServerOptions = {}) {
       const board=service.getBoard();if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
       try{return reply.code(201).send(await options.product!.share((await actor(request))!,
         parsed.data.lineIds,board,service.getEvidence()));}
-      catch{return reply.code(422).send({code:'CROWN_SHARE_REJECTED'});}
+      catch(error){return reply.code(422).send({code:'CROWN_SHARE_REJECTED',issues:crownIssues(error)});}
     });
     social.delete('/crowns/:id',async(request,reply)=>{
       const parsed=z.object({id:z.string().uuid()}).safeParse(request.params);

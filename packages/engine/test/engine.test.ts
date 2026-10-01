@@ -161,3 +161,20 @@ test('auto Crown only returns a complete audited combination', () => {
   assert.deepEqual(partial.picks?.map((pick) => pick.line.id), [a.id]);
   assert.ok(partial.issues.includes('INSUFFICIENT_QUALIFIED_PICKS'));
 });
+
+test('conservative correlation policy limits one game and same-team QB stacks', async () => {
+  const { conservativeCorrelationPolicy } = await import('../src/correlation.js');
+  const pick = (eventId: string, market: string, team: string, direction: 'MORE' | 'LESS') => ({
+    line: { eventId, market, team } as never, analysis: { direction } as never });
+  assert.deepEqual(conservativeCorrelationPolicy([pick('a', 'passing_yards', 'BUF', 'MORE'),
+    pick('b', 'player_points', 'LAL', 'MORE')]), []);
+  assert.deepEqual(conservativeCorrelationPolicy([pick('a', 'player_points', 'X', 'MORE'),
+    pick('a', 'player_rebounds', 'Y', 'MORE'), pick('a', 'player_assists', 'Z', 'MORE')]), ['SAME_EVENT_CONCENTRATION']);
+  assert.deepEqual(conservativeCorrelationPolicy([pick('a', 'passing_yards', 'BUF', 'MORE'),
+    pick('a', 'player_reception_yds', 'BUF', 'MORE')]), ['QB_RECEIVER_STACK']);
+  // Opposite directions, or an opposing receiver, are not a stack.
+  assert.deepEqual(conservativeCorrelationPolicy([pick('a', 'passing_yards', 'BUF', 'MORE'),
+    pick('a', 'player_reception_yds', 'BUF', 'LESS')]), []);
+  assert.deepEqual(conservativeCorrelationPolicy([pick('a', 'passing_yards', 'BUF', 'MORE'),
+    pick('a', 'player_reception_yds', 'MIA', 'MORE')]), []);
+});

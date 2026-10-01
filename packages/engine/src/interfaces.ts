@@ -21,6 +21,9 @@ export interface ResearchTarget {
   readonly playerName: string;
   readonly team: string | null;
   readonly opponent: string | null;
+  /** The event's sides as the odds feed names them, when known. */
+  readonly homeTeam?: string | null;
+  readonly awayTeam?: string | null;
   readonly market: string;
   readonly sport: Sport;
 }

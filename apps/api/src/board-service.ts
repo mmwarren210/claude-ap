@@ -1,5 +1,5 @@
 import { boardSchema, propLineSchema } from '@crowniq/contracts';
-import type { Analysis, Board, BoardResponse, Evidence, PropLine, SecondLookAudit } from '@crowniq/contracts';
+import type { Analysis, Board, BoardResponse, Evidence, PlayerMedia, PropLine, SecondLookAudit } from '@crowniq/contracts';
 import { collectResearch, effectiveEvidenceExpiry, evaluateBoard, ModelRegistry, researchTargetsFor } from '@crowniq/engine';
 import type { OddsProvider, ResearchAdapter, ResearchHealth } from '@crowniq/engine';
 import { classifyPrizePicksLineTypes, normalizeCachedPrizePicksLines } from './prizepicks-line-types.js';
@@ -39,6 +39,7 @@ export class BoardService {
   private webEvidence: readonly Evidence[] = [];
   private evidence: readonly Evidence[] = [];
   private secondLookAudits: Record<string,SecondLookAudit> = {};
+  private playerMedia: Record<string,PlayerMedia> = {};
   private nextDeadline = Infinity;
   private startupRecovery = {status:'NOT_NEEDED' as 'NOT_NEEDED'|'UNCONFIGURED'|'RUNNING'|'SUCCEEDED'|'PARTIAL'|'FAILED',
     evidenceAdded:0,oddsCreditsUsed:0 as const,error:null as string|null};
@@ -136,14 +137,40 @@ export class BoardService {
 
   getEvidence(): readonly Evidence[] { this.getBoard(); return this.evidence; }
 
-  private publish(board: Board, evidence: readonly Evidence[], now: Date): BoardResponse {
+  /**
+   * Team identity from exact source matches. A line gets a team only when the matched team is one
+   * of its own event's two sides; anything else is ignored rather than guessed.
+   */
+  private withIdentity(board: Board, evidence: readonly Evidence[], now: Date): Board {
+    const teams = new Map<string, string>();
+    for (const item of evidence) {
+      if (item.entityType !== 'PLAYER' || effectiveEvidenceExpiry(item) <= now.getTime()) continue;
+      if (item.kind === 'identity:team') teams.set(item.eventId + '|' + item.entityId, item.finding);
+      if (item.kind === 'identity:photo' && item.sourceUrl)
+        this.playerMedia[item.entityId] = { photoUrl: item.sourceUrl, source: item.sourceName };
+    }
+    let changed = false;
+    const lines = board.lines.map((line) => {
+      const team = teams.get(line.eventId + '|' + line.playerId);
+      if (line.team || !team || (team !== line.homeTeam && team !== line.awayTeam)) return line;
+      changed = true;
+      return { ...line, team, opponent: (team === line.homeTeam ? line.awayTeam : line.homeTeam) ?? null };
+    });
+    return changed ? { ...board, lines } : board;
+  }
+
+  private publish(source: Board, evidence: readonly Evidence[], now: Date): BoardResponse {
+    const board = this.withIdentity(source, evidence, now);
     const result = evaluateBoard(board, evidence, this.models, now);
     const analyses=result.analyses.map((analysis)=>{
       const audit=this.secondLookAudits[analysis.lineId];
       return audit?{...analysis,reviewStatus:'SECOND_LOOK' as const,secondLook:audit}:
         {...analysis,reviewStatus:'STANDARD' as const,secondLook:null};
     });
-    this.snapshot = { board, analyses, rankedLineIds:result.rankedLineIds, builtAt: now.toISOString() };
+    const players = new Set(board.lines.map((line) => line.playerId));
+    const media = Object.fromEntries(Object.entries(this.playerMedia).filter(([playerId]) => players.has(playerId)));
+    this.snapshot = { board, analyses, rankedLineIds:result.rankedLineIds, builtAt: now.toISOString(),
+      ...(Object.keys(media).length ? { playerMedia: media } : {}) };
     this.evidence = evidence;
     this.nextDeadline = Infinity;
     for (const line of board.lines) {

@@ -13,7 +13,7 @@ import { Icon } from '../../components/ui/Icon';
 import { LineBadge } from '../../components/ui/LineBadge';
 import { PlayerAvatar } from '../../components/ui/PlayerAvatar';
 import { ScoreRing } from '../../components/ui/ScoreRing';
-import { crownMinimumLineScore, formatLine, fullHitMultiplier, gameTime, lineStats, marketLabel, signed } from '../../insights';
+import { crownIssueMessage, crownMinimumLineScore, formatLine, fullHitMultiplier, gameTime, lineStats, marketLabel, signed } from '../../insights';
 import { addLeg, autoCrown, shareCrown } from '../../state';
 import type { CrownLeg } from '../../state';
 import { colors, lineStyleOf, radius, rankAccents } from '../../theme';
@@ -114,9 +114,9 @@ export default function CrownScreen() {
       const response = await request(path, { method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ lineIds: legs.map((leg) => leg.line.id) }) });
       if (response.ok) { setMessage(done); return; }
-      const body = await response.json().catch(() => ({})) as { code?: string };
+      const body = await response.json().catch(() => ({})) as { code?: string; issues?: string[] };
       setMessage(body.code === 'DEMO_READ_ONLY' ? 'Demo mode is read-only. Sign in to save Crowns.'
-        : 'This Crown did not pass validation. Check that every leg is still on the board and meets the minimum score.');
+        : crownIssueMessage(body.issues));
     } catch { setMessage('Could not reach CrownIQ. Your draft is still on this device.'); }
   };
 
