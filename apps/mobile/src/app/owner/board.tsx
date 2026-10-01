@@ -146,6 +146,22 @@ export default function OwnerBoardScreen(){
     }finally{setBusy(false);}
   };
 
+  const runWebResearch=async()=>{
+    if(busy)return;
+    setBusy(true);setError('');setMessage('');
+    try{
+      const result=await json<{maxSearches:number}>(await request('/v1/owner/board/web-research',{
+        method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({acknowledgeResearchCost:true}),
+      }));
+      setMessage(`Web research started · up to ${result.maxSearches.toLocaleString()} OpenAI searches. Findings are shown as context and never change scores.`);
+    }catch(cause){
+      const text=cause instanceof Error?cause.message:'Web research could not start.';
+      setError(text==='WEB_RESEARCH_UNCONFIGURED'?'Web research is not configured on this server.':
+        text==='WEB_RESEARCH_RUNNING'?'Web research is already running.':text);
+    }finally{setBusy(false);}
+  };
+
   const topReasons=Object.entries(diagnostics?.reasonCounts??{}).slice(0,6);
   const stageIndex=pullStages.indexOf(pullStatus?.refreshStage as typeof pullStages[number]);
   const step=Math.min(Math.max(stageIndex+1,1),5);
@@ -226,6 +242,10 @@ export default function OwnerBoardScreen(){
         onPress={()=>void reanalyze()} style={[styles.action,(busy||pulling||!diagnostics)&&styles.disabled]}>
         <Text style={styles.actionText}>{busy?'Reanalyzing saved board…':'Reanalyze saved board (0 Odds credits)'}</Text>
       </Pressable>
+      <Pressable accessibilityRole="button" disabled={busy||!diagnostics}
+        onPress={()=>void runWebResearch()} style={[styles.secondary,(busy||!diagnostics)&&styles.disabled]}>
+        <Text style={styles.secondaryText}>Run web research (uses OpenAI searches)</Text>
+      </Pressable>
       {!!message&&<Text accessibilityRole="alert" style={styles.success}>{message}</Text>}
       {!!error&&error!=='BOARD_UNAVAILABLE'&&<Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
     </>}
@@ -243,6 +263,9 @@ const styles=StyleSheet.create({
     alignItems:'center',justifyContent:'center',paddingHorizontal:14},
   actionText:{color:palette.background,fontSize:14,fontWeight:'900',textAlign:'center'},
   disabled:{opacity:.5},
+  secondary:{minHeight:46,borderColor:palette.green,borderWidth:1,borderRadius:12,
+    alignItems:'center',justifyContent:'center',paddingHorizontal:14},
+  secondaryText:{color:palette.green,fontSize:13,fontWeight:'800',textAlign:'center'},
   track:{height:8,backgroundColor:palette.border,borderRadius:8,overflow:'hidden'},
   fill:{height:8,backgroundColor:palette.green,borderRadius:8},
   success:{color:palette.green,fontSize:13,lineHeight:19},

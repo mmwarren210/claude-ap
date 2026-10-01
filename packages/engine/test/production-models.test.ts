@@ -309,3 +309,23 @@ test('saved selection retains the exact line, context, score, evidence, and immu
   assert.equal(saved.grade,'PENDING');
   assert.throws(() => snapshotSelection(line,{...analysis,direction:'PASS'},e,now));
 });
+
+test('web findings are display-only: score, quality and expiry ignore them', () => {
+  const line = fixtureLine();
+  const evidence = inputs(line);
+  const web = evidenceSchema.parse({ id: 'web:fixture', entityType: 'PLAYER', entityId: line.playerId,
+    eventId: line.eventId, market: null, kind: 'web:injury', finding: 'Synthetic web claim.',
+    sourceName: 'example.org', sourceUrl: 'https://example.org/fixture', sourceType: 'AI_STRUCTURED',
+    retrievedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 45 * 60_000).toISOString(),
+    quality: 'LOW', confidence: 0.5 });
+  const without = run([line], evidence).analyses[0];
+  const withWeb = run([line], [...evidence, web]).analyses[0];
+  assert.notEqual(without.score, null);
+  assert.equal(withWeb.score, without.score);
+  assert.equal(withWeb.scoreBand, without.scoreBand);
+  assert.equal(withWeb.evidenceQuality, without.evidenceQuality);
+  assert.equal(withWeb.evidenceExpiresAt, without.evidenceExpiresAt);
+  assert.deepEqual(withWeb.evidenceIds, without.evidenceIds);
+  assert.deepEqual(withWeb.contextEvidenceIds, ['web:fixture']);
+  assert.equal(without.contextEvidenceIds, undefined);
+});

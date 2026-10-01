@@ -134,6 +134,8 @@ export const analysisSchema = z.object({
   thresholdCushion: z.number().finite().nullable().optional(),
   reviewStatus: z.enum(['STANDARD', 'SECOND_LOOK']).optional(),
   secondLook: secondLookAuditSchema.nullable().optional(),
+  /** Display-only findings (web research) that no model scores. */
+  contextEvidenceIds: z.array(identifier).optional(),
 });
 
 export const rankingCardSchema = z.object({

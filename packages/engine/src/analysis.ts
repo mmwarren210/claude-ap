@@ -18,6 +18,10 @@ function pass(line: PropLine, reasonCode: string, modelVersion: string | null,
   };
 }
 
+function isContextOnly(item: Evidence): boolean {
+  return item.kind.startsWith('web:');
+}
+
 function evidenceQuality(evidence: readonly Evidence[]): Analysis['evidenceQuality'] {
   if (!evidence.length) return 'NONE';
   if (evidence.some((item) => item.quality === 'LOW')) return 'LOW';
@@ -44,7 +48,18 @@ export function evaluateLine(line: PropLine, evidence: readonly Evidence[], regi
   if (Date.parse(line.eventStartTime) <= now.getTime()) {
     return pass(line, 'EVENT_ALREADY_STARTED', module?.version ?? null);
   }
-  const fresh = freshEvidenceFor(line, evidence, now);
+  const current = freshEvidenceFor(line, evidence, now);
+  // Web findings are AI-structured context for people to read. No model scores them, so
+  // they must not lower evidence quality or shorten the analysis's evidence expiry.
+  const fresh = current.filter((item) => !isContextOnly(item));
+  const contextIds = current.filter(isContextOnly).map((item) => item.id);
+  const withContext = (analysis: Analysis): Analysis =>
+    contextIds.length ? { ...analysis, contextEvidenceIds: contextIds } : analysis;
+  return withContext(evaluateWithEvidence(line, fresh, module));
+}
+
+function evaluateWithEvidence(line: PropLine, fresh: readonly Evidence[],
+  module: ModelModule | null): Analysis {
   if (!module) return pass(line, 'MODEL_SUPPORT_INCOMPLETE', null, fresh);
   if (line.lineType === 'UNKNOWN_ALTERNATE')
     return pass(line, 'UNCLASSIFIED_ALTERNATE', module.version, fresh);

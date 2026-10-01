@@ -70,6 +70,7 @@ export default function PlayerDetail() {
     {(analysis?.opposingFactors.length?analysis.opposingFactors:['No additional risk factors supplied.']).map((item,index)=><Text key={index} style={styles.detail}>• {item}</Text>)}
     <Text style={styles.heading}>Evidence status</Text>
     <Text style={styles.detail}>{analysis?.evidenceIds.length ?? 0} attributed findings · {analysis?.evidenceExpiresAt ? `expires ${new Date(analysis.evidenceExpiresAt).toLocaleString()}`:'no current expiry'}.</Text>
+    {!!analysis?.contextEvidenceIds?.length && <Text style={styles.detail}>Web context (not scored): {analysis.contextEvidenceIds.length} {analysis.contextEvidenceIds.length===1?'finding':'findings'}. These never change the GKR score.</Text>}
     <Text style={styles.detail}>Source details are not exposed by this public board response; unavailable values are not inferred.</Text>
     {history && <><Text style={styles.heading}>{history.label}</Text>
       <Text style={styles.detail}>CrownIQ Tracked History · verified graded outcomes only</Text>

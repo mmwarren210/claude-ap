@@ -147,7 +147,8 @@ export function buildServer(options: ServerOptions = {}) {
         let trackingStatus:OwnerPullJob['trackingStatus']=options.product?'OK':'UNCONFIGURED',tracked=0;
         if(options.product){try{tracked=await options.product.track(snapshot,service.getEvidence());}
           catch{trackingStatus='FAILED';}}
-        const webResearchJob=webBuild?.start(snapshot.board).id??null;
+        // Web research has its own cost (OpenAI searches), so a pull never starts it.
+        const webResearchJob=null;
         const status=service.getStatus();
         ownerBoardRefresh={...ownerBoardRefresh,status:'SUCCEEDED',finishedAt:now().toISOString(),
           error:null,trackingStatus,tracked,webResearchJob,refreshStage:status.refreshStage,
@@ -282,6 +283,19 @@ export function buildServer(options: ServerOptions = {}) {
         message:'A PrizePicks provider refresh may consume credits.'});
       const started=startOwnerBoardRefresh();
       return reply.code(202).send({started,job:currentJob()});
+    });
+    // Paid web research (OpenAI searches) runs only when the owner asks for it.
+    ownerBoard.post('/web-research',async(request,reply)=>{
+      if(!webBuild||!options.webResearch)return reply.code(503).send({code:'WEB_RESEARCH_UNCONFIGURED'});
+      const input=z.object({acknowledgeResearchCost:z.literal(true)}).strict().safeParse(request.body);
+      if(!input.success)return reply.code(428).send({code:'RESEARCH_COST_CONFIRMATION_REQUIRED',
+        message:'Web research uses OpenAI web searches, up to the configured maximum per run.'});
+      const snapshot=service.getBoard();
+      if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+      if(webBuild.getStatus()?.status==='RUNNING')
+        return reply.code(409).send({code:'WEB_RESEARCH_RUNNING',job:webBuild.getStatus()});
+      return reply.code(202).send({job:webBuild.start(snapshot.board),
+        maxSearches:options.webResearch.maxSearchesPerRun});
     });
     // First-board recovery from the Board tab. It can only spend credits when no board exists.
     ownerBoard.post('/bootstrap',async(request,reply)=>{

@@ -290,6 +290,9 @@ export class WebResearchAdapter implements ResearchAdapter {
     this.catalog = options.catalog ?? new WebResearchCatalog(null);
   }
 
+  /** The most searches one research run may spend. */
+  get maxSearchesPerRun(): number { return this.maxSearches; }
+
   getHealth(): ResearchHealth { return this.health; }
   getCatalogSummary() { return this.catalog.summary(); }
   async getCatalog(offset = 0, limit = 100, sport?: string) {
