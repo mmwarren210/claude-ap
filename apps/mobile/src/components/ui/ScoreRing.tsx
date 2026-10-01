@@ -20,7 +20,8 @@ export function ScoreRing({ score, band, size = 72 }: { score: number | null; ba
         transform={`rotate(-90 ${size / 2} ${size / 2})`} />}
     </Svg>
     <Text style={[styles.score, { fontSize: size * 0.34 }]}>{score === null ? '—' : Math.round(score)}</Text>
-    <Text style={[styles.band, { color, fontSize: Math.max(8, size * 0.13) }]}>{bandLabel(band)}</Text>
+    <Text style={[styles.band, { color, fontSize: Math.max(8, size * 0.13) }]}>
+      {size < 64 && bandLabel(band) === 'PLAYABLE' ? 'PLAY' : bandLabel(band)}</Text>
   </View>;
 }
 
