@@ -3,6 +3,7 @@ import type { ModelContext, ModelModule } from '../interfaces.js';
 import { fantasyDistribution } from '../fantasy/scoring.js';
 import { fantasyRules } from '../fantasy/registry.js';
 import type { MarketDefinition } from './definitions.js';
+import { flipsForLess } from './less-aware.js';
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const round = (value: number) => Math.round(value * 100) / 100;
@@ -123,6 +124,10 @@ export function createMarketModule(definition: MarketDefinition, approved = fals
         opposingFactors: missingFactorKeys.map((key) => 'Missing attributed factor ' + key),
       });
 
+      // The side the projection points to. Market checks below can only turn a disagreement with
+      // it into a PASS, so every scored line is scored from this side.
+      const projectedSide: PlayableDirection = distribution.midpoint >= line.threshold ? 'MORE' : 'LESS';
+      const flipped = (key: string) => !!definition.lessAware && projectedSide === 'LESS' && flipsForLess(key);
       const contextComponents = definition.factors.map(([key, maximum]) => {
         if (key === 'evidence_quality') {
           const quality = evidence.some((item) => item.quality === 'LOW' || item.confidence < .6) ? .3 :
@@ -137,6 +142,8 @@ export function createMarketModule(definition: MarketDefinition, approved = fals
         }
         const delta = (observation.value - observation.baseline) /
           Math.max(Math.abs(observation.baseline), 1);
+        if (flipped(key)) return { name: key, contribution: round(maximum * clamp(.5 - delta * 2, 0, 1)),
+          explanation: `Observed ${observation.value} versus reference ${observation.baseline}; weight ${maximum}; below reference favors LESS.` };
         return { name: key, contribution: round(maximum * clamp(.5 + delta * 2, 0, 1)),
           explanation: `Observed ${observation.value} versus reference ${observation.baseline}; weight ${maximum}.` };
       });

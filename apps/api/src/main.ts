@@ -1,5 +1,6 @@
 import 'dotenv/config';
-import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegistry, statHistoryReadyVersions } from '@crowniq/engine';
+import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegistry, lessAwareVersion, marketDefinitions,
+  statHistoryReadyVersions } from '@crowniq/engine';
 import { buildServer } from './server.js';
 import { FullPrizePicksProvider } from './full-prizepicks-provider.js';
 import { TheOddsApiProvider } from './the-odds-api-provider.js';
@@ -72,6 +73,10 @@ const approvedModelVersions=[...new Set(modelPreset==='stat_history_v1'
   ? [...configuredModelVersions,...statHistoryReadyVersions]
   : configuredModelVersions)];
 const models=createGkrRegistry(approvedModelVersions);
+const knownModelVersions=new Set(marketDefinitions.flatMap((definition)=>
+  [definition.version,lessAwareVersion(definition.version)]));
+const unknownModelVersions=configuredModelVersions.filter((version)=>!knownModelVersions.has(version));
+if(unknownModelVersions.length)console.warn('GKR_APPROVED_MODEL_VERSIONS lists unknown versions: '+unknownModelVersions.join(', '));
 const approvedModelKeys=Object.entries(models.requirements())
   .filter(([,requirement])=>requirement.approved).map(([key])=>key);
 const internalHistory=new InternalHistoryStore(process.env.CROWNIQ_INTERNAL_HISTORY_FILE ??

@@ -79,7 +79,7 @@ After normalizing the complete board, CrownIQ compares each `_alternate` thresho
 | `WEB_RESEARCH_MODEL`, `WEB_RESEARCH_MAX_SEARCHES`, `WEB_RESEARCH_CONCURRENCY` | Server only | Defaults: `gpt-5.4-mini`, 1,500 search groups and four parallel searches per owner run. |
 | `CROWNIQ_RESEARCH_CATALOG_FILE` | Server only | Exact searches, cited websites and expiring context cache. Default `tmp/research-catalog.json`; set to a durable mounted path in deployment. |
 | `DATABASE_URL` | Server only | Reserved for durable storage. |
-| `GKR_APPROVED_MODEL_VERSIONS` | Server only | Exact comma-separated module versions, only after owner calibration review; empty by default, so modules PASS. |
+| `GKR_APPROVED_MODEL_VERSIONS` | Server only | Exact comma-separated module versions, only after owner calibration review; empty by default, so modules PASS. Listing a LESS-aware version (the current version with its minor number raised by one, for example `GKR-NBA-PLAYER-POINTS-1.4`) switches that market to LESS-aware scoring; see `docs/MODEL_ENGINE.md`. Unknown versions are reported at startup. |
 | `NFL_PASSING_EVIDENCE_FILE` | Server only | Optional attributed NFL passing evidence JSON read on owner refresh/reanalysis. |
 | `NFLVERSE_MAPPING_FILE` | Server only | Optional verified odds-to-nflverse event/player/team overrides for postgame grading. Exact automatic resolution is used when no override exists. |
 | `CROWNIQ_SELECTIONS_FILE` | Server only | Persistent private JSON ledger for the single-process NFL grading pilot. |

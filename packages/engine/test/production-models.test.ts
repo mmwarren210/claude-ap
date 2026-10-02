@@ -4,7 +4,8 @@ import type { Evidence, PropLine } from '@crowniq/contracts';
 import { boardSchema, evidenceSchema } from '@crowniq/contracts';
 import { auditCrown, buildAutoCrown, createGkrRegistry, evaluateBoard, fantasyDistribution,
   fantasyRules, marketDefinitions, prizepicksFantasyRegistryV1, reviewManualCrown,
-  scoreBand, scoreFantasyStats, snapshotSelection, statHistoryReadyVersions } from '../src/index.js';
+  scoreBand, scoreFantasyStats, snapshotSelection, statHistoryReadyVersions, lessAwareDefinition, lessAwareVersion,
+  flipsForLess, reliabilityFactors } from '../src/index.js';
 import { fixtureAnalysis, fixtureLine, now } from './fixtures.js';
 
 // Every player, number, scenario, and outcome here is a fabricated test fixture.
@@ -328,4 +329,65 @@ test('web findings are display-only: score, quality and expiry ignore them', () 
   assert.deepEqual(withWeb.evidenceIds, without.evidenceIds);
   assert.deepEqual(withWeb.contextEvidenceIds, ['web:fixture']);
   assert.equal(without.contextEvidenceIds, undefined);
+});
+
+const lessLine = (overrides: Partial<PropLine> = {}) => fixtureLine({ threshold: 300, availableDirections: ['MORE', 'LESS'], ...overrides });
+// Output factors move with `ratio`; the stability factor (a reliability read) is held steady.
+function trend(line: PropLine, ratio: number, midpoint: number) {
+  return inputs(line, ratio, midpoint, 20).map((item) => item.kind === 'metric:stability'
+    ? finding(line, 'metric:stability', 1.12, 1) : item);
+}
+function scoreWith(versions: readonly string[], line: PropLine, evidence: Evidence[]) {
+  return evaluateBoard(boardSchema.parse({ provider: 'prizepicks', fetchedAt: now.toISOString(), lines: [line] }),
+    evidence, createGkrRegistry(versions), now).analyses[0];
+}
+
+test('LESS-aware models are separate versions that run only when approved by exact id', () => {
+  const current = new Set(marketDefinitions.map((item) => item.version));
+  for (const definition of marketDefinitions) {
+    const revised = lessAwareDefinition(definition);
+    assert.equal(current.has(revised.version), false, revised.version);
+    assert.equal(revised.lessAware, true);
+    assert.deepEqual([revised.sport, revised.market, revised.factors], [definition.sport, definition.market, definition.factors]);
+  }
+  assert.equal(lessAwareVersion('GKR-NBA-PLAYER-POINTS-1.3'), 'GKR-NBA-PLAYER-POINTS-1.4');
+  assert.equal(lessAwareVersion('GKR-NFL-PASSING-YARDS-1.9'), 'GKR-NFL-PASSING-YARDS-1.10');
+  const line = lessLine();
+  assert.equal(createGkrRegistry().resolve(line)?.version, 'GKR-NFL-PASSING-YARDS-1.2');
+  assert.equal(createGkrRegistry(['GKR-NFL-PASSING-YARDS-1.2']).resolve(line)?.version, 'GKR-NFL-PASSING-YARDS-1.2');
+  assert.equal(createGkrRegistry(['GKR-NFL-PASSING-YARDS-1.3']).resolve(line)?.version, 'GKR-NFL-PASSING-YARDS-1.3');
+  assert.equal(createGkrRegistry(['GKR-NFL-PASSING-YARDS-1.2', 'GKR-NFL-PASSING-YARDS-1.3']).resolve(line)?.version,
+    'GKR-NFL-PASSING-YARDS-1.3');
+  // The stat-history preset keeps approving today's versions.
+  assert.equal(statHistoryReadyVersions.some((version) => version.endsWith('PASSING-YARDS-1.3')), false);
+  assert.deepEqual([...reliabilityFactors].every((key) => !flipsForLess(key)), true);
+  assert.equal(flipsForLess('expected_attempts'), true);
+});
+
+test('LESS-aware scoring mirrors MORE, and a rising player hurts a LESS pick', () => {
+  const lessAware = ['GKR-NFL-PASSING-YARDS-1.3'];
+  const line = lessLine();
+  const moreRising = scoreWith(lessAware, line, trend(line, 1.12, 320));
+  const lessFalling = scoreWith(lessAware, line, trend(line, 0.88, 280));
+  const lessRising = scoreWith(lessAware, line, trend(line, 1.12, 280));
+  assert.equal(moreRising.direction, 'MORE');
+  assert.equal(lessFalling.direction, 'LESS');
+  assert.deepEqual(lessFalling.contextBreakdown?.map((item) => [item.name, item.contribution]),
+    moreRising.contextBreakdown?.map((item) => [item.name, item.contribution]));
+  assert.equal(lessFalling.contextScore, moreRising.contextScore);
+  assert.equal(lessFalling.score, moreRising.score);
+  assert.ok(lessRising.contextScore! < lessFalling.contextScore!);
+  assert.match(lessFalling.contextBreakdown!.find((item) => item.name === 'expected_attempts')!.explanation,
+    /below reference favors LESS/);
+});
+
+test('current model versions keep scoring LESS exactly as before', () => {
+  // Golden values captured before LESS-aware scoring existed: today's model reads a falling
+  // player as weak context, so this LESS line passes. Only an approved 1.3 changes that.
+  const line = lessLine();
+  const legacy = scoreWith(['GKR-NFL-PASSING-YARDS-1.2'], line, trend(line, 0.88, 280));
+  assert.equal(legacy.modelVersion, 'GKR-NFL-PASSING-YARDS-1.2');
+  assert.deepEqual([legacy.direction, legacy.contextScore, legacy.score], ['PASS', 28.4, null]);
+  const revised = scoreWith(['GKR-NFL-PASSING-YARDS-1.3'], line, trend(line, 0.88, 280));
+  assert.equal(revised.direction, 'LESS');
 });

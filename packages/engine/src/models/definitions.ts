@@ -19,6 +19,8 @@ export interface MarketDefinition {
   readonly dangerUnits?: number;
   readonly highVariance?: boolean;
   readonly blowoutMode?: 'VOLUME_LOSS' | 'RUSH_GAIN' | 'ROTATION';
+  /** Opt-in LESS-aware version: output factors count in favor of LESS when they run below reference. */
+  readonly lessAware?: boolean;
 }
 
 const defaults: readonly WeightedFactor[] = [
