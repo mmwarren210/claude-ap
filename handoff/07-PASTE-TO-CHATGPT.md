@@ -1,0 +1,1669 @@
+# Fix 07: B1–B5 (funnel, scheduled context refresh, readable breakdown, lighter board, one decision per pick)
+
+Built against `mmwarren210/crowniq-ai` main `a4e22e5`. With the patch applied there, typecheck, all 159 tests (104 api, 9 mobile, 46 engine) and lint pass. Your B6 (LESS-aware versions) is kept as is; B3's structured fields were added on top of it.
+
+## Prompt for ChatGPT
+
+Create a branch from `main`, apply `07-fixes-B1-B5.patch` (`git apply 07-fixes-B1-B5.patch`), then do the app work listed under each fix, and open one PR. Do not change any model numbers.
+
+### B1. Diagnostics funnel (in the patch)
+- `GET /v1/owner/board/diagnostics` now returns `funnel` (each line counted once: game started, no model, unapproved with reasons, unclassified alternate, missing required evidence by kind, coverage under 60%, model favors the unoffered side split into `oppositeTwin` and `alternateSide`, other passes, scored by band, ranked count) and `outcomeCounts` (scored lines named `SCORED_<band>`). `reasonCounts` stays for one release, marked deprecated.
+- `npm run audit:board -w @crowniq/api -- [--at ISO] [--json]` audits the saved board offline: funnel, Goblin/Demon payout multipliers, unclassified alternates by reason and market, and alternates that miss their Regular line only because of name spelling.
+- **App work:** on the Owner board screen, add a "Where lines stop" card listing the funnel steps in order (hide zero rows except the first), with the missing-evidence kinds, the twin/alternate split and scored bands as small detail lines. Switch the "top reasons" list to `outcomeCounts`.
+
+### B2. Free scheduled context refresh (in the patch)
+- `BoardService.refreshContext(adapter, {windowHours})` re-researches lines whose games start within the window, replaces older evidence of the same kind, drops expired evidence, saves and republishes. It is skipped (`BOARD_BUSY`) while a pull, reanalysis or another tick runs, and never calls the odds provider, web research or `StatApiGkrEvidence`.
+- `ContextRefreshScheduler` runs it every `CROWNIQ_CONTEXT_REFRESH_MINUTES` (default 15, 0 = off), once after startup recovery. NBA status joins only under `CROWNIQ_CONTEXT_NBA_DAILY_LOOKUPS` (default 0), a per-UTC-day cap saved next to the board cache.
+- Diagnostics return `contextRefresh {enabled, intervalMinutes, last, nbaLookupsToday, nbaDailyLimit}`.
+- **App work:** on the Owner board screen, show one line: "Automatic context refresh every N min · 0 Odds credits · last <time>, <status>: <lines> lines, <evidence> evidence records" (or "skipped (<reason>)"), plus "NBA lookups today X/Y" when a limit is set.
+
+### B3. Readable breakdown (in the patch)
+- Score components carry optional `kind` (`FACTOR`, `EVIDENCE_QUALITY`, `COVERAGE`, `LINE_ADJUSTMENT`, `CLAMP`), `measured`, `weight`, `observed`, `reference` and `favorsBelowReference` (set when your LESS-aware versions reverse a factor). Explanations and all numbers are unchanged; a new engine test checks the fields match.
+- `apps/mobile/src/gkr-labels.ts` (new) has a plain label for all 230 model factors (test enforces it) and turns components into rows: `describeComponent()` and `scoreBreakdown()` (context rows and line-adjustment rows that add up to the score). It reads the structured fields and falls back to the text for older boards.
+- **App work:** wherever the app shows a score breakdown, render `scoreBreakdown(analysis)`: two groups, "Player context" and "Line adjustments", each row's label, value ("+18.4 of 25" or "Not measured") and detail ("Recent 0.29 vs usual 0.25 (+16%)"). Do not show raw factor keys.
+
+### B4. Lighter board and snapshot honesty (server part in the patch)
+- `GET /v1/board/lite` returns games not yet started, full analyses for scored lines, slim analyses for PASS lines, and `rankedLineIds`/`playerMedia` filtered to match. Same schema as `/v1/board`.
+- **App work:**
+  - Read the Board from `/v1/board/lite`, falling back to `/v1/board` on 404 (also in the first-board polling loop).
+  - Reread it (free) when the app returns to the foreground (`AppState` `active`), every 5 minutes while the Board screen is focused, and when the earliest `evidenceExpiresAt` among ranked analyses passes.
+  - Lite view: skip any line whose `analysis.evidenceExpiresAt <= now`. Full view: show "Evidence expired, reanalysis needed" on scored lines whose evidence expired.
+  - Show board age as "Captured N min ago" instead of LIVE/FRESH/CACHED, and always show "Saved snapshot. Confirm the exact line and direction in PrizePicks before playing."
+  - Crown draft: refuse a leg below GKR 80 (the lowest minimum any Crown size accepts) with "GKR NN is below 80, the lowest score any Crown accepts." Keep flagging legs below the minimum for the Crown's current size (2: 88, 3: 86, 4: 84, 5: 82, 6: 80) rather than blocking them, so a person can start a larger Crown with an 82 pick.
+
+### B5. One decision per pick (in the patch)
+- Decisions get `decisionKey` = sha256 of [eventId, playerId, market, line, direction, lineType, modelVersion]. Tracking, saved picks, private Crowns and shares reuse the existing decision; a changed re-analysis is appended to `revisions` (compact: score, context, band, rank, research snapshot id). New decisions use the key as their id.
+- On first read, an older ledger is backed up (`<file>.backup-<time>`), copies are folded into the earliest decision (keeping any grade), and saved picks, private Crowns, public Crown legs and public credits are re-pointed and de-duplicated.
+- Picks a person saves or shares record `boardFetchedAt` and `snapshotAgeMinutes`. `CROWNIQ_SOCIAL_MAX_SNAPSHOT_MINUTES` (default 0 = off, keeping your event-start rule) can refuse old snapshots for public Crowns with `SNAPSHOT_TOO_OLD`.
+- **App work:** map the `SNAPSHOT_TOO_OLD` Crown issue to "the board's lines are older than this server allows for public Crowns (wait for the next board pull)".
+
+### Done when
+- `npm run typecheck`, `npm test` and `npm run lint` pass.
+- The PR lists, per fix, what came from the patch and what app work you added.
+
+## The patch (save as 07-fixes-B1-B5.patch and run `git apply 07-fixes-B1-B5.patch`)
+
+```diff
+diff --git a/.env.example b/.env.example
+index cfffc87..706feec 100644
+--- a/.env.example
++++ b/.env.example
+@@ -34,6 +34,15 @@ GKR_CURRENT_CONTEXT=true
+ GKR_PUBLIC_NFL_EVIDENCE=true
+ WEB_RESEARCH_MODEL=gpt-5.4-mini
+ WEB_RESEARCH_MAX_SEARCHES=1500
++# Free scheduled context refresh (local history and the free NFL/MLB status feeds).
++# Never spends Odds API credits. 0 minutes turns it off. Only games starting within the window are refreshed.
++CROWNIQ_CONTEXT_REFRESH_MINUTES=15
++CROWNIQ_CONTEXT_WINDOW_HOURS=8
++# Stat API NBA status lookups allowed per UTC day from refresh ticks (0 leaves NBA out of ticks).
++CROWNIQ_CONTEXT_NBA_DAILY_LOOKUPS=0
++# Optional: refuse public Crowns built from an odds snapshot older than this many minutes (0 = off;
++# lines otherwise stay usable until their event starts).
++CROWNIQ_SOCIAL_MAX_SNAPSHOT_MINUTES=0
+ WEB_RESEARCH_CONCURRENCY=4
+ CROWNIQ_RESEARCH_CATALOG_FILE=tmp/research-catalog.json
+ DATABASE_URL=
+diff --git a/README.md b/README.md
+index 46df8f6..495792d 100644
+--- a/README.md
++++ b/README.md
+@@ -29,7 +29,7 @@ In a second terminal:
+ npm run dev:mobile
+ ```
+ 
+-Set `EXPO_PUBLIC_API_URL` in `apps/mobile/.env` to the running API. On a phone, use your computer's reachable LAN IP and set `API_HOST=0.0.0.0` in `apps/api/.env`. Scan Expo's QR code with Expo Go. `http://127.0.0.1:3000/health` checks the backend; it only reports liveness and whether a board exists. The owner profile reads full server status at `/v1/owner/board/health`, and the admin token at `/v1/admin/status`. Create a profile in the app to reach the Board. If no server-side board exists yet, authenticated `/v1/board` returns `503 BOARD_UNAVAILABLE`; that is an available server with no snapshot, not a network outage. Set `CROWNIQ_OWNER_PUBLIC_ID` to the owner's profile UUID. When the server reports it has no board, the Board button changes to **Pull first board** and asks the owner to confirm the credit cost. It calls `POST /v1/owner/board/bootstrap`, which the server refuses with `409 BOARD_EXISTS` once any board exists. **Refresh board** only rereads the saved board and never spends provider credits. `ADMIN_TOKEN` still protects terminal/admin endpoints and must never be copied into the mobile environment. Use HTTPS for real account credentials.
++Set `EXPO_PUBLIC_API_URL` in `apps/mobile/.env` to the running API. On a phone, use your computer's reachable LAN IP and set `API_HOST=0.0.0.0` in `apps/api/.env`. Scan Expo's QR code with Expo Go. `http://127.0.0.1:3000/health` checks the backend; it only reports liveness and whether a board exists. The owner profile reads full server status at `/v1/owner/board/health`, and the admin token at `/v1/admin/status`. Create a profile in the app to reach the Board. If no server-side board exists yet, authenticated `/v1/board` returns `503 BOARD_UNAVAILABLE`; that is an available server with no snapshot, not a network outage. Set `CROWNIQ_OWNER_PUBLIC_ID` to the owner's profile UUID. When the server reports it has no board, the Board button changes to **Pull first board** and asks the owner to confirm the credit cost. It calls `POST /v1/owner/board/bootstrap`, which the server refuses with `409 BOARD_EXISTS` once any board exists. **Refresh board** only rereads the saved board and never spends provider credits. `GET /v1/board/lite` serves the Board list more cheaply: games not yet started, full analyses for scored lines and slim analyses for PASS lines, in the same schema as `/v1/board`. `ADMIN_TOKEN` still protects terminal/admin endpoints and must never be copied into the mobile environment. Use HTTPS for real account credentials.
+ 
+ To connect The Odds API, put `THE_ODDS_API_KEY` in **the server's** `apps/api/.env` (or your deployed backend's environment). `ODDS_PROVIDER=auto` is the default and activates the PrizePicks adapter whenever that key exists; set `ODDS_PROVIDER=none` only when you intentionally want provider pulls disabled. Set `CROWNIQ_OWNER_PUBLIC_ID` for in-app first-board recovery, and optionally set a locally chosen `ADMIN_TOKEN` for terminal/admin endpoints. These values are never read from the mobile app. With the API running, you can also trigger an owner refresh from a terminal:
+ 
+@@ -48,6 +48,8 @@ After a restart, CrownIQ restores the saved board immediately and rebuilds expir
+ 
+ For an existing saved board, the signed-in owner can use **Settings → Owner Board Analysis** (or `GET /v1/owner/board/diagnostics`) to inspect board age, support/approval/pass-reason counts, evidence, Second Look and fresh-context health without dumping thousands of lines. The screen's **Reanalyze saved board** action calls `POST /v1/owner/board/reanalyze` with explicit research-cost acknowledgement. It reevaluates the saved board with **zero Odds API credits**; a configured research source such as Stat API may consume its own quota. After success the mobile app rereads the saved board. This action never calls the paid odds-provider refresh. Failed optional research does not erase the last validated evidence snapshot.
+ 
++The diagnostics include a **funnel** that counts each line once, in order: game already started, market has no model, model not approved, unclassified alternate, missing required evidence (by missing kind), evidence under 60% coverage, model favors the other side (split into an opposite line at the same number versus an alternate only), other passes, scored lines by band, and the ranked count. The Owner screen shows it as **Where lines stop**. `reasonCounts` is deprecated because it labels every scored band PLAYABLE; use `funnel` or `outcomeCounts`. For an offline look at the saved board, run `npm run audit:board -w @crowniq/api -- [--at ISO_TIME] [--json]`. It reads `CROWNIQ_BOARD_CACHE_FILE`, re-evaluates it at `--at` (default: one minute after the pull) with the approved model versions, and prints the funnel, Goblin and Demon payout multipliers, unclassified alternates by reason and market, and alternates that miss their Regular line only because the player's name is spelled differently. It makes no network calls.
++
+ Set `GKR_MODEL_PRESET=stat_history_v1` to activate CrownIQ's first expanded model-ready cohort: 20 history-backed NFL/NBA/MLB markets. The cohort now uses v1.2/v1.3 partial-coverage modules; every included market has at least 60% of its non-quality model weight mapped to factors directly derivable from Stat API rows and the CrownIQ internal-history store. The 60% gate itself was not lowered. Current lineup, player availability, probable starter and other hard facts remain separate requirements, so missing current context still produces PASS instead of guessed evidence. `GKR_APPROVED_MODEL_VERSIONS` can still add exact custom versions on top of the preset. Optional LESS-aware revisions have their own versions (for example, `GKR-NBA-PLAYER-POINTS-1.4`); only an explicitly listed revision replaces its current market module. The preset keeps current versions by default.
+ 
+ CrownIQ also keeps a durable, server-owned internal history file. `GET /v1/owner/history/status` reports stored rows and backfill state, while `GET /v1/owner/history/learning` summarizes tracked model performance, projection error and factor diagnostics. `POST /v1/owner/history/backfill` can seed selected NFL/NBA/MLB sports from historical Stat API rows for players already present on the saved board. Backfill is explicitly cost-acknowledged, uses zero Odds API credits, is capped by `maxPlayersPerSport`, and stores seed rows separately from future live graded outcomes. Future Stat API evidence lookups are archived into the same store with separate provenance, so recent games naturally push older seed rows out of the rolling sample instead of mixing all eras forever.
+@@ -76,6 +78,9 @@ After normalizing the complete board, CrownIQ compares each `_alternate` thresho
+ | `GKR_STAT_EVIDENCE`, `GKR_STAT_EVIDENCE_MAX_PLAYERS`, `GKR_STAT_EVIDENCE_CONCURRENCY` | Server only | Opt-in historical GKR evidence builder using the same server-side Stat API key. Defaults off / 1,500 exact-name players / 6 workers. It creates attributed rolling distributions and only directly derivable numeric factors for supported NFL/NBA/MLB markets; it never creates lineup, injury, weather, opponent, or role confirmations. Reanalysis uses zero Odds API credits but can consume Stat API row quota. |
+ | `GKR_PUBLIC_NFL_EVIDENCE` | Server only | Key-free public NFL evidence for passing yards, pass attempts and completions. Defaults `true`. It uses nflverse completed-game history plus the public Sleeper player-status feed, never the PrizePicks threshold. Reanalysis uses zero Odds API credits. |
+ | `WEB_RESEARCH_MODEL`, `WEB_RESEARCH_MAX_SEARCHES`, `WEB_RESEARCH_CONCURRENCY` | Server only | Defaults: `gpt-5.4-mini`, 1,500 search groups and four parallel searches per owner run. |
++| `CROWNIQ_CONTEXT_REFRESH_MINUTES` | Server only | Minutes between free context refreshes. Defaults `15`; `0` turns them off. Each tick re-researches lines whose games start within `CROWNIQ_CONTEXT_WINDOW_HOURS` (default `8`) using local history and the free NFL/MLB status feeds, replaces older evidence of the same kind, drops expired evidence and republishes. It never calls the odds provider, web research or Stat API evidence, and is skipped while a pull or reanalysis runs. One tick runs after startup recovery. The Owner screen shows the last tick. |
++| `CROWNIQ_CONTEXT_NBA_DAILY_LOOKUPS` | Server only | Stat API NBA player-status lookups that refresh ticks may make per UTC day. Defaults `0`, which leaves NBA out of ticks. The count is saved next to the board cache, so restarts do not reset it. |
++| `CROWNIQ_SOCIAL_MAX_SNAPSHOT_MINUTES` | Server only | Optional. When above `0`, public Crowns are refused with `SNAPSHOT_TOO_OLD` if the board's odds snapshot is older than this many minutes. Defaults `0` (off): lines stay usable until their event starts. Every pick a person saves or shares records the snapshot time and its age either way. |
+ | `CROWNIQ_RESEARCH_CATALOG_FILE` | Server only | Exact searches, cited websites and expiring context cache. Default `tmp/research-catalog.json`; set to a durable mounted path in deployment. |
+ | `DATABASE_URL` | Server only | Reserved for durable storage. |
+ | `GKR_APPROVED_MODEL_VERSIONS` | Server only | Exact comma-separated module versions, only after owner calibration review; empty by default, so modules PASS. |
+diff --git a/apps/api/package.json b/apps/api/package.json
+index 17f4a13..1a9c9b0 100644
+--- a/apps/api/package.json
++++ b/apps/api/package.json
+@@ -23,6 +23,7 @@
+     "plan:research": "node --import tsx scripts/plan-web-research.ts",
+     "run:research": "node --import tsx scripts/run-web-research.ts",
+     "test": "node --import tsx --test test/*.test.ts",
+-    "typecheck": "tsc --noEmit"
++    "typecheck": "tsc --noEmit",
++    "audit:board": "node --import tsx scripts/audit-saved-board.ts"
+   }
+ }
+diff --git a/apps/api/scripts/audit-saved-board.ts b/apps/api/scripts/audit-saved-board.ts
+new file mode 100644
+index 0000000..5a31e10
+--- /dev/null
++++ b/apps/api/scripts/audit-saved-board.ts
+@@ -0,0 +1,50 @@
++import 'dotenv/config';
++import { createGkrRegistry, statHistoryReadyVersions } from '@crowniq/engine';
++import { auditSavedBoard } from '../src/board-audit.js';
++import { BoardCache } from '../src/board-cache.js';
++
++// Offline audit of the saved board: no provider calls, no research, no credits, nothing published.
++// Usage: npm run audit:board -- [--at ISO_TIME] [--json]
++const args = process.argv.slice(2);
++const atIndex = args.indexOf('--at');
++const file = process.env.CROWNIQ_BOARD_CACHE_FILE ?? 'tmp/board-cache.json';
++const saved = await new BoardCache(file).load();
++if (!saved) throw new Error(`No saved board at ${file} (set CROWNIQ_BOARD_CACHE_FILE).`);
++const at = atIndex >= 0 ? new Date(args[atIndex + 1] ?? '') : new Date(Date.parse(saved.board.fetchedAt) + 60_000);
++if (!Number.isFinite(at.getTime())) throw new Error('Usage: npm run audit:board -- [--at ISO_TIME] [--json]');
++
++const configured = (process.env.GKR_APPROVED_MODEL_VERSIONS ?? '').split(',').map((v) => v.trim()).filter(Boolean);
++const versions = process.env.GKR_MODEL_PRESET === 'stat_history_v1' ? [...configured, ...statHistoryReadyVersions] : configured;
++const audit = auditSavedBoard(saved, createGkrRegistry(versions), at);
++
++if (args.includes('--json')) {
++  console.log(JSON.stringify(audit, null, 2));
++} else {
++  const f = audit.funnel, row = (label: string, value: number, detail = '') =>
++    console.log(`${label.padEnd(34)}${String(value).padStart(8)}${detail ? '  ' + detail : ''}`);
++  const list = (counts: Record<string, number>) => Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ');
++  console.log(`Saved board ${file}, fetched ${saved.board.fetchedAt}, evaluated at ${audit.evaluatedAt}\n`);
++  console.log('FUNNEL (each line counted once, in this order)');
++  row('Lines on board', f.started);
++  row('Game already started', f.eventStarted);
++  row('Market has no model', f.marketNotModeled);
++  row('Model not approved', f.modeledButUnapproved.total, list(f.modeledButUnapproved.reasons));
++  row('Unclassified alternate', f.unknownAlternate);
++  row('Missing required evidence', f.missingHardEvidence.total, list(f.missingHardEvidence.byKind));
++  row('Evidence covers under 60%', f.coverageBelow60);
++  row('Model favors the other side', f.offeredSideUnfavored.total,
++    `opposite twin ${f.offeredSideUnfavored.oppositeTwin}, alternate only ${f.offeredSideUnfavored.alternateSide}`);
++  row('Other passes', f.otherPass.total, list(f.otherPass.reasons));
++  row('Scored', f.scored.total, list(f.scored.byBand));
++  row('Ranked (best line per player)', f.rankedCount);
++  console.log('\nPAYOUT MULTIPLIERS ON CLASSIFIED ALTERNATES (<1 / =1 / >1 / missing)');
++  for (const tier of ['GOBLIN', 'DEMON'] as const) {
++    const t = audit.tierMultipliers[tier];
++    console.log(`${tier.padEnd(8)}${t.below1} / ${t.exactly1} / ${t.above1} / ${t.missing}`);
++  }
++  console.log('\nUNCLASSIFIED ALTERNATES');
++  console.log('By reason: ' + list(audit.unknownAlternates.byReason));
++  for (const item of audit.unknownAlternates.byMarket.slice(0, 15)) console.log(`  ${item.sport} ${item.market}: ${item.count}`);
++  console.log(`\nNO_REGULAR_REFERENCE alternates whose Regular line has a near-identical name: ${audit.nameNearMisses.count}`);
++  for (const item of audit.nameNearMisses.examples) console.log(`  "${item.alternate}" vs "${item.regular}" (${item.market})`);
++}
+diff --git a/apps/api/src/board-audit.ts b/apps/api/src/board-audit.ts
+new file mode 100644
+index 0000000..4dd8ba2
+--- /dev/null
++++ b/apps/api/src/board-audit.ts
+@@ -0,0 +1,68 @@
++import { boardResponseSchema } from '@crowniq/contracts';
++import type { PropLine } from '@crowniq/contracts';
++import { evaluateBoard } from '@crowniq/engine';
++import type { ModelRegistry } from '@crowniq/engine';
++import { boardFunnel } from './board-funnel.js';
++import type { BoardFunnel } from './board-funnel.js';
++import type { SavedBoard } from './board-cache.js';
++import { auditPrizePicksLineTypes, classifyPrizePicksLineTypes, normalizeCachedPrizePicksLines } from './prizepicks-line-types.js';
++
++type MultiplierBucket = { below1: number; exactly1: number; above1: number; missing: number };
++export interface SavedBoardAudit {
++  evaluatedAt: string;
++  funnel: BoardFunnel;
++  /** Payout multipliers on alternates already classified by threshold. A Goblin should pay below 1x, a Demon above. */
++  tierMultipliers: { GOBLIN: MultiplierBucket; DEMON: MultiplierBucket };
++  unknownAlternates: { byReason: Record<string, number>; byMarket: { sport: string; market: string; count: number }[] };
++  /** NO_REGULAR_REFERENCE alternates whose Regular line exists under a player name differing only in case, accents or punctuation. */
++  nameNearMisses: { count: number; examples: { alternate: string; regular: string; eventId: string; market: string }[] };
++}
++
++const looseName = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
++  .toLowerCase().replace(/[^a-z0-9]/g, '');
++
++/** Re-evaluate a saved board offline at a chosen time. No network calls, no credits. */
++export function auditSavedBoard(saved: SavedBoard, models: ModelRegistry, at: Date): SavedBoardAudit {
++  const lines = classifyPrizePicksLineTypes(normalizeCachedPrizePicksLines(saved.board.lines));
++  const board = { ...saved.board, lines };
++  const evaluated = evaluateBoard(board, saved.evidence, models, at);
++  const response = boardResponseSchema.parse({ board, analyses: evaluated.analyses,
++    rankedLineIds: evaluated.rankedLineIds, builtAt: at.toISOString() });
++
++  const bucket = (): MultiplierBucket => ({ below1: 0, exactly1: 0, above1: 0, missing: 0 });
++  const tierMultipliers = { GOBLIN: bucket(), DEMON: bucket() };
++  for (const line of lines) {
++    if (line.lineType !== 'GOBLIN' && line.lineType !== 'DEMON') continue;
++    const counts = tierMultipliers[line.lineType], value = line.payoutMultiplier;
++    if (value === undefined) counts.missing++;
++    else if (value < 1) counts.below1++;
++    else if (value === 1) counts.exactly1++;
++    else counts.above1++;
++  }
++
++  const lineTypes = auditPrizePicksLineTypes(lines);
++  const regulars = new Map<string, PropLine[]>();
++  for (const line of lines) {
++    if (line.lineType !== 'REGULAR') continue;
++    const key = line.eventId + '|' + line.market;
++    regulars.set(key, [...regulars.get(key) ?? [], line]);
++  }
++  const hasRegular = new Set(lines.filter((line) => line.lineType === 'REGULAR')
++    .map((line) => [line.eventId, line.playerId, line.market].join('|')));
++  const examples: SavedBoardAudit['nameNearMisses']['examples'] = [];
++  let nearMisses = 0;
++  for (const line of lines) {
++    if (line.lineType !== 'UNKNOWN_ALTERNATE' || hasRegular.has([line.eventId, line.playerId, line.market].join('|'))) continue;
++    const match = (regulars.get(line.eventId + '|' + line.market) ?? []).find((regular) =>
++      regular.playerId !== line.playerId && looseName(regular.playerName) === looseName(line.playerName));
++    if (!match) continue;
++    nearMisses++;
++    if (examples.length < 20) examples.push({ alternate: line.playerName, regular: match.playerName,
++      eventId: line.eventId, market: line.market });
++  }
++
++  return { evaluatedAt: at.toISOString(),
++    funnel: boardFunnel(response, models.requirements(), saved.evidence), tierMultipliers,
++    unknownAlternates: { byReason: lineTypes.unknownReasons, byMarket: lineTypes.unknownByMarket },
++    nameNearMisses: { count: nearMisses, examples } };
++}
+diff --git a/apps/api/src/board-funnel.ts b/apps/api/src/board-funnel.ts
+new file mode 100644
+index 0000000..b131ffc
+--- /dev/null
++++ b/apps/api/src/board-funnel.ts
+@@ -0,0 +1,93 @@
++import type { BoardResponse, Evidence, PropLine } from '@crowniq/contracts';
++
++type Requirements = Readonly<Record<string, { readonly approved: boolean; readonly required: readonly string[];
++  readonly hardRequired: readonly string[] }>>;
++
++const increment = (counts: Record<string, number>, key: string) => { counts[key] = (counts[key] ?? 0) + 1; };
++const sorted = (counts: Record<string, number>) =>
++  Object.fromEntries(Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])));
++
++export interface BoardFunnel {
++  /** Every line on the board. Each one lands in exactly one bucket below, in this order. */
++  started: number;
++  eventStarted: number;
++  marketNotModeled: number;
++  modeledButUnapproved: { total: number; reasons: Record<string, number> };
++  unknownAlternate: number;
++  missingHardEvidence: { total: number; byKind: Record<string, number> };
++  coverageBelow60: number;
++  offeredSideUnfavored: { total: number; oppositeTwin: number; alternateSide: number };
++  otherPass: { total: number; reasons: Record<string, number> };
++  scored: { total: number; byBand: Record<string, number> };
++  /** Scored lines left after the one-line-per-player ranking rule. */
++  rankedCount: number;
++}
++
++const hardEvidenceReasons = new Set(['STALE_OR_MISSING_EVIDENCE', 'CRITICAL_STATUS_UNCONFIRMED', 'MISSING_DISTRIBUTION']);
++
++/**
++ * Where every line on the board stops, counted once each. Read-only and free: it only reads the
++ * published board, its analyses and the evidence they saw.
++ */
++export function boardFunnel(board: BoardResponse, requirements: Requirements, evidence: readonly Evidence[]): BoardFunnel {
++  const kinds = new Map(evidence.map((item) => [item.id, item.kind]));
++  // Lines offered on one side only, keyed by everything but the side, to find opposite twins.
++  const sides = new Map<string, Set<string>>();
++  const twinKey = (line: PropLine) => JSON.stringify([line.eventId, line.playerId, line.market, line.threshold]);
++  for (const line of board.board.lines) {
++    const key = twinKey(line), set = sides.get(key) ?? new Set<string>();
++    for (const direction of line.availableDirections) set.add(direction);
++    sides.set(key, set);
++  }
++  const funnel: BoardFunnel = { started: board.board.lines.length, eventStarted: 0, marketNotModeled: 0,
++    modeledButUnapproved: { total: 0, reasons: {} }, unknownAlternate: 0,
++    missingHardEvidence: { total: 0, byKind: {} }, coverageBelow60: 0,
++    offeredSideUnfavored: { total: 0, oppositeTwin: 0, alternateSide: 0 },
++    otherPass: { total: 0, reasons: {} }, scored: { total: 0, byBand: {} }, rankedCount: board.rankedLineIds.length };
++  const analyses = new Map(board.analyses.map((item) => [item.lineId, item]));
++  for (const line of board.board.lines) {
++    const analysis = analyses.get(line.id), reason = analysis?.reasonCode ?? 'MISSING_ANALYSIS';
++    const requirement = requirements[`${line.sport}:${line.market.trim().toLowerCase()}`];
++    if (analysis && analysis.direction !== 'PASS') {
++      funnel.scored.total++; increment(funnel.scored.byBand, analysis.scoreBand ?? 'UNKNOWN'); continue;
++    }
++    if (reason === 'EVENT_ALREADY_STARTED') { funnel.eventStarted++; continue; }
++    if (!requirement || reason === 'MODEL_SUPPORT_INCOMPLETE') { funnel.marketNotModeled++; continue; }
++    if (!requirement.approved) {
++      funnel.modeledButUnapproved.total++; increment(funnel.modeledButUnapproved.reasons, reason); continue;
++    }
++    if (line.lineType === 'UNKNOWN_ALTERNATE' || reason === 'UNCLASSIFIED_ALTERNATE') { funnel.unknownAlternate++; continue; }
++    if (hardEvidenceReasons.has(reason)) {
++      funnel.missingHardEvidence.total++;
++      const seen = new Set((analysis?.evidenceIds ?? []).map((id) => kinds.get(id)));
++      const missing = reason === 'CRITICAL_STATUS_UNCONFIRMED' ? (analysis?.opposingFactors ?? []).slice(0, 1)
++        : reason === 'MISSING_DISTRIBUTION' ? [`projection:${line.market}`]
++          : requirement.hardRequired.filter((kind) => !seen.has(kind));
++      for (const kind of missing.length ? missing : ['UNKNOWN']) increment(funnel.missingHardEvidence.byKind, kind);
++      continue;
++    }
++    if (reason === 'INSUFFICIENT_MODEL_COVERAGE') { funnel.coverageBelow60++; continue; }
++    if (reason === 'DIRECTION_UNAVAILABLE') {
++      funnel.offeredSideUnfavored.total++;
++      // The model favors the side this line does not offer. When another line at the same number
++      // offers that side, the pick lives there; otherwise only an alternate offered it.
++      const offered = sides.get(twinKey(line)) ?? new Set<string>();
++      const wanted = line.availableDirections.includes('MORE') ? 'LESS' : 'MORE';
++      if (offered.has(wanted)) funnel.offeredSideUnfavored.oppositeTwin++; else funnel.offeredSideUnfavored.alternateSide++;
++      continue;
++    }
++    funnel.otherPass.total++; increment(funnel.otherPass.reasons, reason);
++  }
++  funnel.modeledButUnapproved.reasons = sorted(funnel.modeledButUnapproved.reasons);
++  funnel.missingHardEvidence.byKind = sorted(funnel.missingHardEvidence.byKind);
++  funnel.otherPass.reasons = sorted(funnel.otherPass.reasons);
++  return funnel;
++}
++
++/** Each line's outcome, with scored lines named by their band rather than all called PLAYABLE. */
++export function outcomeCounts(board: BoardResponse): Record<string, number> {
++  const counts: Record<string, number> = {};
++  for (const analysis of board.analyses)
++    increment(counts, analysis.direction === 'PASS' ? analysis.reasonCode ?? 'MODEL_PASS' : `SCORED_${analysis.scoreBand ?? 'UNKNOWN'}`);
++  return sorted(counts);
++}
+diff --git a/apps/api/src/board-lite.ts b/apps/api/src/board-lite.ts
+new file mode 100644
+index 0000000..d3f0970
+--- /dev/null
++++ b/apps/api/src/board-lite.ts
+@@ -0,0 +1,28 @@
++import type { Analysis, BoardResponse } from '@crowniq/contracts';
++
++/**
++ * The Board list without the weight: only games that have not started, full analyses for scored
++ * lines (the ones a person can open, pick or add to a Crown), and slim analyses for PASS lines that
++ * keep what the list shows (reason, band, quality, expiry) and drop audit trails. Same schema as
++ * the full board, so clients read it the same way.
++ */
++export function liteBoard(snapshot: BoardResponse, now: Date): BoardResponse {
++  const time = now.getTime();
++  const lines = snapshot.board.lines.filter((line) => Date.parse(line.eventStartTime) > time);
++  const kept = new Set(lines.map((line) => line.id));
++  const slim = (analysis: Analysis): Analysis => ({ lineId: analysis.lineId, direction: analysis.direction,
++    score: analysis.score, scoreBreakdown: [], assessments: [], evidenceIds: [],
++    evidenceExpiresAt: analysis.evidenceExpiresAt ?? null, evidenceQuality: analysis.evidenceQuality,
++    dangerZone: analysis.dangerZone, ruleChecks: [], supportingFactors: [], opposingFactors: [],
++    rationale: analysis.rationale.slice(0, 160), reasonCode: analysis.reasonCode, modelVersion: analysis.modelVersion,
++    contextScore: analysis.contextScore ?? null, dataConfidence: analysis.dataConfidence ?? null,
++    scoreBand: analysis.scoreBand ?? null, ...(analysis.reviewStatus ? { reviewStatus: analysis.reviewStatus } : {}) });
++  const analyses = snapshot.analyses.filter((analysis) => kept.has(analysis.lineId))
++    .map((analysis) => analysis.direction === 'PASS' ? slim(analysis) : analysis);
++  const players = new Set(lines.map((line) => line.playerId));
++  const media = snapshot.playerMedia ? Object.fromEntries(Object.entries(snapshot.playerMedia)
++    .filter(([playerId]) => players.has(playerId))) : undefined;
++  return { board: { ...snapshot.board, lines }, analyses,
++    rankedLineIds: snapshot.rankedLineIds.filter((id) => kept.has(id)), builtAt: snapshot.builtAt,
++    ...(media && Object.keys(media).length ? { playerMedia: media } : {}) };
++}
+diff --git a/apps/api/src/board-service.ts b/apps/api/src/board-service.ts
+index f091ba1..6e3c6c1 100644
+--- a/apps/api/src/board-service.ts
++++ b/apps/api/src/board-service.ts
+@@ -29,6 +29,10 @@ function mergeEvidence(base:readonly Evidence[],extra:readonly Evidence[]):Evide
+   return [...merged.values()];
+ }
+ 
++export type ContextRefreshReport={at:string;status:'SUCCEEDED'|'PARTIAL'|'FAILED'|'SKIPPED';
++  reason:string|null;linesTargeted:number;evidenceAdded:number;evidenceExpiredRemoved:number;
++  oddsCreditsUsed:0;sourceRequests:number};
++
+ export class BoardService {
+   private snapshot: BoardResponse | null = null;
+   private lastError: string | null = null;
+@@ -44,11 +48,15 @@ export class BoardService {
+   private startupRecovery = {status:'NOT_NEEDED' as 'NOT_NEEDED'|'UNCONFIGURED'|'RUNNING'|'SUCCEEDED'|'PARTIAL'|'FAILED',
+     evidenceAdded:0,oddsCreditsUsed:0 as const,error:null as string|null};
+   private mutation:Promise<unknown>=Promise.resolve();
++  private pendingMutations=0;
+   private exclusive<T>(operation:()=>Promise<T>):Promise<T>{
+-    const result=this.mutation.then(operation,operation);
++    this.pendingMutations++;
++    const run=async()=>{try{return await operation();}finally{this.pendingMutations--;}};
++    const result=this.mutation.then(run,run);
+     this.mutation=result.catch(()=>undefined);
+     return result;
+   }
++  private lastContextRefresh:ContextRefreshReport|null=null;
+   private lastRefreshStage = 'idle';
+   private lastRefreshCounts = { providerReturned: 0, normalized: 0, saved: 0,
+     qualified: 0, exposed: 0 };
+@@ -118,6 +126,51 @@ export class BoardService {
+     }
+   }
+ 
++  /**
++   * Free context refresh: re-research upcoming lines with the given adapter and republish.
++   * Never calls the odds provider. Skipped when a pull, reanalysis or another refresh is running,
++   * so a scheduled tick never queues behind paid work.
++   */
++  async refreshContext(adapter:ResearchAdapter,options:{windowHours:number}):Promise<ContextRefreshReport>{
++    const skipped=(reason:string):ContextRefreshReport=>({at:this.clock().toISOString(),status:'SKIPPED',
++      reason,linesTargeted:0,evidenceAdded:0,evidenceExpiredRemoved:0,oddsCreditsUsed:0,sourceRequests:0});
++    if(this.pendingMutations>0)return this.lastContextRefresh=skipped('BOARD_BUSY');
++    return this.exclusive(()=>this.refreshContextNow(adapter,options.windowHours,skipped));
++  }
++
++  private async refreshContextNow(adapter:ResearchAdapter,windowHours:number,
++    skipped:(reason:string)=>ContextRefreshReport):Promise<ContextRefreshReport>{
++    const board=this.getBoard()?.board;
++    if(!board)return this.lastContextRefresh=skipped('BOARD_UNAVAILABLE');
++    const now=this.clock(),start=now.getTime(),end=start+windowHours*3600_000;
++    const lines=board.lines.filter((line)=>{
++      const time=Date.parse(line.eventStartTime);return time>start&&time<=end;
++    });
++    if(!lines.length)return this.lastContextRefresh=skipped('NO_UPCOMING_LINES');
++    const researched=await collectResearch(boardSchema.parse({...board,lines}),adapter);
++    const at=this.clock();
++    const report={at:at.toISOString(),linesTargeted:lines.length,oddsCreditsUsed:0 as const,
++      sourceRequests:researched.health?.searches??0};
++    if(researched.status==='FAILED'&&!researched.evidence.length)
++      return this.lastContextRefresh={...report,status:'FAILED',reason:'CONTEXT_SOURCES_FAILED',
++        evidenceAdded:0,evidenceExpiredRemoved:0};
++    // A paid pull that finished meanwhile already replaced the board; its evidence wins.
++    if(this.snapshot?.board!==board)return this.lastContextRefresh=skipped('BOARD_REPLACED');
++    const key=(item:Evidence)=>JSON.stringify([item.entityType,item.entityId,item.eventId,item.market,item.kind]);
++    const replacements=new Set(researched.evidence.map(key));
++    const kept=this.baseEvidence.filter((item)=>!replacements.has(key(item)));
++    const live=kept.filter((item)=>effectiveEvidenceExpiry(item)>at.getTime());
++    const nextBase=mergeEvidence(live,researched.evidence);
++    const combined=mergeEvidence(nextBase,this.webEvidence);
++    await this.cache?.save({board,evidence:combined,researchStatus:this.researchStatus,
++      lastSuccessfulRefresh:this.lastSuccessfulRefresh,secondLookAudits:{...this.secondLookAudits}});
++    this.baseEvidence=nextBase;
++    this.publish(board,combined,at);
++    return this.lastContextRefresh={...report,status:researched.status==='OK'||researched.status==='UNCONFIGURED'
++      ?'SUCCEEDED':'PARTIAL',reason:null,evidenceAdded:researched.evidence.length,
++      evidenceExpiredRemoved:kept.length-live.length};
++  }
++
+   async persist():Promise<void>{return this.exclusive(()=>this.persistNow());}
+ 
+   private async persistNow():Promise<void>{
+@@ -254,6 +307,7 @@ export class BoardService {
+       research: this.researchStatus,
+       researchHealth: this.researchHealth,
+       startupRecovery:{...this.startupRecovery},
++      lastContextRefresh:this.lastContextRefresh?{...this.lastContextRefresh}:null,
+       evidenceFreshness:{total:this.evidence.length,active:activeEvidence.length,
+         expired:this.evidence.length-activeEvidence.length},
+       lastSuccessfulRefresh: this.lastSuccessfulRefresh,
+diff --git a/apps/api/src/context-refresh.ts b/apps/api/src/context-refresh.ts
+new file mode 100644
+index 0000000..2f57dd4
+--- /dev/null
++++ b/apps/api/src/context-refresh.ts
+@@ -0,0 +1,77 @@
++import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
++import { dirname } from 'node:path';
++import type { ResearchAdapter } from '@crowniq/engine';
++import type { BoardService, ContextRefreshReport } from './board-service.js';
++
++/**
++ * A per-day cap on paid lookups, saved to disk so a restart does not reset it.
++ * Days are UTC calendar days.
++ */
++export class DailyLookupBudget {
++  private state: { day: string; used: number } | null = null;
++  constructor(private readonly file: string, readonly limit: number,
++    private readonly clock: () => Date = () => new Date()) {}
++
++  private today() { return this.clock().toISOString().slice(0, 10); }
++
++  private async load() {
++    if (this.state?.day === this.today()) return this.state;
++    try {
++      const saved = JSON.parse(await readFile(this.file, 'utf8')) as { day?: unknown; used?: unknown };
++      if (saved.day === this.today() && Number.isSafeInteger(saved.used))
++        return this.state = { day: saved.day, used: Number(saved.used) };
++    } catch { /* missing or unreadable: start the day at zero */ }
++    return this.state = { day: this.today(), used: 0 };
++  }
++
++  /** Reserves one lookup. False once today's limit is reached. */
++  async take(): Promise<boolean> {
++    const state = await this.load();
++    if (state.used >= this.limit) return false;
++    state.used++;
++    await mkdir(dirname(this.file), { recursive: true });
++    const temporary = `${this.file}.${process.pid}.tmp`;
++    await writeFile(temporary, JSON.stringify(state));
++    await rename(temporary, this.file);
++    return true;
++  }
++
++  async used(): Promise<number> { return (await this.load()).used; }
++}
++
++export interface ContextRefreshOptions {
++  readonly adapter: ResearchAdapter;
++  readonly intervalMinutes: number;
++  readonly windowHours: number;
++}
++
++/** Runs free context refresh ticks on an interval. A tick that would overlap other work is skipped. */
++export class ContextRefreshScheduler {
++  private timer: NodeJS.Timeout | null = null;
++  private running = false;
++
++  constructor(private readonly service: BoardService, private readonly options: ContextRefreshOptions) {}
++
++  async tick(): Promise<ContextRefreshReport | null> {
++    if (this.running) return null;
++    this.running = true;
++    try {
++      return await this.service.refreshContext(this.options.adapter, { windowHours: this.options.windowHours });
++    } catch {
++      return null;
++    } finally {
++      this.running = false;
++    }
++  }
++
++  start(): void {
++    if (this.timer || this.options.intervalMinutes <= 0) return;
++    this.timer = setInterval(() => { void this.tick(); }, this.options.intervalMinutes * 60_000);
++    this.timer.unref();
++  }
++
++  stop(): void {
++    if (this.timer) clearInterval(this.timer);
++    this.timer = null;
++  }
++}
+diff --git a/apps/api/src/main.ts b/apps/api/src/main.ts
+index f294057..af43b34 100644
+--- a/apps/api/src/main.ts
++++ b/apps/api/src/main.ts
+@@ -1,4 +1,5 @@
+ import 'dotenv/config';
++import { dirname, join } from 'node:path';
+ import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegistry, statHistoryReadyVersions } from '@crowniq/engine';
+ import { buildServer } from './server.js';
+ import { FullPrizePicksProvider } from './full-prizepicks-provider.js';
+@@ -9,6 +10,7 @@ import { WebResearchAdapter, WebResearchCatalog } from './web-research.js';
+ import { ProductLedger } from './product-ledger.js';
+ import { ProductGradingWorker } from './background-grading.js';
+ import { BoardCache } from './board-cache.js';
++import { DailyLookupBudget } from './context-refresh.js';
+ import { OwnerPullJobStore } from './owner-pull-job.js';
+ import { ProviderIdentityVerifier } from './provider-identity.js';
+ import { StatApiOwnerResearch } from './stat-api-owner-research.js';
+@@ -75,9 +77,13 @@ const internalHistory=new InternalHistoryStore(process.env.CROWNIQ_INTERNAL_HIST
+ // Crown saves and shares need a correlation policy; 'none' keeps them fail-closed.
+ const correlationSetting=process.env.CROWNIQ_CROWN_CORRELATION_POLICY ?? 'conservative';
+ if(!['conservative','none'].includes(correlationSetting))throw new Error('Invalid CROWNIQ_CROWN_CORRELATION_POLICY');
++const socialMaxSnapshotMinutes=Number(process.env.CROWNIQ_SOCIAL_MAX_SNAPSHOT_MINUTES ?? 0);
++if(!Number.isFinite(socialMaxSnapshotMinutes)||socialMaxSnapshotMinutes<0)
++  throw new Error('Invalid CROWNIQ_SOCIAL_MAX_SNAPSHOT_MINUTES');
+ const product=new ProductLedger(process.env.CROWNIQ_PRODUCT_LEDGER_FILE ??
+   'tmp/product-ledger.json',band,()=>new Date(),
+-  correlationSetting==='conservative'?conservativeCorrelationPolicy:undefined,internalHistory);
++  correlationSetting==='conservative'?conservativeCorrelationPolicy:undefined,internalHistory,
++  socialMaxSnapshotMinutes);
+ const statApiKey=process.env.STAT_API_KEY;
+ const ownerPublicId=process.env.CROWNIQ_OWNER_PUBLIC_ID;
+ const statDailyLimit=process.env.CROWNIQ_STAT_API_DAILY_RECORD_LIMIT
+@@ -122,6 +128,32 @@ const secondLookAdapters=[statEvidence,currentContext]
+   .filter((item):item is NonNullable<typeof item>=>!!item);
+ const secondLookResearch=secondLookAdapters.length===0?null:secondLookAdapters.length===1
+   ? secondLookAdapters[0]:new CompositeResearchAdapter(secondLookAdapters);
++// Free scheduled context refresh: local history and the free NFL/MLB status
++// feeds, every CROWNIQ_CONTEXT_REFRESH_MINUTES. Never the odds provider, web research or
++// StatApiGkrEvidence. NBA status (Stat API) joins only under its own daily lookup cap.
++const nonNegative=(name:string,fallback:number)=>{
++  const value=Number(process.env[name]??fallback);
++  if(!Number.isFinite(value)||value<0)throw new Error(`Invalid ${name}`);
++  return value;
++};
++const boardCacheFile=process.env.CROWNIQ_BOARD_CACHE_FILE ?? 'tmp/board-cache.json';
++const contextIntervalMinutes=nonNegative('CROWNIQ_CONTEXT_REFRESH_MINUTES',15);
++const contextWindowHours=nonNegative('CROWNIQ_CONTEXT_WINDOW_HOURS',8);
++const nbaDailyLookups=Math.floor(nonNegative('CROWNIQ_CONTEXT_NBA_DAILY_LOOKUPS',0));
++const contextLookupBudget=statSource&&nbaDailyLookups>0
++  ? new DailyLookupBudget(join(dirname(boardCacheFile),'context-lookup-budget.json'),nbaDailyLookups):null;
++const tickContext=currentContextEnabled?new CurrentContextResearch({
++  allowedKeys:approvedModelKeys.filter((key)=>key.startsWith('NFL:')||key.startsWith('MLB:')||
++    contextLookupBudget!==null&&key.startsWith('NBA:')),
++  statSource:statSource&&contextLookupBudget?{currentAvailability:async(sport,query)=>{
++    if(!await contextLookupBudget.take())throw new Error('NBA_DAILY_LOOKUP_BUDGET_REACHED');
++    return statSource.currentAvailability(sport,query);
++  }}:undefined,
++}):null;
++const contextAdapters=[internalEvidence,tickContext]
++  .filter((item):item is NonNullable<typeof item>=>!!item);
++const contextRefresh=contextIntervalMinutes>0?{adapter:new CompositeResearchAdapter(contextAdapters),
++  intervalMinutes:contextIntervalMinutes,windowHours:contextWindowHours}:null;
+ const googleClients=(process.env.CROWNIQ_GOOGLE_CLIENT_IDS??'').split(',').map((id)=>id.trim()).filter(Boolean);
+ const appleClients=(process.env.CROWNIQ_APPLE_CLIENT_IDS??'').split(',').map((id)=>id.trim()).filter(Boolean);
+ const identityVerifier=googleClients.length||appleClients.length
+@@ -135,8 +167,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, provider,
+   allowedWebOrigins:(process.env.CROWNIQ_ALLOWED_WEB_ORIGINS??'').split(',')
+     .map((origin)=>origin.trim()).filter(Boolean),
+   ownerJobStore:new OwnerPullJobStore(process.env.CROWNIQ_OWNER_JOB_FILE ?? 'tmp/owner-pull-job.json'),
+-  boardCache:new BoardCache(process.env.CROWNIQ_BOARD_CACHE_FILE ??
+-    'tmp/board-cache.json'),
++  boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,
+   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,
+   selections: process.env.CROWNIQ_SELECTIONS_FILE
+     ? new JsonSelectionLedger(process.env.CROWNIQ_SELECTIONS_FILE) : null,
+diff --git a/apps/api/src/product-ledger.ts b/apps/api/src/product-ledger.ts
+index 6f443f5..78082de 100644
+--- a/apps/api/src/product-ledger.ts
++++ b/apps/api/src/product-ledger.ts
+@@ -25,7 +25,15 @@ export interface TrackedDecision {
+   lineSnapshot:PropLine;
+   grade:Outcome;actualResult:number|null;resultStatus:ResultFact['status']|null;
+   gradedAt:string|null;resultSourceName:string|null;resultSourceUrl:string|null;
++  /** One decision per game, player, market, line, side, line type and model version. */
++  decisionKey?:string;
++  /** Later re-analyses of the same decision, oldest first. Append-only; never graded separately. */
++  revisions?:DecisionRevision[];
++  /** When the pick came from a person's action: the odds snapshot time and its age then. */
++  boardFetchedAt?:string;snapshotAgeMinutes?:number;
+ }
++export interface DecisionRevision {recordedAt:string;lineScore:number;contextScore:number|null;
++  scoreBand:string;boardRank:number|null;researchSnapshotId:string}
+ export interface DecisionHistorySink {recordGradedDecision(decision:TrackedDecision):Promise<void>}
+ export interface PublicProfile {publicId:string;actorKey:string;displayName:string;avatarUrl:string|null;
+   socialEnabled:boolean;profileVisible:boolean;isSuspended:boolean;createdAt:string}
+@@ -59,11 +67,72 @@ const selectedEvidence=(analysis:Analysis,evidence:EvidenceLookup)=>
+     const item=evidence.get(id);return item?[item]:[];
+   }) : evidence.filter((item)=>analysis.evidenceIds.includes(item.id)))
+     .sort((a,b)=>a.id.localeCompare(b.id));
+-const signature=(line:PropLine,analysis:Analysis,evidence:EvidenceLookup)=>JSON.stringify([line.playerId,line.eventId,
+-  line.market,line.threshold,analysis.direction,line.lineType,analysis.modelVersion,
+-  analysis.score,analysis.contextScore,analysis.scoreBreakdown,selectedEvidence(analysis,evidence)]);
+-const idFor=(line:PropLine,analysis:Analysis,evidence:EvidenceLookup)=>createHash('sha256')
+-  .update(signature(line,analysis,evidence)).digest('hex');
++export const decisionKeyOf=(value:{eventId:string;playerId:string;market:string;exactLine:number;
++  direction:string;lineType:string;modelVersion:string})=>createHash('sha256').update(JSON.stringify([
++  value.eventId,value.playerId,value.market,value.exactLine,value.direction,value.lineType,value.modelVersion]))
++  .digest('hex');
++const revisionOf=(decision:TrackedDecision):DecisionRevision=>({recordedAt:decision.createdAt,
++  lineScore:decision.lineScore,contextScore:decision.contextScore,scoreBand:decision.scoreBand,
++  boardRank:decision.boardRank,researchSnapshotId:decision.researchSnapshotId});
++const sameRead=(a:DecisionRevision,b:DecisionRevision)=>a.researchSnapshotId===b.researchSnapshotId&&
++  a.lineScore===b.lineScore&&a.contextScore===b.contextScore&&a.boardRank===b.boardRank;
++/**
++ * The ledger's one decision for this candidate's key: the existing one (with the candidate kept as a
++ * revision when it reads differently) or the candidate itself, newly added.
++ */
++function upsertDecision(data:Data,candidate:TrackedDecision):TrackedDecision{
++  const key=candidate.decisionKey!;
++  const existing=data.decisions.find((item)=>item.decisionKey===key);
++  if(!existing){data.decisions.push(candidate);return candidate;}
++  if(!existing.boardFetchedAt&&candidate.boardFetchedAt)
++    Object.assign(existing,{boardFetchedAt:candidate.boardFetchedAt,snapshotAgeMinutes:candidate.snapshotAgeMinutes});
++  const latest=existing.revisions?.at(-1)??revisionOf(existing),next=revisionOf(candidate);
++  if(!sameRead(latest,next))existing.revisions=[...existing.revisions??[],next];
++  return existing;
++}
++/**
++ * Older ledgers stored a new decision for every re-analysis. Fold each key's copies into its earliest
++ * decision, keep the rest as revisions, carry over a grade, and point every reference at the kept id.
++ */
++function foldDuplicateDecisions(data:Data):boolean{
++  let changed=false;
++  const groups=new Map<string,TrackedDecision[]>();
++  for(const decision of data.decisions){
++    if(!decision.decisionKey){decision.decisionKey=decisionKeyOf(decision);changed=true;}
++    groups.set(decision.decisionKey,[...groups.get(decision.decisionKey)??[],decision]);
++  }
++  const renamed=new Map<string,string>(),kept:TrackedDecision[]=[];
++  for(const group of groups.values()){
++    group.sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
++    const [first,...rest]=group;kept.push(first);
++    if(!rest.length)continue;
++    changed=true;
++    const graded=group.find((item)=>item.grade!=='PENDING');
++    if(first.grade==='PENDING'&&graded)Object.assign(first,{grade:graded.grade,actualResult:graded.actualResult,
++      resultStatus:graded.resultStatus,gradedAt:graded.gradedAt,resultSourceName:graded.resultSourceName,
++      resultSourceUrl:graded.resultSourceUrl});
++    for(const duplicate of rest){
++      renamed.set(duplicate.trackedPickId,first.trackedPickId);
++      const latest=first.revisions?.at(-1)??revisionOf(first),next=revisionOf(duplicate);
++      if(!sameRead(latest,next))first.revisions=[...first.revisions??[],next];
++      first.revisions=[...first.revisions??[],...duplicate.revisions??[]];
++    }
++  }
++  if(!renamed.size)return changed;
++  const id=(value:string)=>renamed.get(value)??value;
++  data.decisions=kept.sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
++  const savedSeen=new Set<string>();
++  data.savedPicks=data.savedPicks.map((item)=>({...item,trackedPickId:id(item.trackedPickId)}))
++    .filter((item)=>{const key=item.accountId+'|'+item.trackedPickId+'|'+(item.removedAt?'removed':'live');
++      if(savedSeen.has(key))return false;savedSeen.add(key);return true;});
++  for(const crown of data.privateCrowns)crown.trackedPickIds=crown.trackedPickIds.map(id);
++  for(const crown of data.crowns)for(const leg of crown.legs)leg.trackedPickId=id(leg.trackedPickId);
++  const creditSeen=new Set<string>();
++  data.publicCredits=data.publicCredits.map((item)=>({...item,trackedPickId:id(item.trackedPickId)}))
++    .filter((item)=>{const key=item.publicId+'|'+item.trackedPickId;
++      if(creditSeen.has(key))return false;creditSeen.add(key);return true;});
++  return true;
++}
+ const eligible=(line:PropLine,analysis:Analysis)=>analysis.direction!=='PASS' &&
+   analysis.score!==null && !!analysis.modelVersion && line.lineType!=='UNKNOWN_ALTERNATE' &&
+   line.availableDirections.includes(analysis.direction) && analysis.lineId===line.id;
+@@ -72,7 +141,9 @@ function snapshot(line:PropLine,analysis:Analysis,evidence:EvidenceLookup,rank:n
+   now:Date):TrackedDecision {
+   if(!eligible(line,analysis))throw new Error('INELIGIBLE_DECISION');
+   const selected=selectedEvidence(analysis,evidence);
+-  return {trackedPickId:idFor(line,analysis,evidence),playerId:line.playerId,playerName:line.playerName,
++  const decisionKey=decisionKeyOf({eventId:line.eventId,playerId:line.playerId,market:line.market,
++    exactLine:line.threshold,direction:analysis.direction,lineType:line.lineType,modelVersion:analysis.modelVersion!});
++  return {trackedPickId:decisionKey,decisionKey,playerId:line.playerId,playerName:line.playerName,
+     sport:line.sport,league:line.league,team:line.team,opponent:line.opponent,eventId:line.eventId,
+     eventStartTime:line.eventStartTime,market:line.market,exactLine:line.threshold,
+     direction:analysis.direction as 'MORE'|'LESS',lineType:line.lineType,
+@@ -123,17 +194,31 @@ export class ProductLedger {
+   constructor(private readonly path:string,private readonly minimumBand:'PLAYABLE'|'CROWN_STRONG'='CROWN_STRONG',
+     private readonly clock:()=>Date=()=>new Date(),
+     private readonly correlationPolicy?:CorrelationPolicy,
+-    private readonly historySink?:DecisionHistorySink){}
++    private readonly historySink?:DecisionHistorySink,
++    /** Optional: public Crowns may only use lines from an odds snapshot at most this old. 0 = no limit;
++     * by default lines stay usable until their event starts. */
++    private readonly maxShareSnapshotMinutes=0){}
++  /** Stamp a person's pick with the odds snapshot it was made from. */
++  private fromUser(decision:TrackedDecision,board:BoardResponse):TrackedDecision{
++    const fetched=Date.parse(board.board.fetchedAt);
++    return {...decision,boardFetchedAt:board.board.fetchedAt,
++      snapshotAgeMinutes:Math.max(0,Math.round((this.clock().getTime()-fetched)/60_000))};
++  }
+   private async read():Promise<Data> {
+-    try {const value=JSON.parse(await readFile(this.path,'utf8')) as Data|LegacyData;
++    try {const raw=await readFile(this.path,'utf8'),value=JSON.parse(raw) as Data|LegacyData;
+       if((value.version!==1 && value.version!==2) || !Array.isArray(value.decisions) || !Array.isArray(value.profiles) ||
+         !Array.isArray(value.crowns) || !Array.isArray(value.follows) || !Array.isArray(value.publicCredits))
+         throw new Error('INVALID_PRODUCT_LEDGER');
+-      if(value.version===1)return {...value,version:2,accounts:[],sessions:[],savedPicks:[],privateCrowns:[]};
+-      if(!Array.isArray(value.accounts)||!Array.isArray(value.sessions)||
+-        !Array.isArray(value.savedPicks)||!Array.isArray(value.privateCrowns))
++      const data:Data=value.version===1?{...value,version:2,accounts:[],sessions:[],savedPicks:[],privateCrowns:[]}:value;
++      if(!Array.isArray(data.accounts)||!Array.isArray(data.sessions)||
++        !Array.isArray(data.savedPicks)||!Array.isArray(data.privateCrowns))
+         throw new Error('INVALID_PRODUCT_LEDGER');
+-      return value;
++      if(foldDuplicateDecisions(data)){
++        // Keep the pre-migration ledger before rewriting it.
++        await writeFile(`${this.path}.backup-${this.clock().toISOString().replace(/[:.]/g,'-')}`,raw,{mode:0o600});
++        await this.write(data);
++      }
++      return data;
+     } catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return blank();throw error;}
+   }
+   private async write(value:Data){
+@@ -242,10 +327,8 @@ export class ProductLedger {
+         Date.parse(line.eventStartTime)<=this.clock().getTime() ||
+         analysis.evidenceExpiresAt && Date.parse(analysis.evidenceExpiresAt)<=this.clock().getTime())
+         throw new Error('INVALID_OR_STALE_PICK');
+-      const candidate=snapshot(line,analysis,evidence,
+-        board.rankedLineIds.indexOf(lineId)<0?null:board.rankedLineIds.indexOf(lineId)+1,this.clock());
+-      if(!data.decisions.some((item)=>item.trackedPickId===candidate.trackedPickId))
+-        data.decisions.push(candidate);
++      const candidate=upsertDecision(data,this.fromUser(snapshot(line,analysis,evidence,
++        board.rankedLineIds.indexOf(lineId)<0?null:board.rankedLineIds.indexOf(lineId)+1,this.clock()),board));
+       let saved=data.savedPicks.find((item)=>item.accountId===accountId &&
+         item.trackedPickId===candidate.trackedPickId);
+       const alreadySaved=!!saved && !saved.removedAt;
+@@ -291,14 +374,14 @@ export class ProductLedger {
+       });
+       const issues=auditCrown(items,items.length as CrownSize,this.correlationPolicy,this.clock());
+       if(issues.length)throw new Error(`CROWN_CONSTRAINT_REJECTED:${issues.join(',')}`);
+-      const decisions=items.map(({line,analysis})=>snapshot(line,analysis,evidence,
+-        board.rankedLineIds.indexOf(line.id)+1,this.clock()));
+-      const ids=decisions.map((item)=>item.trackedPickId);
++      const decisions=items.map(({line,analysis})=>this.fromUser(snapshot(line,analysis,evidence,
++        board.rankedLineIds.indexOf(line.id)+1,this.clock()),board));
++      const known=new Map(data.decisions.map((item)=>[item.decisionKey,item.trackedPickId]));
++      const ids=decisions.map((item)=>known.get(item.decisionKey)??item.trackedPickId);
+       const existing=data.privateCrowns.find((item)=>item.accountId===accountId &&
+         !item.removedAt && JSON.stringify(item.trackedPickIds)===JSON.stringify(ids));
+       if(existing)return {id:existing.id,alreadySaved:true};
+-      for(const decision of decisions)if(!data.decisions.some((item)=>item.trackedPickId===decision.trackedPickId))
+-        data.decisions.push(decision);
++      for(const decision of decisions)upsertDecision(data,decision);
+       const crown:PrivateCrown={id:randomUUID(),accountId,trackedPickIds:ids,
+         savedAt:this.clock().toISOString(),removedAt:null};
+       data.privateCrowns.push(crown);await this.write(data);
+@@ -326,17 +409,22 @@ export class ProductLedger {
+       const data=await this.read(),before=data.decisions.length;
+       const analyses=new Map(board.analyses.map((item)=>[item.lineId,item]));
+       const ranks=new Map(board.rankedLineIds.map((id,index)=>[id,index+1]));
+-      const known=new Set(data.decisions.map((item)=>item.trackedPickId));
++      const byKey=new Map(data.decisions.map((item)=>[item.decisionKey!,item]));
+       const findings=new Map(evidence.map((item)=>[item.id,item]));
++      let revised=false;
+       for(const line of board.board.lines){
+         const analysis=analyses.get(line.id);
+         if(!analysis || !eligible(line,analysis) ||
+           !(['CROWN_STRONG','CROWN_ELITE'].includes(analysis.scoreBand??'') ||
+             this.minimumBand==='PLAYABLE' && analysis.scoreBand==='PLAYABLE'))continue;
+         const next=snapshot(line,analysis,findings,ranks.get(line.id)??null,this.clock());
+-        if(!known.has(next.trackedPickId)){known.add(next.trackedPickId);data.decisions.push(next);}
++        const existing=byKey.get(next.decisionKey!);
++        if(!existing){byKey.set(next.decisionKey!,next);data.decisions.push(next);continue;}
++        const revisions=existing.revisions?.length??0;
++        upsertDecision(data,next);
++        if((existing.revisions?.length??0)!==revisions)revised=true;
+       }
+-      if(data.decisions.length!==before)await this.write(data);
++      if(data.decisions.length!==before||revised)await this.write(data);
+       return data.decisions.length-before;
+     });
+   }
+@@ -503,14 +591,18 @@ export class ProductLedger {
+     // sharing fails closed rather than publishing a Crown that bypasses its rules.
+     const issues=auditCrown(items,items.length as CrownSize,this.correlationPolicy,this.clock());
+     if(issues.length)throw new Error(`CROWN_CONSTRAINT_REJECTED:${issues.join(',')}`);
+-    const ids=items.map(({line,analysis})=>idFor(line,analysis,evidence));
++    const fetchedAt=Date.parse(board.board.fetchedAt);
++    if(this.maxShareSnapshotMinutes>0&&this.clock().getTime()-fetchedAt>this.maxShareSnapshotMinutes*60_000)
++      throw new Error('SNAPSHOT_TOO_OLD');
++    const candidates=items.map(({line,analysis})=>this.fromUser(snapshot(line,analysis,evidence,
++      board.rankedLineIds.indexOf(line.id)+1,this.clock()),board));
++    const known=new Map(data.decisions.map((item)=>[item.decisionKey,item.trackedPickId]));
++    const ids=candidates.map((item)=>known.get(item.decisionKey)??item.trackedPickId);
+     if(data.crowns.some((item)=>item.ownerPublicId===actor.publicId && !item.unsharedAt &&
+       JSON.stringify(item.legs.map((leg)=>leg.trackedPickId))===JSON.stringify(ids)))
+       throw new Error('DUPLICATE_PUBLIC_CROWN');
+-    const legs=items.map(({line,analysis})=>{
+-      const decision=snapshot(line,analysis,evidence,board.rankedLineIds.indexOf(line.id)+1,
+-        this.clock());
+-      if(!data.decisions.some((item)=>item.trackedPickId===decision.trackedPickId))data.decisions.push(decision);
++    const legs=items.map(({line},index)=>{
++      const decision=upsertDecision(data,candidates[index]);
+       return {trackedPickId:decision.trackedPickId,playerName:line.playerName,market:line.market,
+         exactLine:line.threshold,direction:decision.direction,lineType:line.lineType,
+         lineScore:decision.lineScore,modelVersion:decision.modelVersion,eventId:line.eventId,
+diff --git a/apps/api/src/server.ts b/apps/api/src/server.ts
+index 66b3a65..d63d972 100644
+--- a/apps/api/src/server.ts
++++ b/apps/api/src/server.ts
+@@ -17,6 +17,10 @@ import { WebResearchAdapter } from './web-research.js';
+ import { ResearchBuild } from './research-build.js';
+ import { ProductLedger, resultFactSchema } from './product-ledger.js';
+ import type { BoardCache } from './board-cache.js';
++import { boardFunnel, outcomeCounts } from './board-funnel.js';
++import { liteBoard } from './board-lite.js';
++import { ContextRefreshScheduler } from './context-refresh.js';
++import type { ContextRefreshOptions, DailyLookupBudget } from './context-refresh.js';
+ import type { ProviderName } from './provider-identity.js';
+ import { ProviderIdentityVerifier } from './provider-identity.js';
+ import { StatApiOwnerError, StatApiOwnerResearch } from './stat-api-owner-research.js';
+@@ -54,6 +58,10 @@ export interface ServerOptions {
+   identityVerifier?: ProviderIdentityVerifier | null;
+   allowedWebOrigins?: readonly string[];
+   ownerJobStore?: OwnerPullJobStore | null;
++  /** Free scheduled context refresh; never calls the odds provider. */
++  contextRefresh?: ContextRefreshOptions | null;
++  /** Daily cap on paid NBA status lookups made by context refresh ticks. */
++  contextLookupBudget?: DailyLookupBudget | null;
+ }
+ 
+ function authorized(request: FastifyRequest, token?: string): boolean {
+@@ -107,8 +115,10 @@ export function buildServer(options: ServerOptions = {}) {
+         : savedJob;
+       if(savedJob.status==='RUNNING')await saveJob();
+     }
+-    // History reconstruction runs after restore without blocking Fastify startup.
+-    void service.recoverStartupEvidence();
++    // History reconstruction runs after restore without blocking Fastify startup; the first
++    // context refresh follows it, then ticks repeat on the configured interval.
++    void service.recoverStartupEvidence().then(()=>contextScheduler?.tick());
++    contextScheduler?.start();
+     if(options.ownerNotebook && options.ownerPublicId){
+       await options.ownerNotebook.load();options.ownerNotebook.start();
+     }
+@@ -117,7 +127,8 @@ export function buildServer(options: ServerOptions = {}) {
+     options.clock,options.product ? async()=>{const board=service.getBoard();
+       if(board){await service.persist();await options.product!.track(board,service.getEvidence());}} :
+       async()=>service.persist()) : null;
+-  app.addHook('onClose', async () => { webBuild?.cancel();options.ownerNotebook?.stop(); });
++  const contextScheduler=options.contextRefresh?new ContextRefreshScheduler(service,options.contextRefresh):null;
++  app.addHook('onClose', async () => { webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop(); });
+ 
+   let ownerBoardRefresh:OwnerPullJob=idlePullJob();
+   let pullDone:Promise<BoardResponse|null>=Promise.resolve(null);
+@@ -257,10 +268,16 @@ export function buildServer(options: ServerOptions = {}) {
+         lineCount:snapshot.board.lines.length,rankedCount:snapshot.rankedLineIds.length,
+         evidenceCount:service.getEvidence().length,research:status.research,providerRefreshCost:0,
+         evidenceFreshness:status.evidenceFreshness,startupRecovery:status.startupRecovery,
++        contextRefresh:{enabled:!!options.contextRefresh,
++          intervalMinutes:options.contextRefresh?.intervalMinutes??0,last:status.lastContextRefresh,
++          nbaLookupsToday:await options.contextLookupBudget?.used()??0,
++          nbaDailyLimit:options.contextLookupBudget?.limit??0},
+         researchHealth:status.researchHealth,secondLook:status.secondLook,
+         freshContext:status.freshContext,lineTypes:auditPrizePicksLineTypes(snapshot.board.lines),
+         modelSupport:{supported,unsupported:snapshot.board.lines.length-supported,
+           approved,unapproved:supported-approved},
++        funnel:boardFunnel(snapshot,requirements,service.getEvidence()),outcomeCounts:outcomeCounts(snapshot),
++        /** Deprecated: scored lines of every band appear as PLAYABLE here. Use funnel or outcomeCounts. */
+         reasonCounts:Object.fromEntries([...reasons].sort((a,b)=>b[1]-a[1])),
+         sports:Object.fromEntries([...sports].sort((a,b)=>b[1].lines-a[1].lines)),
+         markets:[...markets.values()].sort((a,b)=>b.lines-a.lines).slice(0,100)};
+@@ -550,6 +567,11 @@ export function buildServer(options: ServerOptions = {}) {
+     const snapshot = service.getBoard();
+     return snapshot ?? reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
+   });
++  // The Board list: upcoming games only, with slim PASS analyses. Free, like /v1/board.
++  app.get('/v1/board/lite', async (_request, reply) => {
++    const snapshot = service.getBoard();
++    return snapshot ? liteBoard(snapshot, now()) : reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
++  });
+   app.get('/v1/rankings', async (_request, reply) => {
+     const snapshot = service.getBoard();
+     if (!snapshot) return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
+diff --git a/apps/api/test/board-funnel.test.ts b/apps/api/test/board-funnel.test.ts
+new file mode 100644
+index 0000000..509fd00
+--- /dev/null
++++ b/apps/api/test/board-funnel.test.ts
+@@ -0,0 +1,113 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import { execFile } from 'node:child_process';
++import { mkdtemp, rm } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { promisify } from 'node:util';
++import { analysisSchema, boardResponseSchema, evidenceSchema } from '@crowniq/contracts';
++import type { Analysis, Evidence, PropLine } from '@crowniq/contracts';
++import { ModelRegistry } from '@crowniq/engine';
++import { fixtureAnalysis, fixtureAssessment, fixtureLine, now } from '../../../packages/engine/test/fixtures.js';
++import { auditSavedBoard } from '../src/board-audit.js';
++import { BoardCache } from '../src/board-cache.js';
++import { boardFunnel, outcomeCounts } from '../src/board-funnel.js';
++
++const line = (id: string, overrides: Partial<PropLine> = {}) =>
++  fixtureLine({ id, sourceLineId: id, playerId: 'p-' + id, playerName: 'Player ' + id, ...overrides });
++const pass = (target: PropLine, reasonCode: string, extra: Partial<Analysis> = {}): Analysis => analysisSchema.parse({
++  ...fixtureAnalysis(target), direction: 'PASS', score: null, scoreBreakdown: [], scoreBand: 'PASS', reasonCode, ...extra });
++const scored = (target: PropLine, band: string): Analysis =>
++  analysisSchema.parse({ ...fixtureAnalysis(target), scoreBand: band });
++const evidence = (id: string, kind: string): Evidence => evidenceSchema.parse({ id, entityType: 'PLAYER', entityId: 'x',
++  eventId: 'test-event', market: null, kind, finding: 'Synthetic.', sourceName: 'Synthetic', sourceUrl: null,
++  sourceType: 'OFFICIAL', retrievedAt: now.toISOString(), expiresAt: '2030-09-24T18:00:00.000Z', quality: 'HIGH',
++  confidence: 1, numeric: { value: 1 } });
++
++const requirements = {
++  'NFL:passing_yards': { approved: true, required: ['projection:passing_yards', 'status:qb_available'],
++    hardRequired: ['projection:passing_yards', 'status:qb_available'] },
++  'NFL:player_receptions': { approved: false, required: [], hardRequired: [] },
++};
++
++test('the funnel puts every line in exactly one bucket, in order', () => {
++  const lines = [
++    line('started'), line('nomodel', { market: 'player_kicking_points' }), line('unapproved', { market: 'player_receptions' }),
++    line('alt', { lineType: 'UNKNOWN_ALTERNATE' }), line('missing'), line('critical'), line('coverage'),
++    // The model favors LESS on a MORE-only line. "twin" has a LESS line at the same number; "solo" does not.
++    line('twin', { availableDirections: ['MORE'], threshold: 250 }),
++    line('twin-less', { availableDirections: ['LESS'], threshold: 250, playerId: 'p-twin' }),
++    line('solo', { availableDirections: ['MORE'], threshold: 260 }),
++    line('other'), line('elite'), line('lean'),
++  ];
++  const ids = new Map(lines.map((item) => [item.id, item]));
++  const analyses = [
++    pass(ids.get('started')!, 'EVENT_ALREADY_STARTED'), pass(ids.get('nomodel')!, 'MODEL_SUPPORT_INCOMPLETE'),
++    pass(ids.get('unapproved')!, 'MODEL_CALIBRATION_UNAPPROVED'), pass(ids.get('alt')!, 'UNCLASSIFIED_ALTERNATE'),
++    // Saw a projection but no QB status, so status:qb_available is what is missing.
++    pass(ids.get('missing')!, 'STALE_OR_MISSING_EVIDENCE', { evidenceIds: ['proj'] }),
++    pass(ids.get('critical')!, 'CRITICAL_STATUS_UNCONFIRMED', { opposingFactors: ['status:weather_clear'] }),
++    pass(ids.get('coverage')!, 'INSUFFICIENT_MODEL_COVERAGE'),
++    pass(ids.get('twin')!, 'DIRECTION_UNAVAILABLE'), scored(ids.get('twin-less')!, 'PLAYABLE'),
++    pass(ids.get('solo')!, 'DIRECTION_UNAVAILABLE'), pass(ids.get('other')!, 'INSUFFICIENT_EDGE'),
++    scored(ids.get('elite')!, 'CROWN_ELITE'), scored(ids.get('lean')!, 'LEAN'),
++  ];
++  const board = boardResponseSchema.parse({ board: { provider: 'prizepicks', fetchedAt: now.toISOString(), lines },
++    analyses, rankedLineIds: ['elite', 'twin-less'], builtAt: now.toISOString() });
++  const funnel = boardFunnel(board, requirements, [evidence('proj', 'projection:passing_yards')]);
++  assert.deepEqual(funnel, {
++    started: 13, eventStarted: 1, marketNotModeled: 1,
++    modeledButUnapproved: { total: 1, reasons: { MODEL_CALIBRATION_UNAPPROVED: 1 } }, unknownAlternate: 1,
++    missingHardEvidence: { total: 2, byKind: { 'status:qb_available': 1, 'status:weather_clear': 1 } },
++    coverageBelow60: 1, offeredSideUnfavored: { total: 2, oppositeTwin: 1, alternateSide: 1 },
++    otherPass: { total: 1, reasons: { INSUFFICIENT_EDGE: 1 } },
++    scored: { total: 3, byBand: { CROWN_ELITE: 1, LEAN: 1, PLAYABLE: 1 } }, rankedCount: 2 });
++  const buckets = funnel.eventStarted + funnel.marketNotModeled + funnel.modeledButUnapproved.total + funnel.unknownAlternate +
++    funnel.missingHardEvidence.total + funnel.coverageBelow60 + funnel.offeredSideUnfavored.total + funnel.otherPass.total +
++    funnel.scored.total;
++  assert.equal(buckets, funnel.started);
++  // Scored lines are named by band, never all called PLAYABLE.
++  const outcomes = outcomeCounts(board);
++  assert.equal(outcomes.SCORED_LEAN, 1);
++  assert.equal(outcomes.PLAYABLE, undefined);
++});
++
++function savedBoard() {
++  const alt = (id: string, name: string, threshold: number, payoutMultiplier?: number) => line(id, {
++    playerId: 'p-' + name, playerName: name, lineType: 'UNKNOWN_ALTERNATE', sourceMarketKey: 'player_pass_yds_alternate',
++    availableDirections: ['MORE'], threshold, ...(payoutMultiplier === undefined ? {} : { payoutMultiplier }) });
++  return { board: { provider: 'prizepicks' as const, fetchedAt: now.toISOString(), lines: [
++    line('reg', { playerId: 'p-Ja’Marr Chase', playerName: 'Ja’Marr Chase', threshold: 250, availableDirections: ['MORE', 'LESS'] }),
++    // Classified by threshold: lower is a Goblin, higher a Demon.
++    alt('goblin', 'Ja’Marr Chase', 230, 0.8), alt('demon', 'Ja’Marr Chase', 270, 1.5), alt('demon2', 'Ja’Marr Chase', 280),
++    // Same player, different apostrophe: the feed gave it another player id, so it has no Regular reference.
++    alt('near', "Ja'Marr Chase", 240),
++  ] }, evidence: [], researchStatus: 'OK' as const, lastSuccessfulRefresh: now.toISOString() };
++}
++
++test('the saved-board audit reports tier payouts, unclassified alternates and near-miss names', () => {
++  const registry = new ModelRegistry();
++  registry.register({ sport: 'NFL', market: 'passing_yards', version: 'audit-fixture', calibrationApproved: true,
++    requiredEvidenceKinds: ['projection:passing_yards'], assess: ({ phase }) => fixtureAssessment(phase, 'MORE', 88) });
++  const audit = auditSavedBoard(savedBoard(), registry, new Date(now.getTime() + 60_000));
++  assert.equal(audit.funnel.started, 5);
++  assert.deepEqual(audit.tierMultipliers, { GOBLIN: { below1: 1, exactly1: 0, above1: 0, missing: 0 },
++    DEMON: { below1: 0, exactly1: 0, above1: 1, missing: 1 } });
++  assert.equal(audit.unknownAlternates.byReason.NO_REGULAR_REFERENCE, 1);
++  assert.deepEqual(audit.nameNearMisses, { count: 1, examples: [{ alternate: "Ja'Marr Chase", regular: 'Ja’Marr Chase',
++    eventId: 'test-event', market: 'passing_yards' }] });
++});
++
++test('npm run audit:board reads the saved board offline and prints the funnel', async () => {
++  const folder = await mkdtemp(join(tmpdir(), 'crowniq-audit-'));
++  try {
++    const file = join(folder, 'board.json');
++    await new BoardCache(file).save(savedBoard());
++    const { stdout } = await promisify(execFile)(process.execPath, ['--import', 'tsx', 'scripts/audit-saved-board.ts', '--json'],
++      { env: { ...process.env, CROWNIQ_BOARD_CACHE_FILE: file, GKR_APPROVED_MODEL_VERSIONS: '', GKR_MODEL_PRESET: 'custom' } });
++    const report = JSON.parse(stdout);
++    assert.equal(report.funnel.started, 5);
++    assert.equal(report.evaluatedAt, new Date(now.getTime() + 60_000).toISOString());
++    assert.equal(report.nameNearMisses.count, 1);
++  } finally { await rm(folder, { recursive: true, force: true }); }
++});
+diff --git a/apps/api/test/board-lite.test.ts b/apps/api/test/board-lite.test.ts
+new file mode 100644
+index 0000000..9d8d2a4
+--- /dev/null
++++ b/apps/api/test/board-lite.test.ts
+@@ -0,0 +1,29 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import { analysisSchema, boardResponseSchema } from '@crowniq/contracts';
++import { fixtureAnalysis, fixtureLine, now } from '../../../packages/engine/test/fixtures.js';
++import { liteBoard } from '../src/board-lite.js';
++
++test('the lite board keeps upcoming games, full scored analyses and slim PASS analyses', () => {
++  const upcoming = fixtureLine({ id: 'up', sourceLineId: 'up', playerId: 'p-up' });
++  const pass = fixtureLine({ id: 'pass', sourceLineId: 'pass', playerId: 'p-pass' });
++  const started = fixtureLine({ id: 'gone', sourceLineId: 'gone', playerId: 'p-gone', eventStartTime: '2030-09-24T11:00:00.000Z' });
++  const passAnalysis = analysisSchema.parse({ ...fixtureAnalysis(pass), direction: 'PASS', score: null, scoreBand: 'PASS',
++    reasonCode: 'INSUFFICIENT_EDGE', evidenceIds: ['a', 'b'], opposingFactors: ['x'], rationale: 'r'.repeat(400),
++    evidenceExpiresAt: '2030-09-24T13:00:00.000Z',
++    contextBreakdown: [{ name: 'expected_attempts', contribution: 10, explanation: 'Observed 1 versus reference 1; weight 25.' }] });
++  const full = boardResponseSchema.parse({ board: { provider: 'prizepicks', fetchedAt: now.toISOString(), lines: [upcoming, pass, started] },
++    analyses: [fixtureAnalysis(upcoming), passAnalysis, fixtureAnalysis(started)], rankedLineIds: ['up', 'gone'],
++    builtAt: now.toISOString(), playerMedia: { 'p-up': { photoUrl: 'https://example.org/up.png', source: 'Fixture' },
++      'p-gone': { photoUrl: 'https://example.org/gone.png', source: 'Fixture' } } });
++  const lite = boardResponseSchema.parse(liteBoard(full, now));
++  assert.deepEqual(lite.board.lines.map((line) => line.id), ['up', 'pass']);
++  assert.deepEqual(lite.rankedLineIds, ['up']);
++  assert.deepEqual(Object.keys(lite.playerMedia ?? {}), ['p-up']);
++  assert.deepEqual(lite.analyses[0], full.analyses[0], 'scored analyses are untouched');
++  const slim = lite.analyses[1];
++  assert.deepEqual([slim.reasonCode, slim.scoreBand, slim.evidenceExpiresAt, slim.evidenceIds, slim.opposingFactors, slim.contextBreakdown],
++    ['INSUFFICIENT_EDGE', 'PASS', '2030-09-24T13:00:00.000Z', [], [], undefined]);
++  assert.equal(slim.rationale.length, 160);
++  assert.ok(JSON.stringify(lite).length < JSON.stringify(full).length);
++});
+diff --git a/apps/api/test/context-refresh.test.ts b/apps/api/test/context-refresh.test.ts
+new file mode 100644
+index 0000000..b8ae016
+--- /dev/null
++++ b/apps/api/test/context-refresh.test.ts
+@@ -0,0 +1,130 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import { mkdtemp, readFile, rm } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import type { Evidence } from '@crowniq/contracts';
++import type { OddsProvider, ResearchAdapter } from '@crowniq/engine';
++import { ModelRegistry } from '@crowniq/engine';
++import { fixtureAssessment, fixtureLine, now } from '../../../packages/engine/test/fixtures.js';
++import { BoardCache } from '../src/board-cache.js';
++import { BoardService } from '../src/board-service.js';
++import { ContextRefreshScheduler, DailyLookupBudget } from '../src/context-refresh.js';
++
++// The fixture game starts 12 hours after `now`; the clock is moved to 6 hours before it.
++const tickTime = new Date('2030-09-24T18:00:00.000Z');
++function evidence(id: string, kind: string, retrievedAt: Date, ttlMinutes: number): Evidence {
++  return { id, entityType: 'PLAYER', entityId: 'test-player-1', eventId: 'test-event',
++    market: kind.startsWith('status:') ? null : 'passing_yards', kind, finding: 'Synthetic context refresh evidence.',
++    sourceName: 'Synthetic fixture', sourceUrl: 'https://example.org/context', sourceType: 'OFFICIAL',
++    retrievedAt: retrievedAt.toISOString(), expiresAt: new Date(retrievedAt.getTime() + ttlMinutes * 60_000).toISOString(),
++    quality: 'HIGH', confidence: 1, numeric: { value: kind.startsWith('status:') ? 1 : 270 } };
++}
++function models() {
++  const registry = new ModelRegistry();
++  registry.register({ sport: 'NFL', market: 'passing_yards', version: 'context-fixture', calibrationApproved: true,
++    requiredEvidenceKinds: ['projection:passing_yards', 'status:qb_available'],
++    assess: ({ phase }) => fixtureAssessment(phase, 'MORE', 88) });
++  return registry;
++}
++async function setup() {
++  const folder = await mkdtemp(join(tmpdir(), 'crowniq-context-'));
++  const cache = new BoardCache(join(folder, 'board.json'));
++  // Long-lived history, plus a 30-minute player status taken at `now`, so it is long expired by tickTime.
++  await cache.save({ board: { provider: 'prizepicks', fetchedAt: now.toISOString(), lines: [fixtureLine()] },
++    evidence: [evidence('history', 'projection:passing_yards', now, 24 * 60), evidence('status-old', 'status:qb_available', now, 30)],
++    researchStatus: 'OK', lastSuccessfulRefresh: now.toISOString() });
++  return { folder, cache };
++}
++
++test('a context tick re-ranks a line whose player status expired, without touching the odds provider', async () => {
++  const { folder, cache } = await setup();
++  let pulls = 0, targets = 0;
++  const provider: OddsProvider = { id: 'synthetic-provider', fetchPrizePicksLines: async () => { pulls++; return []; },
++    normalize: () => fixtureLine() };
++  const context: ResearchAdapter = { id: 'synthetic-context', research: async (list) => {
++    targets += list.length; return [evidence('status-new', 'status:qb_available', tickTime, 30)];
++  } };
++  try {
++    let clock = now;
++    const service = new BoardService(provider, null, models(), () => clock, cache);
++    await service.restore();
++    assert.equal(service.getBoard()!.rankedLineIds.length, 1);
++    clock = tickTime;
++    assert.equal(service.getBoard()!.rankedLineIds.length, 0, 'status expired, so the line stops ranking');
++    const report = await new ContextRefreshScheduler(service, { adapter: context, intervalMinutes: 15, windowHours: 8 }).tick();
++    assert.equal(report?.status, 'SUCCEEDED');
++    assert.deepEqual([report?.linesTargeted, report?.evidenceAdded, report?.evidenceExpiredRemoved, report?.oddsCreditsUsed],
++      [1, 1, 0, 0]);
++    assert.equal(service.getBoard()!.rankedLineIds.length, 1, 'fresh status ranks it again');
++    assert.equal(pulls, 0);
++    assert.equal(targets, 1);
++    // The refreshed status replaced the old one by kind, and the result was saved.
++    assert.deepEqual(service.getEvidence().map((item) => item.id).sort(), ['history', 'status-new']);
++    assert.deepEqual((await cache.load())!.evidence.map((item) => item.id).sort(), ['history', 'status-new']);
++    assert.equal(service.getStatus().lastContextRefresh?.status, 'SUCCEEDED');
++  } finally { await rm(folder, { recursive: true, force: true }); }
++});
++
++test('a tick drops expired evidence, targets only games inside the window, and skips while other work runs', async () => {
++  const { folder, cache } = await setup();
++  try {
++    const service = new BoardService(null, null, models(), () => tickTime, cache);
++    await service.restore();
++    const nothing: ResearchAdapter = { id: 'empty', research: async () => [] };
++    // A 4-hour window ends before the game (6 hours away), so nothing is targeted.
++    const outside = await service.refreshContext(nothing, { windowHours: 4 });
++    assert.deepEqual([outside.status, outside.reason], ['SKIPPED', 'NO_UPCOMING_LINES']);
++    const inside = await service.refreshContext(nothing, { windowHours: 8 });
++    assert.deepEqual([inside.status, inside.linesTargeted, inside.evidenceExpiredRemoved], ['SUCCEEDED', 1, 1]);
++    assert.deepEqual(service.getEvidence().map((item) => item.id), ['history']);
++
++    // While a slow tick is still researching, a second request is skipped rather than queued.
++    let release = () => {};
++    const slow: ResearchAdapter = { id: 'slow', research: () => new Promise((resolve) => { release = () => resolve([]); }) };
++    const first = service.refreshContext(slow, { windowHours: 8 });
++    const second = await service.refreshContext(nothing, { windowHours: 8 });
++    assert.deepEqual([second.status, second.reason], ['SKIPPED', 'BOARD_BUSY']);
++    // The scheduler also refuses to start a tick while its previous one runs.
++    const scheduler = new ContextRefreshScheduler(service, { adapter: slow, intervalMinutes: 15, windowHours: 8 });
++    const pending = scheduler.tick();
++    assert.equal(await scheduler.tick(), null);
++    release(); await first;
++    release(); await pending;
++  } finally { await rm(folder, { recursive: true, force: true }); }
++});
++
++test('a tick during a paid pull is skipped, and the pull result is never overwritten', async () => {
++  const { folder, cache } = await setup();
++  let release = () => {};
++  const provider: OddsProvider = { id: 'slow-provider',
++    fetchPrizePicksLines: () => new Promise((resolve) => { release = () => resolve([{}]); }),
++    normalize: (_raw, fetchedAt) => fixtureLine({ fetchedAt }) };
++  let researched = 0;
++  const context: ResearchAdapter = { id: 'context', research: async () => { researched++; return []; } };
++  try {
++    const service = new BoardService(provider, null, models(), () => tickTime, cache);
++    await service.restore();
++    const pull = service.refresh();
++    const tick = await service.refreshContext(context, { windowHours: 8 });
++    assert.deepEqual([tick.status, tick.reason], ['SKIPPED', 'BOARD_BUSY']);
++    assert.equal(researched, 0);
++    release(); await pull;
++  } finally { await rm(folder, { recursive: true, force: true }); }
++});
++
++test('the NBA daily lookup budget stops at its limit, survives a restart and resets the next day', async () => {
++  const folder = await mkdtemp(join(tmpdir(), 'crowniq-budget-'));
++  try {
++    let clock = new Date('2030-09-24T10:00:00.000Z');
++    const file = join(folder, 'budget.json');
++    const budget = new DailyLookupBudget(file, 2, () => clock);
++    assert.deepEqual([await budget.take(), await budget.take(), await budget.take()], [true, true, false]);
++    assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), { day: '2030-09-24', used: 2 });
++    const restarted = new DailyLookupBudget(file, 2, () => clock);
++    assert.equal(await restarted.take(), false);
++    clock = new Date('2030-09-25T00:30:00.000Z');
++    assert.equal(await restarted.take(), true);
++    assert.equal(await restarted.used(), 1);
++  } finally { await rm(folder, { recursive: true, force: true }); }
++});
+diff --git a/apps/api/test/product-ledger.test.ts b/apps/api/test/product-ledger.test.ts
+index 1dbdcc6..96e328c 100644
+--- a/apps/api/test/product-ledger.test.ts
++++ b/apps/api/test/product-ledger.test.ts
+@@ -332,3 +332,100 @@ test('background grading uses exact NFL mapping and leaves absent results pendin
+     assert.equal((await ledger.history('NFL','alpha',board.board.lines[0].market)).recent[0].actual,280);
+   }finally{await rm(folder,{recursive:true,force:true});}
+ });
++
++const withScore=(board:BoardResponse,score:number,evidenceIds:string[]=[]):BoardResponse=>boardResponseSchema.parse({
++  ...board,analyses:board.analyses.map((item)=>({...item,score,evidenceIds}))});
++
++test('re-tracking the same decision keeps one decision and records changed reads as revisions',async()=>{
++  const folder=await mkdtemp(join(tmpdir(),'crowniq-dedupe-'));
++  try{
++    let clock=now;
++    const ledger=new ProductLedger(join(folder,'data.json'),'CROWN_STRONG',()=>clock);
++    const board=build('dedupe');
++    assert.equal(await ledger.track(board,[]),1);
++    clock=new Date(now.getTime()+15*60_000);
++    assert.equal(await ledger.track(board,[]),0);
++    assert.equal(await ledger.track(withScore(board,91),[]),0);
++    const {total,decisions}=await ledger.listDecisions();
++    assert.equal(total,1);
++    // The identical second read adds nothing; the changed score is kept as one revision.
++    assert.deepEqual(decisions[0].revisions?.map((item)=>item.lineScore),[91]);
++    assert.equal(decisions[0].lineScore,89,'the first read stays the graded decision');
++    // A different line (moved threshold) is a different decision.
++    assert.equal(await ledger.track(build('dedupe','alpha',25.5),[]),1);
++    clock=new Date('2030-09-26T00:00:00Z');
++    // One result grades each distinct line once: two decisions, never a copy per re-analysis.
++    assert.deepEqual(await ledger.grade([fact(board.board.lines[0],30)]),{graded:2,unmatched:0});
++    assert.deepEqual([(await ledger.learningSummary()).tracked,(await ledger.learningSummary()).graded],[2,2]);
++  }finally{await rm(folder,{recursive:true,force:true});}
++});
++
++test('an older ledger with duplicate decisions is backed up, folded and re-pointed on read',async()=>{
++  const folder=await mkdtemp(join(tmpdir(),'crowniq-migrate-'));
++  try{
++    const path=join(folder,'data.json');
++    // Build a ledger the old way: three copies of one decision under different ids, one graded.
++    const seed=new ProductLedger(path,'CROWN_STRONG',()=>now);
++    const account=await seed.register('fold@example.org','abcdefghijkl','Fold_owner');
++    const identity=(await seed.authenticate(account.token))!;
++    await seed.upsertProfile('fold-actor','Fold Actor');
++    await seed.track(build('fold'),[]);
++    const stored=JSON.parse(await readFile(path,'utf8'));
++    const original=stored.decisions[0];
++    const copy=(id:string,minutes:number,extra:object={})=>{
++      const value={...structuredClone(original),trackedPickId:id,
++        createdAt:new Date(now.getTime()+minutes*60_000).toISOString(),lineScore:89+minutes/15,...extra};
++      delete value.decisionKey;delete value.revisions;return value;
++    };
++    stored.decisions=[copy('old-1',0),copy('old-2',15,{grade:'WIN',actualResult:30,resultStatus:'FINAL',
++      gradedAt:'2030-09-26T00:00:00Z',resultSourceName:'Synthetic',resultSourceUrl:'https://example.org/r'}),copy('old-3',30)];
++    stored.savedPicks=[{accountId:identity.accountId,trackedPickId:'old-2',savedAt:now.toISOString(),removedAt:null},
++      {accountId:identity.accountId,trackedPickId:'old-3',savedAt:now.toISOString(),removedAt:null}];
++    stored.privateCrowns=[{id:'crown-1',accountId:identity.accountId,trackedPickIds:['old-3','x'],
++      savedAt:now.toISOString(),removedAt:null}];
++    const publicId=stored.profiles[0].publicId;
++    stored.crowns=[{publicCrownId:'00000000-0000-4000-8000-000000000001',ownerPublicId:publicId,createdAt:now.toISOString(),
++      legs:[{...{trackedPickId:'old-2',playerName:'alpha',market:'passing_yards',exactLine:24.5,direction:'MORE',
++        lineType:'REGULAR',lineScore:90,modelVersion:'GKR-NFL-1',eventId:'fold',playerId:'alpha',sport:'NFL'}}],unsharedAt:null}];
++    stored.publicCredits=[{publicId,trackedPickId:'old-2'},{publicId,trackedPickId:'old-3'}];
++    await writeFile(path,JSON.stringify(stored));
++
++    const ledger=new ProductLedger(path,'CROWN_STRONG',()=>now);
++    const {decisions}=await ledger.listDecisions();
++    assert.equal(decisions.length,1);
++    assert.equal(decisions[0].trackedPickId,'old-1','the earliest copy is kept');
++    assert.equal(decisions[0].grade,'WIN','a grade on any copy carries over');
++    assert.deepEqual(decisions[0].revisions?.map((item)=>item.lineScore),[90,91]);
++    const after=JSON.parse(await readFile(path,'utf8'));
++    assert.deepEqual(after.savedPicks.map((item:{trackedPickId:string})=>item.trackedPickId),['old-1']);
++    assert.deepEqual(after.privateCrowns[0].trackedPickIds,['old-1','x']);
++    assert.equal(after.crowns[0].legs[0].trackedPickId,'old-1');
++    assert.deepEqual(after.publicCredits,[{publicId,trackedPickId:'old-1'}]);
++    const { readdir } = await import('node:fs/promises');
++    const backups=(await readdir(folder)).filter((name)=>name.startsWith('data.json.backup-'));
++    assert.equal(backups.length,1);
++    assert.equal(JSON.parse(await readFile(join(folder,backups[0]),'utf8')).decisions.length,3);
++    // Reading again changes nothing and makes no second backup.
++    await ledger.listDecisions();
++    assert.equal((await readdir(folder)).filter((name)=>name.startsWith('data.json.backup-')).length,1);
++  }finally{await rm(folder,{recursive:true,force:true});}
++});
++
++test('picks record their snapshot age, and an optional limit refuses old snapshots for public Crowns',async()=>{
++  const folder=await mkdtemp(join(tmpdir(),'crowniq-snapshot-age-'));
++  try{
++    const clock=new Date(now.getTime()+45*60_000);
++    const ledger=new ProductLedger(join(folder,'data.json'),'CROWN_STRONG',()=>clock,()=>[],undefined,30);
++    const account=await ledger.register('age@example.org','abcdefghijkl','Age_owner');
++    const identity=(await ledger.authenticate(account.token))!;
++    const board=combine(build('age','alpha'),build('age','beta'));
++    const ids=board.board.lines.map((line)=>line.id);
++    await ledger.saveUserPick(identity.accountId,ids[0],board,[]);
++    const [decision]=(await ledger.listDecisions()).decisions;
++    assert.deepEqual([decision.boardFetchedAt,decision.snapshotAgeMinutes],[now.toISOString(),45]);
++    await ledger.upsertProfile('age-actor','Age Actor');
++    await assert.rejects(()=>ledger.share('age-actor',ids,board,[]),/SNAPSHOT_TOO_OLD/);
++    const fresh=boardResponseSchema.parse({...board,board:{...board.board,fetchedAt:new Date(clock.getTime()-10*60_000).toISOString()}});
++    assert.equal((await ledger.share('age-actor',ids,fresh,[])).legs.length,2);
++  }finally{await rm(folder,{recursive:true,force:true});}
++});
+diff --git a/apps/mobile/src/gkr-labels.ts b/apps/mobile/src/gkr-labels.ts
+new file mode 100644
+index 0000000..216a17f
+--- /dev/null
++++ b/apps/mobile/src/gkr-labels.ts
+@@ -0,0 +1,166 @@
++import type { Analysis } from '@crowniq/contracts';
++
++type Component = NonNullable<Analysis['contextBreakdown']>[number];
++
++/** Plain names for the factors CrownIQ measures today, plus the exact-line adjustments. */
++export const factorLabels: Readonly<Record<string, string>> = {
++  // NFL
++  expected_attempts: 'Pass attempts', efficiency_environment: 'Yards per attempt',
++  historical_current_form: 'Recent passing yards', expected_offensive_plays: 'Offensive plays',
++  pass_rate: 'Pass rate', qb_role_security: 'QB snap share', historical_volume: 'Recent volume',
++  attempts: 'Pass attempts', completion_rate: 'Completion rate', passing_style: 'Yards per attempt',
++  expected_carries: 'Carries', rush_attempt_rate: 'Carries per snap', rb_efficiency_skill: 'Yards per carry',
++  historical_rush_volume: 'Recent rushing yards', offensive_snap_volume: 'Offensive snaps',
++  target_opportunity_rate: 'Targets per snap', receiving_efficiency: 'Yards per target',
++  historical_receiving_volume: 'Recent receiving yards', target_floor: 'Targets', catch_rate: 'Catch rate',
++  historical_reception_volume: 'Recent receptions', historical_target_volume: 'Recent targets',
++  coverage_matchup: 'Coverage matchup', matchup_coverage: 'Coverage matchup', qb_environment: 'QB quality',
++  qb_completion_environment: 'QB completion rate', protection_pressure: 'Pass protection', game_script: 'Game script',
++  personnel: 'Personnel', opponent_rush_defense: 'Opponent run defense',
++  // NBA
++  expected_minutes: 'Minutes', minutes: 'Minutes', shot_volume: 'Shot attempts', usage_proxy: 'Usage rate',
++  scoring_rate: 'Points per minute', rebound_rate: 'Rebounds per minute', historical_rebound_volume: 'Recent rebounds',
++  potential_assists: 'Potential assists', ball_handling_rate: 'Ball handling per minute',
++  historical_assist_volume: 'Recent assists', scoring_opportunity: 'Recent points', rebounding_opportunity: 'Recent rebounds',
++  assist_opportunity: 'Recent assists', points_opportunity: 'Recent points', matchup: 'Matchup', pace: 'Pace',
++  opponent_defense: 'Opponent defense', opponent_shot_profile: 'Opponent shot profile',
++  team_rebounding_environment: 'Team rebounding',
++  // MLB
++  expected_pa: 'Plate appearances', contact_obp_skill: 'On-base rate', home_run_rate: 'Home run rate',
++  historical_hrrbi_volume: 'Recent hits + runs + RBIs', run_creation_rate: 'Run production per PA',
++  contact_ability: 'Batting average', historical_hit_volume: 'Recent hits', hit_rate: 'Hits per PA',
++  hitter_walk_rate: 'Walk rate', historical_walk_volume: 'Recent walks', extra_base_power_rate: 'Extra-base hit rate',
++  historical_hr_volume: 'Recent home runs', hr_frequency: 'Home runs per PA', expected_batters_faced: 'Batters faced',
++  pitch_count_innings: 'Innings pitched', pitcher_k_rate: 'Strikeout rate', opponent_k_rate: 'Opponent strikeout rate',
++  pitcher_matchup: 'Pitcher matchup',
++  // NFL (more)
++  competitiveness: 'Game competitiveness', coverage_influence: 'Coverage on the receiver', expected_adot: 'Average target depth',
++  expected_defensive_snaps: 'Defensive snaps', expected_drives: 'Drives', expected_dropbacks: 'Dropbacks',
++  field_goal_opportunity: 'Field goal chances', field_position_game_script: 'Field position', fourth_down_aggressiveness: 'Fourth-down aggressiveness',
++  historical_punt_rate: 'Recent punts', kicker_accuracy: 'Kicker accuracy', offensive_efficiency: 'Offensive efficiency',
++  offensive_line: 'Offensive line', opponent_coverage: 'Opponent coverage', opponent_play_style: 'Opponent play style',
++  opponent_pressure_rate: 'Opponent pass rush', opponent_profile: 'Opponent profile', opponent_red_zone_defense: 'Opponent red-zone defense',
++  opponent_run_pass_funnel: 'Opponent run/pass tendency', opponent_rush_short_pass_volume: 'Opponent short-pass and run volume',
++  personnel_changes: 'Personnel changes', player_snap_share: 'Snap share', position_role: 'Position role', pressure: 'Pass rush pressure',
++  qb_accuracy: 'QB accuracy', qb_mobility_time_to_throw: 'QB mobility and time to throw', qb_red_zone_role: 'QB red-zone role',
++  qb_sack_tendency: 'QB sack tendency', receiver_availability: 'Receivers available', red_zone_pass_rate: 'Red-zone pass rate',
++  red_zone_stalling: 'Red-zone stalls', tackle_efficiency: 'Tackle rate', team_rush_environment: 'Team rushing volume',
++  team_scoring_environment: 'Team scoring', weather: 'Weather',
++  // College football
++  blowout_rotation: 'Blowout rotation', blowout_rotation_risk: 'Blowout rotation risk', committee_risk: 'Committee backfield risk',
++  coverage: 'Coverage', designed_rush_share: 'Designed QB runs', efficiency: 'Efficiency', expected_pass_volume: 'Pass volume',
++  expected_snaps: 'Snaps', opponent: 'Opponent', opponent_run_defense: 'Opponent run defense', route_participation: 'Routes run',
++  sack_treatment_platform_rules: 'Sack scoring rules', scramble_rate: 'Scramble rate', talent_matchup: 'Talent matchup',
++  talent_mismatch: 'Talent gap', talent_ol_mismatch: 'Offensive line mismatch', target_share: 'Target share',
++  // Shared across sports
++  environment: 'Game environment', expected_volume_environment: 'Expected volume', form_history: 'Recent form',
++  role_opportunity: 'Role and opportunity', stability_risk: 'Consistency', game_environment: 'Game environment',
++  overall_usage: 'Usage', usage: 'Usage', role: 'Role', opponent_quality: 'Opponent quality', recent_form: 'Recent form',
++  recent_usage: 'Recent usage', team_strength: 'Team strength', style_matchup: 'Style matchup', fatigue: 'Fatigue',
++  tournament_context: 'Tournament context',
++  // Basketball (more)
++  ball_handling_role: 'Ball-handling role', ft_opportunity: 'Free throw chances', rebound_chance_share: 'Share of rebound chances',
++  role_injuries: 'Teammate injuries', teammate_shooting: 'Teammate shooting',
++  // MLB (more)
++  hook_risk: 'Early-exit risk', lineup_protection: 'Lineup protection', park: 'Ballpark', pitch_mix_matchup: 'Pitch mix matchup',
++  pitcher_hr_susceptibility: 'Pitcher home runs allowed', pitcher_walk_rate: 'Pitcher walk rate',
++  // NHL
++  expected_ice_time: 'Ice time', expected_shots_against: 'Shots against', goalie_start_confirmation: 'Goalie start confirmed',
++  ice_time: 'Ice time', line_assignment: 'Line assignment', opponent_goalie: 'Opponent goalie', opponent_shot_rate: 'Opponent shot rate',
++  opponent_shot_suppression: 'Opponent shot suppression', power_play_role: 'Power-play role', recent_involvement: 'Recent involvement',
++  team_defense: 'Team defense',
++  // Tennis, table tennis and badminton
++  ace_rate: 'Ace rate', current_form: 'Current form', df_rate: 'Double fault rate', early_match_tendencies: 'Early-match tendencies',
++  expected_competitiveness: 'Expected competitiveness', expected_return_games: 'Return games', expected_service_games: 'Service games',
++  expected_set_competitiveness: 'Set competitiveness', form: 'Form', h2h_matchup: 'Head-to-head', match_length: 'Match length',
++  match_pressure: 'Match pressure', opening_game_competitiveness: 'Opening game competitiveness', opening_return_strength: 'Early return strength',
++  opening_serve_strength: 'Early serve strength', opponent_return_profile: 'Opponent return game', opponent_serve_weakness: 'Opponent serve weakness',
++  opponent_strength: 'Opponent strength', player_strength_gap: 'Strength gap', ranking: 'Ranking', ranking_differential: 'Ranking gap',
++  ranking_gap: 'Ranking gap', recent_competitiveness: 'Recent competitiveness', recent_first_game_history: 'Recent first games',
++  recent_match_length: 'Recent match length', recent_serve_stability: 'Serve consistency', return_pressure: 'Return pressure',
++  return_quality: 'Return quality', seeding: 'Seeding', serve_hold_environment: 'Serve holds', serve_return_balance: 'Serve/return balance',
++  serve_return_differential: 'Serve/return gap', serve_return_style: 'Serve and return style', set_competitiveness: 'Set competitiveness',
++  straight_game_probability: 'Straight-games chance', straight_set_probability: 'Straight-sets chance', surface: 'Court surface',
++  surface_adjusted_strength: 'Strength on this surface', three_set_probability: 'Three-set chance', tiebreak_probability: 'Tiebreak chance',
++  tournament_level: 'Tournament level', tournament_round: 'Tournament round',
++  // Handball
++  historical_assist_rate: 'Recent assist rate', penalty_set_piece_role: 'Penalty and set-piece role', playmaking_role: 'Playmaking role',
++  // Esports
++  champion_meta: 'Champion meta', duration: 'Game length', expected_kills: 'Expected kills', expected_placement: 'Expected placement',
++  expected_round_volume: 'Rounds', farm_priority: 'Farm priority', fight_frequency: 'Fight frequency', form_rating: 'Form rating',
++  hero: 'Hero', historical_hs_pct: 'Headshot rate', kill_participation: 'Kill participation', kill_share: 'Kill share',
++  map_series_environment: 'Maps and series', map_volume: 'Maps played', match_duration: 'Match length', player_role: 'Player role',
++  position: 'Position', recent_hs_stability: 'Headshot consistency', role_agent: 'Agent role', role_weapon_profile: 'Weapon role',
++  round_volume: 'Rounds', team_fight_participation: 'Team fight participation', team_kill_expectation: 'Expected team kills',
++  team_kills: 'Team kills', team_strength_series_script: 'Team strength and series script', tournament_format: 'Tournament format',
++  // Shared
++  stability: 'Consistency', evidence_quality: 'Evidence quality',
++  // Adjustments applied to the exact line
++  partial_coverage_adjustment: 'Scaled for unmeasured factors', context_score_clamp: 'Context limit',
++  threshold_cushion: 'Room between projection and line', variance: 'Outcome spread', evidence: 'Evidence quality',
++  demon_tax: 'Demon difficulty', high_variance_market: 'High-variance market', blowout: 'Blowout risk',
++  adversarial_risk: 'Open risks', score_clamp: 'Score limit',
++};
++
++const acronyms: Readonly<Record<string, string>> = { qb: 'QB', rb: 'RB', ft: 'FT', hr: 'HR', pa: 'PA', hs: 'HS',
++  ol: 'OL', df: 'DF', adot: 'aDOT', h2h: 'H2H', obp: 'OBP', k: 'K', hrrbi: 'H+R+RBI' };
++
++/** Readable label for any score component key. */
++export function factorLabel(key: string): string {
++  if (factorLabels[key]) return factorLabels[key];
++  const words = key.split('_').filter(Boolean).map((word) => acronyms[word] ?? word);
++  const text = words.join(' ');
++  return text.charAt(0).toUpperCase() + text.slice(1);
++}
++
++const lineAdjustmentNames = new Set(['threshold_cushion', 'variance', 'evidence', 'demon_tax',
++  'high_variance_market', 'blowout', 'adversarial_risk', 'score_clamp']);
++
++export type BreakdownRow = { key: string; label: string; value: string; measured: boolean; contribution: number;
++  weight: number | null; detail: string | null };
++
++const round1 = (value: number) => Math.round(value * 10) / 10;
++const pretty = (value: number) => Math.abs(value) >= 10 ? round1(value).toFixed(1)
++  : Math.abs(value) >= 1 ? round1(value).toFixed(1) : value.toFixed(2);
++
++/** Turns one score component into a readable row without changing its numbers. Uses the structured
++ * fields when the server sends them, and reads older saved boards from the explanation text. */
++export function describeComponent(component: Component): BreakdownRow {
++  const textWeight = /weight (\d+(?:\.\d+)?)/.exec(component.explanation);
++  const textObserved = /Observed (-?[\d.]+) versus reference (-?[\d.]+)/.exec(component.explanation);
++  const weight = component.weight ?? (textWeight ? Number(textWeight[1]) : null);
++  const observed = component.observed ?? (textObserved ? Number(textObserved[1]) : null);
++  const reference = component.reference ?? (textObserved ? Number(textObserved[2]) : null);
++  const missing = component.measured === false || (component.measured === undefined &&
++    /No current attributed metric/.test(component.explanation));
++  let detail: string | null = null;
++  if (observed !== null && reference !== null) {
++    const change = reference ? (observed - reference) / Math.abs(reference) : null;
++    detail = `Recent ${pretty(observed)} vs usual ${pretty(reference)}` +
++      (change === null ? '' : ` (${change >= 0 ? '+' : ''}${Math.round(change * 100)}%)`) +
++      (component.favorsBelowReference ? ' · lower helps this LESS pick' : '');
++  } else if (component.name === 'partial_coverage_adjustment') {
++    detail = 'Measured factors scaled up to cover the ones without data';
++  } else if (!missing && weight === null) {
++    detail = component.explanation.replace(/(\d+\.\d{3,})/g, (match) => pretty(Number(match)));
++  }
++  const contribution = round1(component.contribution);
++  const signedValue = `${contribution > 0 ? '+' : ''}${contribution.toFixed(1)}`;
++  return { key: component.name, label: factorLabel(component.name), measured: !missing,
++    value: missing ? 'Not measured' : weight !== null ? `${signedValue} of ${weight}` : signedValue,
++    contribution, weight, detail };
++}
++
++/** Context rows and exact-line adjustment rows that add up to the GKR score. */
++export function scoreBreakdown(analysis: Analysis): { context: BreakdownRow[]; adjustments: BreakdownRow[];
++  contextTotal: number; adjustmentTotal: number } {
++  const parts = analysis.scoreBreakdown.length ? analysis.scoreBreakdown
++    : [...(analysis.contextBreakdown ?? []), ...(analysis.lineAdjustments ?? [])];
++  const rows = parts.map(describeComponent);
++  const isAdjustment = (component: Component) => component.kind ? component.kind === 'LINE_ADJUSTMENT' ||
++    component.kind === 'CLAMP' : lineAdjustmentNames.has(component.name);
++  const context = rows.filter((_row, index) => !isAdjustment(parts[index]));
++  const adjustments = rows.filter((row, index) => isAdjustment(parts[index]) && row.contribution !== 0);
++  const sum = (items: BreakdownRow[]) => round1(items.reduce((total, row) => total + row.contribution, 0));
++  return { context, adjustments, contextTotal: sum(context), adjustmentTotal: sum(adjustments) };
++}
+diff --git a/apps/mobile/test/gkr-labels.test.ts b/apps/mobile/test/gkr-labels.test.ts
+new file mode 100644
+index 0000000..2a201f9
+--- /dev/null
++++ b/apps/mobile/test/gkr-labels.test.ts
+@@ -0,0 +1,41 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import { marketDefinitions } from '../../../packages/engine/src/models/definitions.js';
++import { describeComponent, factorLabels, scoreBreakdown } from '../src/gkr-labels.js';
++import type { Analysis } from '@crowniq/contracts';
++
++test('every model factor has a hand-written label', () => {
++  const keys = [...new Set(marketDefinitions.flatMap((definition) => definition.factors.map(([key]) => key)))];
++  assert.deepEqual(keys.filter((key) => !factorLabels[key]), []);
++});
++
++test('rows read the structured fields, and older boards still read from the text', () => {
++  const structured = describeComponent({ name: 'target_opportunity_rate', contribution: 18.4,
++    explanation: 'Observed 0.29 versus reference 0.25; weight 25.', kind: 'FACTOR', measured: true, weight: 25,
++    observed: 0.29, reference: 0.25 });
++  assert.deepEqual([structured.label, structured.value, structured.detail],
++    ['Targets per snap', '+18.4 of 25', 'Recent 0.29 vs usual 0.25 (+16%)']);
++  const legacy = describeComponent({ name: 'target_opportunity_rate', contribution: 18.4,
++    explanation: 'Observed 0.29 versus reference 0.25; weight 25.' });
++  assert.deepEqual([legacy.value, legacy.detail], [structured.value, structured.detail]);
++  const unmeasured = describeComponent({ name: 'coverage_matchup', contribution: 0,
++    explanation: 'No current attributed metric supplied; weight 10 contributes zero.', kind: 'FACTOR', measured: false, weight: 10 });
++  assert.deepEqual([unmeasured.value, unmeasured.measured], ['Not measured', false]);
++  const less = describeComponent({ name: 'expected_minutes', contribution: 20, explanation: 'x', kind: 'FACTOR',
++    measured: true, weight: 25, observed: 30, reference: 34, favorsBelowReference: true });
++  assert.match(less.detail!, /lower helps this LESS pick/);
++});
++
++test('the two groups add up to the score', () => {
++  const analysis = { scoreBreakdown: [
++    { name: 'expected_attempts', contribution: 20, explanation: 'Observed 1 versus reference 1; weight 25.', kind: 'FACTOR', measured: true, weight: 25, observed: 1, reference: 1 },
++    { name: 'partial_coverage_adjustment', contribution: 50, explanation: 'Normalize.', kind: 'COVERAGE' },
++    { name: 'threshold_cushion', contribution: 12, explanation: 'Signed margin 3.2 standard deviations.', kind: 'LINE_ADJUSTMENT' },
++    { name: 'variance', contribution: 0, explanation: 'cv', kind: 'LINE_ADJUSTMENT' },
++    { name: 'score_clamp', contribution: -2, explanation: 'Constrain line score to 0–100.', kind: 'CLAMP' },
++  ] } as unknown as Analysis;
++  const result = scoreBreakdown(analysis);
++  assert.deepEqual(result.context.map((row) => row.label), ['Pass attempts', 'Scaled for unmeasured factors']);
++  assert.deepEqual(result.adjustments.map((row) => row.label), ['Room between projection and line', 'Score limit']);
++  assert.equal(result.contextTotal + result.adjustmentTotal, 80);
++});
+diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
+index d630ead..7e991d9 100644
+--- a/packages/contracts/src/index.ts
++++ b/packages/contracts/src/index.ts
+@@ -80,6 +80,16 @@ export const scoreComponentSchema = z.object({
+   name: identifier,
+   contribution: z.number().finite(),
+   explanation: z.string().min(1),
++  /** Structured copies of what the explanation says, so clients never parse text. All optional. */
++  kind: z.enum(['FACTOR', 'EVIDENCE_QUALITY', 'COVERAGE', 'LINE_ADJUSTMENT', 'CLAMP']).optional(),
++  /** False when the factor had no current attributed metric and contributed zero. */
++  measured: z.boolean().optional(),
++  /** The factor's maximum points. */
++  weight: z.number().finite().optional(),
++  observed: z.number().finite().optional(),
++  reference: z.number().finite().optional(),
++  /** True when a LESS-aware model scored this factor for LESS (below reference favorable). */
++  favorsBelowReference: z.boolean().optional(),
+ });
+ 
+ export const assessmentSchema = z.object({
+@@ -288,6 +298,7 @@ export type Board = z.infer<typeof boardSchema>;
+ export type Evidence = z.infer<typeof evidenceSchema>;
+ export type Analysis = z.infer<typeof analysisSchema>;
+ export type Assessment = z.infer<typeof assessmentSchema>;
++export type ScoreComponent = z.infer<typeof scoreComponentSchema>;
+ export type ScoreBand = z.infer<typeof scoreBandSchema>;
+ export type SecondLookAudit = z.infer<typeof secondLookAuditSchema>;
+ export type Direction = z.infer<typeof directionSchema>;
+diff --git a/packages/engine/src/models/scoring.ts b/packages/engine/src/models/scoring.ts
+index 67713b3..0ab0a74 100644
+--- a/packages/engine/src/models/scoring.ts
++++ b/packages/engine/src/models/scoring.ts
+@@ -1,4 +1,4 @@
+-import type { Assessment, Evidence, PlayableDirection, PropLine } from '@crowniq/contracts';
++import type { Assessment, Evidence, PlayableDirection, PropLine, ScoreComponent } from '@crowniq/contracts';
+ import type { ModelContext, ModelModule } from '../interfaces.js';
+ import { fantasyDistribution } from '../fantasy/scoring.js';
+ import { fantasyRules } from '../fantasy/registry.js';
+@@ -127,31 +127,36 @@ export function createMarketModule(definition: MarketDefinition, approved = fals
+       // conflicting-projection PASS, so every scored line uses this orientation.
+       const orientedDirection: PlayableDirection = distribution.midpoint >= line.threshold
+         ? 'MORE' : 'LESS';
+-      const contextComponents = definition.factors.map(([key, maximum, orientation]) => {
++      const contextComponents: ScoreComponent[] = definition.factors.map(([key, maximum, orientation]): ScoreComponent => {
+         if (key === 'evidence_quality') {
+           const quality = evidence.some((item) => item.quality === 'LOW' || item.confidence < .6) ? .3 :
+             evidence.some((item) => item.quality === 'MEDIUM') ? .7 : 1;
+           return { name: key, contribution: round(maximum * quality),
+-            explanation: 'Lowest quality among current attributed inputs.' };
++            explanation: 'Lowest quality among current attributed inputs.',
++            kind: 'EVIDENCE_QUALITY' as const, measured: true, weight: maximum };
+         }
+         const observation = current(evidence, 'metric:' + key)?.numeric;
+         if (!observation || observation.baseline === undefined) {
+           return { name: key, contribution: 0,
+-            explanation: `No current attributed metric supplied; weight ${maximum} contributes zero.` };
++            explanation: `No current attributed metric supplied; weight ${maximum} contributes zero.`,
++            kind: 'FACTOR' as const, measured: false, weight: maximum };
+         }
+         const delta = (observation.value - observation.baseline) /
+           Math.max(Math.abs(observation.baseline), 1);
+-        const favorable = definition.directionalLessScoring && orientedDirection === 'LESS' &&
+-          orientation === 'DIRECTIONAL' ? .5 - delta * 2 : .5 + delta * 2;
++        const reversed = !!definition.directionalLessScoring && orientedDirection === 'LESS' &&
++          orientation === 'DIRECTIONAL';
++        const favorable = reversed ? .5 - delta * 2 : .5 + delta * 2;
+         return { name: key, contribution: round(maximum * clamp(favorable, 0, 1)),
+-          explanation: `Observed ${observation.value} versus reference ${observation.baseline}; weight ${maximum}.` };
++          explanation: `Observed ${observation.value} versus reference ${observation.baseline}; weight ${maximum}.`,
++          kind: 'FACTOR' as const, measured: true, weight: maximum, observed: observation.value,
++          reference: observation.baseline, ...(reversed ? { favorsBelowReference: true } : {}) };
+       });
+       const rawContextScore = round(contextComponents.reduce((sum, item) => sum + item.contribution, 0));
+       let contextScore = rawContextScore;
+       if (definition.partialCoverageNormalization && inputCoverage < 1) {
+         const normalizedObserved = round(rawContextScore / inputCoverage);
+         const adjustment = round(normalizedObserved - rawContextScore);
+-        contextComponents.push({ name: 'partial_coverage_adjustment', contribution: adjustment,
++        contextComponents.push({ name: 'partial_coverage_adjustment', contribution: adjustment, kind: 'COVERAGE',
+           explanation: 'Normalize observed factor performance to the 100-point context scale; missing coverage is reported separately as data confidence.' });
+         contextScore = round(clamp(rawContextScore + adjustment, 0, 100));
+       }
+@@ -219,11 +224,12 @@ export function createMarketModule(definition: MarketDefinition, approved = fals
+         ['adversarial_risk', -Math.min(10, round(risks.reduce((sum, r) => sum + r.severity, 0) * 5)),
+           'Opposing risk findings after adversarial review.'],
+       ].map(([name, contribution, explanation]) => ({ name: String(name),
+-        contribution: round(Number(contribution)), explanation: String(explanation) }));
++        contribution: round(Number(contribution)), explanation: String(explanation),
++        kind: 'LINE_ADJUSTMENT' as ScoreComponent['kind'] }));
+       const raw = round(contextScore + lineAdjustments.reduce((sum, item) => sum + item.contribution, 0));
+       const lineScore = round(clamp(raw, 0, 100));
+       if (raw !== lineScore) lineAdjustments.push({ name: 'score_clamp',
+-        contribution: round(lineScore - raw), explanation: 'Constrain line score to 0–100.' });
++        contribution: round(lineScore - raw), explanation: 'Constrain line score to 0–100.', kind: 'CLAMP' });
+       const severe = risks.some((risk) => risk.severity >= .7 &&
+         ['injury','role_change','lineup','weather','conflicting_evidence'].includes(risk.risk));
+       const script = current(evidence, 'metric:game_script')?.numeric;
+diff --git a/packages/engine/test/production-models.test.ts b/packages/engine/test/production-models.test.ts
+index 5bc7c8c..06499e5 100644
+--- a/packages/engine/test/production-models.test.ts
++++ b/packages/engine/test/production-models.test.ts
+@@ -421,3 +421,18 @@ test('web findings are display-only: score, quality and expiry ignore them', ()
+   assert.deepEqual(withWeb.contextEvidenceIds, ['web:fixture']);
+   assert.equal(without.contextEvidenceIds, undefined);
+ });
++
++test('score components carry structured fields that match their numbers', () => {
++  const line = fixtureLine({ threshold: 240, availableDirections: ['MORE'] });
++  const analysis = run([line], inputs(line, 1.12, 310, 20)).analyses[0];
++  assert.equal(analysis.direction, 'MORE');
++  for (const component of analysis.contextBreakdown ?? []) {
++    assert.ok(component.kind, component.name);
++    if (component.kind === 'FACTOR' && component.measured) {
++      assert.match(component.explanation, new RegExp(`Observed ${component.observed} versus reference ${component.reference}; weight ${component.weight}`));
++    }
++  }
++  assert.ok((analysis.lineAdjustments ?? []).every((item: { kind?: string }) => item.kind === 'LINE_ADJUSTMENT' || item.kind === 'CLAMP'));
++  const total = [...analysis.contextBreakdown ?? [], ...analysis.lineAdjustments ?? []].reduce((sum, item) => sum + item.contribution, 0);
++  assert.equal(Math.round(total * 100) / 100, analysis.score);
++});
+```
