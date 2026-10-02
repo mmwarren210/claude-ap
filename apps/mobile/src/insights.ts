@@ -126,6 +126,7 @@ const crownIssueTexts: Readonly<Record<string, string>> = {
   STALE_OR_INVALID_CROWN_LEG: 'a leg is no longer on the board or its evidence expired',
   DUPLICATE_PUBLIC_CROWN: 'you already shared this exact Crown',
   APEX_SAME_TEAM: 'two Apex players come from one team',
+  SNAPSHOT_TOO_OLD: 'the board’s lines are older than this server allows for public Crowns (wait for the next board pull)',
 };
 
 export function crownIssueMessage(issues: readonly string[] | undefined): string {

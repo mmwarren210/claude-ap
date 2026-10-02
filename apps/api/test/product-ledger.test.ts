@@ -332,3 +332,100 @@ test('background grading uses exact NFL mapping and leaves absent results pendin
     assert.equal((await ledger.history('NFL','alpha',board.board.lines[0].market)).recent[0].actual,280);
   }finally{await rm(folder,{recursive:true,force:true});}
 });
+
+const withScore=(board:BoardResponse,score:number,evidenceIds:string[]=[]):BoardResponse=>boardResponseSchema.parse({
+  ...board,analyses:board.analyses.map((item)=>({...item,score,evidenceIds}))});
+
+test('re-tracking the same decision keeps one decision and records changed reads as revisions',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-dedupe-'));
+  try{
+    let clock=now;
+    const ledger=new ProductLedger(join(folder,'data.json'),'CROWN_STRONG',()=>clock);
+    const board=build('dedupe');
+    assert.equal(await ledger.track(board,[]),1);
+    clock=new Date(now.getTime()+15*60_000);
+    assert.equal(await ledger.track(board,[]),0);
+    assert.equal(await ledger.track(withScore(board,91),[]),0);
+    const {total,decisions}=await ledger.listDecisions();
+    assert.equal(total,1);
+    // The identical second read adds nothing; the changed score is kept as one revision.
+    assert.deepEqual(decisions[0].revisions?.map((item)=>item.lineScore),[91]);
+    assert.equal(decisions[0].lineScore,89,'the first read stays the graded decision');
+    // A different line (moved threshold) is a different decision.
+    assert.equal(await ledger.track(build('dedupe','alpha',25.5),[]),1);
+    clock=new Date('2030-09-26T00:00:00Z');
+    // One result grades each distinct line once: two decisions, never a copy per re-analysis.
+    assert.deepEqual(await ledger.grade([fact(board.board.lines[0],30)]),{graded:2,unmatched:0});
+    assert.deepEqual([(await ledger.learningSummary()).tracked,(await ledger.learningSummary()).graded],[2,2]);
+  }finally{await rm(folder,{recursive:true,force:true});}
+});
+
+test('an older ledger with duplicate decisions is backed up, folded and re-pointed on read',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-migrate-'));
+  try{
+    const path=join(folder,'data.json');
+    // Build a ledger the old way: three copies of one decision under different ids, one graded.
+    const seed=new ProductLedger(path,'CROWN_STRONG',()=>now);
+    const account=await seed.register('fold@example.org','abcdefghijkl','Fold_owner');
+    const identity=(await seed.authenticate(account.token))!;
+    await seed.upsertProfile('fold-actor','Fold Actor');
+    await seed.track(build('fold'),[]);
+    const stored=JSON.parse(await readFile(path,'utf8'));
+    const original=stored.decisions[0];
+    const copy=(id:string,minutes:number,extra:object={})=>{
+      const value={...structuredClone(original),trackedPickId:id,
+        createdAt:new Date(now.getTime()+minutes*60_000).toISOString(),lineScore:89+minutes/15,...extra};
+      delete value.decisionKey;delete value.revisions;return value;
+    };
+    stored.decisions=[copy('old-1',0),copy('old-2',15,{grade:'WIN',actualResult:30,resultStatus:'FINAL',
+      gradedAt:'2030-09-26T00:00:00Z',resultSourceName:'Synthetic',resultSourceUrl:'https://example.org/r'}),copy('old-3',30)];
+    stored.savedPicks=[{accountId:identity.accountId,trackedPickId:'old-2',savedAt:now.toISOString(),removedAt:null},
+      {accountId:identity.accountId,trackedPickId:'old-3',savedAt:now.toISOString(),removedAt:null}];
+    stored.privateCrowns=[{id:'crown-1',accountId:identity.accountId,trackedPickIds:['old-3','x'],
+      savedAt:now.toISOString(),removedAt:null}];
+    const publicId=stored.profiles[0].publicId;
+    stored.crowns=[{publicCrownId:'00000000-0000-4000-8000-000000000001',ownerPublicId:publicId,createdAt:now.toISOString(),
+      legs:[{...{trackedPickId:'old-2',playerName:'alpha',market:'passing_yards',exactLine:24.5,direction:'MORE',
+        lineType:'REGULAR',lineScore:90,modelVersion:'GKR-NFL-1',eventId:'fold',playerId:'alpha',sport:'NFL'}}],unsharedAt:null}];
+    stored.publicCredits=[{publicId,trackedPickId:'old-2'},{publicId,trackedPickId:'old-3'}];
+    await writeFile(path,JSON.stringify(stored));
+
+    const ledger=new ProductLedger(path,'CROWN_STRONG',()=>now);
+    const {decisions}=await ledger.listDecisions();
+    assert.equal(decisions.length,1);
+    assert.equal(decisions[0].trackedPickId,'old-1','the earliest copy is kept');
+    assert.equal(decisions[0].grade,'WIN','a grade on any copy carries over');
+    assert.deepEqual(decisions[0].revisions?.map((item)=>item.lineScore),[90,91]);
+    const after=JSON.parse(await readFile(path,'utf8'));
+    assert.deepEqual(after.savedPicks.map((item:{trackedPickId:string})=>item.trackedPickId),['old-1']);
+    assert.deepEqual(after.privateCrowns[0].trackedPickIds,['old-1','x']);
+    assert.equal(after.crowns[0].legs[0].trackedPickId,'old-1');
+    assert.deepEqual(after.publicCredits,[{publicId,trackedPickId:'old-1'}]);
+    const { readdir } = await import('node:fs/promises');
+    const backups=(await readdir(folder)).filter((name)=>name.startsWith('data.json.backup-'));
+    assert.equal(backups.length,1);
+    assert.equal(JSON.parse(await readFile(join(folder,backups[0]),'utf8')).decisions.length,3);
+    // Reading again changes nothing and makes no second backup.
+    await ledger.listDecisions();
+    assert.equal((await readdir(folder)).filter((name)=>name.startsWith('data.json.backup-')).length,1);
+  }finally{await rm(folder,{recursive:true,force:true});}
+});
+
+test('picks record their snapshot age, and an optional limit refuses old snapshots for public Crowns',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-snapshot-age-'));
+  try{
+    const clock=new Date(now.getTime()+45*60_000);
+    const ledger=new ProductLedger(join(folder,'data.json'),'CROWN_STRONG',()=>clock,()=>[],undefined,30);
+    const account=await ledger.register('age@example.org','abcdefghijkl','Age_owner');
+    const identity=(await ledger.authenticate(account.token))!;
+    const board=combine(build('age','alpha'),build('age','beta'));
+    const ids=board.board.lines.map((line)=>line.id);
+    await ledger.saveUserPick(identity.accountId,ids[0],board,[]);
+    const [decision]=(await ledger.listDecisions()).decisions;
+    assert.deepEqual([decision.boardFetchedAt,decision.snapshotAgeMinutes],[now.toISOString(),45]);
+    await ledger.upsertProfile('age-actor','Age Actor');
+    await assert.rejects(()=>ledger.share('age-actor',ids,board,[]),/SNAPSHOT_TOO_OLD/);
+    const fresh=boardResponseSchema.parse({...board,board:{...board.board,fetchedAt:new Date(clock.getTime()-10*60_000).toISOString()}});
+    assert.equal((await ledger.share('age-actor',ids,fresh,[])).legs.length,2);
+  }finally{await rm(folder,{recursive:true,force:true});}
+});

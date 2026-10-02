@@ -25,7 +25,15 @@ export interface TrackedDecision {
   lineSnapshot:PropLine;
   grade:Outcome;actualResult:number|null;resultStatus:ResultFact['status']|null;
   gradedAt:string|null;resultSourceName:string|null;resultSourceUrl:string|null;
+  /** One decision per game, player, market, line, side, line type and model version. */
+  decisionKey?:string;
+  /** Later re-analyses of the same decision, oldest first. Append-only; never graded separately. */
+  revisions?:DecisionRevision[];
+  /** When the pick came from a person's action: the odds snapshot time and its age then. */
+  boardFetchedAt?:string;snapshotAgeMinutes?:number;
 }
+export interface DecisionRevision {recordedAt:string;lineScore:number;contextScore:number|null;
+  scoreBand:string;boardRank:number|null;researchSnapshotId:string}
 export interface DecisionHistorySink {recordGradedDecision(decision:TrackedDecision):Promise<void>}
 export interface PublicProfile {publicId:string;actorKey:string;displayName:string;avatarUrl:string|null;
   socialEnabled:boolean;profileVisible:boolean;isSuspended:boolean;createdAt:string}
@@ -59,11 +67,72 @@ const selectedEvidence=(analysis:Analysis,evidence:EvidenceLookup)=>
     const item=evidence.get(id);return item?[item]:[];
   }) : evidence.filter((item)=>analysis.evidenceIds.includes(item.id)))
     .sort((a,b)=>a.id.localeCompare(b.id));
-const signature=(line:PropLine,analysis:Analysis,evidence:EvidenceLookup)=>JSON.stringify([line.playerId,line.eventId,
-  line.market,line.threshold,analysis.direction,line.lineType,analysis.modelVersion,
-  analysis.score,analysis.contextScore,analysis.scoreBreakdown,selectedEvidence(analysis,evidence)]);
-const idFor=(line:PropLine,analysis:Analysis,evidence:EvidenceLookup)=>createHash('sha256')
-  .update(signature(line,analysis,evidence)).digest('hex');
+export const decisionKeyOf=(value:{eventId:string;playerId:string;market:string;exactLine:number;
+  direction:string;lineType:string;modelVersion:string})=>createHash('sha256').update(JSON.stringify([
+  value.eventId,value.playerId,value.market,value.exactLine,value.direction,value.lineType,value.modelVersion]))
+  .digest('hex');
+const revisionOf=(decision:TrackedDecision):DecisionRevision=>({recordedAt:decision.createdAt,
+  lineScore:decision.lineScore,contextScore:decision.contextScore,scoreBand:decision.scoreBand,
+  boardRank:decision.boardRank,researchSnapshotId:decision.researchSnapshotId});
+const sameRead=(a:DecisionRevision,b:DecisionRevision)=>a.researchSnapshotId===b.researchSnapshotId&&
+  a.lineScore===b.lineScore&&a.contextScore===b.contextScore&&a.boardRank===b.boardRank;
+/**
+ * The ledger's one decision for this candidate's key: the existing one (with the candidate kept as a
+ * revision when it reads differently) or the candidate itself, newly added.
+ */
+function upsertDecision(data:Data,candidate:TrackedDecision):TrackedDecision{
+  const key=candidate.decisionKey!;
+  const existing=data.decisions.find((item)=>item.decisionKey===key);
+  if(!existing){data.decisions.push(candidate);return candidate;}
+  if(!existing.boardFetchedAt&&candidate.boardFetchedAt)
+    Object.assign(existing,{boardFetchedAt:candidate.boardFetchedAt,snapshotAgeMinutes:candidate.snapshotAgeMinutes});
+  const latest=existing.revisions?.at(-1)??revisionOf(existing),next=revisionOf(candidate);
+  if(!sameRead(latest,next))existing.revisions=[...existing.revisions??[],next];
+  return existing;
+}
+/**
+ * Older ledgers stored a new decision for every re-analysis. Fold each key's copies into its earliest
+ * decision, keep the rest as revisions, carry over a grade, and point every reference at the kept id.
+ */
+function foldDuplicateDecisions(data:Data):boolean{
+  let changed=false;
+  const groups=new Map<string,TrackedDecision[]>();
+  for(const decision of data.decisions){
+    if(!decision.decisionKey){decision.decisionKey=decisionKeyOf(decision);changed=true;}
+    groups.set(decision.decisionKey,[...groups.get(decision.decisionKey)??[],decision]);
+  }
+  const renamed=new Map<string,string>(),kept:TrackedDecision[]=[];
+  for(const group of groups.values()){
+    group.sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
+    const [first,...rest]=group;kept.push(first);
+    if(!rest.length)continue;
+    changed=true;
+    const graded=group.find((item)=>item.grade!=='PENDING');
+    if(first.grade==='PENDING'&&graded)Object.assign(first,{grade:graded.grade,actualResult:graded.actualResult,
+      resultStatus:graded.resultStatus,gradedAt:graded.gradedAt,resultSourceName:graded.resultSourceName,
+      resultSourceUrl:graded.resultSourceUrl});
+    for(const duplicate of rest){
+      renamed.set(duplicate.trackedPickId,first.trackedPickId);
+      const latest=first.revisions?.at(-1)??revisionOf(first),next=revisionOf(duplicate);
+      if(!sameRead(latest,next))first.revisions=[...first.revisions??[],next];
+      first.revisions=[...first.revisions??[],...duplicate.revisions??[]];
+    }
+  }
+  if(!renamed.size)return changed;
+  const id=(value:string)=>renamed.get(value)??value;
+  data.decisions=kept.sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
+  const savedSeen=new Set<string>();
+  data.savedPicks=data.savedPicks.map((item)=>({...item,trackedPickId:id(item.trackedPickId)}))
+    .filter((item)=>{const key=item.accountId+'|'+item.trackedPickId+'|'+(item.removedAt?'removed':'live');
+      if(savedSeen.has(key))return false;savedSeen.add(key);return true;});
+  for(const crown of data.privateCrowns)crown.trackedPickIds=crown.trackedPickIds.map(id);
+  for(const crown of data.crowns)for(const leg of crown.legs)leg.trackedPickId=id(leg.trackedPickId);
+  const creditSeen=new Set<string>();
+  data.publicCredits=data.publicCredits.map((item)=>({...item,trackedPickId:id(item.trackedPickId)}))
+    .filter((item)=>{const key=item.publicId+'|'+item.trackedPickId;
+      if(creditSeen.has(key))return false;creditSeen.add(key);return true;});
+  return true;
+}
 const eligible=(line:PropLine,analysis:Analysis)=>analysis.direction!=='PASS' &&
   analysis.score!==null && !!analysis.modelVersion && line.lineType!=='UNKNOWN_ALTERNATE' &&
   line.availableDirections.includes(analysis.direction) && analysis.lineId===line.id;
@@ -72,7 +141,9 @@ function snapshot(line:PropLine,analysis:Analysis,evidence:EvidenceLookup,rank:n
   now:Date):TrackedDecision {
   if(!eligible(line,analysis))throw new Error('INELIGIBLE_DECISION');
   const selected=selectedEvidence(analysis,evidence);
-  return {trackedPickId:idFor(line,analysis,evidence),playerId:line.playerId,playerName:line.playerName,
+  const decisionKey=decisionKeyOf({eventId:line.eventId,playerId:line.playerId,market:line.market,
+    exactLine:line.threshold,direction:analysis.direction,lineType:line.lineType,modelVersion:analysis.modelVersion!});
+  return {trackedPickId:decisionKey,decisionKey,playerId:line.playerId,playerName:line.playerName,
     sport:line.sport,league:line.league,team:line.team,opponent:line.opponent,eventId:line.eventId,
     eventStartTime:line.eventStartTime,market:line.market,exactLine:line.threshold,
     direction:analysis.direction as 'MORE'|'LESS',lineType:line.lineType,
@@ -123,17 +194,31 @@ export class ProductLedger {
   constructor(private readonly path:string,private readonly minimumBand:'PLAYABLE'|'CROWN_STRONG'='CROWN_STRONG',
     private readonly clock:()=>Date=()=>new Date(),
     private readonly correlationPolicy?:CorrelationPolicy,
-    private readonly historySink?:DecisionHistorySink){}
+    private readonly historySink?:DecisionHistorySink,
+    /** Optional: public Crowns may only use lines from an odds snapshot at most this old. 0 = no limit;
+     * by default lines stay usable until their event starts. */
+    private readonly maxShareSnapshotMinutes=0){}
+  /** Stamp a person's pick with the odds snapshot it was made from. */
+  private fromUser(decision:TrackedDecision,board:BoardResponse):TrackedDecision{
+    const fetched=Date.parse(board.board.fetchedAt);
+    return {...decision,boardFetchedAt:board.board.fetchedAt,
+      snapshotAgeMinutes:Math.max(0,Math.round((this.clock().getTime()-fetched)/60_000))};
+  }
   private async read():Promise<Data> {
-    try {const value=JSON.parse(await readFile(this.path,'utf8')) as Data|LegacyData;
+    try {const raw=await readFile(this.path,'utf8'),value=JSON.parse(raw) as Data|LegacyData;
       if((value.version!==1 && value.version!==2) || !Array.isArray(value.decisions) || !Array.isArray(value.profiles) ||
         !Array.isArray(value.crowns) || !Array.isArray(value.follows) || !Array.isArray(value.publicCredits))
         throw new Error('INVALID_PRODUCT_LEDGER');
-      if(value.version===1)return {...value,version:2,accounts:[],sessions:[],savedPicks:[],privateCrowns:[]};
-      if(!Array.isArray(value.accounts)||!Array.isArray(value.sessions)||
-        !Array.isArray(value.savedPicks)||!Array.isArray(value.privateCrowns))
+      const data:Data=value.version===1?{...value,version:2,accounts:[],sessions:[],savedPicks:[],privateCrowns:[]}:value;
+      if(!Array.isArray(data.accounts)||!Array.isArray(data.sessions)||
+        !Array.isArray(data.savedPicks)||!Array.isArray(data.privateCrowns))
         throw new Error('INVALID_PRODUCT_LEDGER');
-      return value;
+      if(foldDuplicateDecisions(data)){
+        // Keep the pre-migration ledger before rewriting it.
+        await writeFile(`${this.path}.backup-${this.clock().toISOString().replace(/[:.]/g,'-')}`,raw,{mode:0o600});
+        await this.write(data);
+      }
+      return data;
     } catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return blank();throw error;}
   }
   private async write(value:Data){
@@ -242,10 +327,8 @@ export class ProductLedger {
         Date.parse(line.eventStartTime)<=this.clock().getTime() ||
         analysis.evidenceExpiresAt && Date.parse(analysis.evidenceExpiresAt)<=this.clock().getTime())
         throw new Error('INVALID_OR_STALE_PICK');
-      const candidate=snapshot(line,analysis,evidence,
-        board.rankedLineIds.indexOf(lineId)<0?null:board.rankedLineIds.indexOf(lineId)+1,this.clock());
-      if(!data.decisions.some((item)=>item.trackedPickId===candidate.trackedPickId))
-        data.decisions.push(candidate);
+      const candidate=upsertDecision(data,this.fromUser(snapshot(line,analysis,evidence,
+        board.rankedLineIds.indexOf(lineId)<0?null:board.rankedLineIds.indexOf(lineId)+1,this.clock()),board));
       let saved=data.savedPicks.find((item)=>item.accountId===accountId &&
         item.trackedPickId===candidate.trackedPickId);
       const alreadySaved=!!saved && !saved.removedAt;
@@ -291,14 +374,14 @@ export class ProductLedger {
       });
       const issues=auditCrown(items,items.length as CrownSize,this.correlationPolicy,this.clock());
       if(issues.length)throw new Error(`CROWN_CONSTRAINT_REJECTED:${issues.join(',')}`);
-      const decisions=items.map(({line,analysis})=>snapshot(line,analysis,evidence,
-        board.rankedLineIds.indexOf(line.id)+1,this.clock()));
-      const ids=decisions.map((item)=>item.trackedPickId);
+      const decisions=items.map(({line,analysis})=>this.fromUser(snapshot(line,analysis,evidence,
+        board.rankedLineIds.indexOf(line.id)+1,this.clock()),board));
+      const known=new Map(data.decisions.map((item)=>[item.decisionKey,item.trackedPickId]));
+      const ids=decisions.map((item)=>known.get(item.decisionKey)??item.trackedPickId);
       const existing=data.privateCrowns.find((item)=>item.accountId===accountId &&
         !item.removedAt && JSON.stringify(item.trackedPickIds)===JSON.stringify(ids));
       if(existing)return {id:existing.id,alreadySaved:true};
-      for(const decision of decisions)if(!data.decisions.some((item)=>item.trackedPickId===decision.trackedPickId))
-        data.decisions.push(decision);
+      for(const decision of decisions)upsertDecision(data,decision);
       const crown:PrivateCrown={id:randomUUID(),accountId,trackedPickIds:ids,
         savedAt:this.clock().toISOString(),removedAt:null};
       data.privateCrowns.push(crown);await this.write(data);
@@ -326,17 +409,22 @@ export class ProductLedger {
       const data=await this.read(),before=data.decisions.length;
       const analyses=new Map(board.analyses.map((item)=>[item.lineId,item]));
       const ranks=new Map(board.rankedLineIds.map((id,index)=>[id,index+1]));
-      const known=new Set(data.decisions.map((item)=>item.trackedPickId));
+      const byKey=new Map(data.decisions.map((item)=>[item.decisionKey!,item]));
       const findings=new Map(evidence.map((item)=>[item.id,item]));
+      let revised=false;
       for(const line of board.board.lines){
         const analysis=analyses.get(line.id);
         if(!analysis || !eligible(line,analysis) ||
           !(['CROWN_STRONG','CROWN_ELITE'].includes(analysis.scoreBand??'') ||
             this.minimumBand==='PLAYABLE' && analysis.scoreBand==='PLAYABLE'))continue;
         const next=snapshot(line,analysis,findings,ranks.get(line.id)??null,this.clock());
-        if(!known.has(next.trackedPickId)){known.add(next.trackedPickId);data.decisions.push(next);}
+        const existing=byKey.get(next.decisionKey!);
+        if(!existing){byKey.set(next.decisionKey!,next);data.decisions.push(next);continue;}
+        const revisions=existing.revisions?.length??0;
+        upsertDecision(data,next);
+        if((existing.revisions?.length??0)!==revisions)revised=true;
       }
-      if(data.decisions.length!==before)await this.write(data);
+      if(data.decisions.length!==before||revised)await this.write(data);
       return data.decisions.length-before;
     });
   }
@@ -503,14 +591,18 @@ export class ProductLedger {
     // sharing fails closed rather than publishing a Crown that bypasses its rules.
     const issues=auditCrown(items,items.length as CrownSize,this.correlationPolicy,this.clock());
     if(issues.length)throw new Error(`CROWN_CONSTRAINT_REJECTED:${issues.join(',')}`);
-    const ids=items.map(({line,analysis})=>idFor(line,analysis,evidence));
+    const fetchedAt=Date.parse(board.board.fetchedAt);
+    if(this.maxShareSnapshotMinutes>0&&this.clock().getTime()-fetchedAt>this.maxShareSnapshotMinutes*60_000)
+      throw new Error('SNAPSHOT_TOO_OLD');
+    const candidates=items.map(({line,analysis})=>this.fromUser(snapshot(line,analysis,evidence,
+      board.rankedLineIds.indexOf(line.id)+1,this.clock()),board));
+    const known=new Map(data.decisions.map((item)=>[item.decisionKey,item.trackedPickId]));
+    const ids=candidates.map((item)=>known.get(item.decisionKey)??item.trackedPickId);
     if(data.crowns.some((item)=>item.ownerPublicId===actor.publicId && !item.unsharedAt &&
       JSON.stringify(item.legs.map((leg)=>leg.trackedPickId))===JSON.stringify(ids)))
       throw new Error('DUPLICATE_PUBLIC_CROWN');
-    const legs=items.map(({line,analysis})=>{
-      const decision=snapshot(line,analysis,evidence,board.rankedLineIds.indexOf(line.id)+1,
-        this.clock());
-      if(!data.decisions.some((item)=>item.trackedPickId===decision.trackedPickId))data.decisions.push(decision);
+    const legs=items.map(({line},index)=>{
+      const decision=upsertDecision(data,candidates[index]);
       return {trackedPickId:decision.trackedPickId,playerName:line.playerName,market:line.market,
         exactLine:line.threshold,direction:decision.direction,lineType:line.lineType,
         lineScore:decision.lineScore,modelVersion:decision.modelVersion,eventId:line.eventId,

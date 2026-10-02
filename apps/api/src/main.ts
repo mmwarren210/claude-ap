@@ -86,9 +86,13 @@ const internalHistory=new InternalHistoryStore(process.env.CROWNIQ_INTERNAL_HIST
 // Crown saves and shares need a correlation policy; 'none' keeps them fail-closed.
 const correlationSetting=process.env.CROWNIQ_CROWN_CORRELATION_POLICY ?? 'conservative';
 if(!['conservative','none'].includes(correlationSetting))throw new Error('Invalid CROWNIQ_CROWN_CORRELATION_POLICY');
+const socialMaxSnapshotMinutes=Number(process.env.CROWNIQ_SOCIAL_MAX_SNAPSHOT_MINUTES ?? 0);
+if(!Number.isFinite(socialMaxSnapshotMinutes)||socialMaxSnapshotMinutes<0)
+  throw new Error('Invalid CROWNIQ_SOCIAL_MAX_SNAPSHOT_MINUTES');
 const product=new ProductLedger(process.env.CROWNIQ_PRODUCT_LEDGER_FILE ??
   'tmp/product-ledger.json',band,()=>new Date(),
-  correlationSetting==='conservative'?conservativeCorrelationPolicy:undefined,internalHistory);
+  correlationSetting==='conservative'?conservativeCorrelationPolicy:undefined,internalHistory,
+  socialMaxSnapshotMinutes);
 const statApiKey=process.env.STAT_API_KEY;
 const ownerPublicId=process.env.CROWNIQ_OWNER_PUBLIC_ID;
 const statDailyLimit=process.env.CROWNIQ_STAT_API_DAILY_RECORD_LIMIT
