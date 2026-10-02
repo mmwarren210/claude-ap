@@ -6,6 +6,34 @@ import { useAuth } from '../../auth';
 import { useBoard } from '../../use-board';
 import { palette } from '../../theme';
 
+type Funnel={started:number;eventStarted:number;marketNotModeled:number;
+  modeledButUnapproved:{total:number;reasons:Record<string,number>};unknownAlternate:number;
+  missingHardEvidence:{total:number;byKind:Record<string,number>};coverageBelow60:number;
+  offeredSideUnfavored:{total:number;oppositeTwin:number;alternateSide:number};
+  otherPass:{total:number;reasons:Record<string,number>};scored:{total:number;byBand:Record<string,number>};
+  rankedCount:number};
+const bandNames:Record<string,string>={CROWN_ELITE:'Elite',CROWN_STRONG:'Strong',PLAYABLE:'Playable',LEAN:'Lean',WEAK:'Weak'};
+/** Each step of the funnel as [label, count, detail], in the order lines drop out. */
+function funnelRows(funnel:Funnel):[string,number,string|null][]{
+  const top=(counts:Record<string,number>,limit=3)=>Object.entries(counts).slice(0,limit)
+    .map(([key,count])=>`${key.replace(/^(status|projection):/,'').replace(/_/g,' ').toLowerCase()} ${count.toLocaleString()}`).join(' · ')||null;
+  return [
+    ['Lines on board',funnel.started,null],
+    ['Game already started',funnel.eventStarted,null],
+    ['Market has no model',funnel.marketNotModeled,null],
+    ['Model not approved',funnel.modeledButUnapproved.total,null],
+    ['Unclassified alternate',funnel.unknownAlternate,null],
+    ['Missing required evidence',funnel.missingHardEvidence.total,top(funnel.missingHardEvidence.byKind)],
+    ['Evidence covers under 60%',funnel.coverageBelow60,null],
+    ['Model favors the other side',funnel.offeredSideUnfavored.total,
+      `other side offered at same number ${funnel.offeredSideUnfavored.oppositeTwin.toLocaleString()} · alternate only ${funnel.offeredSideUnfavored.alternateSide.toLocaleString()}`],
+    ['Other passes',funnel.otherPass.total,top(funnel.otherPass.reasons)],
+    ['Scored',funnel.scored.total,Object.entries(funnel.scored.byBand)
+      .map(([band,count])=>`${bandNames[band]??band} ${count.toLocaleString()}`).join(' · ')||null],
+    ['Ranked (best line per player)',funnel.rankedCount,null],
+  ];
+}
+
 type Diagnostics={
   boardFetchedAt:string;builtAt:string;lineCount:number;rankedCount:number;evidenceCount:number;
   research:string;providerRefreshCost:0;
@@ -25,6 +53,8 @@ type Diagnostics={
     unknownByMarket:{sport:string;market:string;count:number}[];
   };
   reasonCounts?:Record<string,number>;
+  outcomeCounts?:Record<string,number>;
+  funnel?:Funnel;
 };
 type ReanalyzeResult={
   builtAt:string;lineCount:number;rankedCount:number;research:string;evidenceCount:number;
@@ -177,7 +207,7 @@ export default function OwnerBoardScreen(){
     }finally{setBusy(false);}
   };
 
-  const topReasons=Object.entries(diagnostics?.reasonCounts??{}).slice(0,6);
+  const topReasons=Object.entries(diagnostics?.outcomeCounts??diagnostics?.reasonCounts??{}).slice(0,6);
   const stageIndex=pullStages.indexOf(pullStatus?.refreshStage as typeof pullStages[number]);
   const step=Math.min(Math.max(stageIndex+1,1),5);
   return <Screen eyebrow="CROWNIQ  /  OWNER ONLY" title="Board Analysis">
@@ -240,6 +270,14 @@ export default function OwnerBoardScreen(){
             </Text>)}
           {diagnostics.lineTypes.unknownReasons.CLASSIFIABLE>0&&
             <Text style={styles.error}>Classifier audit found {diagnostics.lineTypes.unknownReasons.CLASSIFIABLE} safely classifiable unknown lines.</Text>}
+        </View>}
+        {diagnostics.funnel&&<View style={styles.card}>
+          <Text style={styles.heading}>WHERE LINES STOP</Text>
+          {funnelRows(diagnostics.funnel).filter(([,count],index)=>index===0||count>0).map(([label,count,detail])=>
+            <View key={label}>
+              <Text style={styles.row}>{label}: {count.toLocaleString()}</Text>
+              {detail&&<Text style={styles.hint}>{detail}</Text>}
+            </View>)}
         </View>}
         {topReasons.length>0&&<View style={styles.card}>
           <Text style={styles.heading}>TOP FINAL REASONS</Text>

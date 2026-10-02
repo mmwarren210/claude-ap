@@ -17,6 +17,7 @@ import { WebResearchAdapter } from './web-research.js';
 import { ResearchBuild } from './research-build.js';
 import { ProductLedger, resultFactSchema } from './product-ledger.js';
 import type { BoardCache } from './board-cache.js';
+import { boardFunnel, outcomeCounts } from './board-funnel.js';
 import { ContextRefreshScheduler } from './context-refresh.js';
 import type { ContextRefreshOptions, DailyLookupBudget } from './context-refresh.js';
 import type { ProviderName } from './provider-identity.js';
@@ -272,6 +273,8 @@ export function buildServer(options: ServerOptions = {}) {
         freshContext:status.freshContext,lineTypes:auditPrizePicksLineTypes(snapshot.board.lines),
         modelSupport:{supported,unsupported:snapshot.board.lines.length-supported,
           approved,unapproved:supported-approved},
+        funnel:boardFunnel(snapshot,requirements,service.getEvidence()),outcomeCounts:outcomeCounts(snapshot),
+        /** Deprecated: scored lines of every band appear as PLAYABLE here. Use funnel or outcomeCounts. */
         reasonCounts:Object.fromEntries([...reasons].sort((a,b)=>b[1]-a[1])),
         sports:Object.fromEntries([...sports].sort((a,b)=>b[1].lines-a[1].lines)),
         markets:[...markets.values()].sort((a,b)=>b.lines-a.lines).slice(0,100)};

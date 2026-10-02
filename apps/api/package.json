@@ -23,6 +23,7 @@
     "plan:research": "node --import tsx scripts/plan-web-research.ts",
     "run:research": "node --import tsx scripts/run-web-research.ts",
     "test": "node --import tsx --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "audit:board": "node --import tsx scripts/audit-saved-board.ts"
   }
 }
