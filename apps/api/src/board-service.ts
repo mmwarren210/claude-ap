@@ -142,16 +142,21 @@ export class BoardService {
    * of its own event's two sides; anything else is ignored rather than guessed.
    */
   private withIdentity(board: Board, evidence: readonly Evidence[], now: Date): Board {
-    const teams = new Map<string, string>();
+    // Several sources can name a player's team or photo; the most confident one wins.
+    const teams = new Map<string, { team: string; confidence: number }>();
+    const photos = new Map<string, { photoUrl: string; source: string; confidence: number }>();
     for (const item of evidence) {
       if (item.entityType !== 'PLAYER' || effectiveEvidenceExpiry(item) <= now.getTime()) continue;
-      if (item.kind === 'identity:team') teams.set(item.eventId + '|' + item.entityId, item.finding);
-      if (item.kind === 'identity:photo' && item.sourceUrl)
-        this.playerMedia[item.entityId] = { photoUrl: item.sourceUrl, source: item.sourceName };
+      const key = item.eventId + '|' + item.entityId;
+      if (item.kind === 'identity:team' && item.confidence > (teams.get(key)?.confidence ?? -1))
+        teams.set(key, { team: item.finding, confidence: item.confidence });
+      if (item.kind === 'identity:photo' && item.sourceUrl && item.confidence > (photos.get(item.entityId)?.confidence ?? -1))
+        photos.set(item.entityId, { photoUrl: item.sourceUrl, source: item.sourceName, confidence: item.confidence });
     }
+    for (const [playerId, { photoUrl, source }] of photos) this.playerMedia[playerId] = { photoUrl, source };
     let changed = false;
     const lines = board.lines.map((line) => {
-      const team = teams.get(line.eventId + '|' + line.playerId);
+      const team = teams.get(line.eventId + '|' + line.playerId)?.team;
       if (line.team || !team || (team !== line.homeTeam && team !== line.awayTeam)) return line;
       changed = true;
       return { ...line, team, opponent: (team === line.homeTeam ? line.awayTeam : line.homeTeam) ?? null };

@@ -16,7 +16,10 @@ import { StatApiGkrEvidence } from './stat-api-gkr-evidence.js';
 import { PublicNflGkrEvidence } from './public-nfl-gkr-evidence.js';
 import { OwnerResearchNotebook } from './owner-research-notebook.js';
 import { HistoryBackfillService, InternalHistoryResearch, InternalHistoryStore } from './internal-history.js';
-import { BasketballIdentityResearch } from './basketball-identity.js';
+import { EspnRosterIdentitySource } from './identity/espn-rosters.js';
+import { PlayerIdentityResearch } from './identity/player-identity.js';
+import { SleeperNflIdentitySource } from './identity/sleeper-nfl.js';
+import { JsonCache } from './identity/types.js';
 import { CurrentContextResearch } from './current-context.js';
 
 const apiKey = process.env.THE_ODDS_API_KEY;
@@ -115,9 +118,13 @@ const manualEvidence=process.env.NFL_PASSING_EVIDENCE_FILE
 const publicNflEvidence=process.env.GKR_PUBLIC_NFL_EVIDENCE==='false'
   ? null:new PublicNflGkrEvidence();
 const internalEvidence=new InternalHistoryResearch(internalHistory);
-// Free public team and headshot lookup for NBA/WNBA players; identity only, never scored.
-const basketballIdentity=process.env.GKR_PLAYER_IDENTITY==='false'?null:new BasketballIdentityResearch();
-const primaryEvidenceAdapters=[manualEvidence,internalEvidence,publicNflEvidence,basketballIdentity]
+// Team and headshot for every player, every sport a source covers; identity only, never scored.
+// List new identity APIs or scrapers here, most trusted first: each player tries them in order.
+const identityCache=new JsonCache(fetch,()=>new Date());
+const identitySources=[new SleeperNflIdentitySource(identityCache),new EspnRosterIdentitySource(identityCache)];
+const playerIdentity=process.env.GKR_PLAYER_IDENTITY==='false'?null
+  :new PlayerIdentityResearch(identitySources,{cache:identityCache});
+const primaryEvidenceAdapters=[manualEvidence,internalEvidence,publicNflEvidence,playerIdentity]
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const gkrResearch=primaryEvidenceAdapters.length===0?null:primaryEvidenceAdapters.length===1
   ? primaryEvidenceAdapters[0]:new CompositeResearchAdapter(primaryEvidenceAdapters);

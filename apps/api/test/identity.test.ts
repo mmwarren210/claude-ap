@@ -7,7 +7,10 @@ import { boardSchema, evidenceSchema, propLineSchema } from '@crowniq/contracts'
 import type { Evidence, PropLine } from '@crowniq/contracts';
 import { conservativeCorrelationPolicy, ModelRegistry } from '@crowniq/engine';
 import type { ResearchTarget } from '@crowniq/engine';
-import { BasketballIdentityResearch } from '../src/basketball-identity.js';
+import { EspnRosterIdentitySource } from '../src/identity/espn-rosters.js';
+import { PlayerIdentityResearch } from '../src/identity/player-identity.js';
+import { SleeperNflIdentitySource } from '../src/identity/sleeper-nfl.js';
+import { JsonCache, matchTeam } from '../src/identity/types.js';
 import { BoardService } from '../src/board-service.js';
 import { CurrentContextResearch } from '../src/current-context.js';
 import { ProductLedger } from '../src/product-ledger.js';
@@ -77,85 +80,162 @@ test('with team identity and the conservative policy, a valid Crown saves; a 3-l
   await assert.rejects(() => ledger.savePrivateCrown(account, ['x2', 'x3', 'x4'], board, []), /SAME_EVENT_CONCENTRATION/);
 });
 
-const espnTeams = (league: string, teams: [string, string][]) => ({ sports: [{ leagues: [{ teams: teams.map(([id, name]) =>
-  ({ team: { id, name, displayName: `${league} ${name}` } })) }] }] });
-const espnFetch = (routes: Record<string, unknown>, calls: string[] = []): typeof fetch => async (input) => {
+
+const ESPN = 'https://site.api.espn.com/apis/site/v2/sports';
+const espnTeams = (teams: [string, string, string, string][]) => ({ sports: [{ leagues: [{ teams: teams.map(([id, displayName, location, name]) =>
+  ({ team: { id, displayName, location, name } })) }] }] });
+const routed = (routes: Record<string, unknown>, calls: string[] = []): typeof fetch => async (input) => {
   const url = String(input); calls.push(url);
   return url in routes ? new Response(JSON.stringify(routes[url]), { status: 200 }) : new Response('{}', { status: 404 });
 };
-const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/basketball';
-const hoop = (overrides: Partial<ResearchTarget>): ResearchTarget => ({ eventId: 'lac-lal', eventName: 'Los Angeles Clippers @ Los Angeles Lakers',
+const target = (overrides: Partial<ResearchTarget>): ResearchTarget => ({ eventId: 'lac-lal', eventName: 'Los Angeles Clippers @ Los Angeles Lakers',
   eventStartTime: '2030-09-21T02:00:00.000Z', league: 'NBA', playerId: 'nba:harden', playerName: 'James Harden', team: null,
   opponent: null, homeTeam: 'Los Angeles Lakers', awayTeam: 'Los Angeles Clippers', market: 'player_points', sport: 'NBA', ...overrides });
+const identityFor = (fetchFn: typeof fetch, withSleeper = false) => {
+  const cache = new JsonCache(fetchFn, () => now);
+  return new PlayerIdentityResearch([...(withSleeper ? [new SleeperNflIdentitySource(cache)] : []),
+    new EspnRosterIdentitySource(cache)], { clock: () => now, cache });
+};
+const pick = (evidence: readonly Evidence[], playerId: string, kind: string) =>
+  evidence.find((item) => item.entityId === playerId && item.kind === kind);
 
-test('NBA and WNBA identity comes from the two teams in the game, with ESPN headshots', async () => {
+test('team names from other sources match the odds feed exactly or by a unique nickname', () => {
+  const teams = [{ displayName: 'LA Clippers', location: 'LA', nickname: 'Clippers' },
+    { displayName: 'Los Angeles Lakers', location: 'Los Angeles', nickname: 'Lakers' },
+    { displayName: 'Brighton & Hove Albion', location: 'Brighton & Hove Albion', nickname: 'Brighton & Hove Albion' },
+    { displayName: 'Manchester United', location: 'Manchester United', nickname: 'Manchester United' },
+    { displayName: 'West Ham United', location: 'West Ham United', nickname: 'West Ham United' }];
+  assert.equal(matchTeam('Los Angeles Clippers', teams)?.displayName, 'LA Clippers');
+  assert.equal(matchTeam('Los Angeles Lakers', teams)?.displayName, 'Los Angeles Lakers');
+  assert.equal(matchTeam('Brighton and Hove Albion', teams)?.displayName, 'Brighton & Hove Albion');
+  assert.equal(matchTeam('Manchester United', teams)?.displayName, 'Manchester United');
+  assert.equal(matchTeam('Newcastle United', teams), null);
+});
+
+test('identity covers NBA, WNBA, NHL, MLB and soccer from the two teams in each game', async () => {
   const calls: string[] = [];
-  const fetchFn = espnFetch({
-    [`${ESPN}/nba/teams`]: espnTeams('LA', [['12', 'Clippers'], ['13', 'Lakers'], ['7', 'Nuggets']]),
-    [`${ESPN}/nba/teams/12/roster`]: { athletes: [{ id: '3992', fullName: 'James Harden',
+  const fetchFn = routed({
+    [`${ESPN}/basketball/nba/teams?limit=1000`]: espnTeams([['12', 'LA Clippers', 'LA', 'Clippers'],
+      ['13', 'Los Angeles Lakers', 'Los Angeles', 'Lakers'], ['7', 'Denver Nuggets', 'Denver', 'Nuggets']]),
+    [`${ESPN}/basketball/nba/teams/12/roster`]: { athletes: [{ id: '3992', fullName: 'James Harden',
       headshot: { href: 'https://a.espncdn.com/i/headshots/nba/players/full/3992.png' } }] },
-    [`${ESPN}/nba/teams/13/roster`]: { athletes: [{ id: '1966', fullName: 'LeBron James' }] },
-    // A same-named player on a team outside this game must never be considered.
-    [`${ESPN}/nba/teams/7/roster`]: { athletes: [{ id: '9999', fullName: 'James Harden' }] },
-    [`${ESPN}/wnba/teams`]: espnTeams('Las Vegas', [['17', 'Aces'], ['16', 'Liberty']]),
-    [`${ESPN}/wnba/teams/17/roster`]: { athletes: [{ id: '3149391', fullName: "A'ja Wilson" }] },
-    [`${ESPN}/wnba/teams/16/roster`]: { athletes: [] },
+    [`${ESPN}/basketball/nba/teams/13/roster`]: { athletes: [{ id: '1966', fullName: 'LeBron James' }] },
+    // A same-named player outside this game must never be considered.
+    [`${ESPN}/basketball/nba/teams/7/roster`]: { athletes: [{ id: '9999', fullName: 'James Harden' }] },
+    [`${ESPN}/basketball/wnba/teams?limit=1000`]: espnTeams([['17', 'Las Vegas Aces', 'Las Vegas', 'Aces'],
+      ['9', 'New York Liberty', 'New York', 'Liberty']]),
+    [`${ESPN}/basketball/wnba/teams/17/roster`]: { athletes: [{ id: '3149391', fullName: "A'ja Wilson" }] },
+    [`${ESPN}/basketball/wnba/teams/9/roster`]: { athletes: [] },
+    [`${ESPN}/hockey/nhl/teams?limit=1000`]: espnTeams([['6', 'Edmonton Oilers', 'Edmonton', 'Oilers'],
+      ['8', 'Calgary Flames', 'Calgary', 'Flames']]),
+    [`${ESPN}/hockey/nhl/teams/6/roster`]: { athletes: [{ items: [{ id: '3895074', fullName: 'Connor McDavid' }] }] },
+    [`${ESPN}/hockey/nhl/teams/8/roster`]: { athletes: [] },
+    [`${ESPN}/baseball/mlb/teams?limit=1000`]: espnTeams([['19', 'Los Angeles Dodgers', 'Los Angeles', 'Dodgers'],
+      ['26', 'San Francisco Giants', 'San Francisco', 'Giants']]),
+    [`${ESPN}/baseball/mlb/teams/19/roster`]: { athletes: [{ position: 'Pitchers', items: [] },
+      { position: 'Designated Hitter', items: [{ id: '39832', fullName: 'Shohei Ohtani' }] }] },
+    [`${ESPN}/baseball/mlb/teams/26/roster`]: { athletes: [] },
+    [`${ESPN}/soccer/eng.1/teams?limit=1000`]: espnTeams([['359', 'Arsenal', 'Arsenal', 'Arsenal'],
+      ['363', 'Chelsea', 'Chelsea', 'Chelsea']]),
+    [`${ESPN}/soccer/eng.1/teams/359/roster`]: { athletes: [{ id: '209163', displayName: 'Bukayo Saka' }] },
+    [`${ESPN}/soccer/eng.1/teams/363/roster`]: { athletes: [] },
   }, calls);
-  const adapter = new BasketballIdentityResearch(fetchFn, () => now);
+  const adapter = identityFor(fetchFn);
   const evidence = await adapter.research([
-    hoop({}), hoop({ market: 'player_assists' }), hoop({ playerId: 'nba:lebron', playerName: 'LeBron James' }),
-    hoop({ eventId: 'nyl-lva', eventName: 'New York Liberty @ Las Vegas Aces', league: 'WNBA', sport: 'WNBA',
-      playerId: 'wnba:aja', playerName: 'A’ja Wilson', homeTeam: 'Las Vegas Aces', awayTeam: 'New York Liberty' }),
+    target({}), target({ market: 'player_assists' }), target({ playerId: 'nba:lebron', playerName: 'LeBron James' }),
+    target({ eventId: 'nyl-lva', league: 'WNBA', sport: 'WNBA', playerId: 'wnba:aja', playerName: 'A’ja Wilson',
+      homeTeam: 'Las Vegas Aces', awayTeam: 'New York Liberty' }),
+    target({ eventId: 'cgy-edm', sport: 'NHL', playerId: 'nhl:mcdavid', playerName: 'Connor McDavid',
+      homeTeam: 'Edmonton Oilers', awayTeam: 'Calgary Flames', market: 'points' }),
+    target({ eventId: 'sf-lad', sport: 'MLB', playerId: 'mlb:ohtani', playerName: 'Shohei Ohtani',
+      homeTeam: 'Los Angeles Dodgers', awayTeam: 'San Francisco Giants', market: 'batter_hits' }),
+    target({ eventId: 'che-ars', sport: 'SOCCER', sourceSportKey: 'soccer_epl', playerId: 'soc:saka', playerName: 'Bukayo Saka',
+      homeTeam: 'Arsenal', awayTeam: 'Chelsea', market: 'shots_on_goal' }),
+    // Individual sports have no team source yet and are skipped, not guessed.
+    target({ eventId: 'tennis', sport: 'TENNIS', playerId: 'ten:x', playerName: 'Player X', homeTeam: 'Player X', awayTeam: 'Player Y' }),
   ]);
-  const find = (playerId: string, kind: string) => evidence.find((item) => item.entityId === playerId && item.kind === kind);
-  // "LA Clippers" on ESPN matches "Los Angeles Clippers" from the odds feed by nickname.
-  assert.equal(find('nba:harden', 'identity:team')?.finding, 'Los Angeles Clippers');
-  assert.equal(find('nba:harden', 'identity:photo')?.sourceUrl, 'https://a.espncdn.com/i/headshots/nba/players/full/3992.png');
-  assert.equal(find('nba:lebron', 'identity:team')?.finding, 'Los Angeles Lakers');
-  // Without an href the standard ESPN headshot path is built from the athlete id.
-  assert.equal(find('nba:lebron', 'identity:photo')?.sourceUrl, 'https://a.espncdn.com/i/headshots/nba/players/full/1966.png');
-  assert.equal(find('wnba:aja', 'identity:team')?.finding, 'Las Vegas Aces');
-  assert.equal(find('wnba:aja', 'identity:photo')?.sourceUrl, 'https://a.espncdn.com/i/headshots/wnba/players/full/3149391.png');
-  // One player with two markets is looked up once.
+  // "LA Clippers" on ESPN matches "Los Angeles Clippers" from the odds feed.
+  assert.equal(pick(evidence, 'nba:harden', 'identity:team')?.finding, 'Los Angeles Clippers');
+  assert.equal(pick(evidence, 'nba:harden', 'identity:photo')?.sourceUrl, 'https://a.espncdn.com/i/headshots/nba/players/full/3992.png');
+  assert.equal(pick(evidence, 'nba:lebron', 'identity:team')?.finding, 'Los Angeles Lakers');
+  assert.equal(pick(evidence, 'nba:lebron', 'identity:photo')?.sourceUrl, 'https://a.espncdn.com/i/headshots/nba/players/full/1966.png');
+  assert.equal(pick(evidence, 'wnba:aja', 'identity:team')?.finding, 'Las Vegas Aces');
+  assert.equal(pick(evidence, 'wnba:aja', 'identity:photo')?.sourceUrl, 'https://a.espncdn.com/i/headshots/wnba/players/full/3149391.png');
+  assert.equal(pick(evidence, 'nhl:mcdavid', 'identity:team')?.finding, 'Edmonton Oilers');
+  assert.equal(pick(evidence, 'mlb:ohtani', 'identity:team')?.finding, 'Los Angeles Dodgers');
+  assert.equal(pick(evidence, 'mlb:ohtani', 'identity:photo')?.sourceUrl, 'https://a.espncdn.com/i/headshots/mlb/players/full/39832.png');
+  assert.equal(pick(evidence, 'soc:saka', 'identity:team')?.finding, 'Arsenal');
+  assert.equal(pick(evidence, 'soc:saka', 'identity:photo')?.sourceUrl, 'https://a.espncdn.com/i/headshots/soccer/players/full/209163.png');
+  assert.equal(evidence.some((item) => item.entityId === 'ten:x'), false);
+  // One player with two markets is looked up once, and rosters outside the game are never read.
   assert.equal(evidence.filter((item) => item.entityId === 'nba:harden').length, 2);
   assert.equal(calls.some((url) => url.endsWith('/teams/7/roster')), false);
-  assert.equal(adapter.getHealth().status, 'OK');
-  // Rosters are cached, so a second pass makes no new requests.
-  const before = calls.length; await adapter.research([hoop({})]);
+  const health = adapter.getHealth();
+  assert.equal(health.status, 'OK');
+  assert.equal(health.targets, 6);
+  // Cached: a second pass makes no new requests.
+  const before = calls.length; await adapter.research([target({})]);
   assert.equal(calls.length, before);
+  assert.equal(adapter.getHealth().cacheHits > 0, true);
 });
 
-test('basketball identity skips ambiguous players and reports outages without throwing', async () => {
-  const twoTeams = espnFetch({
-    [`${ESPN}/nba/teams`]: espnTeams('LA', [['12', 'Clippers'], ['13', 'Lakers']]),
-    [`${ESPN}/nba/teams/12/roster`]: { athletes: [{ id: '1', fullName: 'Jalen Green' }] },
-    [`${ESPN}/nba/teams/13/roster`]: { athletes: [{ id: '2', fullName: 'Jalen Green' }] },
+test('NFL tries Sleeper first and falls back to ESPN when Sleeper is down', async () => {
+  const nflTeams = { [`${ESPN}/football/nfl/teams?limit=1000`]: espnTeams([['2', 'Buffalo Bills', 'Buffalo', 'Bills'],
+      ['15', 'Miami Dolphins', 'Miami', 'Dolphins']]),
+    [`${ESPN}/football/nfl/teams/2/roster`]: { athletes: [{ position: 'offense', items: [{ id: '3918298', fullName: 'Josh Allen' }] }] },
+    [`${ESPN}/football/nfl/teams/15/roster`]: { athletes: [] } };
+  const nfl = target({ eventId: 'mia-buf', sport: 'NFL', playerId: 'nfl:allen', playerName: 'Josh Allen',
+    homeTeam: 'Buffalo Bills', awayTeam: 'Miami Dolphins', market: 'passing_yards' });
+  const withSleeper = await identityFor(routed({ ...nflTeams, 'https://api.sleeper.app/v1/players/nfl': {
+    '4984': { full_name: 'Josh Allen', team: 'BUF' }, '3321': { full_name: 'Josh Allen', team: 'JAX' } } }), true).research([nfl]);
+  assert.equal(pick(withSleeper, 'nfl:allen', 'identity:photo')?.sourceUrl, 'https://sleepercdn.com/content/nfl/players/4984.jpg');
+  const adapter = identityFor(routed(nflTeams), true);
+  const fallback = await adapter.research([nfl]);
+  assert.equal(pick(fallback, 'nfl:allen', 'identity:team')?.finding, 'Buffalo Bills');
+  assert.equal(pick(fallback, 'nfl:allen', 'identity:photo')?.sourceUrl, 'https://a.espncdn.com/i/headshots/nfl/players/full/3918298.png');
+  assert.equal(adapter.getHealth().sources?.['sleeper-nfl']?.status, 'FAILED');
+  assert.equal(adapter.getHealth().sources?.['espn-rosters']?.status, 'OK');
+});
+
+test('identity skips ambiguous players and reports outages without throwing', async () => {
+  const twoTeams = routed({
+    [`${ESPN}/basketball/nba/teams?limit=1000`]: espnTeams([['12', 'LA Clippers', 'LA', 'Clippers'],
+      ['13', 'Los Angeles Lakers', 'Los Angeles', 'Lakers']]),
+    [`${ESPN}/basketball/nba/teams/12/roster`]: { athletes: [{ id: '1', fullName: 'Jalen Green' }] },
+    [`${ESPN}/basketball/nba/teams/13/roster`]: { athletes: [{ id: '2', fullName: 'Jalen Green' }] },
   });
-  const ambiguous = new BasketballIdentityResearch(twoTeams, () => now);
-  assert.deepEqual(await ambiguous.research([hoop({ playerName: 'Jalen Green' })]), []);
+  const ambiguous = identityFor(twoTeams);
+  assert.deepEqual(await ambiguous.research([target({ playerName: 'Jalen Green' })]), []);
   assert.equal(ambiguous.getHealth().noSources, 1);
-  const down = new BasketballIdentityResearch(async () => new Response('', { status: 503 }), () => now);
-  assert.deepEqual(await down.research([hoop({})]), []);
+  const down = identityFor(async () => new Response('', { status: 503 }));
+  assert.deepEqual(await down.research([target({})]), []);
   assert.equal(down.getHealth().status, 'FAILED');
-  // Lines without both game sides, and other sports, are not looked up.
-  assert.equal(down.supports(hoop({ awayTeam: null })), false);
-  assert.equal(down.supports(hoop({ sport: 'NFL' })), false);
+  assert.equal(down.supports(target({ awayTeam: null })), false);
+  assert.equal(down.supports(target({ sport: 'SOCCER', sourceSportKey: 'soccer_unknown_league' })), false);
 });
 
-test('NBA identity fills the line team and player photo on the published board', async () => {
-  const fetchFn = espnFetch({
-    [`${ESPN}/nba/teams`]: espnTeams('LA', [['12', 'Clippers'], ['13', 'Lakers']]),
-    [`${ESPN}/nba/teams/12/roster`]: { athletes: [{ id: '3992', fullName: 'James Harden' }] },
-    [`${ESPN}/nba/teams/13/roster`]: { athletes: [] },
+test('identity fills the line team and player photo on the published board, preferring the more confident source', async () => {
+  const fetchFn = routed({
+    [`${ESPN}/basketball/nba/teams?limit=1000`]: espnTeams([['12', 'LA Clippers', 'LA', 'Clippers'],
+      ['13', 'Los Angeles Lakers', 'Los Angeles', 'Lakers']]),
+    [`${ESPN}/basketball/nba/teams/12/roster`]: { athletes: [{ id: '3992', fullName: 'James Harden' }] },
+    [`${ESPN}/basketball/nba/teams/13/roster`]: { athletes: [] },
   });
   const nbaLine = propLineSchema.parse({ id: 'h', provider: 'prizepicks', sourceLineId: 'h', sport: 'NBA', league: 'NBA',
     eventId: 'lac-lal', eventName: 'Los Angeles Clippers @ Los Angeles Lakers', eventStartTime: '2030-09-21T02:00:00.000Z',
     playerId: 'nba:harden', playerName: 'James Harden', team: null, opponent: null, homeTeam: 'Los Angeles Lakers',
     awayTeam: 'Los Angeles Clippers', market: 'player_points', threshold: 24.5, availableDirections: ['MORE', 'LESS'],
     lineType: 'REGULAR', fetchedAt: now.toISOString() });
+  const official = evidenceSchema.parse({ ...identity('nba:harden', 'identity:photo', 'Player headshot', 'https://official.example/harden.png'),
+    id: 'official-photo', eventId: 'lac-lal', sourceType: 'OFFICIAL', quality: 'HIGH', confidence: 0.95 });
+  const espn = identityFor(fetchFn);
+  const research = { id: 'both', research: async (targets: readonly ResearchTarget[]) => [...await espn.research(targets), official] };
   const service = new BoardService({ id: 'fixture-provider', fetchPrizePicksLines: async () => [nbaLine],
-    normalize: (raw) => raw as PropLine }, new BasketballIdentityResearch(fetchFn, () => now), new ModelRegistry(), () => now);
+    normalize: (raw) => raw as PropLine }, research, new ModelRegistry(), () => now);
   const snapshot = await service.refresh();
   assert.deepEqual([snapshot.board.lines[0].team, snapshot.board.lines[0].opponent], ['Los Angeles Clippers', 'Los Angeles Lakers']);
-  assert.equal(snapshot.playerMedia?.['nba:harden']?.photoUrl, 'https://a.espncdn.com/i/headshots/nba/players/full/3992.png');
+  assert.equal(snapshot.playerMedia?.['nba:harden']?.photoUrl, 'https://official.example/harden.png');
+  // Identity never reaches the model: the line's analysis carries no identity evidence.
+  const analysis = snapshot.analyses.find((item) => item.lineId === 'h')!;
+  assert.equal(analysis.evidenceIds.some((id) => id.startsWith('identity:') || id === 'official-photo'), false);
 });

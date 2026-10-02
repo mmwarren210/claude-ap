@@ -26,6 +26,8 @@ export interface ResearchTarget {
   readonly awayTeam?: string | null;
   readonly market: string;
   readonly sport: Sport;
+  /** The provider's own sport key (for example soccer_epl), which names the league inside a sport. */
+  readonly sourceSportKey?: string | null;
 }
 
 export interface ResearchAdapter {
