@@ -16,6 +16,7 @@ import { StatApiGkrEvidence } from './stat-api-gkr-evidence.js';
 import { PublicNflGkrEvidence } from './public-nfl-gkr-evidence.js';
 import { OwnerResearchNotebook } from './owner-research-notebook.js';
 import { HistoryBackfillService, InternalHistoryResearch, InternalHistoryStore } from './internal-history.js';
+import { BasketballIdentityResearch } from './basketball-identity.js';
 import { CurrentContextResearch } from './current-context.js';
 
 const apiKey = process.env.THE_ODDS_API_KEY;
@@ -114,7 +115,9 @@ const manualEvidence=process.env.NFL_PASSING_EVIDENCE_FILE
 const publicNflEvidence=process.env.GKR_PUBLIC_NFL_EVIDENCE==='false'
   ? null:new PublicNflGkrEvidence();
 const internalEvidence=new InternalHistoryResearch(internalHistory);
-const primaryEvidenceAdapters=[manualEvidence,internalEvidence,publicNflEvidence]
+// Free public team and headshot lookup for NBA/WNBA players; identity only, never scored.
+const basketballIdentity=process.env.GKR_PLAYER_IDENTITY==='false'?null:new BasketballIdentityResearch();
+const primaryEvidenceAdapters=[manualEvidence,internalEvidence,publicNflEvidence,basketballIdentity]
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const gkrResearch=primaryEvidenceAdapters.length===0?null:primaryEvidenceAdapters.length===1
   ? primaryEvidenceAdapters[0]:new CompositeResearchAdapter(primaryEvidenceAdapters);
