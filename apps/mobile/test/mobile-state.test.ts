@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { analysisSchema, boardResponseSchema, propLineSchema } from '@crowniq/contracts';
-import { addLeg, boardLinesForMode, emptyFilters, freshness, shareCrown, visibleLines } from '../src/state.js';
+import { addLeg, boardLinesForMode, CROWN_LEG_FLOOR, emptyFilters, evidenceExpired, freshness, shareCrown, visibleLines } from '../src/state.js';
 import { parseDraft, profileDraftKey } from '../src/draft-codec.js';
 
 const line=propLineSchema.parse({id:'one',sourceLineId:'one',provider:'prizepicks',sport:'CS2',
@@ -82,4 +82,22 @@ test('a saved line can enter a draft until event start, unless evidence has expi
   assert.match(addLeg([],line,analysis,'MORE',event).error!,/event has started/);
   const expiring={...analysis,evidenceExpiresAt:new Date(captured+30*60_000).toISOString()};
   assert.match(addLeg([],line,expiring,'MORE',captured+60*60_000).error!,/evidence expired/);
+});
+
+test('Lite drops lines whose evidence expired; Full keeps them for labelling',()=>{
+  const expiring=boardResponseSchema.parse({...board,analyses:[{...analysis,evidenceExpiresAt:'2030-01-01T13:00:00Z'}]});
+  const before=Date.parse('2030-01-01T12:30:00Z'),after=Date.parse('2030-01-01T13:30:00Z');
+  assert.deepEqual(boardLinesForMode(expiring,emptyFilters,'LITE',before).map((item)=>item.id),['one']);
+  assert.deepEqual(boardLinesForMode(expiring,emptyFilters,'LITE',after),[]);
+  assert.deepEqual(boardLinesForMode(expiring,emptyFilters,'FULL',after).map((item)=>item.id),['one','two']);
+  assert.equal(evidenceExpired(expiring.analyses[0],after),true);
+  assert.equal(evidenceExpired(expiring.analyses[0],before),false);
+});
+
+test('a Crown leg must reach the lowest score any Crown accepts',()=>{
+  const now=Date.parse('2030-01-01T12:30:00Z');
+  const low=analysisSchema.parse({...analysis,score:79});
+  assert.match(addLeg([],line,low,'MORE',now).error??'',/below 80/);
+  assert.equal(addLeg([],line,analysisSchema.parse({...analysis,score:80}),'MORE',now).error,null);
+  assert.equal(CROWN_LEG_FLOOR,80);
 });

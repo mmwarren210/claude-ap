@@ -11,7 +11,7 @@ export async function demoRequest(path: string, init: RequestInit = {}): Promise
   const url = new URL(path, 'https://demo.crowniq.invalid');
   const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
   const route = '/' + parts.join('/');
-  if (route === '/v1/board') return json(200, demoBoard);
+  if (route === '/v1/board' || route === '/v1/board/lite') return json(200, demoBoard);
   if (route === '/v1/board/summary') return json(200, { researchStatus: 'DEMO', gradingStatus: 'DEMO' });
   if (route === '/v1/rankings') return json(200, demoRankings);
   if (route === '/v1/me/picks') return json(200, { total: demoPicks.length, picks: demoPicks });

@@ -1,9 +1,9 @@
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Window } from '../insights';
-import { boardLinesForMode } from '../state';
+import { boardLinesForMode, evidenceExpired } from '../state';
 import type { Filters } from '../state';
 import { colors, radius, rankAccents } from '../theme';
 import { useBoard } from '../use-board';
@@ -36,6 +36,12 @@ function freshnessLine(freshness: string, fetchedAt: string | undefined, nowMs: 
 export default function BoardView() {
   const { status, data, message, freshness, refreshing, nowMs, reload, needsBootstrap, bootstrapPull } = useBoard();
   const { filters, setFilters, viewMode, ready } = useDraft();
+  // While the Board is on screen, reread the saved board every 5 minutes (free; picks up context refreshes).
+  useFocusEffect(useCallback(() => {
+    if (freshness === 'DEMO') return;
+    const timer = setInterval(reload, 5 * 60_000);
+    return () => clearInterval(timer);
+  }, [reload, freshness]));
   const [sheet, setSheet] = useState<keyof Filters | 'ALL' | null>(null);
   const [window, setWindow] = useState<Window>('L5');
   const [confirmPull, setConfirmPull] = useState(false);
@@ -76,7 +82,8 @@ export default function BoardView() {
       contentContainerStyle={styles.content} ListHeaderComponent={header}
       renderItem={({ item, index }) => <BoardCard line={item} analysis={analyses.get(item.id)}
         photoUrl={data?.playerMedia?.[item.playerId]?.photoUrl} accent={rankAccents[index % rankAccents.length]}
-        window={window} onPress={() => open(item.id)} />}
+        window={window} expired={(() => { const analysis = analyses.get(item.id);
+          return analysis?.direction !== 'PASS' && evidenceExpired(analysis, nowMs); })()} onPress={() => open(item.id)} />}
       ListEmptyComponent={<Notice title={!ready || status === 'loading' ? 'Loading board' : data && viewMode === 'LITE'
         ? 'No qualified plays yet' : data ? 'No matching lines' : 'Board unavailable'}
         detail={!ready ? 'Loading your saved view.' : status === 'loading' ? 'Looking for the latest saved board.'

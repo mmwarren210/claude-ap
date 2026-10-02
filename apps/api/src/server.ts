@@ -18,6 +18,7 @@ import { ResearchBuild } from './research-build.js';
 import { ProductLedger, resultFactSchema } from './product-ledger.js';
 import type { BoardCache } from './board-cache.js';
 import { boardFunnel, outcomeCounts } from './board-funnel.js';
+import { liteBoard } from './board-lite.js';
 import { ContextRefreshScheduler } from './context-refresh.js';
 import type { ContextRefreshOptions, DailyLookupBudget } from './context-refresh.js';
 import type { ProviderName } from './provider-identity.js';
@@ -564,6 +565,11 @@ export function buildServer(options: ServerOptions = {}) {
   app.get('/v1/board', async (_request, reply) => {
     const snapshot = service.getBoard();
     return snapshot ?? reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
+  });
+  // The Board list: upcoming games only, with slim PASS analyses. Free, like /v1/board.
+  app.get('/v1/board/lite', async (_request, reply) => {
+    const snapshot = service.getBoard();
+    return snapshot ? liteBoard(snapshot, now()) : reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
   });
   app.get('/v1/rankings', async (_request, reply) => {
     const snapshot = service.getBoard();

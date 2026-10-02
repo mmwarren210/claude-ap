@@ -1,4 +1,11 @@
 import type { Analysis, BoardResponse, PlayableDirection, PropLine } from '@crowniq/contracts';
+import { crownMinimumLineScore } from './insights';
+
+/** The lowest leg score any Crown size accepts (the 6-leg minimum). */
+export const CROWN_LEG_FLOOR=Math.min(...Object.values(crownMinimumLineScore));
+/** True once a line's research evidence has expired and it needs reanalysis before it can be played. */
+export const evidenceExpired=(analysis:Analysis|undefined,nowMs:number)=>
+  !!analysis?.evidenceExpiresAt&&Date.parse(analysis.evidenceExpiresAt)<=nowMs;
 
 export interface Filters { sport: string; market: string; direction: string; grade: string;
   lineType: string; evidence: string; date: string }
@@ -35,7 +42,7 @@ export function boardLinesForMode(data:BoardResponse,filters:Filters,mode:ViewMo
       !analysis.modelVersion||line.lineType==='UNKNOWN_ALTERNATE'||
       !['PLAYABLE','CROWN_STRONG','CROWN_ELITE'].includes(analysis.scoreBand??'')||
       !line.availableDirections.includes(analysis.direction)||
-      Date.parse(line.eventStartTime)<=nowMs||
+      Date.parse(line.eventStartTime)<=nowMs||evidenceExpired(analysis,nowMs)||
       (filters.sport!=='ALL'&&line.sport!==filters.sport)||
       (filters.market!=='ALL'&&line.market!==filters.market)||
       // The Board's line-style, evidence and date chips apply in both views; grade and
@@ -58,6 +65,8 @@ export function addLeg(legs: readonly CrownLeg[], line: PropLine, analysis: Anal
   if (Date.parse(line.eventStartTime)<=nowMs ||
     (analysis.evidenceExpiresAt && Date.parse(analysis.evidenceExpiresAt)<=nowMs))
     return {legs:[...legs],error:'The event has started or its research evidence expired. Recheck before adding it.'};
+  if (analysis.score < CROWN_LEG_FLOOR)
+    return {legs:[...legs],error:`GKR ${Math.round(analysis.score)} is below ${CROWN_LEG_FLOOR}, the lowest score any Crown accepts.`};
   if (line.sport === 'APEX' && line.team && legs.some((leg) => leg.line.sport === 'APEX' &&
     leg.line.team === line.team))
     return {legs:[...legs],error:'Only one Apex player per team is allowed.'};

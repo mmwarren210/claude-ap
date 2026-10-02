@@ -40,9 +40,9 @@ export function windowStats(stats: ReturnType<typeof lineStats>, l10: ReturnType
   ];
 }
 
-export const BoardCard = memo(function BoardCard({ line, analysis, photoUrl, accent, window, onPress }: {
+export const BoardCard = memo(function BoardCard({ line, analysis, photoUrl, accent, window, expired = false, onPress }: {
   line: PropLine; analysis: Analysis | undefined; photoUrl: string | null | undefined; accent: string;
-  window: Window; onPress: () => void }) {
+  window: Window; expired?: boolean; onPress: () => void }) {
   const direction = analysis?.direction === 'LESS' ? 'LESS' : 'MORE';
   const { log } = usePlayerGames(line);
   const stats = lineStats(log, line.threshold, direction, window, line.opponent);
@@ -83,6 +83,7 @@ export const BoardCard = memo(function BoardCard({ line, analysis, photoUrl, acc
       <View style={styles.strip}><StatStrip stats={windowStats(stats, l10, window)} /></View>
       <View style={styles.evidence}><EvidenceBadge quality={analysis?.evidenceQuality ?? 'NONE'}
         detail={evidenceDetail(analysis)} /></View>
+      {expired && <Text style={styles.expired}>Evidence expired, reanalysis needed</Text>}
     </GlowCard>
   </Pressable>;
 });
@@ -108,6 +109,7 @@ const styles = StyleSheet.create({
   edgeBad: { color: colors.red },
   edgeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   edgeLabel: { color: colors.textMuted, fontSize: 13 },
+  expired: { color: colors.amber, fontSize: 13, fontWeight: '700', marginTop: 8 },
   strip: { marginTop: 10, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
     paddingVertical: 6, backgroundColor: colors.surfaceSunken },
   evidence: { marginTop: 8, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,

@@ -2,7 +2,7 @@ import { boardResponseSchema } from '@crowniq/contracts';
 import type { BoardResponse } from '@crowniq/contracts';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { loadBoard, saveBoard } from './local-store';
 import { freshness } from './state';
 import { reportMobileFailure } from './diagnostics';
@@ -68,7 +68,9 @@ export function BoardProvider({children}:{children:ReactNode}) {
     const controller=new AbortController();
     void (async()=>{
       try{
-        const response=await request('/v1/board',{signal:controller.signal});
+        // The lighter Board list; servers without it get the full board.
+        let response=await request('/v1/board/lite',{signal:controller.signal});
+        if(response.status===404)response=await request('/v1/board',{signal:controller.signal});
         if(!active)return;
         // Any HTTP response proves the API is reachable. A 503 means the board is
         // unavailable, not that the phone cannot reach CrownIQ.
@@ -103,6 +105,22 @@ export function BoardProvider({children}:{children:ReactNode}) {
   const reload=useCallback(()=>{
     setStatus((previous)=>previous==='available'?'available':'loading');setAttempt((n)=>n+1);
   },[]);
+  // Rereading the saved board is free, so pick up server-side context refreshes: when the app
+  // returns to the foreground, and when the earliest ranked evidence expires.
+  useEffect(()=>{
+    if(demo||!configured)return;
+    const subscription=AppState.addEventListener('change',(state)=>{if(state==='active')reload();});
+    return ()=>subscription.remove();
+  },[demo,configured,reload]);
+  useEffect(()=>{
+    if(demo||!data)return;
+    const ranked=new Set(data.rankedLineIds),now=Date.now();
+    const expiries=data.analyses.filter((item)=>ranked.has(item.lineId)&&item.evidenceExpiresAt)
+      .map((item)=>Date.parse(item.evidenceExpiresAt!)).filter((time)=>time>now);
+    if(!expiries.length)return;
+    const timer=setTimeout(reload,Math.min(Math.min(...expiries)-now+5_000,2**31-1));
+    return ()=>clearTimeout(timer);
+  },[demo,data,reload]);
   const pulling=useRef(false);
   const bootstrapPull=useCallback(()=>{
     if(pulling.current)return;
@@ -125,7 +143,8 @@ export function BoardProvider({children}:{children:ReactNode}) {
         setMessage('Building the PrizePicks board. This can take a few minutes…');
         for(let poll=0;poll<150;poll++){
           await sleep(2000);
-          const boardResponse=await request('/v1/board');
+          let boardResponse=await request('/v1/board/lite');
+          if(boardResponse.status===404)boardResponse=await request('/v1/board');
           setReachable(true);
           if(boardResponse.ok){
             const board=boardResponseSchema.parse(await boardResponse.json());
