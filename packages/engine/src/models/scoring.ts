@@ -1,4 +1,4 @@
-import type { Assessment, Evidence, PlayableDirection, PropLine } from '@crowniq/contracts';
+import type { Assessment, Evidence, PlayableDirection, PropLine, ScoreComponent } from '@crowniq/contracts';
 import type { ModelContext, ModelModule } from '../interfaces.js';
 import { fantasyDistribution } from '../fantasy/scoring.js';
 import { fantasyRules } from '../fantasy/registry.js';
@@ -128,31 +128,36 @@ export function createMarketModule(definition: MarketDefinition, approved = fals
       // it into a PASS, so every scored line is scored from this side.
       const projectedSide: PlayableDirection = distribution.midpoint >= line.threshold ? 'MORE' : 'LESS';
       const flipped = (key: string) => !!definition.lessAware && projectedSide === 'LESS' && flipsForLess(key);
-      const contextComponents = definition.factors.map(([key, maximum]) => {
+      const contextComponents: ScoreComponent[] = definition.factors.map(([key, maximum]): ScoreComponent => {
         if (key === 'evidence_quality') {
           const quality = evidence.some((item) => item.quality === 'LOW' || item.confidence < .6) ? .3 :
             evidence.some((item) => item.quality === 'MEDIUM') ? .7 : 1;
           return { name: key, contribution: round(maximum * quality),
-            explanation: 'Lowest quality among current attributed inputs.' };
+            explanation: 'Lowest quality among current attributed inputs.',
+            kind: 'EVIDENCE_QUALITY' as const, measured: true, weight: maximum };
         }
         const observation = current(evidence, 'metric:' + key)?.numeric;
         if (!observation || observation.baseline === undefined) {
           return { name: key, contribution: 0,
-            explanation: `No current attributed metric supplied; weight ${maximum} contributes zero.` };
+            explanation: `No current attributed metric supplied; weight ${maximum} contributes zero.`,
+            kind: 'FACTOR' as const, measured: false, weight: maximum };
         }
         const delta = (observation.value - observation.baseline) /
           Math.max(Math.abs(observation.baseline), 1);
+        const measured = { kind: 'FACTOR' as const, measured: true, weight: maximum,
+          observed: observation.value, reference: observation.baseline };
         if (flipped(key)) return { name: key, contribution: round(maximum * clamp(.5 - delta * 2, 0, 1)),
-          explanation: `Observed ${observation.value} versus reference ${observation.baseline}; weight ${maximum}; below reference favors LESS.` };
+          explanation: `Observed ${observation.value} versus reference ${observation.baseline}; weight ${maximum}; below reference favors LESS.`,
+          ...measured, favorsBelowReference: true };
         return { name: key, contribution: round(maximum * clamp(.5 + delta * 2, 0, 1)),
-          explanation: `Observed ${observation.value} versus reference ${observation.baseline}; weight ${maximum}.` };
+          explanation: `Observed ${observation.value} versus reference ${observation.baseline}; weight ${maximum}.`, ...measured };
       });
       const rawContextScore = round(contextComponents.reduce((sum, item) => sum + item.contribution, 0));
       let contextScore = rawContextScore;
       if (definition.partialCoverageNormalization && inputCoverage < 1) {
         const normalizedObserved = round(rawContextScore / inputCoverage);
         const adjustment = round(normalizedObserved - rawContextScore);
-        contextComponents.push({ name: 'partial_coverage_adjustment', contribution: adjustment,
+        contextComponents.push({ name: 'partial_coverage_adjustment', contribution: adjustment, kind: 'COVERAGE',
           explanation: 'Normalize observed factor performance to the 100-point context scale; missing coverage is reported separately as data confidence.' });
         contextScore = round(clamp(rawContextScore + adjustment, 0, 100));
       }
@@ -220,11 +225,12 @@ export function createMarketModule(definition: MarketDefinition, approved = fals
         ['adversarial_risk', -Math.min(10, round(risks.reduce((sum, r) => sum + r.severity, 0) * 5)),
           'Opposing risk findings after adversarial review.'],
       ].map(([name, contribution, explanation]) => ({ name: String(name),
-        contribution: round(Number(contribution)), explanation: String(explanation) }));
+        contribution: round(Number(contribution)), explanation: String(explanation),
+        kind: 'LINE_ADJUSTMENT' as ScoreComponent['kind'] }));
       const raw = round(contextScore + lineAdjustments.reduce((sum, item) => sum + item.contribution, 0));
       const lineScore = round(clamp(raw, 0, 100));
       if (raw !== lineScore) lineAdjustments.push({ name: 'score_clamp',
-        contribution: round(lineScore - raw), explanation: 'Constrain line score to 0–100.' });
+        contribution: round(lineScore - raw), explanation: 'Constrain line score to 0–100.', kind: 'CLAMP' });
       const severe = risks.some((risk) => risk.severity >= .7 &&
         ['injury','role_change','lineup','weather','conflicting_evidence'].includes(risk.risk));
       const script = current(evidence, 'metric:game_script')?.numeric;

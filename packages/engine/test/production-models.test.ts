@@ -391,3 +391,18 @@ test('current model versions keep scoring LESS exactly as before', () => {
   const revised = scoreWith(['GKR-NFL-PASSING-YARDS-1.3'], line, trend(line, 0.88, 280));
   assert.equal(revised.direction, 'LESS');
 });
+
+test('score components carry structured fields that match their numbers', () => {
+  const line = lessLine();
+  const analysis = scoreWith(['GKR-NFL-PASSING-YARDS-1.2'], line, trend(line, 1.12, 320));
+  assert.equal(analysis.direction, 'MORE');
+  for (const component of analysis.contextBreakdown ?? []) {
+    assert.ok(component.kind, component.name);
+    if (component.kind === 'FACTOR' && component.measured) {
+      assert.match(component.explanation, new RegExp(`Observed ${component.observed} versus reference ${component.reference}; weight ${component.weight}`));
+    }
+  }
+  assert.ok((analysis.lineAdjustments ?? []).every((item) => item.kind === 'LINE_ADJUSTMENT' || item.kind === 'CLAMP'));
+  const total = [...analysis.contextBreakdown ?? [], ...analysis.lineAdjustments ?? []].reduce((sum, item) => sum + item.contribution, 0);
+  assert.equal(Math.round(total * 100) / 100, analysis.score);
+});

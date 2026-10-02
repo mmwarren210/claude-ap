@@ -80,6 +80,16 @@ export const scoreComponentSchema = z.object({
   name: identifier,
   contribution: z.number().finite(),
   explanation: z.string().min(1),
+  /** Structured copies of what the explanation says, so clients never parse text. All optional. */
+  kind: z.enum(['FACTOR', 'EVIDENCE_QUALITY', 'COVERAGE', 'LINE_ADJUSTMENT', 'CLAMP']).optional(),
+  /** False when the factor had no current attributed metric and contributed zero. */
+  measured: z.boolean().optional(),
+  /** The factor's maximum points. */
+  weight: z.number().finite().optional(),
+  observed: z.number().finite().optional(),
+  reference: z.number().finite().optional(),
+  /** True when a LESS-aware model scored this factor for LESS (below reference favorable). */
+  favorsBelowReference: z.boolean().optional(),
 });
 
 export const assessmentSchema = z.object({
@@ -288,6 +298,7 @@ export type Board = z.infer<typeof boardSchema>;
 export type Evidence = z.infer<typeof evidenceSchema>;
 export type Analysis = z.infer<typeof analysisSchema>;
 export type Assessment = z.infer<typeof assessmentSchema>;
+export type ScoreComponent = z.infer<typeof scoreComponentSchema>;
 export type ScoreBand = z.infer<typeof scoreBandSchema>;
 export type SecondLookAudit = z.infer<typeof secondLookAuditSchema>;
 export type Direction = z.infer<typeof directionSchema>;
