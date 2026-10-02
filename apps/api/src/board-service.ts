@@ -29,6 +29,10 @@ function mergeEvidence(base:readonly Evidence[],extra:readonly Evidence[]):Evide
   return [...merged.values()];
 }
 
+export type ContextRefreshReport={at:string;status:'SUCCEEDED'|'PARTIAL'|'FAILED'|'SKIPPED';
+  reason:string|null;linesTargeted:number;evidenceAdded:number;evidenceExpiredRemoved:number;
+  oddsCreditsUsed:0;sourceRequests:number};
+
 export class BoardService {
   private snapshot: BoardResponse | null = null;
   private lastError: string | null = null;
@@ -44,11 +48,15 @@ export class BoardService {
   private startupRecovery = {status:'NOT_NEEDED' as 'NOT_NEEDED'|'UNCONFIGURED'|'RUNNING'|'SUCCEEDED'|'PARTIAL'|'FAILED',
     evidenceAdded:0,oddsCreditsUsed:0 as const,error:null as string|null};
   private mutation:Promise<unknown>=Promise.resolve();
+  private pendingMutations=0;
   private exclusive<T>(operation:()=>Promise<T>):Promise<T>{
-    const result=this.mutation.then(operation,operation);
+    this.pendingMutations++;
+    const run=async()=>{try{return await operation();}finally{this.pendingMutations--;}};
+    const result=this.mutation.then(run,run);
     this.mutation=result.catch(()=>undefined);
     return result;
   }
+  private lastContextRefresh:ContextRefreshReport|null=null;
   private lastRefreshStage = 'idle';
   private lastRefreshCounts = { providerReturned: 0, normalized: 0, saved: 0,
     qualified: 0, exposed: 0 };
@@ -116,6 +124,51 @@ export class BoardService {
       this.startupRecovery={status:'FAILED',evidenceAdded:0,oddsCreditsUsed:0,
         error:'STARTUP_HISTORY_RECOVERY_FAILED'};
     }
+  }
+
+  /**
+   * Free context refresh: re-research upcoming lines with the given adapter and republish.
+   * Never calls the odds provider. Skipped when a pull, reanalysis or another refresh is running,
+   * so a scheduled tick never queues behind paid work.
+   */
+  async refreshContext(adapter:ResearchAdapter,options:{windowHours:number}):Promise<ContextRefreshReport>{
+    const skipped=(reason:string):ContextRefreshReport=>({at:this.clock().toISOString(),status:'SKIPPED',
+      reason,linesTargeted:0,evidenceAdded:0,evidenceExpiredRemoved:0,oddsCreditsUsed:0,sourceRequests:0});
+    if(this.pendingMutations>0)return this.lastContextRefresh=skipped('BOARD_BUSY');
+    return this.exclusive(()=>this.refreshContextNow(adapter,options.windowHours,skipped));
+  }
+
+  private async refreshContextNow(adapter:ResearchAdapter,windowHours:number,
+    skipped:(reason:string)=>ContextRefreshReport):Promise<ContextRefreshReport>{
+    const board=this.getBoard()?.board;
+    if(!board)return this.lastContextRefresh=skipped('BOARD_UNAVAILABLE');
+    const now=this.clock(),start=now.getTime(),end=start+windowHours*3600_000;
+    const lines=board.lines.filter((line)=>{
+      const time=Date.parse(line.eventStartTime);return time>start&&time<=end;
+    });
+    if(!lines.length)return this.lastContextRefresh=skipped('NO_UPCOMING_LINES');
+    const researched=await collectResearch(boardSchema.parse({...board,lines}),adapter);
+    const at=this.clock();
+    const report={at:at.toISOString(),linesTargeted:lines.length,oddsCreditsUsed:0 as const,
+      sourceRequests:researched.health?.searches??0};
+    if(researched.status==='FAILED'&&!researched.evidence.length)
+      return this.lastContextRefresh={...report,status:'FAILED',reason:'CONTEXT_SOURCES_FAILED',
+        evidenceAdded:0,evidenceExpiredRemoved:0};
+    // A paid pull that finished meanwhile already replaced the board; its evidence wins.
+    if(this.snapshot?.board!==board)return this.lastContextRefresh=skipped('BOARD_REPLACED');
+    const key=(item:Evidence)=>JSON.stringify([item.entityType,item.entityId,item.eventId,item.market,item.kind]);
+    const replacements=new Set(researched.evidence.map(key));
+    const kept=this.baseEvidence.filter((item)=>!replacements.has(key(item)));
+    const live=kept.filter((item)=>effectiveEvidenceExpiry(item)>at.getTime());
+    const nextBase=mergeEvidence(live,researched.evidence);
+    const combined=mergeEvidence(nextBase,this.webEvidence);
+    await this.cache?.save({board,evidence:combined,researchStatus:this.researchStatus,
+      lastSuccessfulRefresh:this.lastSuccessfulRefresh,secondLookAudits:{...this.secondLookAudits}});
+    this.baseEvidence=nextBase;
+    this.publish(board,combined,at);
+    return this.lastContextRefresh={...report,status:researched.status==='OK'||researched.status==='UNCONFIGURED'
+      ?'SUCCEEDED':'PARTIAL',reason:null,evidenceAdded:researched.evidence.length,
+      evidenceExpiredRemoved:kept.length-live.length};
   }
 
   async persist():Promise<void>{return this.exclusive(()=>this.persistNow());}
@@ -259,6 +312,7 @@ export class BoardService {
       research: this.researchStatus,
       researchHealth: this.researchHealth,
       startupRecovery:{...this.startupRecovery},
+      lastContextRefresh:this.lastContextRefresh?{...this.lastContextRefresh}:null,
       evidenceFreshness:{total:this.evidence.length,active:activeEvidence.length,
         expired:this.evidence.length-activeEvidence.length},
       lastSuccessfulRefresh: this.lastSuccessfulRefresh,

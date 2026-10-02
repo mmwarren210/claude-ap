@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { dirname, join } from 'node:path';
 import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegistry, lessAwareVersion, marketDefinitions,
   statHistoryReadyVersions } from '@crowniq/engine';
 import { buildServer } from './server.js';
@@ -10,6 +11,7 @@ import { WebResearchAdapter, WebResearchCatalog } from './web-research.js';
 import { ProductLedger } from './product-ledger.js';
 import { ProductGradingWorker } from './background-grading.js';
 import { BoardCache } from './board-cache.js';
+import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
 import { ProviderIdentityVerifier } from './provider-identity.js';
 import { StatApiOwnerResearch } from './stat-api-owner-research.js';
@@ -137,6 +139,32 @@ const secondLookAdapters=[statEvidence,currentContext]
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const secondLookResearch=secondLookAdapters.length===0?null:secondLookAdapters.length===1
   ? secondLookAdapters[0]:new CompositeResearchAdapter(secondLookAdapters);
+// Free scheduled context refresh: local history, player identity and the free NFL/MLB status
+// feeds, every CROWNIQ_CONTEXT_REFRESH_MINUTES. Never the odds provider, web research or
+// StatApiGkrEvidence. NBA status (Stat API) joins only under its own daily lookup cap.
+const nonNegative=(name:string,fallback:number)=>{
+  const value=Number(process.env[name]??fallback);
+  if(!Number.isFinite(value)||value<0)throw new Error(`Invalid ${name}`);
+  return value;
+};
+const boardCacheFile=process.env.CROWNIQ_BOARD_CACHE_FILE ?? 'tmp/board-cache.json';
+const contextIntervalMinutes=nonNegative('CROWNIQ_CONTEXT_REFRESH_MINUTES',15);
+const contextWindowHours=nonNegative('CROWNIQ_CONTEXT_WINDOW_HOURS',8);
+const nbaDailyLookups=Math.floor(nonNegative('CROWNIQ_CONTEXT_NBA_DAILY_LOOKUPS',0));
+const contextLookupBudget=statSource&&nbaDailyLookups>0
+  ? new DailyLookupBudget(join(dirname(boardCacheFile),'context-lookup-budget.json'),nbaDailyLookups):null;
+const tickContext=currentContextEnabled?new CurrentContextResearch({
+  allowedKeys:approvedModelKeys.filter((key)=>key.startsWith('NFL:')||key.startsWith('MLB:')||
+    contextLookupBudget!==null&&key.startsWith('NBA:')),
+  statSource:statSource&&contextLookupBudget?{currentAvailability:async(sport,query)=>{
+    if(!await contextLookupBudget.take())throw new Error('NBA_DAILY_LOOKUP_BUDGET_REACHED');
+    return statSource.currentAvailability(sport,query);
+  }}:undefined,
+}):null;
+const contextAdapters=[internalEvidence,playerIdentity,tickContext]
+  .filter((item):item is NonNullable<typeof item>=>!!item);
+const contextRefresh=contextIntervalMinutes>0?{adapter:new CompositeResearchAdapter(contextAdapters),
+  intervalMinutes:contextIntervalMinutes,windowHours:contextWindowHours}:null;
 const googleClients=(process.env.CROWNIQ_GOOGLE_CLIENT_IDS??'').split(',').map((id)=>id.trim()).filter(Boolean);
 const appleClients=(process.env.CROWNIQ_APPLE_CLIENT_IDS??'').split(',').map((id)=>id.trim()).filter(Boolean);
 const identityVerifier=googleClients.length||appleClients.length
@@ -150,8 +178,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, provider,
   allowedWebOrigins:(process.env.CROWNIQ_ALLOWED_WEB_ORIGINS??'').split(',')
     .map((origin)=>origin.trim()).filter(Boolean),
   ownerJobStore:new OwnerPullJobStore(process.env.CROWNIQ_OWNER_JOB_FILE ?? 'tmp/owner-pull-job.json'),
-  boardCache:new BoardCache(process.env.CROWNIQ_BOARD_CACHE_FILE ??
-    'tmp/board-cache.json'),
+  boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,
   selections: process.env.CROWNIQ_SELECTIONS_FILE
     ? new JsonSelectionLedger(process.env.CROWNIQ_SELECTIONS_FILE) : null,

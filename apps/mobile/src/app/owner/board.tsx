@@ -13,6 +13,9 @@ type Diagnostics={
   startupRecovery?:{status:string;evidenceAdded:number;oddsCreditsUsed:0;error:string|null};
   secondLook?:{attempted:number;upgraded:number;stillPass:number;evidenceAdded:number};
   freshContext?:{evidenceCount:number};
+  contextRefresh?:{enabled:boolean;intervalMinutes:number;nbaLookupsToday:number;nbaDailyLimit:number;
+    last:{at:string;status:string;reason:string|null;linesTargeted:number;evidenceAdded:number;
+      evidenceExpiredRemoved:number}|null};
   modelSupport?:{supported:number;unsupported:number;approved:number;unapproved:number};
   lineTypes?:{
     counts:{REGULAR:number;GOBLIN:number;DEMON:number;UNKNOWN_ALTERNATE:number};
@@ -56,6 +59,18 @@ async function json<T>(response:Response):Promise<T>{
   const body=await response.json().catch(()=>({})) as T & {code?:string;message?:string};
   if(!response.ok)throw new Error(body.message??body.code??'Owner board request failed.');
   return body;
+}
+
+function contextRefreshText(info:NonNullable<Diagnostics['contextRefresh']>):string{
+  if(!info.enabled)return 'Automatic context refresh is off.';
+  const head=`Automatic context refresh every ${info.intervalMinutes} min · 0 Odds credits`;
+  const nba=info.nbaDailyLimit?` · NBA lookups today ${info.nbaLookupsToday}/${info.nbaDailyLimit}`:'';
+  const last=info.last;
+  if(!last)return `${head}${nba} · not run yet`;
+  const when=new Date(last.at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+  const what=last.status==='SKIPPED'?`skipped (${(last.reason??'').replace(/_/g,' ').toLowerCase()})`
+    :`${last.status.toLowerCase()}: ${last.linesTargeted.toLocaleString()} lines, ${last.evidenceAdded.toLocaleString()} evidence records`;
+  return `${head}${nba} · last ${when}, ${what}`;
 }
 
 export default function OwnerBoardScreen(){
@@ -205,6 +220,7 @@ export default function OwnerBoardScreen(){
           <Text style={styles.row}>Research: {diagnostics.research}</Text>
           {diagnostics.startupRecovery&&<Text style={styles.hint}>Internal history recovery: {diagnostics.startupRecovery.status.replace(/_/g,' ')} · {diagnostics.startupRecovery.evidenceAdded.toLocaleString()} evidence records · 0 Odds credits</Text>}
           <Text style={styles.row}>Fresh context: {diagnostics.freshContext?.evidenceCount??0}</Text>
+          {diagnostics.contextRefresh&&<Text style={styles.hint}>{contextRefreshText(diagnostics.contextRefresh)}</Text>}
           <Text style={styles.row}>Second Look: {diagnostics.secondLook?.upgraded??0} upgraded / {diagnostics.secondLook?.attempted??0} attempted</Text>
           <Text style={styles.hint}>Board fetched {new Date(diagnostics.boardFetchedAt).toLocaleString()}</Text>
           <Text style={styles.hint}>Analysis built {new Date(diagnostics.builtAt).toLocaleString()}</Text>

@@ -17,6 +17,8 @@ import { WebResearchAdapter } from './web-research.js';
 import { ResearchBuild } from './research-build.js';
 import { ProductLedger, resultFactSchema } from './product-ledger.js';
 import type { BoardCache } from './board-cache.js';
+import { ContextRefreshScheduler } from './context-refresh.js';
+import type { ContextRefreshOptions, DailyLookupBudget } from './context-refresh.js';
 import type { ProviderName } from './provider-identity.js';
 import { ProviderIdentityVerifier } from './provider-identity.js';
 import { StatApiOwnerError, StatApiOwnerResearch } from './stat-api-owner-research.js';
@@ -55,6 +57,10 @@ export interface ServerOptions {
   allowedWebOrigins?: readonly string[];
   /** Persists the paid-pull job record across restarts. */
   ownerJobStore?: OwnerPullJobStore | null;
+  /** Free scheduled context refresh; never calls the odds provider. */
+  contextRefresh?: ContextRefreshOptions | null;
+  /** Daily cap on paid NBA status lookups made by context refresh ticks. */
+  contextLookupBudget?: DailyLookupBudget | null;
 }
 
 function authorized(request: FastifyRequest, token?: string): boolean {
@@ -109,8 +115,10 @@ export function buildServer(options: ServerOptions = {}) {
         : savedJob;
       if(savedJob.status==='RUNNING')await saveJob();
     }
-    // History reconstruction runs after restore without blocking Fastify startup.
-    void service.recoverStartupEvidence();
+    // History reconstruction runs after restore without blocking Fastify startup; the first
+    // context refresh follows it, then ticks repeat on the configured interval.
+    void service.recoverStartupEvidence().then(()=>contextScheduler?.tick());
+    contextScheduler?.start();
     if(options.ownerNotebook && options.ownerPublicId){
       await options.ownerNotebook.load();options.ownerNotebook.start();
     }
@@ -119,7 +127,8 @@ export function buildServer(options: ServerOptions = {}) {
     options.clock,options.product ? async()=>{const board=service.getBoard();
       if(board){await service.persist();await options.product!.track(board,service.getEvidence());}} :
       async()=>service.persist()) : null;
-  app.addHook('onClose', async () => { webBuild?.cancel();options.ownerNotebook?.stop(); });
+  const contextScheduler=options.contextRefresh?new ContextRefreshScheduler(service,options.contextRefresh):null;
+  app.addHook('onClose', async () => { webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop(); });
 
   // Every paid provider pull runs through this one job, so two pulls can never overlap or
   // queue back to back. The record is persisted so a restart mid-pull is reported.
@@ -255,6 +264,10 @@ export function buildServer(options: ServerOptions = {}) {
         lineCount:snapshot.board.lines.length,rankedCount:snapshot.rankedLineIds.length,
         evidenceCount:service.getEvidence().length,research:status.research,providerRefreshCost:0,
         evidenceFreshness:status.evidenceFreshness,startupRecovery:status.startupRecovery,
+        contextRefresh:{enabled:!!options.contextRefresh,
+          intervalMinutes:options.contextRefresh?.intervalMinutes??0,last:status.lastContextRefresh,
+          nbaLookupsToday:await options.contextLookupBudget?.used()??0,
+          nbaDailyLimit:options.contextLookupBudget?.limit??0},
         researchHealth:status.researchHealth,secondLook:status.secondLook,
         freshContext:status.freshContext,lineTypes:auditPrizePicksLineTypes(snapshot.board.lines),
         modelSupport:{supported,unsupported:snapshot.board.lines.length-supported,
