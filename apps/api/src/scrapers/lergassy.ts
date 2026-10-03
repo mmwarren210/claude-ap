@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { PlayableDirection } from '@crowniq/contracts';
-import type { DfsApp, ScrapedLine, ScrapedTier } from './scraped-line.js';
+import type { DfsApp, ScrapedLine, ScrapedTier, ScraperSource } from './scraped-line.js';
 
 /** Apify actor `lergassy/dfs-props-scraper` (PrizePicks and Underdog, one row per prop). */
 export const LERGASSY_ACTOR = 'lergassy/dfs-props-scraper';
@@ -52,3 +52,10 @@ export function readLergassyRow(raw: unknown, now: Date): { line: ScrapedLine } 
     stat: row.market.trim(), line: row.line, tier, directions, startTime: new Date(row.startTime).toISOString(),
     imageUrl: image } };
 }
+
+/** The lergassy scraper as a source. Its own hard cap is 20,000 rows, so it confirms rather than covers. */
+export const lergassy: ScraperSource = {
+  id: 'lergassy', actor: LERGASSY_ACTOR, apps: ['prizepicks', 'underdog'], rowCap: 20_000,
+  input: () => lergassyInput(20_000),
+  read: readLergassyRow,
+};

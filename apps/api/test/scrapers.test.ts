@@ -4,12 +4,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ApifyClient } from '../src/scrapers/apify-client.js';
-import { readLergassyRow } from '../src/scrapers/lergassy.js';
+import { lergassy, readLergassyRow } from '../src/scrapers/lergassy.js';
 import { ScrapedLineStore } from '../src/scrapers/line-store.js';
 import { marketKey, ScrapedPrizePicksProvider } from '../src/scrapers/scraped-prizepicks-provider.js';
 import type { ScrapedLine } from '../src/scrapers/scraped-line.js';
 import { ScraperPuller } from '../src/scrapers/scraper-puller.js';
 import { DailySpendBudget } from '../src/scrapers/spend-budget.js';
+import { zenPrizePicks, zenUnderdog } from '../src/scrapers/zen-studio.js';
 
 const now = new Date('2030-10-03T20:00:00.000Z');
 // Rows shaped like lergassy/dfs-props-scraper output; every player and number is synthetic.
@@ -101,34 +102,89 @@ test('stored PrizePicks lines become board lines with model market keys, full NF
     /SCRAPED_LINES_UNAVAILABLE/);
 });
 
-test('the puller stays within the daily spend cap, flags cut-short runs and rebuilds only when lines change', async () => {
+test('the puller runs each source on its schedule, within one daily spend cap, and rebuilds only when lines change', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'crowniq-scraper-'));
   try {
     let runs = 0, rebuilds = 0, rows: unknown[] = [row(), row({ propId: '1002', player: 'Other Player' })];
-    const apify = { runActor: async () => { runs++; return { id: 'run', status: 'SUCCEEDED', datasetId: 'ds', usageUsd: 1.4 }; },
+    let status = 'SUCCEEDED';
+    const apify = { runActor: async () => { runs++; return { id: 'run', status, datasetId: 'ds', usageUsd: 1.4 }; },
       datasetItems: async () => rows } as unknown as ApifyClient;
-    const budget = new DailySpendBudget(join(folder, 'spend.json'), 3, () => now);
+    const budget = new DailySpendBudget(join(folder, 'spend.json'), 4.5, () => now);
+    const capped = { ...lergassy, rowCap: 2 };
     const puller = new ScraperPuller(apify, new ScrapedLineStore(join(folder, 'lines.json'), () => now), budget,
-      { maxRows: 2, maxRunUsd: 1.5, hoursEt: [16] }, () => now);
+      [{ source: capped, hoursEt: [16] }, { source: zenPrizePicks, hoursEt: [] }], { maxRunUsd: 1.5 }, () => now);
     puller.whenLinesChange(() => { rebuilds++; });
-    const first = await puller.pull();
+    const first = await puller.pull('lergassy');
     assert.deepEqual([first.status, first.rows, first.truncated, first.costUsd, first.ingest?.added], ['SUCCEEDED', 2, true, 1.4, 2]);
     assert.equal(rebuilds, 1);
     rows = [row()];
-    const second = await puller.pull();
+    const second = await puller.pull('lergassy');
     assert.deepEqual([second.status, second.truncated, second.ingest?.added, second.ingest?.removed], ['SUCCEEDED', false, 0, 1]);
     assert.equal(rebuilds, 2);
-    // 2.8 of 3.00 spent: not enough left for another 1.50 run.
-    const third = await puller.pull();
-    assert.deepEqual([third.status, third.reason], ['SKIPPED', 'DAILY_BUDGET_REACHED']);
-    assert.equal(runs, 2);
-    assert.equal(await budget.spent(), 2.8);
-    // The schedule: 20:00 UTC is 16:00 Eastern, so a tick fires once for that hour.
+    // A run stopped at the spend cap keeps what it saved but never counts as a complete board.
+    status = 'ABORTED';
+    const aborted = await puller.pull('lergassy');
+    assert.deepEqual([aborted.status, aborted.reason, aborted.truncated], ['SUCCEEDED', 'RUN_ABORTED', true]);
+    // 4.20 of 4.50 spent: not enough left for another 1.50 run.
+    assert.deepEqual([(await puller.pull('lergassy')).reason, (await puller.pull('nope')).reason], ['DAILY_BUDGET_REACHED', 'UNKNOWN_SOURCE']);
+    assert.equal(runs, 3);
+    assert.equal(await budget.spent(), 4.2);
+    // The schedule: 20:00 UTC is 16:00 Eastern, so only the source scheduled then runs, once.
     const scheduled = new ScraperPuller(apify, new ScrapedLineStore(null, () => now),
-      new DailySpendBudget(join(folder, 'spend2.json'), 10, () => now), { maxRows: 100, maxRunUsd: 1.5, hoursEt: [16] }, () => now);
-    assert.equal((await scheduled.tick())?.status, 'SUCCEEDED');
-    assert.equal(await scheduled.tick(), null);
+      new DailySpendBudget(join(folder, 'spend2.json'), 10, () => now),
+      [{ source: lergassy, hoursEt: [16] }, { source: zenPrizePicks, hoursEt: [9] }], { maxRunUsd: 1.5 }, () => now);
+    assert.deepEqual((await scheduled.tick()).map((report) => report.source), ['lergassy']);
+    assert.deepEqual(await scheduled.tick(), []);
+    assert.deepEqual((await scheduled.status()).sources.map((item) => [item.id, item.last?.source ?? null]),
+      [['lergassy', 'lergassy'], ['zen-studio-prizepicks', null]]);
   } finally { await rm(folder, { recursive: true, force: true }); }
+});
+
+// Rows shaped like zen-studio scraper output; synthetic players and numbers.
+const zenRow = (overrides: Record<string, unknown> = {}) => ({ projection_id: '1001', line: 64.5, stat: 'Receiving Yards',
+  stat_short: 'Rec Yards', odds_tier: 'standard', status: 'pre_game', is_live: false, in_game: false, event_type: 'team',
+  allowed_wager_types: 'under_or_over', player_name: 'Test Receiver', player_team: 'JAC', player_team_name: 'Jaguars',
+  player_image: 'https://static.prizepicks.com/images/teams/nfl/x/1.webp', player_combo: false, league: 'NFL',
+  game_external_id: 'NFL_game_1', start_time: '2030-10-04T13:00:00.000-04:00', game_start: '2030-10-04T13:00:00.000-04:00',
+  home_team: 'CIN', home_team_name: 'Bengals', away_team: 'JAC', away_team_name: 'Jaguars', ...overrides });
+const udRow = (overrides: Record<string, unknown> = {}) => ({ projection_id: 'ud-1', line: 48.5, stat: 'rushing_yds',
+  stat_display: 'Rush Yards', status: 'active', is_live: false, player_name: 'Test Back', player_team: 'BAL',
+  player_team_name: 'Baltimore Ravens', player_image: 'https://assets.underdogfantasy.com/player-images/nfl/x.png',
+  league: 'NFL', game_start: '2030-10-04T17:00:00Z', game_status: 'scheduled', home_team: 'BAL', away_team: 'TEN',
+  home_team_name: 'Baltimore Ravens', away_team_name: 'Tennessee Titans', line_type: 'balanced', category: 'player_prop',
+  higher_payout_multiplier: '1.0', lower_payout_multiplier: '0.9', ...overrides });
+
+test('Zen Studio rows read like lergassy rows, with home and away teams and Underdog payouts per side', () => {
+  const zen = zenPrizePicks.read(zenRow(), now);
+  assert.ok('line' in zen);
+  assert.deepEqual([zen.line.appLineId, zen.line.stat, zen.line.opponent, zen.line.home?.abbreviation, zen.line.away?.abbreviation,
+    zen.line.startTime, zen.line.imageUrl], ['1001', 'Rec Yards', 'CIN', 'CIN', 'JAC', '2030-10-04T17:00:00.000Z', null]);
+  const skip = (result: ReturnType<typeof zenPrizePicks.read>) => 'skip' in result ? result.skip : null;
+  assert.equal(skip(zenPrizePicks.read(zenRow({ player_combo: true }), now)), 'COMBO_PLAYER');
+  assert.equal(skip(zenPrizePicks.read(zenRow({ in_game: true }), now)), 'LIVE_OR_STARTED');
+  const ud = zenUnderdog.read(udRow(), now);
+  assert.ok('line' in ud);
+  assert.deepEqual([ud.line.app, ud.line.tier, ud.line.directions, ud.line.multipliers, ud.line.opponent],
+    ['underdog', 'REGULAR', ['MORE', 'LESS'], { MORE: 1, LESS: 0.9 }, 'TEN']);
+  const higherOnly = zenUnderdog.read(udRow({ lower_payout_multiplier: null }), now);
+  assert.ok('line' in higherOnly && higherOnly.line.directions.length === 1 && higherOnly.line.directions[0] === 'MORE');
+  assert.equal(skip(zenUnderdog.read(udRow({ higher_payout_multiplier: null, lower_payout_multiplier: null }), now)), 'NO_SIDES');
+});
+
+test('two sources reporting the same PrizePicks line confirm it, and each field keeps the best value', async () => {
+  const store = new ScrapedLineStore(null, () => now);
+  // lergassy has the headshot but not home/away; Zen Studio has home/away but only a team logo.
+  await store.ingest('lergassy', [line()], { complete: false, apps: ['prizepicks'] });
+  const zen = zenPrizePicks.read(zenRow(), now);
+  assert.ok('line' in zen);
+  await store.ingest('zen-studio-prizepicks', [zen.line], { complete: false, apps: ['prizepicks'] });
+  const [stored] = await store.active();
+  assert.deepEqual([...stored.confirmedBy].sort(), ['lergassy', 'zen-studio-prizepicks']);
+  assert.equal(stored.imageUrl, 'https://static.prizepicks.com/images/players/test.png');
+  assert.deepEqual([stored.home?.abbreviation, stored.away?.abbreviation], ['CIN', 'JAC']);
+  const [board] = await new ScrapedPrizePicksProvider(store).fetchPrizePicksLines();
+  assert.deepEqual([board.awayTeam, board.homeTeam, board.eventName],
+    ['Jacksonville Jaguars', 'Cincinnati Bengals', 'Jacksonville Jaguars @ Cincinnati Bengals']);
 });
 
 test('the Apify client starts a run with spend and row caps, waits for it, and reads every page', async () => {
@@ -145,7 +201,12 @@ test('the Apify client starts a run with spend and row caps, waits for it, and r
   const client = new ApifyClient('token', fetchFn, async () => undefined);
   const run = await client.runActor('lergassy/dfs-props-scraper', { mode: 'props' }, { maxChargeUsd: 2.5, maxItems: 20000 });
   assert.deepEqual(run, { id: 'r1', status: 'SUCCEEDED', datasetId: 'd1', usageUsd: 1.25 });
-  assert.match(calls[0], /^POST https:\/\/api\.apify\.com\/v2\/acts\/lergassy~dfs-props-scraper\/runs\?.*maxItems=20000.*maxTotalChargeUsd=2\.5/);
+  assert.match(calls[0], /^POST https:\/\/api\.apify\.com\/v2\/acts\/lergassy~dfs-props-scraper\/runs\?/);
+  assert.match(calls[0], /maxItems=20000/);
+  assert.match(calls[0], /maxTotalChargeUsd=2\.5/);
+  // Without a row cap the actor returns everything.
+  await client.runActor('zen-studio/prizepicks-player-props', {}, { maxChargeUsd: 5 });
+  assert.doesNotMatch(calls.at(-2) ?? '', /maxItems/);
   assert.deepEqual(await client.datasetItems('d1', 2), [1, 2, 3]);
   await assert.rejects(() => new ApifyClient(null, async () => new Response('', { status: 401 })).datasetItems('d1'), /APIFY_HTTP_401/);
 });

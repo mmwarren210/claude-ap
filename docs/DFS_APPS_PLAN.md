@@ -118,3 +118,16 @@ Code in `apps/api/src/scrapers/`. Turn on with `ODDS_PROVIDER=scrapers` and `API
   skipped); 3,262 of 4,782 NFL lines and 672 of 1,616 MLB lines are on modeled markets.
 - **Not yet:** Pick6 connector (its two test runs returned 0 props from open slates, which suggests the scraper is
   broken; retest Sunday); major-change re-pulls (the scraper has no team filter, so a re-pull is a full run).
+
+## Sources after the live tests (2026-10-03)
+
+| Source | Role | Live test | Schedule (ET) |
+|---|---|---|---|
+| `zen-studio/prizepicks-player-props` | Main PrizePicks source; no row cap; home/away teams; teams filter | 9,072 NFL lines for $0.20 ($0.05/1,000) | 9, 12, 15, 18 |
+| `lergassy/dfs-props-scraper` | Confirms PrizePicks lines; actor caps at 20,000 rows / 20 leagues | 20,000 rows (cut off) for $1.80 | 12 |
+| `zen-studio/underdog-player-props` | Underdog pregame board, stored for later | 4,935 NFL lines with payouts per side | 10, 17 |
+
+Merged on real data: 8,885 PrizePicks lines confirmed by both PrizePicks sources, 6 with differing numbers
+(newest wins, flagged), 19,036 PrizePicks lines on the board. Owner decision: no row caps; $12/day overall.
+Not chosen: `crawloop/prizepicks-player-props-scraper` (1 row), `automation-lab/underdog-fantasy-player-props-scraper`
+(0 rows). Odds API to run alongside as a third check is still to be wired.

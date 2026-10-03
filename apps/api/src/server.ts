@@ -333,10 +333,11 @@ export function buildServer(options: ServerOptions = {}) {
     // Run the line scraper now (spends Apify credit, within the daily cap). The board rebuilds after.
     ownerBoard.post('/scrapers/pull',async(request,reply)=>{
       if(!options.scraperPuller)return reply.code(503).send({code:'SCRAPERS_UNCONFIGURED'});
-      const input=z.object({acknowledgeScraperCost:z.literal(true)}).strict().safeParse(request.body);
+      const input=z.object({acknowledgeScraperCost:z.literal(true),source:z.string().min(1).optional()})
+        .strict().safeParse(request.body);
       if(!input.success)return reply.code(428).send({code:'SCRAPER_COST_CONFIRMATION_REQUIRED',
         message:'A scraper pull spends Apify credit.'});
-      void options.scraperPuller.pull();
+      void (input.data.source?options.scraperPuller.pull(input.data.source):options.scraperPuller.pullAll());
       return reply.code(202).send({started:true});
     });
     ownerBoard.post('/bootstrap',async(request,reply)=>{

@@ -23,4 +23,24 @@ export interface ScrapedLine {
   readonly directions: readonly PlayableDirection[];
   readonly startTime: string;
   readonly imageUrl: string | null;
+  /** The game's home and away teams (abbreviation and name), when the source says which is which. */
+  readonly home?: TeamSide | null;
+  readonly away?: TeamSide | null;
+  /** Payout multipliers per side, when the source gives them. */
+  readonly multipliers?: Partial<Record<PlayableDirection, number>> | null;
+}
+
+export interface TeamSide { readonly abbreviation: string; readonly name: string | null }
+
+export type ReadResult<Skip extends string = string> = { line: ScrapedLine } | { skip: Skip };
+
+/** One Apify scraper: which actor, what to ask it for, and how to read a row it returns. */
+export interface ScraperSource {
+  readonly id: string;
+  readonly actor: string;
+  readonly apps: readonly DfsApp[];
+  input(): unknown;
+  /** Rows at or above this mean the run was cut short (the actor's own hard cap), or null if uncapped. */
+  readonly rowCap: number | null;
+  read(row: unknown, now: Date): ReadResult;
 }

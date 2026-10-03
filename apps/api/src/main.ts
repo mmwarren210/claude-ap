@@ -15,7 +15,9 @@ import { BoardCache } from './board-cache.js';
 import { ApifyClient } from './scrapers/apify-client.js';
 import { ScrapedLineStore } from './scrapers/line-store.js';
 import { ScrapedPrizePicksProvider } from './scrapers/scraped-prizepicks-provider.js';
+import { lergassy } from './scrapers/lergassy.js';
 import { ScraperPuller } from './scrapers/scraper-puller.js';
+import { zenPrizePicks, zenUnderdog } from './scrapers/zen-studio.js';
 import { DailySpendBudget } from './scrapers/spend-budget.js';
 import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
@@ -54,13 +56,16 @@ const nonNegativeNumber=(name:string,fallback:number)=>{
 };
 const scrapedLines=providerName==='scrapers'
   ? new ScrapedLineStore(process.env.CROWNIQ_SCRAPED_LINES_FILE ?? 'tmp/scraped-lines.json'):null;
+// Each source on its own Eastern-time schedule ("" turns one off), under one shared daily cap.
+const hoursEt=(name:string,fallback:string)=>(process.env[name] ?? fallback).split(',').map((hour)=>hour.trim())
+  .filter(Boolean).map(Number).filter((hour)=>Number.isInteger(hour)&&hour>=0&&hour<=23);
 const scraperPuller=scrapedLines?new ScraperPuller(new ApifyClient(process.env.APIFY_TOKEN?.trim()||null),scrapedLines,
   new DailySpendBudget(process.env.CROWNIQ_SCRAPER_SPEND_FILE ?? 'tmp/scraper-spend.json',
-    nonNegativeNumber('CROWNIQ_SCRAPER_DAILY_USD',6)),
-  {maxRows:Math.floor(nonNegativeNumber('CROWNIQ_SCRAPER_MAX_ROWS',20000)),
-    maxRunUsd:nonNegativeNumber('CROWNIQ_SCRAPER_MAX_RUN_USD',2.5),
-    hoursEt:(process.env.CROWNIQ_SCRAPER_PULL_HOURS_ET ?? '9,12,15,18').split(',').map((hour)=>hour.trim())
-      .filter(Boolean).map(Number).filter((hour)=>Number.isInteger(hour)&&hour>=0&&hour<=23)}):null;
+    nonNegativeNumber('CROWNIQ_SCRAPER_DAILY_USD',12)),
+  [{source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9,12,15,18')},
+    {source:lergassy,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_LERGASSY','12')},
+    {source:zenUnderdog,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_UNDERDOG','10,17')}],
+  {maxRunUsd:nonNegativeNumber('CROWNIQ_SCRAPER_MAX_RUN_USD',5)}):null;
 const provider: OddsProvider | null = scrapedLines ? new ScrapedPrizePicksProvider(scrapedLines)
   : providerName !== 'the_odds_api' || !apiKey ? null
   : scope === 'nfl_passing_yards'

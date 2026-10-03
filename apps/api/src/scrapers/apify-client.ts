@@ -12,8 +12,8 @@ export interface ApifyRun {
 export interface ApifyRunOptions {
   /** Hard cap Apify enforces on the run's charge. */
   readonly maxChargeUsd: number;
-  /** Hard cap on result rows (pay-per-result actors bill per row). */
-  readonly maxItems: number;
+  /** Optional cap on result rows. Left out, the actor returns everything it finds. */
+  readonly maxItems?: number;
   readonly timeoutSecs?: number;
 }
 
@@ -45,8 +45,8 @@ export class ApifyClient {
 
   /** Start `actorId` (owner/name) with `input` and wait until it finishes. */
   async runActor(actorId: string, input: unknown, options: ApifyRunOptions): Promise<ApifyRun> {
-    const params = new URLSearchParams({ waitForFinish: '60', maxItems: String(options.maxItems),
-      maxTotalChargeUsd: String(options.maxChargeUsd), timeout: String(options.timeoutSecs ?? 900) });
+    const params = new URLSearchParams({ waitForFinish: '60', maxTotalChargeUsd: String(options.maxChargeUsd),
+      timeout: String(options.timeoutSecs ?? 900), ...(options.maxItems ? { maxItems: String(options.maxItems) } : {}) });
     let run = ApifyClient.run(await this.json(`/acts/${actorId.replace('/', '~')}/runs?${params}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) }));
     for (let poll = 0; !TERMINAL.has(run.status) && poll < 30; poll++) {

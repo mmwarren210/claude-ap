@@ -52,7 +52,10 @@ export function marketKey(sport: Sport, stat: string): string {
 /** Readable team names for a slate: NFL full names, otherwise the names the rows themselves give. */
 function teamNames(lines: readonly StoredLine[]): (league: string, abbreviation: string | null) => string | null {
   const names = new Map<string, string>();
-  for (const line of lines) if (line.team && line.teamName) names.set(`${line.league}|${line.team}`, line.teamName);
+  for (const line of lines) {
+    if (line.team && line.teamName) names.set(`${line.league}|${line.team}`, line.teamName);
+    for (const side of [line.home, line.away]) if (side?.name) names.set(`${line.league}|${side.abbreviation}`, side.name);
+  }
   return (league, abbreviation) => {
     if (!abbreviation) return null;
     if (league === 'NFL') return NFL_TEAMS[nflAliases[abbreviation] ?? abbreviation] ?? abbreviation;
@@ -76,13 +79,15 @@ export class ScrapedPrizePicksProvider implements OddsProvider<PropLine> {
     return lines.map((line) => {
       const league = leagues[line.league] ?? { sport: 'OTHER' as Sport, key: line.league.toLowerCase() };
       const team = name(line.league, line.team), opponent = name(line.league, line.opponent);
-      // The feed does not say which side is home, so the two sides are listed in a fixed order.
-      const sides = [team, opponent].filter((side): side is string => !!side).sort();
+      // Real home and away when a source said which is which; otherwise the two sides in a fixed order.
+      const home = line.home ? name(line.league, line.home.abbreviation) : null;
+      const away = line.away ? name(line.league, line.away.abbreviation) : null;
+      const sides = home && away ? [away, home] : [team, opponent].filter((side): side is string => !!side).sort();
       return propLineSchema.parse({
         id: 'pp:' + line.appLineId, provider: 'prizepicks', sourceLineId: line.appLineId,
         sport: league.sport, league: line.league, sourceSportKey: league.key,
         eventId: 'pp-game:' + line.gameId,
-        eventName: sides.length === 2 ? `${sides[0]} vs ${sides[1]}` : `${line.league} ${line.gameId}`,
+        eventName: sides.length !== 2 ? `${line.league} ${line.gameId}` : home && away ? `${away} @ ${home}` : `${sides[0]} vs ${sides[1]}`,
         eventStartTime: line.startTime,
         playerId: league.key + ':' + hash(line.player.trim().toLowerCase()), playerName: line.player,
         team, opponent, homeTeam: sides.length === 2 ? sides[1] : null, awayTeam: sides.length === 2 ? sides[0] : null,

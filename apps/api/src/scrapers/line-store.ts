@@ -23,6 +23,13 @@ export interface IngestReport {
 }
 
 const key = (line: Pick<ScrapedLine, 'app' | 'appLineId'>) => `${line.app}:${line.appLineId}`;
+/** Best information wins: each field keeps the newest value any source supplied, never a blank over a value. */
+function fill<T extends object>(existing: T, update: Partial<T>): T {
+  const merged = { ...existing };
+  for (const [field, value] of Object.entries(update))
+    if (value !== null && value !== undefined) (merged as Record<string, unknown>)[field] = value;
+  return merged;
+}
 /** The same line across different sources: app, player, stat, number, tier. */
 const sameLine = (line: ScrapedLine) => JSON.stringify([line.app, line.league, line.player.toLowerCase(),
   line.stat.toLowerCase(), line.line, line.tier]);
@@ -79,7 +86,7 @@ export class ScrapedLineStore {
       }
       const numberMoved = existing.line !== line.line;
       if (numberMoved) moved++; else unchanged++;
-      this.lines.set(id, { ...existing, ...line, lastSeenAt: at, removedAt: null,
+      this.lines.set(id, { ...fill(existing, line), lastSeenAt: at, removedAt: null,
         previousLine: numberMoved ? existing.line : existing.previousLine,
         // A moved number needs confirming again; otherwise this source adds to the confirmations.
         confirmedBy: numberMoved ? [...new Set([source, ...others])] : [...new Set([...existing.confirmedBy, source, ...others])] });
