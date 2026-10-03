@@ -73,3 +73,13 @@ attaches the player's team and headshot. It is display data only: the engine nev
 - Its PrizePicks league index returned HTTP 403 and it fell back to a built-in league list, so it may miss new
   leagues: keep a second PrizePicks source as backup.
 - 276 Underdog props looks partial; confirm against another Underdog source before relying on it.
+
+## Chosen scrapers (owner, 2026-10-03)
+
+| Apify actor | Apps | Status |
+|---|---|---|
+| `lergassy/dfs-props-scraper` | PrizePicks, Underdog | Full run OK: 13,859 PrizePicks + 276 Underdog props. Approved ~$2.82/day. |
+| `crawloop/draftkings-pick6-scraper` | DraftKings Pick6 | Runs OK but Pick6 had no open props at test time (one MLB slate, 0 props). Retest when NFL slate is up. |
+
+Needed before building each connector: the actor's input JSON (Input tab, JSON view) and a sample of its output rows.
+`crawloop/prizepicks-player-props-scraper` was tried and returned 1 row for $0.105; not chosen.
