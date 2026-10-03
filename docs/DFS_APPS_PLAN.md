@@ -64,3 +64,12 @@ attaches the player's team and headshot. It is display data only: the engine nev
 - **Lines on started games are frozen and leave the board.**
 - The app tells people lines can move near game time and to confirm the line in the app within an hour of the start;
   the user makes the final call on the presented line.
+
+## First scraper measured (2026-10-03)
+
+- `lergassy/dfs-props-scraper` (PrizePicks + Underdog): one full run returned 13,859 PrizePicks props across
+  10 leagues and 276 Underdog props in about 2 minutes. At $0.10 per 1,000 props that is about $1.41 per run,
+  about $2.82 a day at two pulls. **The owner approved that cost for this scraper** (above the $2 guideline).
+- Its PrizePicks league index returned HTTP 403 and it fell back to a built-in league list, so it may miss new
+  leagues: keep a second PrizePicks source as backup.
+- 276 Underdog props looks partial; confirm against another Underdog source before relying on it.
