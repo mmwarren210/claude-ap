@@ -72,8 +72,8 @@ export default function BoardView() {
           : needsBootstrap ? 'Pull first board' : 'Refresh'}</Text>
       </Pressable>
     </View>
-    {data && freshness !== 'DEMO' && <Text style={styles.note}>Saved snapshot. Confirm the exact line and direction in
-      PrizePicks before playing.</Text>}
+    {data && freshness !== 'DEMO' && <Text style={styles.note}>Saved snapshot. Lines can move near game time; confirm the exact line and direction in
+      PrizePicks within an hour of the start.</Text>}
     {!!message && !!data && <Text style={styles.warning}>{message} Showing the last saved board.</Text>}
   </View>;
 

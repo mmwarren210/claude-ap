@@ -52,3 +52,15 @@ attaches the player's team and headshot. It is display data only: the engine nev
 - Each scraper gets its own adapter, its own daily spend cap and a run schedule sized to that cap.
 - Scraping can break without notice and may conflict with an app's terms; each adapter must fail closed
   (no lines rather than stale or wrong ones).
+
+## Refresh rules (owner decision, 2026-10-03)
+
+- **Two scheduled pulls a day** per scraper. Each pull skips leagues and teams whose games have started.
+- **A confirmed line is not pulled again.** It is re-pulled only when a major change hits that game: an injury or
+  status change for a player in it, or a weather change, as reported by the free context refresh. That re-pull is
+  limited to the affected teams.
+- **One record per line** (app, player, stat, number, side); a second source confirms it rather than copying it, and a
+  moved number replaces the old one.
+- **Lines on started games are frozen and leave the board.**
+- The app tells people lines can move near game time and to confirm the line in the app within an hour of the start;
+  the user makes the final call on the presented line.

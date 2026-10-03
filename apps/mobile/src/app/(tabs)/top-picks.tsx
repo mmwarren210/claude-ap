@@ -118,8 +118,8 @@ export default function TopPicksScreen() {
         <FilterChip icon="chart-line" label={filter.lineType === 'ALL' ? 'Line Style' : optionLabel('lineType', filter.lineType)}
           active={filter.lineType !== 'ALL'} onPress={() => setSheet('lineType')} />
       </ChipRow>
-      {freshness !== 'DEMO' && board && <Text style={styles.note}>Saved snapshot. Confirm the exact line and direction in
-        PrizePicks before playing.</Text>}
+      {freshness !== 'DEMO' && board && <Text style={styles.note}>Saved snapshot. Lines can move near game time; confirm the exact line and direction in
+        PrizePicks within an hour of the start.</Text>}
       {!!notice && <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text>}
       {!data ? <Notice title={status === 'loading' ? 'Loading top picks' : 'Top picks pending'}
         detail={message || 'Checking the saved full-board analysis.'} />

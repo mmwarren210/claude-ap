@@ -187,7 +187,7 @@ export default function PlayerResearch() {
       </View>
 
       {started ? <Notice title="Event started" detail="This line can no longer be added or saved." />
-        : freshness !== 'DEMO' && <Text style={styles.note}>Saved snapshot. Confirm the exact line and direction in PrizePicks before playing.</Text>}
+        : freshness !== 'DEMO' && <Text style={styles.note}>Saved snapshot. Lines can move near game time; confirm the exact line and direction in PrizePicks within an hour of the start.</Text>}
 
       <Segmented label="Hit-rate window" options={windows} value={window} onChange={setWindow} />
       <View style={styles.statRow}>
