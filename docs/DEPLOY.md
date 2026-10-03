@@ -19,7 +19,8 @@ for a long-running server, so it is not used here (it could hold the data later 
    - `OPENAI_API_KEY` for web research, and later `ANTHROPIC_API_KEY`
    - Optional schedule and spend settings from `.env.example` (`CROWNIQ_SCRAPER_*`, `CROWNIQ_CONTEXT_*`)
 4. **Settings → Networking → Generate domain.** That gives a URL like `https://crowniq-api.up.railway.app`.
-5. Check `https://<your-domain>/health` shows `{"status":"ok", ...}`.
+5. Check `https://<your-domain>/health` shows `{"status":"ok", ...}`. The live server is
+   `https://claude-ap-production.up.railway.app`.
 6. Point the app at it: set `EXPO_PUBLIC_API_URL=https://<your-domain>` in `apps/mobile/.env` (and in the app's build
    settings when it is published), and add the app's web address to `CROWNIQ_ALLOWED_WEB_ORIGINS` if you use the web app.
 
