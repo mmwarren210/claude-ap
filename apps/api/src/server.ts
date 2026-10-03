@@ -217,9 +217,12 @@ export function buildServer(options: ServerOptions = {}) {
   app.post('/v1/auth/login',async(request,reply)=>{
     if(!options.product)return reply.code(503).send({code:'PROFILES_UNCONFIGURED'});
     if(limited(`login:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
-    const input=z.object({email,password:z.string().min(1).max(128)}).strict().safeParse(request.body);
+    // `login` is the email or the username; older apps send `email`.
+    const entered=z.string().trim().min(1).max(254);
+    const input=z.object({login:entered.optional(),email:entered.optional(),password:z.string().min(1).max(128)})
+      .strict().refine((value)=>!!(value.login??value.email)).safeParse(request.body);
     if(!input.success)return reply.code(400).send({code:'INVALID_LOGIN'});
-    try{return await options.product.login(input.data.email,input.data.password);}
+    try{return await options.product.login((input.data.login??input.data.email)!,input.data.password);}
     catch{return reply.code(401).send({code:'INVALID_CREDENTIALS'});}
   });
   app.get('/v1/auth/me',async(request,reply)=>{

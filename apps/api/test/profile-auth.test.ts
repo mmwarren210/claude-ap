@@ -34,6 +34,10 @@ test('profile sessions, private selections and private Crowns survive restart wi
     await assert.rejects(()=>ledger.register('other@example.org','another-long-password','alpha_1'),
       /USERNAME_TAKEN/);
     await assert.rejects(()=>ledger.login('alice@example.org','incorrect-password'),/INVALID_CREDENTIALS/);
+    assert.equal((await ledger.login('alpha_1','long-private-passphrase')).profile.publicId,alice.profile.publicId);
+    assert.equal((await ledger.login(' Alice@Example.org ','long-private-passphrase')).profile.publicId,alice.profile.publicId);
+    await assert.rejects(()=>ledger.login('Alpha_1','another-private-password'),/INVALID_CREDENTIALS/);
+    await assert.rejects(()=>ledger.login('nobody_here','long-private-passphrase'),/INVALID_CREDENTIALS/);
     const data=await readFile(path,'utf8');
     assert.equal(data.includes('long-private-passphrase'),false);
     assert.equal(data.includes(alice.token),false);
@@ -128,6 +132,10 @@ test('protected routes require a real profile; public registration and logout ne
       payload:{email:'someone@example.org',password:'private-passphrase-1'}});
     assert.equal(login.statusCode,200);
     assert.notEqual(login.json().token,session.token);
+    const byName=await app.inject({method:'POST',url:'/v1/auth/login',payload:{login:'PRIVATE_1',password:'private-passphrase-1'}});
+    assert.equal(byName.statusCode,200,byName.body);
+    assert.equal(byName.json().profile.publicId,session.profile.publicId);
+    assert.equal((await app.inject({method:'POST',url:'/v1/auth/login',payload:{password:'private-passphrase-1'}})).statusCode,400);
   }finally{await app.close();await rm(folder,{recursive:true,force:true});}
 });
 

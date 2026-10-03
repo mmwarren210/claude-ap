@@ -35,9 +35,10 @@ export default function SignIn() {
             <TextInput accessibilityLabel="Display username" autoCapitalize="none" autoCorrect={false}
               autoComplete="username-new" value={username} onChangeText={setUsername}
               placeholder="Choose a username" placeholderTextColor={colors.textFaint} style={styles.input} /></View>}
-          <View style={styles.field}><Text style={styles.label}>Email</Text>
-            <TextInput accessibilityLabel="Email" autoCapitalize="none" autoCorrect={false} autoComplete="email"
-              keyboardType="email-address" value={email} onChangeText={setEmail} placeholder="you@example.com"
+          <View style={styles.field}><Text style={styles.label}>{creating ? 'Email' : 'Email or username'}</Text>
+            <TextInput accessibilityLabel={creating ? 'Email' : 'Email or username'} autoCapitalize="none" autoCorrect={false}
+              autoComplete={creating ? 'email' : 'username'} keyboardType={creating ? 'email-address' : 'default'}
+              value={email} onChangeText={setEmail} placeholder={creating ? 'you@example.com' : 'Email or username'}
               placeholderTextColor={colors.textFaint} style={styles.input} /></View>
           <View style={styles.field}><Text style={styles.label}>Password</Text>
             <TextInput accessibilityLabel="Password" secureTextEntry

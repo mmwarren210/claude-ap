@@ -263,9 +263,13 @@ export class ProductLedger {
       isSuspended:false,createdAt:account.createdAt});
     const result=this.session(data,account);await this.write(data);return result;
   });}
-  async login(email:string,password:string){return this.exclusive(async()=>{
-    const data=await this.read(),account=data.accounts.find((item)=>item.email===normalizedEmail(email));
-    // Keep the work comparable for unknown emails and wrong passwords.
+  /** Sign in with the account's email or its current username (either, case-insensitive). */
+  async login(emailOrUsername:string,password:string){return this.exclusive(async()=>{
+    const data=await this.read(),entered=emailOrUsername.trim();
+    const byName=()=>{const profile=data.profiles.find((item)=>normalizedName(item.displayName)===normalizedName(entered));
+      return profile?data.accounts.find((item)=>item.id===profile.actorKey):undefined;};
+    const account=entered.includes('@')?data.accounts.find((item)=>item.email===normalizedEmail(entered)):byName();
+    // Keep the work comparable for unknown accounts and wrong passwords.
     const actual=await passwordKey(password,account?.passwordSalt??'0'.repeat(32));
     const stored=Buffer.from(account?.passwordHash??'0'.repeat(128),'hex');
     if(!account?.passwordHash || !timingSafeEqual(actual,stored) || account.status==='SUSPENDED')
