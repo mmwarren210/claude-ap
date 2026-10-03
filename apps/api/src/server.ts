@@ -313,6 +313,12 @@ export function buildServer(options: ServerOptions = {}) {
       const input=z.object({acknowledgeProviderCost:z.literal(true)}).strict().safeParse(request.body);
       if(!input.success)return reply.code(428).send({code:'PROVIDER_CREDITS_CONFIRMATION_REQUIRED',
         message:'A PrizePicks provider refresh may consume credits.'});
+      // With scrapers feeding the board, the owner's paid pull runs The Odds API as the third source;
+      // the board rebuilds once its lines are stored.
+      if(options.scraperPuller?.hasSource('the-odds-api')){
+        void options.scraperPuller.pull('the-odds-api');
+        return reply.code(202).send({started:true,job:currentJob(),source:'the-odds-api'});
+      }
       const started=startOwnerBoardRefresh();
       return reply.code(202).send({started,job:currentJob()});
     });

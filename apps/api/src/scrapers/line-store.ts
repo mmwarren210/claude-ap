@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { sameLineKey } from './markets.js';
 import type { DfsApp, ScrapedLine } from './scraped-line.js';
 
 export interface StoredLine extends ScrapedLine {
@@ -30,9 +31,7 @@ function fill<T extends object>(existing: T, update: Partial<T>): T {
     if (value !== null && value !== undefined) (merged as Record<string, unknown>)[field] = value;
   return merged;
 }
-/** The same line across different sources: app, player, stat, number, tier. */
-const sameLine = (line: ScrapedLine) => JSON.stringify([line.app, line.league, line.player.toLowerCase(),
-  line.stat.toLowerCase(), line.line, line.tier]);
+const sameLine = sameLineKey;
 
 /**
  * Durable store of scraped lines, one record per app line. It applies the board rules:

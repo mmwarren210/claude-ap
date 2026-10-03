@@ -223,3 +223,53 @@ test('a board built from scraped lines is dated by the scrape and carries their 
   const playerId = snapshot.board.lines[0].playerId;
   assert.equal(snapshot.playerMedia?.[playerId]?.photoUrl, 'https://static.prizepicks.com/images/players/test.png');
 });
+
+test('Odds API lines join their Over and Under, collapse onto the scraper line for the same pick, and share its game', async () => {
+  const { oddsApiSource } = await import('../src/scrapers/odds-api-source.js');
+  const { propLineSchema } = await import('@crowniq/contracts');
+  const odds = (id: string, direction: 'MORE' | 'LESS', overrides: Record<string, unknown> = {}) => propLineSchema.parse({
+    id, provider: 'prizepicks', sourceLineId: 'sid-' + id, sport: 'NFL', league: 'NFL', eventId: 'odds-event-1',
+    eventName: 'Jacksonville Jaguars @ Cincinnati Bengals', eventStartTime: '2030-10-04T17:02:00.000Z', playerId: 'p',
+    playerName: 'Test Receiver', team: null, opponent: null, homeTeam: 'Cincinnati Bengals', awayTeam: 'Jacksonville Jaguars',
+    market: 'player_reception_yds', threshold: 64.5, availableDirections: [direction], lineType: 'REGULAR',
+    fetchedAt: now.toISOString(), payoutMultiplier: 1, ...overrides });
+  const provider = { id: 'fake-odds', fetchPrizePicksLines: async () => [odds('o', 'MORE'), odds('u', 'LESS'),
+    odds('x', 'MORE', { playerName: 'Odds Only', playerId: 'q', threshold: 30.5 })],
+    normalize: (raw: unknown) => raw as never };
+  const source = oddsApiSource(provider, () => now);
+  const { rows, complete } = await source.run!();
+  assert.equal(complete, true);
+  const read = rows.map((row) => source.read(row, now)).flatMap((result) => 'line' in result ? [result.line] : []);
+  assert.deepEqual(read.map((item) => [item.player, item.directions, item.league, item.marketKey]),
+    [['Test Receiver', ['MORE', 'LESS'], 'NFL', 'player_reception_yds'], ['Odds Only', ['MORE'], 'NFL', 'player_reception_yds']]);
+  const store = new ScrapedLineStore(null, () => now);
+  // The scraper says Rec Yards 64.5 under PrizePicks' own id; the Odds API says the same line under its sid.
+  await store.ingest('zen-studio-prizepicks', [(() => { const r = zenPrizePicks.read(zenRow(), now); assert.ok('line' in r); return r.line; })()],
+    { complete: false, apps: ['prizepicks'] });
+  await store.ingest('the-odds-api', read, { complete: false, apps: ['prizepicks'] });
+  const shared = (await store.active()).find((item) => item.appLineId.startsWith('sid-o'))!;
+  assert.deepEqual([...shared.confirmedBy].sort(), ['the-odds-api', 'zen-studio-prizepicks']);
+  const board = await new ScrapedPrizePicksProvider(store).fetchPrizePicksLines();
+  assert.equal(board.length, 2, 'the shared pick appears once');
+  const pick = board.find((item) => item.playerName === 'Test Receiver')!;
+  assert.equal(pick.sourceLineId, '1001', 'the app id wins');
+  // The Odds-only line joins the app's game id, so Crown same-game rules see one game.
+  assert.equal(board.find((item) => item.playerName === 'Odds Only')!.eventId, pick.eventId);
+});
+
+test('runs that come back empty are counted so a broken scraper shows up', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'crowniq-blank-'));
+  try {
+    let rows: unknown[] = [];
+    const apify = { runActor: async () => ({ id: 'run', status: 'SUCCEEDED', datasetId: 'ds', usageUsd: 0.05 }),
+      datasetItems: async () => rows } as unknown as ApifyClient;
+    const puller = new ScraperPuller(apify, new ScrapedLineStore(null, () => now), new DailySpendBudget(join(folder, 's.json'), 10, () => now),
+      [{ source: zenPrizePicks, hoursEt: [] }], { maxRunUsd: 1 }, () => now);
+    await puller.pull('zen-studio-prizepicks'); await puller.pull('zen-studio-prizepicks');
+    const blank = (await puller.status()).sources[0];
+    assert.deepEqual([blank.last?.reason, blank.blankRunsInARow], ['NO_ROWS', 2]);
+    rows = [zenRow()];
+    await puller.pull('zen-studio-prizepicks');
+    assert.equal((await puller.status()).sources[0].blankRunsInARow, 0);
+  } finally { await rm(folder, { recursive: true, force: true }); }
+});

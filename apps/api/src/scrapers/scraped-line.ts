@@ -18,6 +18,8 @@ export interface ScrapedLine {
   readonly opponent: string | null;
   /** The app's stat label, e.g. "Rec Yards". */
   readonly stat: string;
+  /** The model market key, when the source already gives one (the Odds API does). */
+  readonly marketKey?: string | null;
   readonly line: number;
   readonly tier: ScrapedTier;
   readonly directions: readonly PlayableDirection[];
@@ -37,7 +39,10 @@ export type ReadResult<Skip extends string = string> = { line: ScrapedLine } | {
 /** One Apify scraper: which actor, what to ask it for, and how to read a row it returns. */
 export interface ScraperSource {
   readonly id: string;
-  readonly actor: string;
+  /** The Apify actor to run; sources without one fetch through `run`. */
+  readonly actor: string | null;
+  /** Fetch without Apify (for example The Odds API). Its cost is in that service's own credits, not Apify USD. */
+  run?(): Promise<{ rows: unknown[]; complete: boolean }>;
   readonly apps: readonly DfsApp[];
   input(): unknown;
   /** Rows at or above this mean the run was cut short (the actor's own hard cap), or null if uncapped. */

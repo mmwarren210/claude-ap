@@ -16,6 +16,7 @@ import { ApifyClient } from './scrapers/apify-client.js';
 import { ScrapedLineStore } from './scrapers/line-store.js';
 import { ScrapedPrizePicksProvider } from './scrapers/scraped-prizepicks-provider.js';
 import { lergassy } from './scrapers/lergassy.js';
+import { oddsApiSource } from './scrapers/odds-api-source.js';
 import { ScraperPuller } from './scrapers/scraper-puller.js';
 import { zenPrizePicks, zenUnderdog } from './scrapers/zen-studio.js';
 import { DailySpendBudget } from './scrapers/spend-budget.js';
@@ -64,7 +65,11 @@ const scraperPuller=scrapedLines?new ScraperPuller(new ApifyClient(process.env.A
     nonNegativeNumber('CROWNIQ_SCRAPER_DAILY_USD',12)),
   [{source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9,12,15,18')},
     {source:lergassy,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_LERGASSY','12')},
-    {source:zenUnderdog,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_UNDERDOG','10,17')}],
+    {source:zenUnderdog,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_UNDERDOG','10,17')},
+    // The Odds API alongside the scrapers as a third check. It spends Odds API credits, so by default
+    // it runs only when the owner pulls (CROWNIQ_SCRAPER_HOURS_ODDS_API adds a schedule).
+    ...(apiKey?[{source:oddsApiSource(new FullPrizePicksProvider({apiKey,maxEvents,maxCreditsPerRefresh})),
+      hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ODDS_API','')}]:[])],
   {maxRunUsd:nonNegativeNumber('CROWNIQ_SCRAPER_MAX_RUN_USD',5)}):null;
 const provider: OddsProvider | null = scrapedLines ? new ScrapedPrizePicksProvider(scrapedLines)
   : providerName !== 'the_odds_api' || !apiKey ? null

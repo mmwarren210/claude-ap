@@ -37,6 +37,8 @@ const easternDay = (date: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 
  */
 export class ScraperPuller {
   private last = new Map<string, PullReport>();
+  /** Back-to-back runs that returned no rows, per source: a sign the scraper broke. */
+  private blankStreaks = new Map<string, number>();
   private running = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
   private slotsDone = new Set<string>();
@@ -49,10 +51,12 @@ export class ScraperPuller {
   /** What to do after a pull changes lines: the server rebuilds the board from the store (free). */
   whenLinesChange(callback: () => unknown): void { this.onLinesChanged = callback; }
 
+  hasSource(sourceId: string): boolean { return this.sources.some(({ source }) => source.id === sourceId); }
+
   async status() {
     return { spentTodayUsd: await this.budget.spent(), dailyLimitUsd: this.budget.limitUsd, maxRunUsd: this.options.maxRunUsd,
       sources: this.sources.map(({ source, hoursEt }) => ({ id: source.id, actor: source.actor, apps: source.apps, hoursEt,
-        last: this.last.get(source.id) ?? null })) };
+        last: this.last.get(source.id) ?? null, blankRunsInARow: this.blankStreaks.get(source.id) ?? 0 })) };
   }
 
   /** Pull one source now (or every source when none is named). */
@@ -69,26 +73,39 @@ export class ScraperPuller {
       const value: PullReport = { at, source: sourceId, status: 'SKIPPED', reason: null, rows: 0, truncated: false,
         costUsd: 0, skipped: {}, ingest: null, ...fields };
       this.last.set(sourceId, value);
+      if (value.reason === 'NO_ROWS') this.blankStreaks.set(sourceId, (this.blankStreaks.get(sourceId) ?? 0) + 1);
+      else if (value.status === 'SUCCEEDED') this.blankStreaks.set(sourceId, 0);
       return value;
     };
     if (!scheduled) return report({ reason: 'UNKNOWN_SOURCE' });
     const { source } = scheduled;
     if (this.running.has(sourceId)) return report({ reason: 'PULL_RUNNING' });
-    if (await this.budget.remaining() < this.options.maxRunUsd) return report({ reason: 'DAILY_BUDGET_REACHED' });
+    // Apify runs spend from the shared daily USD cap; other sources spend their own credits (with their own guards).
+    if (source.actor && await this.budget.remaining() < this.options.maxRunUsd) return report({ reason: 'DAILY_BUDGET_REACHED' });
     this.running.add(sourceId);
     try {
-      let run;
-      try {
-        run = await this.apify.runActor(source.actor, source.input(), { maxChargeUsd: this.options.maxRunUsd });
-      } catch (error) {
-        return report({ status: 'FAILED', reason: error instanceof Error ? error.message : 'APIFY_RUN_FAILED' });
+      let rows: unknown[], costUsd = 0, capped = false;
+      if (source.actor) {
+        let run;
+        try {
+          run = await this.apify.runActor(source.actor, source.input(), { maxChargeUsd: this.options.maxRunUsd });
+        } catch (error) {
+          return report({ status: 'FAILED', reason: error instanceof Error ? error.message : 'APIFY_RUN_FAILED' });
+        }
+        await this.budget.record(run.usageUsd);
+        costUsd = run.usageUsd;
+        // A run stopped at our spend cap still saved what it got; use it, but never as a complete board.
+        capped = run.status === 'ABORTED' || run.status === 'TIMED-OUT';
+        if (run.status !== 'SUCCEEDED' && !capped)
+          return report({ status: 'FAILED', reason: 'RUN_' + run.status, costUsd });
+        rows = await this.apify.datasetItems(run.datasetId);
+      } else if (source.run) {
+        try { const fetched = await source.run(); rows = fetched.rows; capped = !fetched.complete; }
+        catch (error) { return report({ status: 'FAILED', reason: error instanceof Error ? error.message : 'SOURCE_FAILED' }); }
+      } else {
+        return report({ status: 'FAILED', reason: 'SOURCE_HAS_NO_FETCH' });
       }
-      await this.budget.record(run.usageUsd);
-      // A run stopped at our spend cap still saved what it got; use it, but never as a complete board.
-      const capped = run.status === 'ABORTED' || run.status === 'TIMED-OUT';
-      if (run.status !== 'SUCCEEDED' && !capped)
-        return report({ status: 'FAILED', reason: 'RUN_' + run.status, costUsd: run.usageUsd });
-      const rows = await this.apify.datasetItems(run.datasetId);
+      const run = { usageUsd: costUsd, status: capped ? 'ABORTED' : 'SUCCEEDED' };
       if (!rows.length) return report({ status: 'FAILED', reason: 'NO_ROWS', costUsd: run.usageUsd });
       const now = this.clock(), skipped: Record<string, number> = {};
       const lines = rows.flatMap((row) => {

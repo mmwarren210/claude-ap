@@ -135,3 +135,17 @@ Not chosen: `crawloop/prizepicks-player-props-scraper` (1 row), `automation-lab/
 Full-board live run (2026-10-03): `zen-studio/prizepicks-player-props` with All leagues returned **28,411 lines
 for $1.47**. Expected daily spend at the default schedule: Zen PrizePicks 4 × ~$1.47 + lergassy 1 × ~$1.80 +
 Zen Underdog 2 × ~$1 ≈ **$9.70/day**, under the $12 cap.
+
+## Odds API alongside (2026-10-03)
+
+The Odds API is the third PrizePicks source (`apps/api/src/scrapers/odds-api-source.ts`). Its Over and Under outcomes
+are joined into one line; lines it shares with the scrapers are matched by player, market, number and tier (its ids
+differ from PrizePicks'), confirm each other, and appear once on the board under PrizePicks' id and game. It runs on
+the owner's paid pull only. Odds-only lines in leagues where the two sources name teams differently (outside the NFL)
+may keep their own game id.
+
+## Watch list
+
+- **Pick6 (`crawloop/draftkings-pick6-scraper`):** returned 0 props on both test runs (2026-10-03: an MLB slate, then
+  a CFB slate). The owner has an Apify auto-refresh on it. **If it comes back blank again, flag it** and replace it.
+  Any source wired into the puller also reports `blankRunsInARow` in owner diagnostics.
