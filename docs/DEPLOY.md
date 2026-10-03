@@ -7,7 +7,8 @@ for a long-running server, so it is not used here (it could hold the data later 
 ## Railway (recommended: simplest)
 
 1. Sign in at railway.com with GitHub, then **New Project → Deploy from GitHub repo → `mmwarren210/claude-ap`**.
-   Pick the branch to run (`claude/crowniq-redesign` until it is merged). Railway finds the `Dockerfile`.
+   Pick the branch to run (`claude/crowniq-redesign` until it is merged); `main` does not have the server setup yet.
+   `railway.json` tells Railway to build with the `Dockerfile` and check `/health`.
 2. **Add a volume** to the service and mount it at **`/data`**. Everything the server saves goes there
    (board, lines, picks, accounts, spend counters), so it survives restarts and redeploys.
 3. **Variables** (service → Variables). Paste values in Railway, never in chat or the repo:
