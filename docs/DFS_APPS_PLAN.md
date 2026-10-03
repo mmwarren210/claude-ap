@@ -131,3 +131,7 @@ Merged on real data: 8,885 PrizePicks lines confirmed by both PrizePicks sources
 (newest wins, flagged), 19,036 PrizePicks lines on the board. Owner decision: no row caps; $12/day overall.
 Not chosen: `crawloop/prizepicks-player-props-scraper` (1 row), `automation-lab/underdog-fantasy-player-props-scraper`
 (0 rows). Odds API to run alongside as a third check is still to be wired.
+
+Full-board live run (2026-10-03): `zen-studio/prizepicks-player-props` with All leagues returned **28,411 lines
+for $1.47**. Expected daily spend at the default schedule: Zen PrizePicks 4 × ~$1.47 + lergassy 1 × ~$1.80 +
+Zen Underdog 2 × ~$1 ≈ **$9.70/day**, under the $12 cap.
