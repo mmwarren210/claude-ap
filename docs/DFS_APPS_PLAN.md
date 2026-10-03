@@ -83,3 +83,17 @@ attaches the player's team and headshot. It is display data only: the engine nev
 
 Needed before building each connector: the actor's input JSON (Input tab, JSON view) and a sample of its output rows.
 `crawloop/prizepicks-player-props-scraper` was tried and returned 1 row for $0.105; not chosen.
+
+## Pull schedule with two scrapers (owner, 2026-10-03)
+
+With two scrapers instead of six, the extra budget goes to more pulls a day. Total cap: **$12/day**.
+
+| Scraper | Pulls/day | Approx. cost/day |
+|---|---|---|
+| `lergassy/dfs-props-scraper` (~$1.41 per full board) | 4 (morning, midday, afternoon, early evening ET) | ~$5.60 at most; less as started games are skipped |
+| `crawloop/draftkings-pick6-scraper` ($0.05/1,000 lines) | 6 (every ~2–3 h while slates are open) | under $1 |
+
+- The CrownIQ server starts the runs (not Apify Schedules), so it can skip started games, confirmed lines and
+  closed slates, and stop at each scraper's daily cap.
+- Major-change re-pulls (injury, status, weather) count against the same daily cap.
+- If a run returns nothing or errors, the next pull still happens; no lines are shown from a failed run.
