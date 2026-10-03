@@ -43,3 +43,12 @@ attaches the player's team and headshot. It is display data only: the engine nev
   in research status under its `id`. When two sources name a photo or team, the higher `confidence` wins.
 - **New line sources** (Underdog, Pick6, Betr, Dabble) get identity for free, provided their adapter sets
   `homeTeam`, `awayTeam` and, for soccer, `sourceSportKey`.
+
+## Scraper budget (owner decision, 2026-10-03)
+
+- Up to **$2 per day per scraper**, about six scrapers (roughly $12/day, $360/month).
+- Scrapers run on Apify and may stand in for a pricier licensed API. Several scrapers covering the same app back
+  each other up: when sources disagree on a line, the app shows the line only where they agree or marks it unconfirmed.
+- Each scraper gets its own adapter, its own daily spend cap and a run schedule sized to that cap.
+- Scraping can break without notice and may conflict with an app's terms; each adapter must fail closed
+  (no lines rather than stale or wrong ones).
