@@ -20,6 +20,7 @@ import type { BoardCache } from './board-cache.js';
 import { boardFunnel, outcomeCounts } from './board-funnel.js';
 import { liteBoard } from './board-lite.js';
 import { ContextRefreshScheduler } from './context-refresh.js';
+import type { ScraperPuller } from './scrapers/scraper-puller.js';
 import type { ContextRefreshOptions, DailyLookupBudget } from './context-refresh.js';
 import type { ProviderName } from './provider-identity.js';
 import { ProviderIdentityVerifier } from './provider-identity.js';
@@ -63,6 +64,8 @@ export interface ServerOptions {
   contextRefresh?: ContextRefreshOptions | null;
   /** Daily cap on paid NBA status lookups made by context refresh ticks. */
   contextLookupBudget?: DailyLookupBudget | null;
+  /** Scheduled Apify scraper pulls that feed the provider's line store. */
+  scraperPuller?: ScraperPuller | null;
 }
 
 function authorized(request: FastifyRequest, token?: string): boolean {
@@ -121,6 +124,9 @@ export function buildServer(options: ServerOptions = {}) {
     // context refresh follows it, then ticks repeat on the configured interval.
     void service.recoverStartupEvidence().then(()=>contextScheduler?.tick());
     contextScheduler?.start();
+    // After a scraper pull changes lines, rebuild the board through the owner job (free; tracks picks).
+    options.scraperPuller?.whenLinesChange(()=>startOwnerBoardRefresh());
+    options.scraperPuller?.start();
     if(options.ownerNotebook && options.ownerPublicId){
       await options.ownerNotebook.load();options.ownerNotebook.start();
     }
@@ -130,7 +136,8 @@ export function buildServer(options: ServerOptions = {}) {
       if(board){await service.persist();await options.product!.track(board,service.getEvidence());}} :
       async()=>service.persist()) : null;
   const contextScheduler=options.contextRefresh?new ContextRefreshScheduler(service,options.contextRefresh):null;
-  app.addHook('onClose', async () => { webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop(); });
+  app.addHook('onClose', async () => { webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
+    options.scraperPuller?.stop(); });
 
   // Every paid provider pull runs through this one job, so two pulls can never overlap or
   // queue back to back. The record is persisted so a restart mid-pull is reported.
@@ -270,6 +277,7 @@ export function buildServer(options: ServerOptions = {}) {
           intervalMinutes:options.contextRefresh?.intervalMinutes??0,last:status.lastContextRefresh,
           nbaLookupsToday:await options.contextLookupBudget?.used()??0,
           nbaDailyLimit:options.contextLookupBudget?.limit??0},
+        scrapers:await options.scraperPuller?.status()??null,
         researchHealth:status.researchHealth,secondLook:status.secondLook,
         freshContext:status.freshContext,lineTypes:auditPrizePicksLineTypes(snapshot.board.lines),
         modelSupport:{supported,unsupported:snapshot.board.lines.length-supported,
@@ -322,6 +330,15 @@ export function buildServer(options: ServerOptions = {}) {
         maxSearches:options.webResearch.maxSearchesPerRun});
     });
     // First-board recovery from the Board tab. It can only spend credits when no board exists.
+    // Run the line scraper now (spends Apify credit, within the daily cap). The board rebuilds after.
+    ownerBoard.post('/scrapers/pull',async(request,reply)=>{
+      if(!options.scraperPuller)return reply.code(503).send({code:'SCRAPERS_UNCONFIGURED'});
+      const input=z.object({acknowledgeScraperCost:z.literal(true)}).strict().safeParse(request.body);
+      if(!input.success)return reply.code(428).send({code:'SCRAPER_COST_CONFIRMATION_REQUIRED',
+        message:'A scraper pull spends Apify credit.'});
+      void options.scraperPuller.pull();
+      return reply.code(202).send({started:true});
+    });
     ownerBoard.post('/bootstrap',async(request,reply)=>{
       if(!options.provider)return reply.code(503).send({code:'ODDS_PROVIDER_UNCONFIGURED'});
       const input=z.object({acknowledgeProviderCost:z.literal(true)}).strict().safeParse(request.body);

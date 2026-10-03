@@ -103,3 +103,18 @@ With two scrapers instead of six, the extra budget goes to more pulls a day. Tot
 **Reminder for the owner before moving past the scraper work:** add Claude as a second web-research provider
 next to ChatGPT, and run **both**. Needs `ANTHROPIC_API_KEY` on the API server. Findings stay display-only;
 findings both providers agree on can be marked as such.
+
+## Built: PrizePicks lines from `lergassy/dfs-props-scraper` (2026-10-03)
+
+Code in `apps/api/src/scrapers/`. Turn on with `ODDS_PROVIDER=scrapers` and `APIFY_TOKEN`.
+- **Pulls:** 9, 12, 15 and 18 Eastern, capped at $6/day and $2.50/run, up to 20,000 rows (the first runs were cut
+  off at 10,000 and lost NBA, NHL and others). A cut-short run is flagged and takes no lines down.
+- **Store:** one record per app line id; moved numbers replace the old one (kept as `previousLine`); a second source
+  reporting the same line adds a confirmation; started games are frozen; finished games drop after two days.
+- **Board:** PrizePicks lines only (Underdog rows are stored for later). Stat labels map to model market keys
+  (unmapped stats keep a plain key and simply have no model); NFL teams get full names; ids match the Odds API
+  provider's so player history lines up. Player headshots come from the row (team logos excluded) or the identity layer.
+- **Measured on the real 10,000-row run:** 9,614 lines kept (276 live Underdog rows and 110 multi-player combos
+  skipped); 3,262 of 4,782 NFL lines and 672 of 1,616 MLB lines are on modeled markets.
+- **Not yet:** Pick6 connector (its two test runs returned 0 props from open slates, which suggests the scraper is
+  broken; retest Sunday); major-change re-pulls (the scraper has no team filter, so a re-pull is a full run).

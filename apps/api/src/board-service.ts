@@ -207,6 +207,10 @@ export class BoardService {
         photos.set(item.entityId, { photoUrl: item.sourceUrl, source: item.sourceName, confidence: item.confidence });
     }
     for (const [playerId, { photoUrl, source }] of photos) this.playerMedia[playerId] = { photoUrl, source };
+    // A headshot from the line source fills in only where no identity source supplied one.
+    for (const line of board.lines)
+      if (line.playerImageUrl && !this.playerMedia[line.playerId])
+        this.playerMedia[line.playerId] = { photoUrl: line.playerImageUrl, source: 'Line source' };
     let changed = false;
     const lines = board.lines.map((line) => {
       const team = teams.get(line.eventId + '|' + line.playerId)?.team;
@@ -350,7 +354,9 @@ export class BoardService {
         (item) => propLineSchema.parse(this.provider!.normalize(item, fetchedAt))));
       normalizedCount = lines.length;
       this.lastRefreshCounts = { ...this.lastRefreshCounts, normalized: normalizedCount };
-      const board = boardSchema.parse({ provider: 'prizepicks', fetchedAt, lines });
+      // The board is as old as its oldest line: a source may hand over lines it captured earlier.
+      const capturedAt = lines.reduce((earliest, line) => line.fetchedAt < earliest ? line.fetchedAt : earliest, fetchedAt);
+      const board = boardSchema.parse({ provider: 'prizepicks', fetchedAt: capturedAt, lines });
 
       this.lastRefreshStage = 'research';
       const researched = await collectResearch(board, this.research);

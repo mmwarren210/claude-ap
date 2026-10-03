@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { dirname, join } from 'node:path';
 import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegistry, lessAwareVersion, marketDefinitions,
   statHistoryReadyVersions } from '@crowniq/engine';
+import type { OddsProvider } from '@crowniq/engine';
 import { buildServer } from './server.js';
 import { FullPrizePicksProvider } from './full-prizepicks-provider.js';
 import { TheOddsApiProvider } from './the-odds-api-provider.js';
@@ -11,6 +12,11 @@ import { WebResearchAdapter, WebResearchCatalog } from './web-research.js';
 import { ProductLedger } from './product-ledger.js';
 import { ProductGradingWorker } from './background-grading.js';
 import { BoardCache } from './board-cache.js';
+import { ApifyClient } from './scrapers/apify-client.js';
+import { ScrapedLineStore } from './scrapers/line-store.js';
+import { ScrapedPrizePicksProvider } from './scrapers/scraped-prizepicks-provider.js';
+import { ScraperPuller } from './scrapers/scraper-puller.js';
+import { DailySpendBudget } from './scrapers/spend-budget.js';
 import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
 import { ProviderIdentityVerifier } from './provider-identity.js';
@@ -27,7 +33,7 @@ import { CurrentContextResearch } from './current-context.js';
 
 const apiKey = process.env.THE_ODDS_API_KEY;
 const providerMode = process.env.ODDS_PROVIDER ?? 'auto';
-if (!['auto', 'none', 'the_odds_api'].includes(providerMode)) {
+if (!['auto', 'none', 'the_odds_api', 'scrapers'].includes(providerMode)) {
   throw new Error('Unknown ODDS_PROVIDER');
 }
 const providerName = providerMode === 'auto'
@@ -39,7 +45,24 @@ const maxEvents = process.env.THE_ODDS_API_MAX_EVENTS
   ? Number(process.env.THE_ODDS_API_MAX_EVENTS) : undefined;
 const maxCreditsPerRefresh = process.env.THE_ODDS_API_MAX_CREDITS_PER_REFRESH
   ? Number(process.env.THE_ODDS_API_MAX_CREDITS_PER_REFRESH) : undefined;
-const provider = providerName !== 'the_odds_api' || !apiKey ? null
+// Lines from the Apify scrapers instead of The Odds API: pulls run on their own schedule and spend cap,
+// and the board reads the stored lines for free.
+const nonNegativeNumber=(name:string,fallback:number)=>{
+  const value=Number(process.env[name]??fallback);
+  if(!Number.isFinite(value)||value<0)throw new Error(`Invalid ${name}`);
+  return value;
+};
+const scrapedLines=providerName==='scrapers'
+  ? new ScrapedLineStore(process.env.CROWNIQ_SCRAPED_LINES_FILE ?? 'tmp/scraped-lines.json'):null;
+const scraperPuller=scrapedLines?new ScraperPuller(new ApifyClient(process.env.APIFY_TOKEN?.trim()||null),scrapedLines,
+  new DailySpendBudget(process.env.CROWNIQ_SCRAPER_SPEND_FILE ?? 'tmp/scraper-spend.json',
+    nonNegativeNumber('CROWNIQ_SCRAPER_DAILY_USD',6)),
+  {maxRows:Math.floor(nonNegativeNumber('CROWNIQ_SCRAPER_MAX_ROWS',20000)),
+    maxRunUsd:nonNegativeNumber('CROWNIQ_SCRAPER_MAX_RUN_USD',2.5),
+    hoursEt:(process.env.CROWNIQ_SCRAPER_PULL_HOURS_ET ?? '9,12,15,18').split(',').map((hour)=>hour.trim())
+      .filter(Boolean).map(Number).filter((hour)=>Number.isInteger(hour)&&hour>=0&&hour<=23)}):null;
+const provider: OddsProvider | null = scrapedLines ? new ScrapedPrizePicksProvider(scrapedLines)
+  : providerName !== 'the_odds_api' || !apiKey ? null
   : scope === 'nfl_passing_yards'
     ? new TheOddsApiProvider({ apiKey,
       marketKeys: process.env.THE_ODDS_API_MARKETS?.split(',').map((item) => item.trim()),
@@ -182,7 +205,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, provider,
   allowedWebOrigins:(process.env.CROWNIQ_ALLOWED_WEB_ORIGINS??'').split(',')
     .map((origin)=>origin.trim()).filter(Boolean),
   ownerJobStore:new OwnerPullJobStore(process.env.CROWNIQ_OWNER_JOB_FILE ?? 'tmp/owner-pull-job.json'),
-  boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,
+  boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,
   selections: process.env.CROWNIQ_SELECTIONS_FILE
     ? new JsonSelectionLedger(process.env.CROWNIQ_SELECTIONS_FILE) : null,

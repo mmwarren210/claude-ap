@@ -44,6 +44,8 @@ export const propLineSchema = z.object({
   fetchedAt: timestamp,
   // Optional because a provider may omit payout. Never infer payout from line type.
   payoutMultiplier: z.number().positive().finite().optional(),
+  /** Player headshot the line source supplied, when it has one. Display only. */
+  playerImageUrl: z.url().optional(),
 });
 
 export const boardSchema = z.object({
