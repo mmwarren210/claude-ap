@@ -6,7 +6,7 @@ import type { DfsApp, ScrapedLine, ScrapedTier } from './scraped-line.js';
 export const LERGASSY_ACTOR = 'lergassy/dfs-props-scraper';
 
 export const lergassyInput = (maxRows: number) =>
-  ({ mode: 'props', platforms: ['prizepicks', 'underdog'], maxRows, maxLeagues: 30 });
+  ({ mode: 'props', platforms: ['prizepicks', 'underdog'], maxRows, maxLeagues: 20 });
 
 const rowSchema = z.object({
   type: z.string().optional(), platform: z.string(), propId: z.union([z.string(), z.number()]).transform(String),
