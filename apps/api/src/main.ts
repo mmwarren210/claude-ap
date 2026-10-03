@@ -34,6 +34,8 @@ import { SleeperNflIdentitySource } from './identity/sleeper-nfl.js';
 import { JsonCache } from './identity/types.js';
 import { CurrentContextResearch } from './current-context.js';
 
+// Where the server keeps its data files. On a host, point this at a permanent disk.
+const dataDir=(process.env.CROWNIQ_DATA_DIR ?? 'tmp').replace(/\/$/,'');
 const apiKey = process.env.THE_ODDS_API_KEY;
 const providerMode = process.env.ODDS_PROVIDER ?? 'auto';
 if (!['auto', 'none', 'the_odds_api', 'scrapers'].includes(providerMode)) {
@@ -56,12 +58,12 @@ const nonNegativeNumber=(name:string,fallback:number)=>{
   return value;
 };
 const scrapedLines=providerName==='scrapers'
-  ? new ScrapedLineStore(process.env.CROWNIQ_SCRAPED_LINES_FILE ?? 'tmp/scraped-lines.json'):null;
+  ? new ScrapedLineStore(process.env.CROWNIQ_SCRAPED_LINES_FILE ?? `${dataDir}/scraped-lines.json`):null;
 // Each source on its own Eastern-time schedule ("" turns one off), under one shared daily cap.
 const hoursEt=(name:string,fallback:string)=>(process.env[name] ?? fallback).split(',').map((hour)=>hour.trim())
   .filter(Boolean).map(Number).filter((hour)=>Number.isInteger(hour)&&hour>=0&&hour<=23);
 const scraperPuller=scrapedLines?new ScraperPuller(new ApifyClient(process.env.APIFY_TOKEN?.trim()||null),scrapedLines,
-  new DailySpendBudget(process.env.CROWNIQ_SCRAPER_SPEND_FILE ?? 'tmp/scraper-spend.json',
+  new DailySpendBudget(process.env.CROWNIQ_SCRAPER_SPEND_FILE ?? `${dataDir}/scraper-spend.json`,
     nonNegativeNumber('CROWNIQ_SCRAPER_DAILY_USD',12)),
   [{source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9,12,15,18')},
     {source:lergassy,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_LERGASSY','12')},
@@ -94,7 +96,7 @@ const webResearch = researchProvider !== 'none' && webKey
     concurrency: process.env.WEB_RESEARCH_CONCURRENCY
       ? Number(process.env.WEB_RESEARCH_CONCURRENCY) : undefined,
     catalog: new WebResearchCatalog(process.env.CROWNIQ_RESEARCH_CATALOG_FILE ??
-      'tmp/research-catalog.json') }) : null;
+      `${dataDir}/research-catalog.json`) }) : null;
 if (researchProvider === 'openai_web' && !webResearch) {
   console.warn('Web research selected but OPENAI_API_KEY is absent from this server runtime.');
 }
@@ -115,7 +117,7 @@ if(unknownModelVersions.length)console.warn('GKR_APPROVED_MODEL_VERSIONS lists u
 const approvedModelKeys=Object.entries(models.requirements())
   .filter(([,requirement])=>requirement.approved).map(([key])=>key);
 const internalHistory=new InternalHistoryStore(process.env.CROWNIQ_INTERNAL_HISTORY_FILE ??
-  'tmp/internal-history.json');
+  `${dataDir}/internal-history.json`);
 // Crown saves and shares need a correlation policy; 'none' keeps them fail-closed.
 const correlationSetting=process.env.CROWNIQ_CROWN_CORRELATION_POLICY ?? 'conservative';
 if(!['conservative','none'].includes(correlationSetting))throw new Error('Invalid CROWNIQ_CROWN_CORRELATION_POLICY');
@@ -123,7 +125,7 @@ const socialMaxSnapshotMinutes=Number(process.env.CROWNIQ_SOCIAL_MAX_SNAPSHOT_MI
 if(!Number.isFinite(socialMaxSnapshotMinutes)||socialMaxSnapshotMinutes<0)
   throw new Error('Invalid CROWNIQ_SOCIAL_MAX_SNAPSHOT_MINUTES');
 const product=new ProductLedger(process.env.CROWNIQ_PRODUCT_LEDGER_FILE ??
-  'tmp/product-ledger.json',band,()=>new Date(),
+  `${dataDir}/product-ledger.json`,band,()=>new Date(),
   correlationSetting==='conservative'?conservativeCorrelationPolicy:undefined,internalHistory,
   socialMaxSnapshotMinutes);
 const statApiKey=process.env.STAT_API_KEY;
@@ -134,7 +136,7 @@ const statSource=statApiKey ? new StatApiOwnerResearch(statApiKey,fetch,()=>new 
 const ownerResearch=statSource && ownerPublicId ? statSource:null;
 const historyBackfill=statSource?new HistoryBackfillService(statSource,internalHistory):null;
 const ownerNotebook=ownerResearch ? new OwnerResearchNotebook(
-  process.env.CROWNIQ_OWNER_RESEARCH_FILE??'tmp/owner-stat-research.json',ownerResearch,
+  process.env.CROWNIQ_OWNER_RESEARCH_FILE??`${dataDir}/owner-stat-research.json`,ownerResearch,
   process.env.CROWNIQ_OWNER_RESEARCH_REFRESH_MINUTES
     ? Number(process.env.CROWNIQ_OWNER_RESEARCH_REFRESH_MINUTES):60):null;
 if(statApiKey && !ownerPublicId)console.warn('STAT_API_KEY is set, but CROWNIQ_OWNER_PUBLIC_ID is missing. Private research is inaccessible.');
@@ -184,7 +186,7 @@ const nonNegative=(name:string,fallback:number)=>{
   if(!Number.isFinite(value)||value<0)throw new Error(`Invalid ${name}`);
   return value;
 };
-const boardCacheFile=process.env.CROWNIQ_BOARD_CACHE_FILE ?? 'tmp/board-cache.json';
+const boardCacheFile=process.env.CROWNIQ_BOARD_CACHE_FILE ?? `${dataDir}/board-cache.json`;
 const contextIntervalMinutes=nonNegative('CROWNIQ_CONTEXT_REFRESH_MINUTES',15);
 const contextWindowHours=nonNegative('CROWNIQ_CONTEXT_WINDOW_HOURS',8);
 const nbaDailyLookups=Math.floor(nonNegative('CROWNIQ_CONTEXT_NBA_DAILY_LOOKUPS',0));
@@ -214,7 +216,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, provider,
   requireProfiles:true,identityVerifier,
   allowedWebOrigins:(process.env.CROWNIQ_ALLOWED_WEB_ORIGINS??'').split(',')
     .map((origin)=>origin.trim()).filter(Boolean),
-  ownerJobStore:new OwnerPullJobStore(process.env.CROWNIQ_OWNER_JOB_FILE ?? 'tmp/owner-pull-job.json'),
+  ownerJobStore:new OwnerPullJobStore(process.env.CROWNIQ_OWNER_JOB_FILE ?? `${dataDir}/owner-pull-job.json`),
   boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,
   selections: process.env.CROWNIQ_SELECTIONS_FILE
@@ -224,7 +226,8 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, provider,
 autoGrade?.start();
 app.addHook('onClose',async()=>autoGrade?.stop());
 const host = process.env.API_HOST ?? '127.0.0.1';
-const port = Number(process.env.API_PORT ?? 3000);
+// Hosts such as Railway and Render hand the server its port in PORT.
+const port = Number(process.env.API_PORT ?? process.env.PORT ?? 3000);
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   throw new Error('API_PORT must be a valid port');

@@ -149,3 +149,10 @@ may keep their own game id.
 - **Pick6 (`crawloop/draftkings-pick6-scraper`):** returned 0 props on both test runs (2026-10-03: an MLB slate, then
   a CFB slate). The owner has an Apify auto-refresh on it. **If it comes back blank again, flag it** and replace it.
   Any source wired into the puller also reports `blankRunsInARow` in owner diagnostics.
+
+## SharpAPI (owner, 2026-10-03)
+
+The owner added a SharpAPI key to the environment's secrets. SharpAPI can cover DraftKings (Pick6), Hard Rock,
+Underdog, PrizePicks and Kalshi. It was not reachable from the session where it was added (secrets reach new
+sessions only). Next: in a new session, read its docs and responses, then add it as another source in
+`apps/api/src/scrapers/` (no Apify; a `run()` source like `odds-api-source.ts`), confirming lines across sources.
