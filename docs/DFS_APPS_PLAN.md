@@ -97,3 +97,9 @@ With two scrapers instead of six, the extra budget goes to more pulls a day. Tot
   closed slates, and stop at each scraper's daily cap.
 - Major-change re-pulls (injury, status, weather) count against the same daily cap.
 - If a run returns nothing or errors, the next pull still happens; no lines are shown from a failed run.
+
+## Next after scrapers (owner, 2026-10-03)
+
+**Reminder for the owner before moving past the scraper work:** add Claude as a second web-research provider
+next to ChatGPT, and run **both**. Needs `ANTHROPIC_API_KEY` on the API server. Findings stay display-only;
+findings both providers agree on can be marked as such.
