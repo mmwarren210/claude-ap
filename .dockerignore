@@ -1,7 +1,9 @@
 node_modules
 **/node_modules
-apps/mobile/*
-!apps/mobile/package.json
+apps/mobile/.expo
+apps/mobile/dist
+apps/mobile/.env
+**/.env
 tmp
 **/tmp
 .git

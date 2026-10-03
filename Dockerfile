@@ -1,4 +1,20 @@
-# CrownIQ API server. Installs only the server's workspaces (not the mobile app).
+# CrownIQ server, which also hosts the web version of the app.
+
+# Stage 1: export the web app (static files). Leave EXPO_PUBLIC_API_URL empty so the web app calls the server it came from.
+FROM node:22-slim AS web
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/api/package.json apps/api/
+COPY packages/contracts/package.json packages/contracts/
+COPY packages/engine/package.json packages/engine/
+COPY apps/mobile/package.json apps/mobile/
+RUN npm ci --no-audit --no-fund
+COPY packages packages
+COPY apps/mobile apps/mobile
+ARG EXPO_PUBLIC_API_URL=
+RUN cd apps/mobile && npx expo export -p web --output-dir dist
+
+# Stage 2: the server. Installs only the server's workspaces.
 FROM node:22-slim
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -9,6 +25,7 @@ COPY apps/mobile/package.json apps/mobile/
 RUN npm ci -w @crowniq/api -w @crowniq/contracts -w @crowniq/engine --include-workspace-root --no-audit --no-fund
 COPY packages packages
 COPY apps/api apps/api
+COPY --from=web /app/apps/mobile/dist apps/mobile/dist
 # Data files live on the host's permanent disk, mounted at /data.
 ENV NODE_ENV=production API_HOST=0.0.0.0 CROWNIQ_DATA_DIR=/data
 EXPOSE 3000

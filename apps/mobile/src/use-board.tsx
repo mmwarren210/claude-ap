@@ -8,6 +8,7 @@ import { freshness } from './state';
 import { reportMobileFailure } from './diagnostics';
 import { useAuth } from './auth';
 import { DEMO_NOW } from './demo/data';
+import { apiBaseUrl } from './api-base';
 
 type BoardState={status:'loading'|'available'|'unavailable';data:BoardResponse|null;message:string;
   freshness:'LIVE'|'FRESH'|'CACHED'|'SNAPSHOT'|'STALE'|'OFFLINE'|'UNREACHABLE'|'UNAVAILABLE'|'DEMO';
@@ -20,7 +21,7 @@ type BoardState={status:'loading'|'available'|'unavailable';data:BoardResponse|n
   bootstrapPull:()=>void};
 type OwnerRefreshStatus={job?:{status?:'IDLE'|'RUNNING'|'SUCCEEDED'|'FAILED';error?:string|null}};
 const Context=createContext<BoardState|null>(null);
-const apiBase=process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/,'');
+const apiBase=apiBaseUrl();
 const sleep=(ms:number)=>new Promise<void>((resolve)=>setTimeout(resolve,ms));
 
 function responseMessage(status:number):string {

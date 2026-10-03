@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegistry, lessAwareVersion, marketDefinitions,
   statHistoryReadyVersions } from '@crowniq/engine';
 import type { OddsProvider } from '@crowniq/engine';
@@ -210,6 +212,8 @@ const identityVerifier=googleClients.length||appleClients.length
   ? new ProviderIdentityVerifier({GOOGLE:googleClients,APPLE:appleClients}):null;
 const autoGrade=process.env.CROWNIQ_NFLVERSE_AUTO_GRADE==='true'
   ? new ProductGradingWorker(product,process.env.NFLVERSE_MAPPING_FILE||null) : null;
+// The exported web app (npx expo export -p web), served by this server when present.
+const webAppDir=process.env.CROWNIQ_WEB_DIR ?? fileURLToPath(new URL('../../mobile/dist',import.meta.url));
 const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, provider,
   webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,
   autoGradingEnabled:!!autoGrade,autoGradingStatus:()=>autoGrade?.status()??null,
@@ -218,6 +222,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, provider,
     .map((origin)=>origin.trim()).filter(Boolean),
   ownerJobStore:new OwnerPullJobStore(process.env.CROWNIQ_OWNER_JOB_FILE ?? `${dataDir}/owner-pull-job.json`),
   boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,
+  webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,
   selections: process.env.CROWNIQ_SELECTIONS_FILE
     ? new JsonSelectionLedger(process.env.CROWNIQ_SELECTIONS_FILE) : null,

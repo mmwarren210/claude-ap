@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { demoRequest } from './demo/request';
+import { apiBaseUrl } from './api-base';
 
 const demoProfile:Profile={publicId:'demo',username:'Demo',email:null,plan:'DEMO'};
 
@@ -12,7 +13,7 @@ type AuthContext={profile:Profile|null;register:(username:string,email:string,pa
   /** True in demo mode: sample data, no account, no server calls. */
   demo:boolean;enterDemo:()=>void};
 const Context=createContext<AuthContext|null>(null);
-const base=process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/,'');
+const base=apiBaseUrl();
 
 async function parseSession(response:Response):Promise<Session>{
   if(!response.ok){const payload=await response.json().catch(()=>({})) as {code?:string};

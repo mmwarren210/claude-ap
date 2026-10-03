@@ -30,9 +30,12 @@ import { rankingCards, secondLookWatchlist } from './ranking-cards.js';
 import { auditPrizePicksLineTypes } from './prizepicks-line-types.js';
 import type { HistoryBackfillService, InternalHistorySport, InternalHistoryStore } from './internal-history.js';
 import type { ProductGradingStatus } from './background-grading.js';
+import { serveWebApp } from './web-app.js';
 
 export interface ServerOptions {
   provider?: OddsProvider | null;
+  /** Folder holding the exported web app, served at every non-API path. */
+  webAppDir?: string | null;
   research?: ResearchAdapter | null;
   secondLookResearch?: ResearchAdapter | null;
   webResearch?: WebResearchAdapter | null;
@@ -877,5 +880,6 @@ export function buildServer(options: ServerOptions = {}) {
     });
   }, { prefix: '/v1/admin' });
 
+  if (options.webAppDir) serveWebApp(app, options.webAppDir);
   return app;
 }
