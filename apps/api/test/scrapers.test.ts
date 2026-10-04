@@ -283,3 +283,22 @@ test('Goblins and Demons stay MORE-only whatever side label a source sends', () 
   const regular = zenPrizePicks.read(zenRow(), now);
   assert.ok('line' in regular && regular.line.directions.length === 2);
 });
+
+test('a restart or an overlapping deployment never repeats a scheduled pull, and both see the same spending', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'crowniq-slots-'));
+  try {
+    const { SlotLedger } = await import('../src/scrapers/slot-ledger.js');
+    const slotsFile = join(folder, 'slots.json'), spendFile = join(folder, 'spend.json');
+    const first = new SlotLedger(slotsFile), second = new SlotLedger(slotsFile);
+    assert.equal(await first.claim('2030-10-04', '12|zen'), true);
+    assert.equal(await second.claim('2030-10-04', '12|zen'), false, 'the other process sees the slot already ran');
+    assert.equal(await second.claim('2030-10-04', '15|zen'), true);
+    assert.equal(await second.claim('2030-10-05', '12|zen'), true, 'a new day starts clean');
+    const a = new DailySpendBudget(spendFile, 15, () => now), b = new DailySpendBudget(spendFile, 15, () => now);
+    await a.spent();
+    await b.record(4);
+    assert.equal(await a.spent(), 4, 'a budget reads what another process spent');
+    await a.record(1.5);
+    assert.equal(await b.remaining(), 9.5);
+  } finally { await rm(folder, { recursive: true, force: true }); }
+});

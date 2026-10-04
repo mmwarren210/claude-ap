@@ -11,6 +11,7 @@ import { TheOddsApiProvider } from './the-odds-api-provider.js';
 import { NflPassingFileResearch } from './nfl-evidence-file.js';
 import { JsonSelectionLedger } from './selection-ledger.js';
 import { CombinedWebResearch, WebResearchAdapter, WebResearchCatalog } from './web-research.js';
+import { SlotLedger } from './scrapers/slot-ledger.js';
 import { ContextFeeds, injuryReports, kalshiMarkets, pinnacleLines, polymarketMarkets } from './context/feeds.js';
 import { ClaudeWebResearchAdapter } from './claude-web-research.js';
 import { ProductLedger } from './product-ledger.js';
@@ -68,6 +69,8 @@ const hoursEt=(name:string,fallback:string)=>(process.env[name] ?? fallback).spl
   .filter(Boolean).map(Number).filter((hour)=>Number.isInteger(hour)&&hour>=0&&hour<=23);
 // One Apify client and one daily cap shared by the line scrapers and the display-only context feeds.
 const apify=new ApifyClient(process.env.APIFY_TOKEN?.trim()||null);
+// Scheduled slots already run today, saved so a restart or an overlapping deployment never repeats a paid pull.
+const scraperSlots=new SlotLedger(process.env.CROWNIQ_SCRAPER_SLOTS_FILE ?? `${dataDir}/scraper-slots.json`);
 const scraperBudget=new DailySpendBudget(process.env.CROWNIQ_SCRAPER_SPEND_FILE ?? `${dataDir}/scraper-spend.json`,
   nonNegativeNumber('CROWNIQ_SCRAPER_DAILY_USD',15));
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
@@ -78,14 +81,14 @@ const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBud
     // it runs only when the owner pulls (CROWNIQ_SCRAPER_HOURS_ODDS_API adds a schedule).
     ...(apiKey?[{source:oddsApiSource(new FullPrizePicksProvider({apiKey,maxEvents,maxCreditsPerRefresh})),
       hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ODDS_API','')}]:[])],
-  {maxRunUsd:nonNegativeNumber('CROWNIQ_SCRAPER_MAX_RUN_USD',5)}):null;
+  {maxRunUsd:nonNegativeNumber('CROWNIQ_SCRAPER_MAX_RUN_USD',5),slots:scraperSlots}):null;
 // Display-only game context (never scored): injuries, Pinnacle game lines, Kalshi and Polymarket odds.
 const contextFeeds=process.env.APIFY_TOKEN?.trim()?new ContextFeeds(apify,scraperBudget,[
   {source:injuryReports,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_INJURIES','8,11,14,17')},
   {source:pinnacleLines,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_PINNACLE','9,15')},
   {source:kalshiMarkets,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_KALSHI','11')},
   {source:polymarketMarkets,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_POLYMARKET','11')}],
-process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`):null;
+process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`,undefined,scraperSlots):null;
 const provider: OddsProvider | null = scrapedLines ? new ScrapedPrizePicksProvider(scrapedLines)
   : providerName !== 'the_odds_api' || !apiKey ? null
   : scope === 'nfl_passing_yards'

@@ -1,22 +1,23 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-/** A per-UTC-day spending cap in USD, saved to disk so restarts do not reset it. */
+/**
+ * A per-UTC-day spending cap in USD, saved to disk so restarts do not reset it. It is re-read on every check, so a
+ * second process (a deployment starting while the old one runs) sees what the other spent.
+ */
 export class DailySpendBudget {
-  private state: { day: string; spentUsd: number } | null = null;
   constructor(private readonly file: string, readonly limitUsd: number,
     private readonly clock: () => Date = () => new Date()) {}
 
   private today() { return this.clock().toISOString().slice(0, 10); }
 
-  private async load() {
-    if (this.state?.day === this.today()) return this.state;
+  private async load(): Promise<{ day: string; spentUsd: number }> {
     try {
       const saved = JSON.parse(await readFile(this.file, 'utf8')) as { day?: unknown; spentUsd?: unknown };
       if (saved.day === this.today() && typeof saved.spentUsd === 'number' && Number.isFinite(saved.spentUsd))
-        return this.state = { day: saved.day, spentUsd: saved.spentUsd };
+        return { day: saved.day, spentUsd: saved.spentUsd };
     } catch { /* missing or unreadable: the day starts at zero */ }
-    return this.state = { day: this.today(), spentUsd: 0 };
+    return { day: this.today(), spentUsd: 0 };
   }
 
   async spent(): Promise<number> { return (await this.load()).spentUsd; }

@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ApifyClient } from '../scrapers/apify-client.js';
 import type { DailySpendBudget } from '../scrapers/spend-budget.js';
+import { SlotLedger } from '../scrapers/slot-ledger.js';
 
 // Display-only game context from Apify scrapers: injury reports, Pinnacle game lines and prediction-market odds.
 // None of it feeds GKR scoring; using any of it in a score needs the owner's approval and a new opt-in model version.
@@ -106,13 +107,12 @@ export class ContextFeeds {
   private snapshots = new Map<string, Snapshot>();
   private last = new Map<string, ContextReport>();
   private blankStreaks = new Map<string, number>();
-  private slotsDone = new Set<string>();
   private loaded = false;
   private timer: NodeJS.Timeout | null = null;
 
   constructor(private readonly apify: ApifyClient, private readonly budget: DailySpendBudget,
     private readonly sources: readonly ContextScheduled[], private readonly file: string | null,
-    private readonly clock: () => Date = () => new Date()) {}
+    private readonly clock: () => Date = () => new Date(), private readonly slots = new SlotLedger(null)) {}
 
   private async load() {
     if (this.loaded || !this.file) { this.loaded = true; return; }
@@ -185,9 +185,7 @@ export class ContextFeeds {
   async tick(): Promise<ContextReport[]> {
     const now = this.clock(), hour = easternHour(now), day = easternDay(now), reports: ContextReport[] = [];
     for (const { source, hoursEt } of this.sources) {
-      const slot = `${day}|${hour}|${source.id}`;
-      if (!hoursEt.includes(hour) || this.slotsDone.has(slot)) continue;
-      this.slotsDone.add(slot);
+      if (!hoursEt.includes(hour) || !await this.slots.claim(day, `${hour}|context:${source.id}`)) continue;
       reports.push(await this.pull(source.id));
     }
     return reports;

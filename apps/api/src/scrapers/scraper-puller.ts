@@ -2,6 +2,7 @@ import type { ApifyClient } from './apify-client.js';
 import type { IngestReport, ScrapedLineStore } from './line-store.js';
 import type { ScraperSource } from './scraped-line.js';
 import type { DailySpendBudget } from './spend-budget.js';
+import { SlotLedger } from './slot-ledger.js';
 
 export interface PullReport {
   readonly at: string;
@@ -25,6 +26,8 @@ export interface ScheduledSource {
 export interface PullerOptions {
   /** Most one run may cost; also what must be left in today's budget to start one. */
   readonly maxRunUsd: number;
+  /** Saved record of scheduled slots already run, so restarts and overlapping deployments never repeat one. */
+  readonly slots?: SlotLedger;
 }
 
 const easternHour = (date: Date) => Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York',
@@ -41,12 +44,14 @@ export class ScraperPuller {
   private blankStreaks = new Map<string, number>();
   private running = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
-  private slotsDone = new Set<string>();
   private onLinesChanged: (() => unknown) | null = null;
 
   constructor(private readonly apify: ApifyClient, private readonly store: ScrapedLineStore,
     private readonly budget: DailySpendBudget, private readonly sources: readonly ScheduledSource[],
-    private readonly options: PullerOptions, private readonly clock: () => Date = () => new Date()) {}
+    private readonly options: PullerOptions, private readonly clock: () => Date = () => new Date()) {
+    this.slots = options.slots ?? new SlotLedger(null);
+  }
+  private readonly slots: SlotLedger;
 
   /** What to do after a pull changes lines: the server rebuilds the board from the store (free). */
   whenLinesChange(callback: () => unknown): void { this.onLinesChanged = callback; }
@@ -136,10 +141,10 @@ export class ScraperPuller {
 
   async tick(): Promise<PullReport[]> {
     const now = this.clock(), hour = easternHour(now), day = easternDay(now);
-    const due = this.sources.filter(({ source, hoursEt }) => hoursEt.includes(hour) && !this.slotsDone.has(`${day}|${hour}|${source.id}`));
+    const due = this.sources.filter(({ hoursEt }) => hoursEt.includes(hour));
     const reports: PullReport[] = [];
     for (const { source } of due) {
-      this.slotsDone.add(`${day}|${hour}|${source.id}`);
+      if (!await this.slots.claim(day, `${hour}|${source.id}`)) continue;
       reports.push(await this.pull(source.id));
     }
     return reports;
