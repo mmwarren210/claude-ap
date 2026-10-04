@@ -160,7 +160,7 @@ sessions only). Next: in a new session, read its docs and responses, then add it
 
 ## Game context feeds (owner, 2026-10-04)
 
-Display-only, never scored (`apps/api/src/context/`). They share the scraper budget, raised to **$15/day**.
+Display-only, never scored (`apps/api/src/context/`). They share the scraper budget, raised to **$20/day** (owner, 2026-10-04).
 
 | Apify actor | Shows | Schedule (ET) | Per-run cap |
 |---|---|---|---|
