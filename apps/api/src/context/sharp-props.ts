@@ -91,8 +91,11 @@ export class SharpPropsFeed {
   private requests = 0;
   private loaded = false;
   private timer: NodeJS.Timeout | null = null;
+  private running: Promise<SharpPropsStatus> | null = null;
   constructor(private readonly apiKey: string | null, private readonly file: string | null,
-    private readonly options: { books?: readonly string[]; leagues?: readonly string[]; maxPagesPerLeague?: number } = {},
+    private readonly options: { books?: readonly string[]; leagues?: readonly string[]; maxPagesPerLeague?: number;
+      /** Pause between requests; SharpAPI's Hobby plan allows 120 a minute. */
+      requestGapMs?: number } = {},
     private readonly fetchFn: typeof fetch = fetch, private readonly clock: () => Date = () => new Date()) {}
 
   private async load() {
@@ -116,7 +119,13 @@ export class SharpPropsFeed {
       requests: this.requests };
   }
 
-  async refresh(): Promise<SharpPropsStatus> {
+  /** One refresh at a time: a second call waits for the running one instead of doubling the requests. */
+  refresh(): Promise<SharpPropsStatus> {
+    this.running ??= this.refreshNow().finally(() => { this.running = null; });
+    return this.running;
+  }
+
+  private async refreshNow(): Promise<SharpPropsStatus> {
     await this.load();
     if (!this.apiKey) { this.lastError = 'SHARPAPI_KEY_MISSING'; return this.status(); }
     const rows: unknown[] = [];
@@ -131,7 +140,7 @@ export class SharpPropsFeed {
           url.searchParams.set('is_live', 'false');
           url.searchParams.set('limit', '200');
           if (cursor) url.searchParams.set('cursor', cursor);
-          this.requests++;
+          if (this.requests++ > 0) await new Promise((resolve) => setTimeout(resolve, this.options.requestGapMs ?? 700));
           const response = await this.fetchFn(url, { headers: { 'X-API-Key': this.apiKey }, signal: AbortSignal.timeout(30_000) });
           if (response.status === 404 || response.status === 400) break; // league not offered
           if (!response.ok) throw new Error(`SHARPAPI_HTTP_${response.status}`);

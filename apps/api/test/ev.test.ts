@@ -54,7 +54,7 @@ test('the SharpAPI feed pages with the cursor, sends the key, and keeps old pric
     return new Response(JSON.stringify({ data: first ? [row('draftkings', 'over', 0.6)] : [row('draftkings', 'under', 0.45)],
       pagination: { has_more: first, next_cursor: first ? 'next' : undefined } }), { status: 200 });
   }) as typeof fetch;
-  const feed = new SharpPropsFeed('key', null, { leagues: ['nfl'] }, fetchFn, () => now);
+  const feed = new SharpPropsFeed('key', null, { leagues: ['nfl'], requestGapMs: 0 }, fetchFn, () => now);
   const status = await feed.refresh();
   assert.deepEqual(calls, ['first', 'next']);
   assert.deepEqual([status.prices, status.lastError], [1, null]);
