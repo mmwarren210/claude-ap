@@ -151,6 +151,7 @@ const nfl=(value:(r:Row)=>number|null,unit:string,factors:MarketSpec['factors'])
 const touches=(r:Row)=>sum(n(r,'rushing_attempts'),n(r,'targets'));
 const scrimmage=(r:Row)=>sum(n(r,'rushing_yds'),n(r,'receiving_yds'));
 const tackles=(r:Row)=>sum(n(r,'solo_tackles'),n(r,'assisted_tackles'));
+const sacks=(r:Row)=>(n(r,'pass_attempts')??0)>0?n(r,'sacks_allowed'):n(r,'defensive_sacks');
 const kicking=(r:Row)=>{const fg=n(r,'field_goals_made'),xp=n(r,'extra_pts_made');
   return fg===null||xp===null?null:fg*3+xp;};
 const v2:Readonly<Partial<Record<StatApiSport,Readonly<Record<string,MarketSpec>>>>>={
@@ -215,8 +216,9 @@ const v2:Readonly<Partial<Record<StatApiSport,Readonly<Record<string,MarketSpec>
       solo_tackle_share:(r)=>ratio(n(r,'solo_tackles'),tackles(r))}),
     player_tackle_assists:nfl((r)=>n(r,'assisted_tackles'),'assisted tackles',{
       historical_assist_volume:(r)=>n(r,'assisted_tackles'),assist_share:(r)=>ratio(n(r,'assisted_tackles'),tackles(r))}),
-    player_sacks:nfl((r)=>n(r,'defensive_sacks'),'sacks',{historical_sack_volume:(r)=>n(r,'defensive_sacks'),
-      pressure_rate:(r)=>n(r,'quarterback_hits')}),
+    // "Sacks" is sacks taken for a quarterback (a game with pass attempts) and sacks made for a defender.
+    player_sacks:nfl(sacks,'sacks',{historical_sack_volume:sacks,
+      pressure_rate:(r)=>(n(r,'pass_attempts')??0)>0?ratio(n(r,'sacks_allowed'),n(r,'pass_attempts')):n(r,'quarterback_hits')}),
     player_defensive_interceptions:nfl((r)=>n(r,'defensive_interceptions'),'interceptions',{
       historical_int_volume:(r)=>n(r,'defensive_interceptions'),passes_defended_rate:(r)=>n(r,'passes_defended')}),
     player_kicking_points:nfl(kicking,'points',{historical_kicking_points:kicking,

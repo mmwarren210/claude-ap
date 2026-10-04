@@ -57,7 +57,9 @@ const football: Readonly<Record<string, Read>> = {
   player_pass_rush_yds: total('passing.passingYards', 'rushing.rushingYards'),
   pass_plus_rush_yds: total('passing.passingYards', 'rushing.rushingYards'),
   anytime_tds: total('rushing.rushingTouchdowns', 'receiving.receivingTouchdowns'),
-  player_tackles_assists: orZero('defensive.totalTackles'), player_sacks: orZero('defensive.sacks'),
+  player_tackles_assists: orZero('defensive.totalTackles'),
+  // A quarterback's "Sacks" are sacks taken (passing); everyone else's are sacks made (defensive).
+  player_sacks: (s) => (s['passing.passingAttempts'] ?? 0) > 0 ? s['passing.sacks'] ?? 0 : s['defensive.sacks'] ?? 0,
   player_kicking_points: stat('kicking.totalKickingPoints'),
   player_field_goals: stat('kicking.fieldGoalsMade'), fg_made: stat('kicking.fieldGoalsMade'),
   player_punts: stat('punting.punts'), player_solo_tackles: orZero('defensive.soloTackles'),

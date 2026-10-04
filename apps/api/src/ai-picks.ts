@@ -138,7 +138,8 @@ const sportOrder = ['NFL', 'NCAAFB', 'MLB', 'NBA', 'NHL', 'WNBA', 'SOCCER', 'TEN
  * research can rarely settle (fantasy scores, single-map or partial-game props, preseason splits) come last.
  */
 function worth(line: PropLine): number {
-  const sport = sportOrder.indexOf(line.sport), thin = /fantasy|map_[3-9]|1st_|1h_|2h_|1q_|qtrs?_|halves?_|inn/.test(line.market);
+  const sport = sportOrder.indexOf(line.sport), thin = /fantasy|map_[3-9]|1st_|1h_|2h_|1q_|qtrs?_|halves?_|inn|pitches_seen|strikes_counted|balls_counted|^po$/
+    .test(line.market);
   return (sport < 0 ? sportOrder.length : sport) + (line.league.toUpperCase() !== line.sport ? 10 : 0) + (thin ? 20 : 0);
 }
 

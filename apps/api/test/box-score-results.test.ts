@@ -118,3 +118,9 @@ test('MLB picks grade from the official boxscore, including total bases and sing
   assert.equal(requested.filter((url) => url.endsWith('/boxscore')).length, 1, 'one boxscore request per game');
   assert.equal(mlbRows({}).length, 0);
 });
+
+test('a quarterback grades sacks taken; a defender grades sacks made', () => {
+  const read = boxScoreReader(fixtureLine({ market: 'player_sacks' }))!;
+  assert.equal(read({ 'passing.passingAttempts': 30, 'passing.sacks': 3 }), 3);
+  assert.equal(read({ 'defensive.sacks': 1.5 }), 1.5);
+});

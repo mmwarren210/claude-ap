@@ -30,7 +30,7 @@ const FIELD_KEYS: Record<StatApiSport, Record<string, string[]>> = {
     'offensive_snaps', 'fantasy_pts', 'passing_tds', 'interceptions_thrown', 'rushing_tds', 'receiving_tds',
     'solo_tackles', 'assisted_tackles', 'defensive_sacks', 'quarterback_hits', 'defensive_interceptions',
     'passes_defended', 'field_goals_made', 'field_goals_attempted', 'extra_pts_made', 'receiving_long',
-    'rushing_long', 'passing_long', 'passing_air_yds', 'punts'] },
+    'rushing_long', 'passing_long', 'passing_air_yds', 'punts', 'sacks_allowed'] },
   NBA: { game_player_stats: ['pts', 'rebounds', 'assists', 'potential_assists',
     'minutes', 'field_goals_attempted', 'three_pointers_attempted', 'turnovers'] },
   MLB: { game_player_batter_stats: ['plate_appearances', 'at_bats', 'hits', 'doubles',
