@@ -163,3 +163,41 @@ test('a Crown GKR turns down is still saved, as the user own picks',async()=>{
     assert.deepEqual(crowns[0].legs.map((leg:{direction:string})=>leg.direction),['MORE','LESS']);
   } finally {await app.close();await rm(folder,{recursive:true,force:true});}
 });
+
+test('Underdog lines are served with the PrizePicks reference, and a slip on them saves as the user own picks',async()=>{
+  const { ScrapedLineStore } = await import('../src/scrapers/line-store.js');
+  const { createHash } = await import('node:crypto');
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-app-board-'));
+  const clock=()=>new Date('2030-09-24T12:00:00Z');
+  const store=new ScrapedLineStore(join(folder,'lines.json'),clock);
+  const row=(id:string,player:string,stat:string,line:number)=>({app:'underdog' as const,appLineId:id,league:'NFL',gameId:'g1',
+    player,team:'CHI',teamName:'Chicago Bears',opponent:'GB',stat,line,tier:'REGULAR' as const,
+    directions:['MORE','LESS'] as ('MORE'|'LESS')[],startTime:'2030-09-25T00:00:00.000Z',imageUrl:null,multipliers:{MORE:1.8}});
+  await store.ingest('zen-studio-underdog',[row('u1','Player A','Receiving Yards',55.5),row('u2','Player B','Rush Yards',40.5)],
+    {complete:true,apps:['underdog']});
+  const playerId=`americanfootball_nfl:${createHash('sha256').update('player a').digest('hex').slice(0,24)}`;
+  const cache=new BoardCache(join(folder,'board.json'));
+  await cache.save({board:boardSchema.parse({provider:'prizepicks',fetchedAt:'2030-09-24T11:00:00Z',lines:[fixtureLine({
+    id:'pp:1',sourceLineId:'1',playerId,playerName:'Player A',market:'player_reception_yds',threshold:54.5,
+    eventStartTime:'2030-09-25T00:00:00Z',fetchedAt:'2030-09-24T11:00:00Z'})]}),
+  evidence:[],researchStatus:'UNCONFIGURED',lastSuccessfulRefresh:null,secondLookAudits:{}});
+  const ledger=new ProductLedger(join(folder,'product.json'),'CROWN_STRONG',clock);
+  const app=buildServer({boardCache:cache,clock,product:ledger,scrapedLines:store});
+  try {
+    const board=(await app.inject('/v1/apps/underdog/board')).json() as {lines:{id:string;market:string;
+      prizePicks:{threshold:number}|null}[]};
+    assert.deepEqual(board.lines.map((line)=>[line.id,line.market,line.prizePicks?.threshold??null]),
+      [['ud:u1','player_reception_yds',54.5],['ud:u2','player_rush_yds',null]]);
+    assert.equal((await app.inject('/v1/apps/betr/board')).statusCode,404);
+    const session=(await app.inject({method:'POST',url:'/v1/auth/register',
+      payload:{username:'Slip_1',email:'slip@example.org',password:'private-passphrase-1'}})).json() as {token:string};
+    const headers={authorization:`Bearer ${session.token}`};
+    const saved=await app.inject({method:'POST',url:'/v1/me/crowns',headers,payload:{app:'underdog',personal:true,
+      lineIds:['ud:u1','ud:u2'],directions:{'ud:u1':'MORE','ud:u2':'LESS'}}});
+    assert.equal(saved.statusCode,201);
+    const crowns=(await app.inject({url:'/v1/me/crowns',headers})).json().crowns;
+    assert.equal(crowns[0].app,'underdog');
+    assert.deepEqual(crowns[0].legs.map((leg:{market:string;direction:string})=>[leg.market,leg.direction]),
+      [['player_reception_yds','MORE'],['player_rush_yds','LESS']]);
+  } finally {await app.close();await rm(folder,{recursive:true,force:true});}
+});

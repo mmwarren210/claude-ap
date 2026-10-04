@@ -22,7 +22,8 @@ type Pick = { id: string; savedAt: string; playerName: string; market: string; s
 type Leg = { playerName: string; market: string; threshold: number; direction: string; lineType?: string; score: number | null;
   grade: string; actual?: number | null; opponent?: string | null; playerId?: string };
 /** `personal` Crowns hold the user's own calls; results grade them, but they stay outside GKR's tracked record. */
-type Crown = { id: string; savedAt: string; name?: string; personal?: boolean; legs: Leg[] };
+type Crown = { id: string; savedAt: string; name?: string; personal?: boolean; app?: 'underdog' | 'pick6'; legs: Leg[] };
+const appLabels = { underdog: 'Underdog', pick6: 'Pick6' } as const;
 type Range = 7 | 30 | 0;
 /** GKR Picks: Crowns GKR fully backs (its tracked record). Your Picks: Crowns with your own calls, graded separately. */
 type Book = 'GKR' | 'YOURS';
@@ -178,7 +179,8 @@ export default function ResultsScreen() {
               <Text style={styles.pickSub}>{crown.legs.length} Legs · {new Date(crown.savedAt).toLocaleDateString('en-US',
                 { month: 'short', day: 'numeric', year: 'numeric' })}</Text>
               {average >= 90 && <Text style={styles.confidence}>High confidence</Text>}
-              {crown.personal && <Text style={styles.yourCall}>Your picks · outside GKR’s record</Text>}</View>
+              {crown.personal && <Text style={styles.yourCall}>{crown.app ? `${appLabels[crown.app]} slip · ` : ''}Your picks ·
+                outside GKR’s record</Text>}</View>
             <View style={[styles.status, { borderColor: state.color, backgroundColor: alpha(state.color, 0.1) }]}>
               <Text style={[styles.statusText, { color: state.color }]}>{state.label}</Text></View>
             <Text style={[styles.units, { color: crownUnits === null ? colors.textMuted : crownUnits >= 0 ? colors.mint : colors.red }]}>

@@ -8,6 +8,8 @@ import type { Filters } from '../state';
 import { colors, radius, rankAccents } from '../theme';
 import { useBoard } from '../use-board';
 import { useDraft } from '../use-draft';
+import { AppBoard, pickApps } from './AppBoard';
+import type { PickApp } from './AppBoard';
 import { BoardCard } from './BoardCard';
 import { CrownTray } from './CrownTray';
 import { FilterSheet, optionLabel } from './FilterSheet';
@@ -33,7 +35,16 @@ function freshnessLine(freshness: string, fetchedAt: string | undefined, nowMs: 
   return freshness === 'DEMO_LIVE' ? `Next 3 days · captured ${age}` : `Captured ${age}`;
 }
 
+// The chosen pick'em app survives leaving and returning to the Board tab.
+let lastApp: PickApp = 'prizepicks';
+
 export default function BoardView() {
+  const [app, setAppState] = useState<PickApp>(lastApp);
+  const setApp = useCallback((next: PickApp) => { lastApp = next; setAppState(next); }, []);
+  return app === 'prizepicks' ? <PrizePicksBoard onApp={setApp} /> : <AppBoard app={app} onApp={setApp} />;
+}
+
+function PrizePicksBoard({ onApp }: { onApp: (app: PickApp) => void }) {
   const { status, data, message, freshness, refreshing, nowMs, reload, needsBootstrap, bootstrapPull } = useBoard();
   const { filters, setFilters, viewMode, ready } = useDraft();
   // While the Board is on screen, reread the saved board every 5 minutes (free; picks up context refreshes).
@@ -53,6 +64,7 @@ export default function BoardView() {
 
   const header = <View style={styles.header}>
     <AppHeader subtitle="Sports Intelligence · Powered by GKR" />
+    <Segmented label="Pick'em app" options={pickApps} value={'prizepicks' as PickApp} onChange={onApp} />
     {data && <ChipRow>
       {chipKeys.map((key) => <FilterChip key={key} active={filters[key] !== 'ALL'} onPress={() => setSheet(key)}
         label={filters[key] === 'ALL' ? chipNames[key]! : optionLabel(key, filters[key])} />)}

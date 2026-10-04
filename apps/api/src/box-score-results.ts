@@ -60,7 +60,9 @@ const football: Readonly<Record<string, Read>> = {
   player_tackles_assists: orZero('defensive.totalTackles'), player_sacks: orZero('defensive.sacks'),
   player_kicking_points: stat('kicking.totalKickingPoints'),
   player_field_goals: stat('kicking.fieldGoalsMade'), fg_made: stat('kicking.fieldGoalsMade'),
-  player_punts: stat('punting.punts'),
+  player_punts: stat('punting.punts'), player_solo_tackles: orZero('defensive.soloTackles'),
+  player_defensive_interceptions: orZero('interceptions.interceptions'), player_fumbles_lost: orZero('fumbles.fumblesLost'),
+  player_extra_points: stat('kicking.extraPointsMade'),
 };
 const basketball: Readonly<Record<string, Read>> = {
   player_points: stat('points'), points: stat('points'), player_rebounds: stat('rebounds'),
@@ -89,6 +91,11 @@ const baseball: Readonly<Record<string, Read>> = {
   batter_total_bases: stat('batting.totalBases'), hitter_ks: stat('batting.strikeOuts'), rbis: stat('batting.rbi'),
   runs: stat('batting.runs'), batter_runs_scored: stat('batting.runs'), doubles: stat('batting.doubles'),
   singles, batter_singles: singles,
+  triples: stat('batting.triples'),
+  extra_base_hits: (s) => s['batting.hits'] === undefined ? null
+    : (s['batting.doubles'] ?? 0) + (s['batting.triples'] ?? 0) + (s['batting.homeRuns'] ?? 0),
+  runs_rbis: (s) => s['batting.runs'] === undefined ? null : s['batting.runs'] + (s['batting.rbi'] ?? 0),
+  pitching_outs: stat('pitching.outs'),
   batter_walks: stat('batting.baseOnBalls'), batter_home_runs: stat('batting.homeRuns'), sb: stat('batting.stolenBases'),
   plate_appearances: stat('batting.plateAppearances'),
   pitcher_strikeouts: stat('pitching.strikeOuts'), hits_allowed: stat('pitching.hits'),
@@ -229,7 +236,7 @@ function factFor(target: GradeTarget, rows: readonly Row[], read: Read, source: 
   const base = { eventId: line.eventId, playerId: line.playerId, market: line.market, sourceName: source.name,
     sourceUrl: source.url, completedAt: now.toISOString() };
   if (line.sport === 'MLB') {
-    const pitcher = /pitch|allowed|batters_faced|pitcher/.test(line.market);
+    const pitcher = /pitch|allowed|batters_faced|pitcher/.test(line.market) && line.market !== 'pitches_seen';
     if (!Object.keys(row.stats).some((key) => key.startsWith(pitcher ? 'pitching.' : 'batting.')))
       return { ...base, status: 'DNP', actual: null };
   }

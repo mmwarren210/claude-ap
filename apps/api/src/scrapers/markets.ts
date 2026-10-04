@@ -1,5 +1,5 @@
 import type { Sport } from '@crowniq/contracts';
-import type { ScrapedLine } from './scraped-line.js';
+import type { DfsApp, ScrapedLine } from './scraped-line.js';
 
 /** PrizePicks league labels to CrownIQ sports and the matching Odds API sport keys (keeps player ids identical). */
 export const leagues: Readonly<Record<string, { sport: Sport; key: string }>> = {
@@ -36,8 +36,41 @@ const statKeys: Readonly<Record<string, Readonly<Record<string, string>>>> = {
     'Saves': 'saves', 'Fantasy Score': 'player_fantasy_points' },
 };
 
+const nflApps: Readonly<Record<string, string>> = { 'Receiving Yards': 'player_reception_yds',
+  'Receptions': 'player_receptions', 'Longest Reception': 'player_reception_longest', 'Sacks': 'player_sacks',
+  'Tackles + Assists': 'player_tackles_assists', 'Solo Tackles': 'player_solo_tackles', 'Targets': 'player_receiving_targets',
+  'Rush Yards': 'player_rush_yds', 'Rushing Yards': 'player_rush_yds', 'Longest Rush': 'player_rush_longest',
+  'Rush Attempts': 'player_rush_attempts', 'Rush + Rec Yards': 'player_rush_reception_yds',
+  'Rush + Rec TDs': 'anytime_tds', 'Rush + Rec TD': 'anytime_tds', 'Pass Yards': 'passing_yards',
+  'Passing Yards': 'passing_yards', 'Pass TDs': 'player_pass_tds', 'Passing TDs': 'player_pass_tds',
+  'Completions': 'player_pass_completions', 'Pass Attempts': 'player_pass_attempts', 'Passing Attempts': 'player_pass_attempts',
+  'Pass + Rush Yards': 'player_pass_rush_yds', 'Passing + Rushing Yards': 'player_pass_rush_yds',
+  'INTs Thrown': 'player_pass_interceptions', 'Interceptions Thrown': 'player_pass_interceptions',
+  'Defensive INTs': 'player_defensive_interceptions', 'Fumbles Lost': 'player_fumbles_lost',
+  'FG Made': 'player_field_goals', 'Field Goals Made': 'player_field_goals', 'Kicking Points': 'player_kicking_points',
+  'XP Made': 'player_extra_points', 'Fantasy Points': 'player_fantasy_points' };
+const mlbApps: Readonly<Record<string, string>> = { 'Hits + Runs + RBIs': 'batter_hits_runs_rbis',
+  'Total Bases': 'batter_total_bases', 'Total Bases (From Hits)': 'batter_total_bases', 'RBIs': 'rbis',
+  'Runs Batted In': 'rbis', 'Home Runs': 'batter_home_runs', 'Hits': 'batter_hits', 'Runs': 'runs',
+  'Batter Walks': 'batter_walks', 'Walks': 'batter_walks', 'Stolen Bases': 'sb', 'Singles': 'singles',
+  'Doubles': 'doubles', 'Triples': 'triples', 'Extra Base Hits': 'extra_base_hits', 'Runs + RBIs': 'runs_rbis',
+  'Batter Strikeouts': 'hitter_ks', 'Strikeouts': 'pitcher_strikeouts', 'Strikeouts Thrown': 'pitcher_strikeouts',
+  'Pitching Outs Recorded': 'pitching_outs', 'Outs': 'pitching_outs', 'Pitcher Hits Allowed': 'hits_allowed',
+  'Hits Against': 'hits_allowed', 'Pitcher Earned Runs Allowed': 'pitcher_earned_runs',
+  'Earned Runs Allowed': 'pitcher_earned_runs', 'Pitcher Walks Allowed': 'walks_allowed', 'Walks Allowed': 'walks_allowed',
+  'Fantasy Points': 'batter_fantasy_score', 'Batter Fantasy Points': 'batter_fantasy_score' };
+const nhlApps: Readonly<Record<string, string>> = { 'Goals': 'goals', 'Assists': 'assists', 'Points': 'points',
+  'Shots on Goal': 'shots_on_goal', 'Plus Minus': 'plus_minus', 'Faceoffs Won': 'faceoffs_won', 'Hits': 'hits',
+  'Blocked Shots': 'blocked_shots', 'Blocks': 'blocked_shots', 'Saves': 'saves', 'Fantasy Points': 'player_fantasy_points' };
+/** Underdog and Pick6 stat labels to the same market keys PrizePicks lines use, so lines match and grade alike. */
+const appStatKeys: Readonly<Partial<Record<DfsApp, Readonly<Partial<Record<Sport, Readonly<Record<string, string>>>>>>>> = {
+  underdog: { NFL: nflApps, NCAAFB: nflApps, MLB: mlbApps, NHL: nhlApps, NBA: basketball, WNBA: basketball },
+  pick6: { NFL: nflApps, NCAAFB: nflApps, MLB: mlbApps, NHL: nhlApps, NBA: basketball, WNBA: basketball },
+};
 
-export function marketKey(sport: Sport, stat: string): string {
+export function marketKey(sport: Sport, stat: string, app?: DfsApp): string {
+  const own = app ? appStatKeys[app]?.[sport]?.[stat] : undefined;
+  if (own) return own;
   return statKeys[sport]?.[stat] ?? stat.toLowerCase().replace(/\+/g, ' plus ').replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
@@ -52,8 +85,8 @@ export function leagueLabel(sport: Sport): string {
 }
 
 /** The model market key of a stored line, whichever source supplied it. */
-export const lineMarket = (line: Pick<ScrapedLine, 'league' | 'stat' | 'marketKey'>) =>
-  line.marketKey ?? marketKey(leagueInfo(line.league).sport, line.stat);
+export const lineMarket = (line: Pick<ScrapedLine, 'league' | 'stat' | 'marketKey'> & { app?: DfsApp }) =>
+  line.marketKey ?? marketKey(leagueInfo(line.league).sport, line.stat, line.app);
 
 /** The same line across sources that use different ids: app, league, player, market, number, tier. */
 export const sameLineKey = (line: ScrapedLine) => JSON.stringify([line.app, line.league,
