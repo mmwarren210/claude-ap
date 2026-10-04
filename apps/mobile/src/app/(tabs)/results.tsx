@@ -19,9 +19,10 @@ import { useBoard } from '../../use-board';
 
 type Pick = { id: string; savedAt: string; playerName: string; market: string; sport: string; threshold: number;
   direction: string; lineType: string; lineScore: number; result: string; actual: number | null; eventStartTime?: string };
-type Leg = { playerName: string; market: string; threshold: number; direction: string; lineType?: string; score: number;
+type Leg = { playerName: string; market: string; threshold: number; direction: string; lineType?: string; score: number | null;
   grade: string; actual?: number | null; opponent?: string | null; playerId?: string };
-type Crown = { id: string; savedAt: string; name?: string; legs: Leg[] };
+/** `personal` Crowns hold the user's own calls; they are kept but not graded as GKR picks. */
+type Crown = { id: string; savedAt: string; name?: string; personal?: boolean; legs: Leg[] };
 type Range = 7 | 30 | 0;
 const DAY = 86_400_000;
 
@@ -155,14 +156,16 @@ export default function ResultsScreen() {
 
       {shown.map(({ crown, status, units: crownUnits }) => {
         const title = crownTitle(crown), state = statusStyle[status];
-        const average = crown.legs.reduce((sum, leg) => sum + leg.score, 0) / Math.max(1, crown.legs.length);
+        const scored = crown.legs.flatMap((leg) => leg.score === null ? [] : [leg.score]);
+        const average = crown.personal ? 0 : scored.reduce((sum, score) => sum + score, 0) / Math.max(1, scored.length);
         return <View key={crown.id} style={[styles.crown, { borderColor: alpha(title.color, 0.55) }]}>
           <View style={styles.crownHead}>
             <Icon name={title.icon} size={40} color={title.color} />
             <View style={styles.grow}><Text style={styles.crownName}>{title.title}</Text>
               <Text style={styles.pickSub}>{crown.legs.length} Legs · {new Date(crown.savedAt).toLocaleDateString('en-US',
                 { month: 'short', day: 'numeric', year: 'numeric' })}</Text>
-              {average >= 90 && <Text style={styles.confidence}>High confidence</Text>}</View>
+              {average >= 90 && <Text style={styles.confidence}>High confidence</Text>}
+              {crown.personal && <Text style={styles.yourCall}>Your call · not graded by GKR</Text>}</View>
             <View style={[styles.status, { borderColor: state.color, backgroundColor: alpha(state.color, 0.1) }]}>
               <Text style={[styles.statusText, { color: state.color }]}>{state.label}</Text></View>
             <Text style={[styles.units, { color: crownUnits === null ? colors.textMuted : crownUnits >= 0 ? colors.mint : colors.red }]}>
@@ -213,6 +216,7 @@ export default function ResultsScreen() {
 }
 
 const styles = StyleSheet.create({
+  yourCall: { color: colors.gold, fontSize: 12, fontWeight: '700' },
   safe: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 32, gap: 14 },
   range: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: colors.borderStrong,

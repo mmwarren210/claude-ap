@@ -236,3 +236,26 @@ test('the guest route is off without a configured pass and needs a device id',as
     assert.equal(me.json().profile.plan,'GUEST');
   }finally{await off.close();await on.close();await rm(folder,{recursive:true,force:true});}
 });
+
+test('a personal Crown keeps the user own calls outside the tracked record',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-personal-'));
+  try{const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>start,()=>[]);
+    const user=await ledger.register('person@example.org','long-private-passphrase','Person_1');
+    const account=(await ledger.authenticate(user.token))!.accountId;
+    const sample=board();
+    const pass=boardResponseSchema.parse({...sample,analyses:[sample.analyses[0],
+      {...sample.analyses[1],direction:'PASS',score:null,scoreBand:'PASS',modelVersion:null,reasonCode:'INSUFFICIENT_EDGE'}]});
+    const legs=pass.board.lines.map((line)=>({lineId:line.id,direction:'MORE' as const}));
+    await assert.rejects(()=>ledger.savePrivateCrown(account,legs.map((leg)=>leg.lineId),pass,[]),/INVALID_OR_STALE_CROWN/);
+    const saved=await ledger.savePersonalCrown(account,legs,pass);
+    assert.equal(saved.alreadySaved,false);
+    assert.equal((await ledger.savePersonalCrown(account,legs,pass)).alreadySaved,true);
+    await assert.rejects(()=>ledger.savePersonalCrown(account,[legs[0],{...legs[1],direction:'LESS'}],pass),
+      /INVALID_OR_STALE_CROWN/,'a side PrizePicks does not offer is still refused');
+    const crowns=(await ledger.userCrowns(account)).crowns;
+    assert.equal(crowns.length,1);
+    assert.equal((crowns[0] as {personal?:boolean}).personal,true);
+    assert.deepEqual(crowns[0].legs.map((leg)=>leg.score),[89,null]);
+    assert.equal((await ledger.userPicks(account)).total,0,'personal Crowns do not create tracked picks');
+  }finally{await rm(folder,{recursive:true,force:true});}
+});

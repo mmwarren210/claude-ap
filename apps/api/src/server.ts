@@ -595,12 +595,17 @@ export function buildServer(options: ServerOptions = {}) {
   });
   app.post('/v1/me/crowns',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
-    const input=z.object({lineIds:z.array(z.string().min(1).max(300)).min(2).max(6)})
-      .strict().safeParse(request.body);
+    // `personal` Crowns hold the user's own calls (one side per line in `directions`) and skip GKR's rules.
+    const input=z.object({lineIds:z.array(z.string().min(1).max(300)).min(2).max(6),personal:z.literal(true).optional(),
+      directions:z.record(z.string(),z.enum(['MORE','LESS'])).optional()})
+      .strict().refine((value)=>!value.personal||value.lineIds.every((id)=>value.directions?.[id]))
+      .safeParse(request.body);
     if(!input.success)return reply.code(400).send({code:'INVALID_CROWN'});
     const board=service.getBoard();if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
-    try{return reply.code(201).send(await options.product!.savePrivateCrown(user.accountId,
-      input.data.lineIds,board,service.getEvidence()));}
+    try{return reply.code(201).send(input.data.personal
+      ? await options.product!.savePersonalCrown(user.accountId,
+        input.data.lineIds.map((lineId)=>({lineId,direction:input.data.directions![lineId]!})),board)
+      : await options.product!.savePrivateCrown(user.accountId,input.data.lineIds,board,service.getEvidence()));}
     catch(error){return reply.code(422).send({code:'CROWN_VALIDATION_FAILED',issues:crownIssues(error)});}
   });
   app.delete('/v1/me/crowns/:id',async(request,reply)=>{

@@ -18,7 +18,7 @@ import { rateTone, StatStrip } from '../../components/ui/StatStrip';
 import { formatLine, gameTime, lineStats, marketLabel, percent } from '../../insights';
 import { colors, radius, rankAccents } from '../../theme';
 import { useBoard } from '../../use-board';
-import { useDraft } from '../../use-draft';
+import { useTipFlow } from '../../components/TipSheet';
 import { usePlayerGames } from '../../use-player-games';
 import { useRankings } from '../../use-rankings';
 
@@ -83,11 +83,11 @@ function PickCard({ card, rank, accent, photoUrl, analysis, onAdd }: { card: Car
 export default function TopPicksScreen() {
   const { data: board, nowMs, freshness } = useBoard();
   const { status, data, message, retry } = useRankings();
-  const { add } = useDraft();
   const [size, setSize] = useState(5);
   const [filter, setFilter] = useState<ListFilter>({ sport: 'ALL', date: 'ALL', lineType: 'ALL' });
   const [sheet, setSheet] = useState<keyof ListFilter | null>(null);
   const [notice, setNotice] = useState('');
+  const tips = useTipFlow(setNotice);
   const lineById = useMemo(() => new Map(board?.board.lines.map((line) => [line.id, line])), [board]);
   const analysisById = useMemo(() => new Map(board?.analyses.map((item) => [item.lineId, item])), [board]);
   const keep = (card: Card) => Date.parse(card.eventStartTime) > nowMs &&
@@ -104,7 +104,7 @@ export default function TopPicksScreen() {
   const addCard = (card: Card) => {
     const line = lineById.get(card.lineId), analysis = analysisById.get(card.lineId);
     if (!line || !analysis || analysis.direction === 'PASS') { setNotice('That line is no longer on the board.'); return; }
-    setNotice(add(line, analysis, analysis.direction) ?? `Added ${card.playerName} to your Crown.`);
+    tips.attempt(line, analysis, analysis.direction, `Added ${card.playerName} to your Crown.`);
   };
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
@@ -139,6 +139,7 @@ export default function TopPicksScreen() {
       </View>}
       {!data && <Pressable accessibilityRole="button" onPress={retry}><Text style={styles.link}>Retry</Text></Pressable>}
     </ScrollView>
+    {tips.sheet}
     {sheet && <Sheet visible title={{ sport: 'Sport', date: 'Date', lineType: 'Line style' }[sheet]} onClose={() => setSheet(null)}>
       <View style={styles.options}>
         {['ALL', ...options[sheet]].map((option) => <Pressable key={option} accessibilityRole="button"

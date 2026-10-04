@@ -30,7 +30,7 @@ function Row({ icon, title, detail, onPress, locked, last }: { icon: IconName; t
 
 export default function MoreScreen() {
   const { profile, logout, request, setUsername, demo } = useAuth();
-  const { viewMode, setViewMode, ready } = useDraft();
+  const { viewMode, setViewMode, ready, hiddenTips, showAllTips } = useDraft();
   const [owner, setOwner] = useState(false);
   const [stats, setStats] = useState<{ picks: number; crowns: number; rate: number | null } | null>(null);
   const [sheet, setSheet] = useState<'account' | 'payouts' | null>(null);
@@ -93,6 +93,9 @@ export default function MoreScreen() {
         <Row icon="view-grid-outline" title="Board view" detail={viewMode === 'LITE' ? 'Lite · top qualified' : 'Full · every line'}
           onPress={ready ? () => setViewMode(viewMode === 'LITE' ? 'FULL' : 'LITE') : undefined} />
         <Row icon="cash-multiple" title="Payout estimates" detail="Flex table" onPress={() => setSheet('payouts')} />
+        <Row icon="lightbulb-on-outline" title="Pick tips" detail={hiddenTips.length
+          ? `${hiddenTips.length} hidden · tap to show again` : 'On · advice before weaker picks'}
+          onPress={hiddenTips.length ? showAllTips : undefined} />
         <Row icon="account-group-outline" title="Social" detail="Top 10 and Crowns" onPress={() => go('/(tabs)/social')} />
         <Row icon="lifebuoy" title="Play responsibly" detail="1-800-MY-RESET" last onPress={() => void Linking.openURL(helpUrl)} />
       </View>

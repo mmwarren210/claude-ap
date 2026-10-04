@@ -9,12 +9,13 @@ import { AppHeader } from '../../components/ui/AppHeader';
 import { alpha } from '../../components/ui/color';
 import { GhostButton, PrimaryButton, Segmented } from '../../components/ui/Controls';
 import { GlowCard } from '../../components/ui/GlowCard';
+import { useTipFlow } from '../../components/TipSheet';
 import { Icon } from '../../components/ui/Icon';
 import { LineBadge } from '../../components/ui/LineBadge';
 import { PlayerAvatar } from '../../components/ui/PlayerAvatar';
 import { ScoreRing } from '../../components/ui/ScoreRing';
 import { crownIssueMessage, crownMinimumLineScore, formatLine, fullHitMultiplier, gameTime, lineStats, marketLabel, signed } from '../../insights';
-import { addLeg, autoCrown, shareCrown } from '../../state';
+import { autoCrown, betterSwap, checkLeg, gkrBacked, shareCrown } from '../../state';
 import type { CrownLeg } from '../../state';
 import { colors, lineStyleOf, radius, rankAccents } from '../../theme';
 import { useBoard } from '../../use-board';
@@ -37,7 +38,8 @@ function LegCard({ leg, accent, photoUrl, minimum, onRemove, onEdge }: { leg: Cr
   const { log } = usePlayerGames(leg.line);
   const edge = lineStats(log, leg.line.threshold, leg.direction, 'L10').edge;
   useEffect(() => { onEdge(edge); }, [edge, onEdge]);
-  const below = leg.score < minimum;
+  const below = leg.score !== null && leg.score < minimum;
+  const yours = leg.score === null || !!leg.yourCall?.length;
   return <View style={[styles.leg, { borderColor: alpha(accent, 0.55) }]}>
     <PlayerAvatar name={leg.line.playerName} photoUrl={photoUrl} ring={accent} size={58} />
     <Pressable accessibilityRole="button" style={styles.legBody}
@@ -48,11 +50,12 @@ function LegCard({ leg, accent, photoUrl, minimum, onRemove, onEdge }: { leg: Cr
       <View style={styles.legPick}><Text style={styles.legMarket}>{marketLabel(leg.line.market)}</Text>
         <Text style={styles.legLine}>{leg.direction} {formatLine(leg.line.threshold)}</Text></View>
       {below && <Text style={styles.legWarn}>Below the {minimum} minimum for this Crown size</Text>}
+      {yours && <Text style={styles.legCall}>Your call{leg.score === null ? ' · no GKR score' : ''}</Text>}
     </Pressable>
     <View style={styles.legSide}>
       <LineBadge lineType={leg.line.lineType} compact />
-      <ScoreRing score={leg.score} band={leg.score >= 92 ? 'CROWN_ELITE' : leg.score >= 86 ? 'CROWN_STRONG' : leg.score >= 80
-        ? 'PLAYABLE' : leg.score >= 74 ? 'LEAN' : 'WEAK'} size={54} />
+      <ScoreRing score={leg.score} band={leg.score === null ? 'PASS' : leg.score >= 92 ? 'CROWN_ELITE'
+        : leg.score >= 86 ? 'CROWN_STRONG' : leg.score >= 80 ? 'PLAYABLE' : leg.score >= 74 ? 'LEAN' : 'WEAK'} size={54} />
     </View>
     <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${leg.line.playerName}`} onPress={onRemove}
       hitSlop={8} style={styles.remove}><Icon name="close" size={18} color={colors.textMuted} /></Pressable>
@@ -77,7 +80,7 @@ export default function CrownScreen() {
   const { request, demo } = useAuth();
   const { data: board, nowMs } = useBoard();
   const { data: ranked } = useRankings();
-  const { legs, remove, add, replace } = useDraft();
+  const { legs, remove, replace, hiddenTips, hideTips } = useDraft();
   const [size, setSize] = useState(4);
   const [offset, setOffset] = useState(0);
   const [built, setBuilt] = useState(false);
@@ -85,6 +88,8 @@ export default function CrownScreen() {
   const [editing, setEditing] = useState(false);
   const [edges, setEdges] = useState<Record<string, number | null>>({});
   const [message, setMessage] = useState('');
+  const tips = useTipFlow(setMessage);
+  const [keptLeg, setKeptLeg] = useState<string | null>(null);
   const analyses = useMemo(() => new Map(board?.analyses.map((item) => [item.lineId, item])), [board]);
   const lines = useMemo(() => new Map(board?.board.lines.map((item) => [item.id, item])), [board]);
   const candidates = useMemo(() => (ranked?.rankings ?? []).flatMap((card) => {
@@ -93,7 +98,9 @@ export default function CrownScreen() {
   }), [ranked, lines, analyses, nowMs]);
   const minimum = crownMinimumLineScore[Math.max(2, Math.min(6, legs.length || size))] ?? 80;
   const crownName = name ?? defaultName(legs);
-  const average = legs.length ? legs.reduce((sum, leg) => sum + leg.score, 0) / legs.length : null;
+  const scores = legs.flatMap((leg) => leg.score === null ? [] : [leg.score]);
+  const average = scores.length ? scores.reduce((sum, score) => sum + score, 0) / scores.length : null;
+  const backed = gkrBacked(legs);
   const elite = legs.filter((leg) => analyses.get(leg.line.id)?.evidenceQuality === 'HIGH').length;
   const knownEdges = legs.map((leg) => edges[leg.line.id]).filter((edge): edge is number => typeof edge === 'number');
   const avgEdge = knownEdges.length ? knownEdges.reduce((sum, edge) => sum + edge, 0) / knownEdges.length : null;
@@ -101,7 +108,11 @@ export default function CrownScreen() {
   const multiplier = fullHitMultiplier(legs.length);
   const suggestions = candidates.filter(({ line }) => !legs.some((leg) => leg.line.id === line.id))
     .filter(({ line, analysis }) => analysis.direction !== 'PASS' &&
-      !addLeg(legs, line, analysis, analysis.direction, nowMs).error).slice(0, 2);
+      (({ block, tips: advice }) => !block && !advice.length)(checkLeg(legs, line, analysis, analysis.direction, nowMs)))
+    .slice(0, 2);
+  // A clearly stronger qualified pick for the weakest leg, unless the user hid this tip or kept that leg.
+  const swap = hiddenTips.includes('WEAKER_TICKET') ? null : betterSwap(legs, candidates, nowMs);
+  const showSwap = swap && swap.weakest.line.id !== keptLeg ? swap : null;
 
   const generate = () => {
     const next = autoCrown(candidates, size, crownMinimumLineScore[size], built ? offset + 1 : 0, nowMs);
@@ -111,8 +122,14 @@ export default function CrownScreen() {
   };
   const save = async (path: string, done: string) => {
     try {
+      if (!backed && path !== '/v1/me/crowns') {
+        setMessage('Social only shows Crowns GKR fully backs, so the Top 10 stays fair. Save this one privately or ' +
+          'share the text instead.'); return;
+      }
+      // A Crown with your-call legs saves to the profile as personal: kept, but outside GKR's tracked record.
       const response = await request(path, { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ lineIds: legs.map((leg) => leg.line.id) }) });
+        body: JSON.stringify(backed ? { lineIds: legs.map((leg) => leg.line.id) } : { lineIds: legs.map((leg) => leg.line.id),
+          personal: true, directions: Object.fromEntries(legs.map((leg) => [leg.line.id, leg.direction])) }) });
       if (response.ok) { setMessage(done); return; }
       const body = await response.json().catch(() => ({})) as { code?: string; issues?: string[] };
       setMessage(body.code === 'DEMO_READ_ONLY' ? 'Demo mode is read-only. Sign in to save Crowns.'
@@ -162,7 +179,29 @@ export default function CrownScreen() {
             <Text style={styles.link}>View More</Text></Pressable></View>
         <View style={styles.suggestions}>{suggestions.map(({ line, analysis }) => <Suggestion key={line.id} line={line}
           analysis={analysis} photoUrl={board?.playerMedia?.[line.playerId]?.photoUrl}
-          onAdd={() => setMessage(add(line, analysis, analysis.direction as 'MORE' | 'LESS') ?? `Added ${line.playerName}.`)} />)}</View>
+          onAdd={() => tips.attempt(line, analysis, analysis.direction as 'MORE' | 'LESS', `Added ${line.playerName}.`)} />)}</View>
+      </View>}
+
+      {showSwap && <View style={[styles.panel, styles.tipPanel]}>
+        <View style={styles.panelHead}><Icon name="lightbulb-on-outline" size={22} color={colors.gold} />
+          <View style={styles.legBody}><Text style={styles.panelTitle}>This Crown could be stronger</Text>
+            <Text style={styles.legMeta}>{showSwap.weakest.line.playerName} ({showSwap.weakest.score === null ? 'your call'
+              : `GKR ${Math.round(showSwap.weakest.score)}`}) is your weakest leg. {showSwap.line.playerName}{' '}
+              {marketLabel(showSwap.line.market)} {showSwap.analysis.direction} {formatLine(showSwap.line.threshold)} scores
+              GKR {Math.round(showSwap.analysis.score ?? 0)} and fits this Crown.</Text></View></View>
+        <Text style={styles.quip}>Just looking out for you. You’re only human, after all.</Text>
+        <View style={styles.actions}>
+          <PrimaryButton label="Swap it" icon="swap-horizontal" style={styles.action} onPress={() => {
+            replace([...legs.filter((leg) => leg !== showSwap.weakest), { line: showSwap.line,
+              direction: showSwap.analysis.direction as 'MORE' | 'LESS', score: showSwap.analysis.score,
+              modelVersion: showSwap.analysis.modelVersion }]);
+            setMessage(`Swapped in ${showSwap.line.playerName}.`);
+          }} />
+          <GhostButton label="Keep mine" icon="account-check-outline" tone={colors.gold} style={styles.action}
+            onPress={() => setKeptLeg(showSwap.weakest.line.id)} />
+        </View>
+        <Pressable accessibilityRole="button" onPress={() => hideTips(['WEAKER_TICKET'])}>
+          <Text style={styles.dismiss}>Don’t show swap tips again</Text></Pressable>
       </View>}
 
       <GlowCard accent={colors.mint}>
@@ -187,6 +226,8 @@ export default function CrownScreen() {
         </View>
       </GlowCard>
       {!!message && <Text accessibilityRole="alert" style={styles.message}>{message}</Text>}
+      {!backed && legs.length > 0 && <Text style={styles.disclaimer}>This Crown has your-call legs. It saves to your
+        profile as a personal Crown, outside GKR’s tracked record and the Social Top 10.</Text>}
       {legs.length >= 2 && <View style={styles.actions}>
         <GhostButton label="Share text" icon="share-variant-outline" onPress={() => void Share.share({ message: shareCrown(legs) })}
           style={styles.action} />
@@ -194,6 +235,7 @@ export default function CrownScreen() {
           onPress={() => void save('/v1/social/crowns', 'Shared to Social.')} />
       </View>}
     </ScrollView>
+    {tips.sheet}
   </SafeAreaView>;
 }
 
@@ -226,6 +268,10 @@ const styles = StyleSheet.create({
   legMarket: { color: colors.text, fontSize: 12.5, fontWeight: '700' },
   legLine: { color: colors.mint, fontSize: 19, fontWeight: '900' },
   legWarn: { color: colors.amber, fontSize: 11.5, marginTop: 2 },
+  legCall: { color: colors.gold, fontSize: 11.5, fontWeight: '700', marginTop: 2 },
+  tipPanel: { borderColor: alpha(colors.gold, 0.5), gap: 12 },
+  quip: { color: colors.gold, fontSize: 13, fontStyle: 'italic' },
+  dismiss: { color: colors.textMuted, fontSize: 13, textAlign: 'center', paddingVertical: 4 },
   legSide: { alignItems: 'center', gap: 6, marginRight: 18 },
   remove: { position: 'absolute', top: 10, right: 8 },
   panel: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg,

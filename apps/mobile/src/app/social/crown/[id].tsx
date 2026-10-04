@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { boardResponseSchema } from '@crowniq/contracts';
 import { Notice, Screen } from '../../../components/Screen';
 import { palette } from '../../../theme';
-import { useDraft } from '../../../use-draft';
+import { useTipFlow } from '../../../components/TipSheet';
 import { useAuth } from '../../../auth';
 
 type Preview={legs:{shared:{playerName:string;market:string;threshold:number;
@@ -14,9 +14,10 @@ type Crown={createdAt:string;legs:{playerName:string;market:string;exactLine:num
   direction:string;lineType:string;lineScore:number;grade:string}[]};
 export default function PublicCrown(){
   const {request}=useAuth();
-  const {id}=useLocalSearchParams<{id:string}>(),{add}=useDraft();
+  const {id}=useLocalSearchParams<{id:string}>();
   const [crown,setCrown]=useState<Crown|null>(null),[preview,setPreview]=useState<Preview|null>(null),
     [message,setMessage]=useState('Loading public Crown…');
+  const tips=useTipFlow(setMessage);
   useEffect(()=>{
     if(!id)return;
     let active=true;
@@ -50,7 +51,7 @@ export default function PublicCrown(){
       if(!line || !analysis || analysis.direction!==leg.shared.direction || analysis.direction==='PASS'){
         setMessage('Current GKR decision changed. Check the Board.');return;
       }
-      setMessage(add(line,analysis,analysis.direction) ?? 'Added the exact current line to your Crown draft.');
+      tips.attempt(line,analysis,analysis.direction,'Added the exact current line to your Crown draft.');
     }catch(error){setMessage(error instanceof Error?error.message:'Cannot check the current line.');}
   };
   return <Screen eyebrow="CROWNIQ  /  PUBLIC CROWN" title="Shared Crown">
@@ -67,6 +68,7 @@ export default function PublicCrown(){
       <Text style={styles.note}>Each leg must still pass current GKR and Crown draft checks. Changed lines are never substituted.</Text>
     </>}
     {!!message && crown && <Text accessibilityRole="alert" style={styles.note}>{message}</Text>}
+    {tips.sheet}
   </Screen>;
 }
 const styles=StyleSheet.create({card:{backgroundColor:palette.card,borderColor:palette.border,

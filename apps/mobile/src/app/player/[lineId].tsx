@@ -8,6 +8,7 @@ import { evidenceDetail, matchup } from '../../components/BoardCard';
 import { windows } from '../../components/BoardView';
 import { Notice } from '../../components/Screen';
 import { Sheet } from '../../components/Sheet';
+import { useTipFlow } from '../../components/TipSheet';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { alpha } from '../../components/ui/color';
 import { GhostButton, PrimaryButton, Segmented } from '../../components/ui/Controls';
@@ -60,10 +61,11 @@ export default function PlayerResearch() {
   const { request, demo } = useAuth();
   const { lineId } = useLocalSearchParams<{ lineId: string }>();
   const { data, freshness, nowMs } = useBoard();
-  const { add, legs } = useDraft();
+  const { legs } = useDraft();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [window, setWindow] = useState<Window>('L5');
   const [notice, setNotice] = useState('');
+  const tips = useTipFlow(setNotice);
   const [marketOpen, setMarketOpen] = useState(false);
   const [audit, setAudit] = useState(false);
   const line = data?.board.lines.find((item) => item.id === (selectedId ?? lineId));
@@ -117,10 +119,11 @@ export default function PlayerResearch() {
     if (next) setSelectedId(next.id);
   };
   const inCrown = legs.some((leg) => leg.line.id === line.id);
-  const addToCrown = () => {
-    if (pass || !analysis) { setNotice('This line is a PASS and cannot join a Crown.'); return; }
-    setNotice(add(line, analysis, analysis.direction as 'MORE' | 'LESS') ?? 'Added to your Crown.');
-  };
+  // GKR's side when it scores one; otherwise the first side PrizePicks offers, as the user's own call.
+  const modelSide = !pass && analysis ? analysis.direction as 'MORE' | 'LESS' : null;
+  const otherSide = line.availableDirections.find((side) => side !== modelSide) ?? null;
+  const addSide = (side: 'MORE' | 'LESS') => tips.attempt(line, analysis, side, `Added ${side} to your Crown.`);
+  const addToCrown = () => addSide(modelSide ?? otherSide ?? 'MORE');
   const savePick = () => {
     void request('/v1/me/picks', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ lineId: line.id }) }).then(async (response) => {
@@ -258,16 +261,20 @@ export default function PlayerResearch() {
           {item.eventDate} · {item.direction} {item.line} · {item.actual ?? '—'} · {item.grade}</Text>)}</View>
       </View>}
       {!!notice && <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text>}
+      {!inCrown && !started && modelSide && otherSide && <Pressable accessibilityRole="button"
+        onPress={() => addSide(otherSide)} style={styles.savePick}>
+        <Text style={styles.link}>Like {otherSide} instead? Add it as your call</Text></Pressable>}
       <Pressable accessibilityRole="button" onPress={savePick} style={styles.savePick}>
         <Text style={styles.link}>Save this pick to Results</Text></Pressable>
     </ScrollView>
 
     <View style={styles.footer}>
-      <GhostButton label={inCrown ? 'In your Crown' : 'Add to Crown'} icon="crown" onPress={addToCrown}
-        disabled={inCrown || pass || started} style={styles.footerButton} />
+      <GhostButton label={inCrown ? 'In your Crown' : modelSide ? 'Add to Crown' : `Add ${otherSide ?? 'MORE'}`}
+        icon="crown" onPress={addToCrown} disabled={inCrown || started} style={styles.footerButton} />
       <PrimaryButton label="View Crown" icon="arrow-right" onPress={() => router.push('/(tabs)/crown')} style={styles.footerButton} />
     </View>
 
+    {tips.sheet}
     <Sheet visible={marketOpen} title="Market" onClose={() => setMarketOpen(false)}>
       {markets.map((item) => <Pressable key={item.market} accessibilityRole="button" style={styles.marketOption}
         onPress={() => { setSelectedId(item.id); setMarketOpen(false); }}>

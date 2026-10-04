@@ -59,7 +59,11 @@ const planOf=(account:Account,lifetime:ReadonlySet<string>)=>account.status==='S
 const guestExpired=(account:Account,now:Date)=>!!account.guest&&Date.parse(account.guest.expiresAt)<=now.getTime();
 interface Session {hash:string;accountId:string;expiresAt:string;createdAt:string}
 interface SavedPick {accountId:string;trackedPickId:string;savedAt:string;removedAt:string|null}
-interface PrivateCrown {id:string;accountId:string;trackedPickIds:string[];savedAt:string;removedAt:string|null}
+interface PrivateCrown {id:string;accountId:string;trackedPickIds:string[];savedAt:string;removedAt:string|null;
+  /** A personal Crown's legs, as saved. It holds the user's own calls, so it stays out of GKR's tracked record. */
+  personalLegs?:PersonalLeg[]}
+interface PersonalLeg {lineId:string;playerName:string;market:string;threshold:number;direction:'MORE'|'LESS';
+  lineType:string;eventStartTime:string;score:number|null}
 interface LegacyData {version:1;decisions:TrackedDecision[];profiles:PublicProfile[];
   crowns:PublicCrown[];follows:Follow[];publicCredits:{publicId:string;trackedPickId:string}[]}
 interface Data extends Omit<LegacyData,'version'> {version:2;accounts:Account[];sessions:Session[];
@@ -430,16 +434,48 @@ export class ProductLedger {
       data.privateCrowns.push(crown);await this.write(data);
       return {id:crown.id,alreadySaved:false};
     });}
+  /**
+   * Saves a Crown that includes the user's own calls (PASS lines, the side GKR does not back, or legs past CrownIQ's
+   * advice). Only what PrizePicks itself requires is checked; it is kept privately and never tracked or graded as GKR.
+   */
+  async savePersonalCrown(accountId:string,legs:readonly {lineId:string;direction:'MORE'|'LESS'}[],board:BoardResponse){
+    return this.exclusive(async()=>{
+      const data=await this.read();
+      if(!data.accounts.some((account)=>account.id===accountId && account.status!=='SUSPENDED')||
+        legs.length<2||legs.length>6||new Set(legs.map((leg)=>leg.lineId)).size!==legs.length)
+        throw new Error('INVALID_PRIVATE_CROWN');
+      const saved=legs.map(({lineId,direction})=>{
+        const line=board.board.lines.find((item)=>item.id===lineId),
+          analysis=board.analyses.find((item)=>item.lineId===lineId);
+        if(!line||line.lineType==='UNKNOWN_ALTERNATE'||!line.availableDirections.includes(direction)||
+          Date.parse(line.eventStartTime)<=this.clock().getTime())throw new Error('INVALID_OR_STALE_CROWN');
+        const backed=analysis&&analysis.direction===direction&&analysis.score!==null?analysis.score:null;
+        return {lineId,playerName:line.playerName,market:line.market,threshold:line.threshold,direction,
+          lineType:line.lineType,eventStartTime:line.eventStartTime,score:backed,playerId:line.playerId};
+      });
+      if(new Set(saved.map((leg)=>leg.playerId)).size!==saved.length)throw new Error('CROWN_CONSTRAINT_REJECTED:DUPLICATE_PLAYER');
+      const personalLegs=saved.map(({playerId:_playerId,...leg})=>leg);
+      const key=JSON.stringify(personalLegs.map((leg)=>[leg.lineId,leg.direction]));
+      const existing=data.privateCrowns.find((item)=>item.accountId===accountId && !item.removedAt &&
+        item.personalLegs && JSON.stringify(item.personalLegs.map((leg)=>[leg.lineId,leg.direction]))===key);
+      if(existing)return {id:existing.id,alreadySaved:true};
+      const crown:PrivateCrown={id:randomUUID(),accountId,trackedPickIds:[],savedAt:this.clock().toISOString(),
+        removedAt:null,personalLegs};
+      data.privateCrowns.push(crown);await this.write(data);
+      return {id:crown.id,alreadySaved:false};
+    });}
   async userCrowns(accountId:string){return this.exclusive(async()=>{
     const data=await this.read(),decisions=new Map(data.decisions.map((item)=>[item.trackedPickId,item]));
     return {crowns:data.privateCrowns.filter((item)=>item.accountId===accountId && !item.removedAt)
-      .sort((a,b)=>b.savedAt.localeCompare(a.savedAt)).slice(0,30).map((item)=>({id:item.id,
+      .sort((a,b)=>b.savedAt.localeCompare(a.savedAt)).slice(0,30).map((item)=>item.personalLegs?{id:item.id,
+        savedAt:item.savedAt,personal:true,legs:item.personalLegs.map((leg)=>({playerName:leg.playerName,market:leg.market,
+          threshold:leg.threshold,direction:leg.direction,lineType:leg.lineType,score:leg.score,grade:'PENDING'}))}:{id:item.id,
         savedAt:item.savedAt,legs:item.trackedPickIds.flatMap((id)=>{
           const decision=decisions.get(id);
           return decision?[{playerName:decision.playerName,market:decision.market,
             threshold:decision.exactLine,direction:decision.direction,lineType:decision.lineType,
             score:decision.lineScore,grade:decision.grade}]:[];
-        })}))};
+        })})};
   });}
   async removeUserCrown(accountId:string,id:string){return this.exclusive(async()=>{
     const data=await this.read(),crown=data.privateCrowns.find((item)=>item.accountId===accountId &&

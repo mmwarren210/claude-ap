@@ -13,8 +13,17 @@ export type ViewMode='LITE'|'FULL';
 export const LITE_LIMIT=20;
 export const emptyFilters: Filters = { sport:'ALL',market:'ALL',direction:'ALL',grade:'ALL',
   lineType:'ALL',evidence:'ALL',date:'ALL' };
-export interface CrownLeg { line: PropLine; direction: PlayableDirection; score: number;
-  modelVersion: string }
+/**
+ * A Crown leg. `score` and `modelVersion` are GKR's for the chosen side, or null when GKR does not back that side.
+ * `yourCall` lists the tips the user saw and overrode to add it.
+ */
+export interface CrownLeg { line: PropLine; direction: PlayableDirection; score: number | null;
+  modelVersion: string | null; yourCall?: TipId[] }
+/** Things CrownIQ advises against but lets an adult do anyway. */
+export type TipId='NO_SCORE'|'AGAINST_MODEL'|'LOW_SCORE'|'STALE_EVIDENCE'|'TEAM_STACK'|'WEAKER_TICKET';
+export interface LegTip { id: TipId; title: string; text: string }
+/** True when every leg is one GKR backs as-is, so the Crown can join the tracked record and Social. */
+export const gkrBacked=(legs:readonly CrownLeg[])=>legs.every((leg)=>leg.score!==null&&!leg.yourCall?.length);
 export function visibleLines(data: BoardResponse, filters: Filters, nowMs=Date.now()): PropLine[] {
   const analyses = new Map(data.analyses.map((analysis) => [analysis.lineId,analysis]));
   return data.board.lines.filter((line) => {
@@ -55,25 +64,70 @@ export function boardLinesForMode(data:BoardResponse,filters:Filters,mode:ViewMo
   }
   return ranked;
 }
-export function addLeg(legs: readonly CrownLeg[], line: PropLine, analysis: Analysis,
-  direction: PlayableDirection, nowMs=Date.now()): { legs: CrownLeg[]; error: string | null } {
-  if (analysis.direction !== direction || analysis.score === null || !analysis.modelVersion ||
-    line.lineType === 'UNKNOWN_ALTERNATE' || !line.availableDirections.includes(direction))
-    return {legs:[...legs],error:'This line is not currently playable.'};
+/**
+ * What stands between a line and this Crown. `block` is a hard stop PrizePicks itself enforces (a started game, a side
+ * it does not offer, the same player twice). `tips` are CrownIQ's own advice, which the user may override.
+ */
+export function checkLeg(legs: readonly CrownLeg[], line: PropLine, analysis: Analysis | undefined,
+  direction: PlayableDirection, nowMs=Date.now()): { block: string | null; tips: LegTip[] } {
+  if (Date.parse(line.eventStartTime)<=nowMs)
+    return {block:'This game has started, so PrizePicks has closed the line.',tips:[]};
+  if (line.lineType === 'UNKNOWN_ALTERNATE' || !line.availableDirections.includes(direction))
+    return {block:`PrizePicks does not offer ${direction} on this line.`,tips:[]};
   if (legs.some((leg) => leg.line.playerId === line.playerId))
-    return {legs:[...legs],error:'That player is already in this Crown. Remove or swap the leg first.'};
-  if (Date.parse(line.eventStartTime)<=nowMs ||
-    (analysis.evidenceExpiresAt && Date.parse(analysis.evidenceExpiresAt)<=nowMs))
-    return {legs:[...legs],error:'The event has started or its research evidence expired. Recheck before adding it.'};
-  if (analysis.score < CROWN_LEG_FLOOR)
-    return {legs:[...legs],error:`GKR ${Math.round(analysis.score)} is below ${CROWN_LEG_FLOOR}, the lowest score any Crown accepts.`};
-  if (line.sport === 'APEX' && line.team && legs.some((leg) => leg.line.sport === 'APEX' &&
-    leg.line.team === line.team))
-    return {legs:[...legs],error:'Only one Apex player per team is allowed.'};
-  if (line.team && legs.filter((leg)=>leg.line.team===line.team).length>=2)
-    return {legs:[...legs],error:'A Crown cannot contain three players from the same team.'};
+    return {block:`PrizePicks allows one pick per player in a lineup. ${line.playerName} is already in this Crown; ` +
+      'remove or swap that leg first.',tips:[]};
+  const tips:LegTip[]=[];
+  const scored=!!analysis && analysis.direction!=='PASS' && analysis.score!==null && !!analysis.modelVersion;
+  if (!scored) tips.push({id:'NO_SCORE',title:'GKR passes on this line',
+    text:'There is not enough support for either side to score it. It goes in as your call, without a GKR score.'});
+  else if (analysis!.direction!==direction) tips.push({id:'AGAINST_MODEL',title:`GKR leans ${analysis!.direction}`,
+    text:`GKR scores ${analysis!.direction} at ${Math.round(analysis!.score!)}. Taking ${direction} goes against it, ` +
+      'so this leg has no GKR score.'});
+  else if (analysis!.score!<CROWN_LEG_FLOOR) tips.push({id:'LOW_SCORE',title:`GKR ${Math.round(analysis!.score!)} is a weaker pick`,
+    text:`Every Crown CrownIQ builds starts at GKR ${CROWN_LEG_FLOOR}. This one sits under that.`});
+  if (scored && evidenceExpired(analysis,nowMs)) tips.push({id:'STALE_EVIDENCE',title:'The research is out of date',
+    text:'News may have changed since GKR last checked this player. Recheck the line before you play it.'});
+  const sameTeam=line.team?legs.filter((leg)=>leg.line.team===line.team).length:0;
+  if ((line.sport==='APEX' && sameTeam>=1) || sameTeam>=2) tips.push({id:'TEAM_STACK',
+    title:`That is ${sameTeam+1} from ${line.team}`,
+    text:'Legs from the same team tend to win or lose together, which makes the whole Crown swingier.'});
+  return {block:null,tips};
+}
+
+/**
+ * Adds a leg unless something blocks it. Tips not listed in `accept` come back unadded so the app can show them;
+ * accepted tips are recorded on the leg as the user's call.
+ */
+export function addLeg(legs: readonly CrownLeg[], line: PropLine, analysis: Analysis | undefined,
+  direction: PlayableDirection, nowMs=Date.now(), accept: readonly TipId[]=[]):
+  { legs: CrownLeg[]; error: string | null; tips: LegTip[] } {
+  const {block,tips}=checkLeg(legs,line,analysis,direction,nowMs);
+  if (block) return {legs:[...legs],error:block,tips:[]};
+  const pending=tips.filter((tip)=>!accept.includes(tip.id));
+  if (pending.length) return {legs:[...legs],error:null,tips:pending};
+  const backed=!tips.some((tip)=>tip.id==='NO_SCORE'||tip.id==='AGAINST_MODEL');
   // The server owns team/correlation audits; never call this draft an approved Crown.
-  return {legs:[...legs,{line,direction,score:analysis.score,modelVersion:analysis.modelVersion}],error:null};
+  return {legs:[...legs,{line,direction,score:backed?analysis!.score:null,modelVersion:backed?analysis!.modelVersion:null,
+    ...(tips.length?{yourCall:tips.map((tip)=>tip.id)}:{})}],error:null,tips:[]};
+}
+
+/**
+ * The strongest qualified pick that would lift this Crown: it fits every rule in place of the weakest leg and beats
+ * it by at least `margin` GKR points. Your-call legs count as the weakest.
+ */
+export function betterSwap(legs:readonly CrownLeg[],candidates:readonly {line:PropLine;analysis:Analysis}[],
+  nowMs=Date.now(),margin=8):{weakest:CrownLeg;line:PropLine;analysis:Analysis}|null{
+  if(!legs.length)return null;
+  const weakest=[...legs].sort((a,b)=>(a.score??-1)-(b.score??-1))[0];
+  const rest=legs.filter((leg)=>leg!==weakest);
+  for(const {line,analysis} of candidates){
+    if(analysis.direction==='PASS'||analysis.score===null||legs.some((leg)=>leg.line.id===line.id))continue;
+    if(analysis.score<(weakest.score??0)+margin)continue;
+    const check=checkLeg(rest,line,analysis,analysis.direction,nowMs);
+    if(!check.block&&!check.tips.length)return {weakest,line,analysis};
+  }
+  return null;
 }
 export function freshness(data: BoardResponse | null, reachable: boolean, nowMs: number,
   verifiedOffline=false):'LIVE'|'FRESH'|'CACHED'|'SNAPSHOT'|'STALE'|'OFFLINE'|'UNREACHABLE'|'UNAVAILABLE' {
@@ -87,7 +141,7 @@ export function freshness(data: BoardResponse | null, reachable: boolean, nowMs:
 }
 export function shareCrown(legs: readonly CrownLeg[]): string {
   return ['CrownIQ Crown draft — not a guaranteed or submitted pick',
-    ...legs.map((leg,index) => `${index+1}. ${leg.line.playerName} · ${leg.line.market} ${leg.direction} ${leg.line.threshold} (${leg.line.lineType}) · GKR ${leg.score}`),
+    ...legs.map((leg,index) => `${index+1}. ${leg.line.playerName} · ${leg.line.market} ${leg.direction} ${leg.line.threshold} (${leg.line.lineType}) · ${leg.score===null?'your call':`GKR ${leg.score}`}`),
     'Check current lines before playing. Play responsibly.'].join('\n');
 }
 
@@ -103,7 +157,7 @@ export function autoCrown(candidates:readonly {line:PropLine;analysis:Analysis}[
     if(legs.length===size)break;
     if(analysis.direction==='PASS'||(analysis.score??0)<minimumScore)continue;
     const result=addLeg(legs,line,analysis,analysis.direction,nowMs);
-    if(!result.error)legs=result.legs;
+    if(!result.error&&!result.tips.length)legs=result.legs;
   }
   return legs;
 }

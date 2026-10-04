@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { analysisSchema, boardResponseSchema, propLineSchema } from '@crowniq/contracts';
-import { addLeg, boardLinesForMode, CROWN_LEG_FLOOR, emptyFilters, evidenceExpired, freshness, shareCrown, visibleLines } from '../src/state.js';
+import { addLeg, betterSwap, boardLinesForMode, CROWN_LEG_FLOOR, emptyFilters, evidenceExpired, freshness, gkrBacked, shareCrown,
+  visibleLines } from '../src/state.js';
 import { parseDraft, profileDraftKey } from '../src/draft-codec.js';
 
 const line=propLineSchema.parse({id:'one',sourceLineId:'one',provider:'prizepicks',sport:'CS2',
@@ -53,12 +54,20 @@ test('profile draft migration preserves existing filters/legs and saves view cho
   assert.equal(parseDraft({...migrated,viewMode:'FULL'}).viewMode,'FULL');
   assert.notEqual(profileDraftKey('profile-a'),profileDraftKey('profile-b'));
 });
-test('Crown draft adds eligible line and rejects duplicate, PASS, invalid alternate',()=>{
+test('Crown draft adds eligible line, blocks what PrizePicks blocks and tips on a PASS line',()=>{
   const first=addLeg([],line,analysis,'MORE');
-  assert.equal(first.error,null);assert.equal(first.legs.length,1);
-  assert.match(addLeg(first.legs,alternate,{...analysis,lineId:'two'},'MORE').error!,/already/);
+  assert.equal(first.error,null);assert.equal(first.legs.length,1);assert.deepEqual(first.tips,[]);
+  assert.match(addLeg(first.legs,alternate,{...analysis,lineId:'two'},'MORE').error!,/one pick per player/);
   assert.equal(addLeg([],{...line,lineType:'UNKNOWN_ALTERNATE'},analysis,'MORE').legs.length,0);
-  assert.equal(addLeg([],line,{...analysis,direction:'PASS'},'MORE').legs.length,0);
+  assert.match(addLeg([],{...line,availableDirections:['MORE']},analysis,'LESS').error!,/does not offer LESS/);
+  const pass=analysisSchema.parse({...analysis,direction:'PASS',score:null,modelVersion:null});
+  const tipped=addLeg([],line,pass,'MORE');
+  assert.equal(tipped.error,null);assert.equal(tipped.legs.length,0);
+  assert.deepEqual(tipped.tips.map((tip)=>tip.id),['NO_SCORE']);
+  const yours=addLeg([],line,pass,'MORE',undefined,['NO_SCORE']);
+  assert.deepEqual([yours.legs[0].score,yours.legs[0].yourCall],[null,['NO_SCORE']]);
+  assert.equal(gkrBacked(yours.legs),false);assert.equal(gkrBacked(first.legs),true);
+  assert.match(shareCrown(yours.legs),/your call/);
   assert.equal(first.legs.filter((leg)=>leg.line.id!=='one').length,0);
   assert.match(shareCrown(first.legs),/GKR 89/);
   assert.match(shareCrown(first.legs),/not a guaranteed/);
@@ -79,9 +88,9 @@ test('a saved line can enter a draft until event start, unless evidence has expi
   const captured=Date.parse(line.fetchedAt),event=Date.parse(line.eventStartTime);
   assert.equal(addLeg([],line,analysis,'MORE',captured+60*60_000).error,null);
   assert.equal(addLeg([],line,analysis,'MORE',event-1).error,null);
-  assert.match(addLeg([],line,analysis,'MORE',event).error!,/event has started/);
+  assert.match(addLeg([],line,analysis,'MORE',event).error!,/game has started/);
   const expiring={...analysis,evidenceExpiresAt:new Date(captured+30*60_000).toISOString()};
-  assert.match(addLeg([],line,expiring,'MORE',captured+60*60_000).error!,/evidence expired/);
+  assert.deepEqual(addLeg([],line,expiring,'MORE',captured+60*60_000).tips.map((tip)=>tip.id),['STALE_EVIDENCE']);
 });
 
 test('Lite drops lines whose evidence expired; Full keeps them for labelling',()=>{
@@ -97,7 +106,38 @@ test('Lite drops lines whose evidence expired; Full keeps them for labelling',()
 test('a Crown leg must reach the lowest score any Crown accepts',()=>{
   const now=Date.parse('2030-01-01T12:30:00Z');
   const low=analysisSchema.parse({...analysis,score:79});
-  assert.match(addLeg([],line,low,'MORE',now).error??'',/below 80/);
-  assert.equal(addLeg([],line,analysisSchema.parse({...analysis,score:80}),'MORE',now).error,null);
+  assert.deepEqual(addLeg([],line,low,'MORE',now).tips.map((tip)=>tip.id),['LOW_SCORE']);
+  const accepted=addLeg([],line,low,'MORE',now,['LOW_SCORE']);
+  assert.deepEqual([accepted.legs[0].score,accepted.legs[0].yourCall],[79,['LOW_SCORE']]);
+  assert.equal(addLeg([],line,analysisSchema.parse({...analysis,score:80}),'MORE',now).legs.length,1);
   assert.equal(CROWN_LEG_FLOOR,80);
+});
+
+test('taking the side GKR does not back is a tipped your-call leg with no GKR score',()=>{
+  const now=Date.parse('2030-01-01T12:30:00Z');
+  assert.deepEqual(addLeg([],line,analysis,'LESS',now).tips.map((tip)=>tip.id),['AGAINST_MODEL']);
+  const leg=addLeg([],line,analysis,'LESS',now,['AGAINST_MODEL']).legs[0];
+  assert.deepEqual([leg.direction,leg.score,leg.modelVersion],['LESS',null,null]);
+});
+
+test('a third player from one team is a tip, not a block',()=>{
+  const now=Date.parse('2030-01-01T12:30:00Z');
+  const player=(id:string)=>propLineSchema.parse({...line,id,sourceLineId:id,playerId:id,playerName:id});
+  const scored=(id:string)=>analysisSchema.parse({...analysis,lineId:id});
+  let legs=addLeg([],player('p1'),scored('p1'),'MORE',now).legs;
+  legs=addLeg(legs,player('p2'),scored('p2'),'MORE',now).legs;
+  const third=addLeg(legs,player('p3'),scored('p3'),'MORE',now);
+  assert.deepEqual(third.tips.map((tip)=>tip.id),['TEAM_STACK']);
+  assert.equal(addLeg(legs,player('p3'),scored('p3'),'MORE',now,['TEAM_STACK']).legs.length,3);
+});
+
+test('a clearly stronger qualified pick is offered for the weakest leg',()=>{
+  const now=Date.parse('2030-01-01T12:30:00Z');
+  const player=(id:string,team:string)=>propLineSchema.parse({...line,id,sourceLineId:id,playerId:id,playerName:id,team});
+  const scored=(id:string,score:number)=>analysisSchema.parse({...analysis,lineId:id,score});
+  const legs=addLeg([],player('weak','A'),scored('weak',81),'MORE',now).legs;
+  const candidates=[{line:player('close','B'),analysis:scored('close',85)},{line:player('strong','C'),analysis:scored('strong',93)}];
+  const swap=betterSwap(legs,candidates,now);
+  assert.equal(swap?.weakest.line.id,'weak');assert.equal(swap?.line.id,'strong');
+  assert.equal(betterSwap(legs,candidates.slice(0,1),now),null,'a small gain is not worth a tip');
 });
