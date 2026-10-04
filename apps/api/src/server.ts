@@ -891,6 +891,8 @@ export function buildServer(options: ServerOptions = {}) {
         trackingStatus:ownerBoardRefresh.trackingStatus,creditsSpent:ownerBoardRefresh.creditsSpent,
         creditsRemaining:ownerBoardRefresh.creditsRemaining};
     };
+    admin.get('/scrapers', async (_request, reply) => options.scraperPuller
+      ? options.scraperPuller.status() : reply.code(503).send({ code: 'SCRAPERS_UNCONFIGURED' }));
     admin.post('/sharp-props/refresh', async (_request, reply) => options.sharpProps
       ? options.sharpProps.refresh() : reply.code(503).send({ code: 'EV_UNCONFIGURED' }));
     admin.get('/context', async (_request, reply) => options.contextFeeds

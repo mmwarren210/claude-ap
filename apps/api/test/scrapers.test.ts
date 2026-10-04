@@ -319,3 +319,29 @@ test('DraftKings Pick6 rows are stored as Pick6 lines with both sides; live and 
   assert.equal(skip(zenPick6.read(row({ is_alternate_line: true }), now)), 'ALTERNATE_LINE');
   assert.equal(skip(zenPick6.read(row({ over_multiplier: null, under_multiplier: null }), now)), 'NO_SIDES');
 });
+
+test('claims and charges made at the same moment are never lost', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'crowniq-race-'));
+  try {
+    const { SlotLedger } = await import('../src/scrapers/slot-ledger.js');
+    const ledger = new SlotLedger(join(folder, 'slots.json'));
+    const results = await Promise.all(['15|zen', '15|context:pinnacle', '15|zen'].map((slot) => ledger.claim('2030-10-04', slot)));
+    assert.deepEqual(results, [true, true, false]);
+    assert.equal(await ledger.claim('2030-10-04', '15|context:pinnacle'), false, 'the context slot was kept, not overwritten');
+    const budget = new DailySpendBudget(join(folder, 'spend.json'), 20, () => now);
+    await Promise.all([budget.record(1.25), budget.record(0.4), budget.record(0.35)]);
+    assert.equal(await budget.spent(), 2);
+  } finally { await rm(folder, { recursive: true, force: true }); }
+});
+
+test('a run’s charge is read again after it settles, so the budget counts what Apify bills', async () => {
+  let reads = 0;
+  const fetchFn: typeof fetch = async (input) => {
+    if (String(input).includes('/acts/')) return Response.json({ data: { id: 'r2', status: 'SUCCEEDED', defaultDatasetId: 'd2', usageTotalUsd: 0 } });
+    reads++;
+    return Response.json({ data: { id: 'r2', status: 'SUCCEEDED', defaultDatasetId: 'd2', usageTotalUsd: 0.405 } });
+  };
+  const run = await new ApifyClient('token', fetchFn, async () => undefined).runActor('lergassy/kalshi-scraper', {}, { maxChargeUsd: 1 });
+  assert.equal(run.usageUsd, 0.405);
+  assert.equal(reads, 1);
+});

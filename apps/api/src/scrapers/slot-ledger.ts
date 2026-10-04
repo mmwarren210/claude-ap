@@ -8,10 +8,20 @@ import { dirname } from 'node:path';
  */
 export class SlotLedger {
   private memory = new Set<string>();
+  private chain: Promise<unknown> = Promise.resolve();
   constructor(private readonly file: string | null) {}
 
-  /** True when this slot was free and is now taken; false when it already ran. */
-  async claim(day: string, slot: string): Promise<boolean> {
+  /**
+   * True when this slot was free and is now taken; false when it already ran. Claims run one at a time, so the line
+   * scrapers and the context feeds (which share this ledger and tick in the same minute) never overwrite each other.
+   */
+  claim(day: string, slot: string): Promise<boolean> {
+    const result = this.chain.then(() => this.claimNow(day, slot));
+    this.chain = result.catch(() => undefined);
+    return result;
+  }
+
+  private async claimNow(day: string, slot: string): Promise<boolean> {
     const key = `${day}|${slot}`;
     if (!this.file) { if (this.memory.has(key)) return false; this.memory.add(key); return true; }
     let done: string[] = [];

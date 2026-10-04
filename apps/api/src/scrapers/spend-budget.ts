@@ -23,7 +23,16 @@ export class DailySpendBudget {
   async spent(): Promise<number> { return (await this.load()).spentUsd; }
   async remaining(): Promise<number> { return Math.max(0, this.limitUsd - await this.spent()); }
 
-  async record(usd: number): Promise<void> {
+  private chain: Promise<unknown> = Promise.resolve();
+
+  /** Adds a charge. Recordings run one at a time so two pulls finishing together never lose one. */
+  record(usd: number): Promise<void> {
+    const result = this.chain.then(() => this.recordNow(usd));
+    this.chain = result.catch(() => undefined);
+    return result;
+  }
+
+  private async recordNow(usd: number): Promise<void> {
     const state = await this.load();
     state.spentUsd = Math.round((state.spentUsd + Math.max(0, usd)) * 10_000) / 10_000;
     await mkdir(dirname(this.file), { recursive: true });

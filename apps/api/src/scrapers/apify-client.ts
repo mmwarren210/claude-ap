@@ -54,6 +54,12 @@ export class ApifyClient {
       run = ApifyClient.run(await this.json(`/actor-runs/${run.id}?waitForFinish=60`));
     }
     if (!TERMINAL.has(run.status)) throw new Error('APIFY_RUN_DID_NOT_FINISH');
+    // Apify settles a run's charge a few seconds after it finishes; read it again so the daily budget counts it.
+    await this.sleep(5_000);
+    try {
+      const settled = ApifyClient.run(await this.json(`/actor-runs/${run.id}`));
+      if (settled.usageUsd > run.usageUsd) run = { ...run, usageUsd: settled.usageUsd };
+    } catch { /* keep the charge read at finish */ }
     return run;
   }
 
