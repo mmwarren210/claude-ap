@@ -164,8 +164,8 @@ const eventId = (spec: Spec) => `demo-event:${spec.sport}:${[spec.team, spec.opp
 
 function lineFor(spec: Spec): PropLine {
   const away = spec.home ? spec.opponent : spec.team, home = spec.home ? spec.team : spec.opponent;
-  const directions: ('MORE' | 'LESS')[] = spec.lineType === 'REGULAR'
-    ? [spec.direction === 'LESS' ? 'LESS' : 'MORE'] : ['MORE'];
+  // Like PrizePicks: regular lines offer both sides, Goblins and Demons only MORE.
+  const directions: ('MORE' | 'LESS')[] = spec.lineType === 'REGULAR' ? ['MORE', 'LESS'] : ['MORE'];
   return { id: `demo-line:${spec.key}`, provider: 'prizepicks', sourceLineId: `demo:${spec.key}`,
     sourceLineIdIsSynthetic: true, sport: spec.sport, league: spec.league, eventId: eventId(spec),
     eventName: `${away} @ ${home}`, eventStartTime: iso(spec.start), playerId: playerId(spec),

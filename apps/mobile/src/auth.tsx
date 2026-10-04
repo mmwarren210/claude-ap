@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { demoRequest } from './demo/request';
 import { apiBaseUrl } from './api-base';
@@ -27,6 +27,7 @@ function guestDeviceId():string{
   try{window.localStorage.setItem(key,id);}catch{ /* storage unavailable */ }
   return id;
 }
+const noSubscription=()=>()=>undefined;
 const guestMessages:Record<string,string>={GUEST_PASS_FULL:'This guest link has already been used by its four testers.',
   GUEST_PASS_EXPIRED:'Your three-day guest pass has ended. Thanks for testing CrownIQ!',
   GUEST_PASS_INVALID:'This guest link is not valid.',TOO_MANY_ATTEMPTS:'Too many attempts. Please wait a minute.'};
@@ -58,8 +59,14 @@ async function parseSession(response:Response):Promise<Session>{
 export function AuthProvider({children}:{children:ReactNode}){
   // Session tokens stay in memory; device-local files hold only non-secret drafts.
   const [session,setSession]=useState<Session|null>(null);
-  const [demo,setDemo]=useState(()=>startsInDemo());
-  const [guest,setGuest]=useState(()=>({signingIn:!!guestCode()&&!!base,message:''}));
+  // The page's link is read as an external value that is empty while hydrating, so the first render matches the
+  // prebuilt web page. Choices made in the app (Try the demo, sign in, log out) then take over.
+  const demoLink=useSyncExternalStore(noSubscription,()=>startsInDemo(),()=>false);
+  const guestLink=useSyncExternalStore(noSubscription,()=>!!guestCode()&&!!base,()=>false);
+  const [demoChoice,setDemo]=useState<boolean|null>(null);
+  const demo=demoChoice??demoLink;
+  const [guestResult,setGuestResult]=useState<{done:boolean;message:string}>({done:false,message:''});
+  const guest=useMemo(()=>({signingIn:guestLink&&!guestResult.done,message:guestResult.message}),[guestLink,guestResult]);
   useEffect(()=>{
     const code=guestCode();
     if(!code||!base)return;
@@ -71,9 +78,9 @@ export function AuthProvider({children}:{children:ReactNode}){
         if(!response.ok){const payload=await response.json().catch(()=>({})) as {code?:string};
           throw new Error(guestMessages[payload.code??'']??'Could not open the guest link. Try again.');}
         const value=await parseSession(response);
-        if(active){setSession(value);setGuest({signingIn:false,message:''});}
+        if(active){setSession(value);setDemo(false);setGuestResult({done:true,message:''});}
       }catch(error){
-        if(active)setGuest({signingIn:false,message:error instanceof Error?error.message:'Could not open the guest link.'});
+        if(active)setGuestResult({done:true,message:error instanceof Error?error.message:'Could not open the guest link.'});
       }
     })();
     return ()=>{active=false;};
