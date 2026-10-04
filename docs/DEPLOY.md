@@ -28,6 +28,18 @@ for a long-running server, so it is not used here (it could hold the data later 
 7. For the phone app (Expo Go or a store build): set `EXPO_PUBLIC_API_URL=https://<your-domain>` in `apps/mobile/.env` (and in the app's build
    settings when it is published). A web app hosted somewhere else needs its address in `CROWNIQ_ALLOWED_WEB_ORIGINS`.
 
+### Automatic deploys
+
+Railway's GitHub auto-deploy is not connected for this service (it has no branch trigger, so pushes were skipped and
+every deploy so far was started by hand). `.github/workflows/railway-deploy.yml` deploys each push to
+`claude/crowniq-redesign` instead: it asks Railway's API to deploy the pushed commit, waits for it to finish and checks
+`/health` and the web app. It needs a Railway **project token** (project → Settings → Tokens, production environment)
+saved as the `RAILWAY_TOKEN` repository secret in GitHub (Settings → Secrets and variables → Actions). It can also be
+run by hand from the Actions tab.
+
+To use Railway's own auto-deploy instead, reconnect the repo under the service's **Settings → Source** (pick branch
+`claude/crowniq-redesign`) and delete the workflow, so each push is not deployed twice.
+
 ## Render (alternative)
 
 New **Web Service** from the repo (Docker), a paid instance with a **Disk** mounted at `/data`, the same variables,

@@ -1,0 +1,66 @@
+name: Railway deploy
+
+# Railway's own GitHub auto-deploy is not connected for this service (it has no branch trigger), so every push was
+# skipped. This deploys the pushed commit through Railway's API with a project token, waits for it, then checks /health.
+
+on:
+  push:
+    branches: [claude/crowniq-redesign]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-production
+  cancel-in-progress: false
+
+env:
+  RAILWAY_API: https://backboard.railway.app/graphql/v2
+  RAILWAY_SERVICE_ID: 6e3355d4-5663-4ac1-920d-e4b5020756b2
+  RAILWAY_ENVIRONMENT_ID: dd8a8b68-9cdf-4c08-9b53-40a782d3bd47
+  APP_URL: https://claude-ap-production.up.railway.app
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+    steps:
+      - name: Check token
+        run: |
+          if [[ -z "$RAILWAY_TOKEN" ]]; then
+            echo 'Add a Railway project token as the RAILWAY_TOKEN repository secret.'
+            exit 1
+          fi
+      - name: Deploy this commit
+        id: deploy
+        run: |
+          railway() {
+            curl -sS --fail-with-body "$RAILWAY_API" -H 'Content-Type: application/json' \
+              -H "Project-Access-Token: $RAILWAY_TOKEN" -d "$1"
+          }
+          body=$(jq -nc --arg s "$RAILWAY_SERVICE_ID" --arg e "$RAILWAY_ENVIRONMENT_ID" --arg c "$GITHUB_SHA" \
+            '{query: "mutation($s:String!,$e:String!,$c:String){serviceInstanceDeployV2(serviceId:$s,environmentId:$e,commitSha:$c)}",
+              variables: {s: $s, e: $e, c: $c}}')
+          id=$(railway "$body" | jq -er '.data.serviceInstanceDeployV2')
+          echo "Deployment $id for $GITHUB_SHA"
+          for _ in $(seq 1 100); do
+            sleep 15
+            status=$(railway "$(jq -nc --arg id "$id" \
+              '{query: "query($id:String!){deployment(id:$id){status}}", variables: {id: $id}}')" \
+              | jq -r '.data.deployment.status')
+            echo "Status: $status"
+            case "$status" in
+              SUCCESS) exit 0 ;;
+              FAILED|CRASHED|REMOVED|SKIPPED) exit 1 ;;
+            esac
+          done
+          echo 'Timed out waiting for the deployment.'
+          exit 1
+      - name: Check the live server
+        run: |
+          curl -sS --fail --retry 5 --retry-delay 5 --retry-all-errors "$APP_URL/health" | tee /dev/stderr \
+            | jq -e '.status == "ok"' > /dev/null
+          curl -sS --fail -o /dev/null -w 'Web app: %{http_code} %{content_type}\n' "$APP_URL/"
