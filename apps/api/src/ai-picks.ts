@@ -36,7 +36,8 @@ export interface PickResearcher {
 export const pickSchema = { type: 'object', additionalProperties: false, required: ['pick', 'confidence', 'summary', 'reasons'],
   properties: {
     pick: { type: 'string', enum: ['MORE', 'LESS', 'PASS'] },
-    confidence: { type: 'integer', minimum: 0, maximum: 100 },
+    // No numeric limits: strict schemas on both APIs reject them. parsePick clamps to 0-100.
+    confidence: { type: 'integer' },
     summary: { type: 'string' },
     reasons: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['text', 'source_url'],
       properties: { text: { type: 'string' }, source_url: { type: 'string' } } } },
@@ -140,6 +141,8 @@ export class AiPickService {
   private inFlight = new Map<string, Promise<AiRead | null>>();
   private timers: NodeJS.Timeout[] = [];
   private lastRun: { at: string; researched: number; failed: number } | null = null;
+  /** Each provider's most recent failure, for the admin status (codes only, never a key or a payload). */
+  private lastErrors: Partial<Record<ProviderRead['provider'], { at: string; error: string }>> = {};
   constructor(private readonly researchers: readonly PickResearcher[], private readonly file: string | null,
     private readonly options: AiPickOptions, private readonly boxScores: BoxScoreResults | null = null,
     private readonly clock: () => Date = () => new Date()) {}
@@ -199,6 +202,10 @@ export class AiPickService {
       const question = questionFor(line, evidence, fairMore);
       const settled = await Promise.allSettled(this.researchers.map((researcher) => researcher.read(question,
         AbortSignal.timeout(150_000))));
+      settled.forEach((result, index) => {
+        if (result.status === 'rejected') this.lastErrors[this.researchers[index].provider] = { at: this.clock().toISOString(),
+          error: (result.reason instanceof Error ? `${result.reason.name}: ${result.reason.message}` : String(result.reason)).slice(0, 300) };
+      });
       const reads = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
       if (!reads.length) return null;
       const combined = combineReads(reads);
@@ -222,8 +229,8 @@ export class AiPickService {
     if (Date.parse(line.eventStartTime) <= this.clock().getTime()) return { read: null, error: 'EVENT_STARTED' };
     if (this.reads.has(this.key(line))) return { read: this.reads.get(this.key(line))!, error: null };
     if (this.used(`user:${accountId}`) >= this.options.dailyPerUser) return { read: null, error: 'DAILY_LIMIT_REACHED' };
-    this.spend(`user:${accountId}`);
     const read = await this.research(line, evidence, fairMore, 'user');
+    if (read) this.spend(`user:${accountId}`);
     return read ? { read, error: null } : { read: null, error: 'AI_UNAVAILABLE' };
   }
 
@@ -252,11 +259,12 @@ export class AiPickService {
       if (picked.length >= Math.min(this.options.perRun ?? 15, this.options.dailyAuto - this.used('auto'))) break;
       players.add(player); picked.push(line);
     }
-    let researched = 0, failed = 0;
+    let researched = 0, failed = 0, failedInARow = 0;
     for (const line of picked) {
-      this.spend('auto');
+      // Only answered lines count against the daily cap; three failures in a row end the run.
+      if (failedInARow >= 3) break;
       const read = await this.research(line, evidence, fairMore(line.id), 'auto').catch(() => null);
-      if (read) researched++; else failed++;
+      if (read) { researched++; failedInARow = 0; this.spend('auto'); } else { failed++; failedInARow++; }
     }
     await this.save();
     this.lastRun = { at: this.clock().toISOString(), researched, failed };
@@ -289,6 +297,7 @@ export class AiPickService {
     const reads = [...this.reads.values()], decided = reads.filter((read) => read.grade === 'WIN' || read.grade === 'LOSS');
     const wins = decided.filter((read) => read.grade === 'WIN').length;
     return { configured: this.configured, providers: this.researchers.map((item) => item.provider), lastRun: this.lastRun,
+      lastErrors: this.lastErrors,
       today: { auto: this.used('auto'), dailyAuto: this.options.dailyAuto }, reads: reads.length,
       plays: reads.filter((read) => read.pick !== 'PASS').length,
       record: { graded: decided.length, wins, losses: decided.length - wins,
