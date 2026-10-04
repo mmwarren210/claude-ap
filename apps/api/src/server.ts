@@ -31,6 +31,8 @@ import { rankingCards, secondLookWatchlist } from './ranking-cards.js';
 import { auditPrizePicksLineTypes } from './prizepicks-line-types.js';
 import type { HistoryBackfillService, InternalHistorySport, InternalHistoryStore } from './internal-history.js';
 import type { ProductGradingStatus } from './background-grading.js';
+import type { ContextFeeds, GameLine, InjuryNote, MarketOdds } from './context/feeds.js';
+import { gameLinesFor, injuryFor, marketsFor, normalizedName } from './context/match.js';
 import { serveWebApp } from './web-app.js';
 
 /** How far ahead the public demo shows real lines. */
@@ -75,6 +77,8 @@ export interface ServerOptions {
   contextLookupBudget?: DailyLookupBudget | null;
   /** Scheduled Apify scraper pulls that feed the provider's line store. */
   scraperPuller?: ScraperPuller | null;
+  /** Display-only game context feeds (injuries, Pinnacle, Kalshi, Polymarket); never scored. */
+  contextFeeds?: ContextFeeds | null;
 }
 
 function authorized(request: FastifyRequest, token?: string): boolean {
@@ -136,6 +140,7 @@ export function buildServer(options: ServerOptions = {}) {
     // After a scraper pull changes lines, rebuild the board through the owner job (free; tracks picks).
     options.scraperPuller?.whenLinesChange(()=>startOwnerBoardRefresh());
     options.scraperPuller?.start();
+    options.contextFeeds?.start();
     if(options.ownerNotebook && options.ownerPublicId){
       await options.ownerNotebook.load();options.ownerNotebook.start();
     }
@@ -146,7 +151,7 @@ export function buildServer(options: ServerOptions = {}) {
       async()=>service.persist()) : null;
   const contextScheduler=options.contextRefresh?new ContextRefreshScheduler(service,options.contextRefresh):null;
   app.addHook('onClose', async () => { webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
-    options.scraperPuller?.stop(); });
+    options.scraperPuller?.stop();options.contextFeeds?.stop(); });
 
   // Every paid provider pull runs through this one job, so two pulls can never overlap or
   // queue back to back. The record is persisted so a restart mid-pull is reported.
@@ -302,6 +307,7 @@ export function buildServer(options: ServerOptions = {}) {
           nbaLookupsToday:await options.contextLookupBudget?.used()??0,
           nbaDailyLimit:options.contextLookupBudget?.limit??0},
         scrapers:await options.scraperPuller?.status()??null,
+        contextFeeds:await options.contextFeeds?.status()??null,
         researchHealth:status.researchHealth,secondLook:status.secondLook,
         freshContext:status.freshContext,lineTypes:auditPrizePicksLineTypes(snapshot.board.lines),
         modelSupport:{supported,unsupported:snapshot.board.lines.length-supported,
@@ -615,6 +621,25 @@ export function buildServer(options: ServerOptions = {}) {
     try{await options.product!.removeUserCrown(user.accountId,input.data.id);return {removed:true};}
     catch{return reply.code(404).send({code:'CROWN_NOT_FOUND'});}
   });
+  // Display-only game context for one board line: injury, game lines and prediction-market odds. Never scored.
+  app.get('/v1/context/line/:lineId', async (request, reply) => {
+    const parsed=z.object({lineId:z.string().min(1).max(300)}).safeParse(request.params);
+    if(!parsed.success)return reply.code(400).send({code:'INVALID_LINE'});
+    const line=service.getBoard()?.board.lines.find((item)=>item.id===parsed.data.lineId);
+    if(!line)return reply.code(404).send({code:'LINE_NOT_FOUND'});
+    if(!options.contextFeeds)return {injury:null,teamInjuries:[],game:[],markets:[]};
+    const [injuries,pinnacle,kalshi,polymarket]=await Promise.all([options.contextFeeds.items<InjuryNote>('injuries'),
+      options.contextFeeds.items<GameLine>('pinnacle'),options.contextFeeds.items<MarketOdds>('kalshi'),
+      options.contextFeeds.items<MarketOdds>('polymarket')]);
+    const game=gameLinesFor(line,pinnacle.items);
+    const team=line.team;
+    const teamInjuries=team?injuries.items.filter((item)=>item.league.toUpperCase()===line.league.toUpperCase()&&
+      (item.teamAbbreviation?.toUpperCase()===team.toUpperCase()||normalizedName(item.team)===normalizedName(team)))
+      .slice(0,8):[];
+    return {injury:injuryFor(line,injuries.items),teamInjuries,game,
+      markets:marketsFor(line,[...kalshi.items,...polymarket.items],game),
+      fetchedAt:{injuries:injuries.fetchedAt,pinnacle:pinnacle.fetchedAt,kalshi:kalshi.fetchedAt,polymarket:polymarket.fetchedAt}};
+  });
   app.get('/v1/board', async (_request, reply) => {
     const snapshot = service.getBoard();
     return snapshot ?? reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
@@ -823,6 +848,16 @@ export function buildServer(options: ServerOptions = {}) {
         trackingStatus:ownerBoardRefresh.trackingStatus,creditsSpent:ownerBoardRefresh.creditsSpent,
         creditsRemaining:ownerBoardRefresh.creditsRemaining};
     };
+    admin.get('/context', async (_request, reply) => options.contextFeeds
+      ? { feeds: await options.contextFeeds.status() } : reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' }));
+    // Pulls one context feed now; it spends from the shared daily scraper budget.
+    admin.post('/context/pull', async (request, reply) => {
+      if (!options.contextFeeds) return reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' });
+      if (request.headers['x-confirm-provider-cost'] !== 'yes') return reply.code(428).send({ code: 'COST_CONFIRMATION_REQUIRED' });
+      const input = z.object({ source: z.enum(['injuries', 'pinnacle', 'kalshi', 'polymarket']) }).safeParse(request.body);
+      if (!input.success) return reply.code(400).send({ code: 'INVALID_CONTEXT_SOURCE' });
+      return options.contextFeeds.pull(input.data.source);
+    });
     admin.post('/refresh',adminPull);
     admin.post('/reanalyze', async (request, reply) => {
       const input=z.object({acknowledgeResearchCost:z.boolean().optional()}).strict()

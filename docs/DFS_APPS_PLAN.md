@@ -157,3 +157,18 @@ The owner added a SharpAPI key to the environment's secrets. SharpAPI can cover 
 Underdog, PrizePicks and Kalshi. It was not reachable from the session where it was added (secrets reach new
 sessions only). Next: in a new session, read its docs and responses, then add it as another source in
 `apps/api/src/scrapers/` (no Apify; a `run()` source like `odds-api-source.ts`), confirming lines across sources.
+
+## Game context feeds (owner, 2026-10-04)
+
+Display-only, never scored (`apps/api/src/context/`). They share the scraper budget, raised to **$15/day**.
+
+| Apify actor | Shows | Schedule (ET) | Per-run cap |
+|---|---|---|---|
+| `lergassy/sports-injuries-api` | Injury status, injury, expected return, ESPN note (NFL, NBA, MLB, NHL, WNBA, college football) | 8, 11, 14, 17 | $0.50 |
+| `lergassy/pinnacle-odds-api` | Pinnacle moneyline (no-vig win chance), spread and total for games in the next 3 days | 9, 15 | $1.50 |
+| `lergassy/kalshi-scraper` | Sports prediction markets (top 300 by volume, min $1,000) | 11 | $1.00 |
+| `lergassy/polymarket-scraper` | Same, from Polymarket | 11 | $1.00 |
+
+The player screen shows them under **Game news** ("Not part of the GKR score"); `GET /v1/context/line/:lineId` serves
+them, owner diagnostics show each feed's last run and `blankRunsInARow`, and `POST /v1/admin/context/pull` runs one now.
+Using any of them inside scoring needs the owner's approval and a new opt-in model version.

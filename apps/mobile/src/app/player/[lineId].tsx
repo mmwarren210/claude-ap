@@ -57,6 +57,34 @@ function LadderRow({ line, analysis, current, onPress }: { line: PropLine; analy
   </Pressable>;
 }
 
+/** Display-only context from the server: injury report, Pinnacle game lines, prediction markets. */
+type GameContext = {
+  injury: { status: string; injury: string | null; returnDate: string | null; note: string | null } | null;
+  teamInjuries: { player: string; position: string | null; status: string }[];
+  game: { market: string; home: string; away: string; line: number | null; homeFair: number | null; awayFair: number | null }[];
+  markets: { platform: string; question: string; outcomes: { name: string; probability: number }[] }[];
+};
+
+function contextLines(context: GameContext, playerName: string): string[] {
+  const lines: string[] = [];
+  if (context.injury) lines.push(`Injury report: ${context.injury.status}${context.injury.injury ? ` · ${context.injury.injury}` : ''}` +
+    `${context.injury.returnDate ? ` · expected back ${context.injury.returnDate}` : ''}`);
+  if (context.injury?.note) lines.push(context.injury.note);
+  const others = context.teamInjuries.filter((item) => item.player !== playerName);
+  if (others.length) lines.push(`Also on the team report: ${others.slice(0, 5).map((item) =>
+    `${item.player}${item.position ? ` (${item.position})` : ''} ${item.status}`).join(', ')}`);
+  const money = context.game.find((item) => item.market === 'moneyline');
+  if (money?.homeFair !== null && money?.homeFair !== undefined && money.awayFair !== null)
+    lines.push(`Pinnacle win chance: ${money.home} ${Math.round(money.homeFair * 100)}% · ${money.away} ${Math.round(money.awayFair! * 100)}%`);
+  const spread = context.game.find((item) => item.market === 'spread');
+  if (spread?.line !== null && spread?.line !== undefined) lines.push(`Pinnacle spread: ${spread.home} ${spread.line > 0 ? '+' : ''}${spread.line}`);
+  const total = context.game.find((item) => item.market === 'total');
+  if (total?.line !== null && total?.line !== undefined) lines.push(`Pinnacle game total: ${total.line}`);
+  for (const market of context.markets) lines.push(`${market.platform === 'kalshi' ? 'Kalshi' : 'Polymarket'}: ${market.question} · ` +
+    market.outcomes.slice(0, 3).map((item) => `${item.name} ${Math.round(item.probability)}%`).join(' · '));
+  return lines;
+}
+
 export default function PlayerResearch() {
   const { request, demo } = useAuth();
   const { lineId } = useLocalSearchParams<{ lineId: string }>();
@@ -87,6 +115,18 @@ export default function PlayerResearch() {
   const { log } = usePlayerGames(line);
   const stats = line ? lineStats(log, line.threshold, direction, window, line.opponent) : null;
   const [history, setHistory] = useState<{ key: string; value: TrackedHistory } | null>(null);
+  const [context, setContext] = useState<{ lineId: string; value: GameContext } | null>(null);
+  useEffect(() => {
+    if (!line || demo) return;
+    let active = true;
+    void request(`/v1/context/line/${encodeURIComponent(line.id)}`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((value: GameContext | null) => { if (active && value) setContext({ lineId: line.id, value }); })
+      .catch(() => undefined);
+    return () => { active = false; };
+    // The line id identifies everything shown.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [line?.id, demo]);
   const historyKey = line ? [line.sport, line.playerId, line.market].join('/') : '';
   useEffect(() => {
     if (!line || demo) return;
@@ -255,6 +295,12 @@ export default function PlayerResearch() {
         detail="CrownIQ gave this line another research pass after an initial PASS. It is a review flag, not a score bonus." />}
       {!!analysis?.contextEvidenceIds?.length && <Text style={styles.note}>Web context (not scored):{' '}
         {analysis.contextEvidenceIds.length} {analysis.contextEvidenceIds.length === 1 ? 'finding' : 'findings'}.</Text>}
+      {context?.lineId === line.id && contextLines(context.value, line.playerName).length > 0 && <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Game news</Text>
+        <View style={styles.panel}>{contextLines(context.value, line.playerName).map((text, index) =>
+          <Text key={index} style={styles.factorLine}>{text}</Text>)}
+          <Text style={styles.small}>For your information only. Not part of the GKR score.</Text></View>
+      </View>}
       {history?.key === historyKey && <View style={styles.section}>
         <Text style={styles.sectionTitle}>{history.value.label}</Text>
         <View style={styles.panel}>{history.value.recent.map((item, index) => <Text key={index} style={styles.factorLine}>

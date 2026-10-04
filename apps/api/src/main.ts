@@ -11,6 +11,7 @@ import { TheOddsApiProvider } from './the-odds-api-provider.js';
 import { NflPassingFileResearch } from './nfl-evidence-file.js';
 import { JsonSelectionLedger } from './selection-ledger.js';
 import { CombinedWebResearch, WebResearchAdapter, WebResearchCatalog } from './web-research.js';
+import { ContextFeeds, injuryReports, kalshiMarkets, pinnacleLines, polymarketMarkets } from './context/feeds.js';
 import { ClaudeWebResearchAdapter } from './claude-web-research.js';
 import { ProductLedger } from './product-ledger.js';
 import { ProductGradingWorker } from './background-grading.js';
@@ -65,9 +66,11 @@ const scrapedLines=providerName==='scrapers'
 // Each source on its own Eastern-time schedule ("" turns one off), under one shared daily cap.
 const hoursEt=(name:string,fallback:string)=>(process.env[name] ?? fallback).split(',').map((hour)=>hour.trim())
   .filter(Boolean).map(Number).filter((hour)=>Number.isInteger(hour)&&hour>=0&&hour<=23);
-const scraperPuller=scrapedLines?new ScraperPuller(new ApifyClient(process.env.APIFY_TOKEN?.trim()||null),scrapedLines,
-  new DailySpendBudget(process.env.CROWNIQ_SCRAPER_SPEND_FILE ?? `${dataDir}/scraper-spend.json`,
-    nonNegativeNumber('CROWNIQ_SCRAPER_DAILY_USD',12)),
+// One Apify client and one daily cap shared by the line scrapers and the display-only context feeds.
+const apify=new ApifyClient(process.env.APIFY_TOKEN?.trim()||null);
+const scraperBudget=new DailySpendBudget(process.env.CROWNIQ_SCRAPER_SPEND_FILE ?? `${dataDir}/scraper-spend.json`,
+  nonNegativeNumber('CROWNIQ_SCRAPER_DAILY_USD',15));
+const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
   [{source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9,12,15,18')},
     {source:lergassy,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_LERGASSY','12')},
     {source:zenUnderdog,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_UNDERDOG','10,17')},
@@ -76,6 +79,13 @@ const scraperPuller=scrapedLines?new ScraperPuller(new ApifyClient(process.env.A
     ...(apiKey?[{source:oddsApiSource(new FullPrizePicksProvider({apiKey,maxEvents,maxCreditsPerRefresh})),
       hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ODDS_API','')}]:[])],
   {maxRunUsd:nonNegativeNumber('CROWNIQ_SCRAPER_MAX_RUN_USD',5)}):null;
+// Display-only game context (never scored): injuries, Pinnacle game lines, Kalshi and Polymarket odds.
+const contextFeeds=process.env.APIFY_TOKEN?.trim()?new ContextFeeds(apify,scraperBudget,[
+  {source:injuryReports,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_INJURIES','8,11,14,17')},
+  {source:pinnacleLines,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_PINNACLE','9,15')},
+  {source:kalshiMarkets,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_KALSHI','11')},
+  {source:polymarketMarkets,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_POLYMARKET','11')}],
+process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`):null;
 const provider: OddsProvider | null = scrapedLines ? new ScrapedPrizePicksProvider(scrapedLines)
   : providerName !== 'the_odds_api' || !apiKey ? null
   : scope === 'nfl_passing_yards'
@@ -243,7 +253,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provid
   allowedWebOrigins:(process.env.CROWNIQ_ALLOWED_WEB_ORIGINS??'').split(',')
     .map((origin)=>origin.trim()).filter(Boolean),
   ownerJobStore:new OwnerPullJobStore(process.env.CROWNIQ_OWNER_JOB_FILE ?? `${dataDir}/owner-pull-job.json`),
-  boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,
+  boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,
   selections: process.env.CROWNIQ_SELECTIONS_FILE
