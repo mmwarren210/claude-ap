@@ -264,3 +264,18 @@ test('NBA and MLB inspection request stable practical complete game-log windows'
   assert.ok(nba.includes('limit=250'));assert.ok(nba.includes('from_id=0'));
   assert.ok(mlb.includes('limit=500'));assert.ok(mlb.includes('from_id=0'));
 });
+
+test('MLB search falls back to injured and inactive lists only when the active list has no match',async()=>{
+  const asked:string[]=[];
+  const fetcher:typeof fetch=async(input)=>{
+    const url=new URL(String(input));asked.push(url.searchParams.get('roster_status')??'');
+    const players=url.searchParams.get('roster_status')==='injured_reserve'
+      ? [{id:558,full_name:'Ronald Acuña Jr.',team_id:41}] : [{id:1,full_name:'Freddie Freeman',team_id:27}];
+    return response({players,next_from_id:null});
+  };
+  const adapter=new StatApiOwnerResearch('private',fetcher,clock);
+  assert.deepEqual((await adapter.search('MLB','Freddie Freeman')).players.map((p)=>p.id),[1]);
+  assert.deepEqual(asked,['active']);
+  assert.deepEqual((await adapter.search('MLB','Ronald Acuna Jr.')).players.map((p)=>p.id),[558]);
+  assert.deepEqual(asked,['active','injured_reserve','inactive'],'the active page is reused from cache');
+});

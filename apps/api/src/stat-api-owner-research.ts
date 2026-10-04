@@ -202,13 +202,21 @@ export class StatApiOwnerResearch {
     }
     // NFL/MLB have no documented name-search endpoint; PGA has no roster-status
     // filter. Scan a bounded player page and expose incomplete coverage if capped.
-    const page = await this.page(sport, 'players', sport === 'PGA'
-      ? { limit: '2500' } : { roster_status: 'active', limit: '2500' },
-      SEARCH_TTL, 2500);
+    // Roster statuses lag: playoff regulars can still read injured_reserve or inactive. Those players are included;
+    // whether they actually play is decided by the official lineup and status checks, not by this list.
+    // They are read only when the active list has no match, so an ordinary search stays one request.
     const wanted=normalizePlayerName(query);
-    return { players: page.rows.map(player).filter((p): p is StatApiPlayer =>
-      p !== null && normalizePlayerName(p.name).includes(wanted)).slice(0, 20),
-      partial: page.nextFromId !== null, sourceUrl: page.url, retrievedAt: page.retrievedAt };
+    const scan = (status: string | null) => this.page(sport, 'players',
+      status ? { roster_status: status, limit: '2500' } : { limit: '2500' }, SEARCH_TTL, 2500);
+    const matching = (list: readonly ApiPage[]) => [...new Map(list.flatMap((page) => page.rows).map(player)
+      .filter((p): p is StatApiPlayer => p !== null && normalizePlayerName(p.name).includes(wanted))
+      .map((p) => [p.id, p])).values()].slice(0, 20);
+    const pages = [await scan(sport === 'PGA' ? null : 'active')];
+    if (sport !== 'PGA' && !matching(pages).length)
+      pages.push(...await Promise.all(['injured_reserve', 'inactive'].map(scan)));
+    const players = matching(pages);
+    return { players, partial: pages.some((page) => page.nextFromId !== null), sourceUrl: pages[0].url,
+      retrievedAt: pages[0].retrievedAt };
   }
 
   /**

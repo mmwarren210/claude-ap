@@ -100,3 +100,27 @@ test('every stat-history-ready model has at least sixty percent directly derivab
       `${definition.sport}:${definition.market} only has ${covered}/${total} history-backed factor weight`);
   }
 });
+
+test('a shared name resolves to the candidate on the line team, learned from uniquely matched teammates',async()=>{
+  const inspected:number[]=[];
+  const people:Record<string,{id:number;name:string;teamId:number}[]>={
+    'Freddie Freeman':[{id:1,name:'Freddie Freeman',teamId:27}],'Mookie Betts':[{id:2,name:'Mookie Betts',teamId:27}],
+    'Max Muncy':[{id:1467,name:'Max Muncy',teamId:30},{id:1366,name:'Max Muncy',teamId:27}],
+    'Lone Name':[{id:9,name:'Lone Name',teamId:30},{id:10,name:'Lone Name',teamId:31}],
+  };
+  const source={
+    search:async(_sport:string,query:string)=>({players:people[query]??[],partial:false,
+      sourceUrl:'https://api.stat-api.com/api/v1/nfl/players',retrievedAt:'2030-09-24T12:00:00.000Z'}),
+    inspect:async(_sport:string,id:number)=>{inspected.push(id);return {sport:'NFL' as const,
+      player:{id,name:'x',teamId:27},table:'game_player_stats',
+      sourceUrl:`https://api.stat-api.com/api/v1/nfl/game_player_stats?player_id=${id}`,
+      retrievedAt:'2030-09-24T12:00:00.000Z',nextFromId:null,sampleOnly:true as const,
+      officialStatusConfirmed:false as const,rows};},
+  };
+  const adapter=new StatApiGkrEvidence(source,{clock:()=>new Date('2030-09-24T12:00:00.000Z'),concurrency:1});
+  const on=(playerName:string,team:string)=>({...target,playerId:playerName,playerName,team});
+  await adapter.research([on('Freddie Freeman','Dodgers'),on('Mookie Betts','Dodgers'),on('Max Muncy','Dodgers'),
+    on('Lone Name','Rays')]);
+  assert.deepEqual(inspected.sort((a,b)=>a-b),[1,2,1366],'the Dodgers Max Muncy; an unresolvable shared name is skipped');
+  assert.equal(adapter.getHealth().sources?.PROVIDER_IDENTITY.errorCode,'IDENTITY_UNRESOLVED');
+});

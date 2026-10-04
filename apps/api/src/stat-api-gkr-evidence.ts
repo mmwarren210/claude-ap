@@ -227,6 +227,28 @@ export class StatApiGkrEvidence implements ResearchAdapter {
     let cursor=0,searches=0,skipped=Math.max(0,grouped.size-selected.length),failures=0,noSources=0;
     let identityMisses=0,sampleMisses=0,producedTargets=0;
     const evidence:Evidence[]=[];
+    // Two players can share a name (two Max Muncys). Such a name resolves only to the candidate on the line's team,
+    // with the team's Stat API id learned from teammates whose names matched exactly one player.
+    const teamVotes=new Map<string,Map<number,number>>();
+    const teamKey=(target:ResearchTarget)=>target.team?[target.sport,normalizeName(target.team)].join('|'):null;
+    const ambiguous:{playerTargets:ResearchTarget[];candidates:StatApiPlayer[]}[]=[];
+    const resolve=async(playerTargets:ResearchTarget[],player:StatApiPlayer)=>{
+      const first=playerTargets[0],sport=first.sport as StatApiSport;
+      const tables=[...new Set(playerTargets.map((target)=>specs[sport][target.market].table))];
+      const details=new Map<Table,Detail>();
+      for(const table of tables){
+        searches++;
+        const detail=await this.source.inspect(sport,player.id,table);
+        details.set(table,detail);
+        if(this.onDetail)await this.onDetail({sport,target:first,player,detail}).catch(()=>undefined);
+      }
+      for(const target of playerTargets){
+        const spec=specs[sport][target.market],detail=details.get(spec.table)!;
+        const findings=this.forTarget(target,spec,detail,now);
+        if(findings.length)producedTargets++;else sampleMisses++;
+        evidence.push(...findings);
+      }
+    };
     const workers=Array.from({length:Math.min(this.concurrency,selected.length)},async()=>{
       while(true){
         const index=cursor++; if(index>=selected.length)return;
@@ -238,26 +260,29 @@ export class StatApiGkrEvidence implements ResearchAdapter {
           const result=await this.source.search(sport,first.playerName);
           const wanted=normalizeName(first.playerName);
           const exact=result.players.filter((player:StatApiPlayer)=>normalizeName(player.name)===wanted);
+          if(exact.length>1){ambiguous.push({playerTargets,candidates:exact});continue;}
           if(exact.length!==1){skipped++;noSources++;identityMisses++;continue;}
           const player=exact[0];
-          const tables=[...new Set(playerTargets.map((target)=>specs[sport][target.market].table))];
-          const details=new Map<Table,Detail>();
-          for(const table of tables){
-            searches++;
-            const detail=await this.source.inspect(sport,player.id,table);
-            details.set(table,detail);
-            if(this.onDetail)await this.onDetail({sport,target:first,player,detail}).catch(()=>undefined);
+          const team=teamKey(first);
+          if(team&&player.teamId!==null){
+            const votes=teamVotes.get(team)??new Map<number,number>();
+            votes.set(player.teamId,(votes.get(player.teamId)??0)+1);teamVotes.set(team,votes);
           }
-          for(const target of playerTargets){
-            const spec=specs[sport][target.market],detail=details.get(spec.table)!;
-            const findings=this.forTarget(target,spec,detail,now);
-            if(findings.length)producedTargets++;else sampleMisses++;
-            evidence.push(...findings);
-          }
+          await resolve(playerTargets,player);
+          continue;
         }catch{failures++;}
       }
     });
     await Promise.all(workers);
+    for(const {playerTargets,candidates} of ambiguous){
+      const team=teamKey(playerTargets[0]),votes=team?[...teamVotes.get(team)?.entries()??[]]:[];
+      // The team id needs a clear majority of at least two teammates.
+      votes.sort((a,b)=>b[1]-a[1]);
+      const teamId=votes[0]&&votes[0][1]>=2&&(votes[1]?.[1]??0)<votes[0][1]?votes[0][0]:null;
+      const onTeam=teamId===null?[]:candidates.filter((player)=>player.teamId===teamId);
+      if(onTeam.length!==1){skipped++;noSources++;identityMisses++;continue;}
+      try{await resolve(playerTargets,onTeam[0]);}catch{failures++;}
+    }
     const status=failures?evidence.length?'PARTIAL':'FAILED':'OK';
     const sources:NonNullable<ResearchHealth['sources']>={
       CACHE_MODEL_READY:{status:'SKIPPED',targets:persistentHits,evidence:0,failures:0,
