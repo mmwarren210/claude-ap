@@ -11,6 +11,7 @@ import { TheOddsApiProvider } from './the-odds-api-provider.js';
 import { NflPassingFileResearch } from './nfl-evidence-file.js';
 import { JsonSelectionLedger } from './selection-ledger.js';
 import { CombinedWebResearch, WebResearchAdapter, WebResearchCatalog } from './web-research.js';
+import { SharpPropsFeed } from './context/sharp-props.js';
 import { SlotLedger } from './scrapers/slot-ledger.js';
 import { ContextFeeds, injuryReports, kalshiMarkets, pinnacleLines, polymarketMarkets } from './context/feeds.js';
 import { ClaudeWebResearchAdapter } from './claude-web-research.js';
@@ -90,6 +91,10 @@ const contextFeeds=process.env.APIFY_TOKEN?.trim()?new ContextFeeds(apify,scrape
   {source:kalshiMarkets,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_KALSHI','11')},
   {source:polymarketMarkets,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_POLYMARKET','11')}],
 process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`,undefined,scraperSlots):null;
+// DraftKings and Hard Rock prop prices from SharpAPI (reference odds and +EV), refreshed hourly. Needs SHARPAPI_KEY.
+const sharpProps=new SharpPropsFeed(process.env.SHARPAPI_KEY?.trim()||null,
+  process.env.CROWNIQ_SHARP_PROPS_FILE ?? `${dataDir}/sharp-props.json`);
+const evBreakEven=process.env.CROWNIQ_EV_BREAK_EVEN?Number(process.env.CROWNIQ_EV_BREAK_EVEN):undefined;
 const provider: OddsProvider | null = scrapedLines ? new ScrapedPrizePicksProvider(scrapedLines)
   : providerName !== 'the_odds_api' || !apiKey ? null
   : scope === 'nfl_passing_yards'
@@ -257,7 +262,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provid
   allowedWebOrigins:(process.env.CROWNIQ_ALLOWED_WEB_ORIGINS??'').split(',')
     .map((origin)=>origin.trim()).filter(Boolean),
   ownerJobStore:new OwnerPullJobStore(process.env.CROWNIQ_OWNER_JOB_FILE ?? `${dataDir}/owner-pull-job.json`),
-  boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,
+  boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,
   selections: process.env.CROWNIQ_SELECTIONS_FILE

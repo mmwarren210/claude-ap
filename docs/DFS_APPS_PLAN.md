@@ -193,3 +193,14 @@ lines); (2) a platform picker on the Board, one board per pick'em app with its o
 compute its own: remove the vig from a sharp book's Over/Under prices for the same player, stat and number (DraftKings
 and Hard Rock props via SharpAPI; Pinnacle for game lines) to get a fair probability, then compare it with each pick'em
 app's break-even for its payout. Shown as its own +EV view; it does not change GKR scores unless approved as a model version.
+
+### +EV built (2026-10-04)
+
+`apps/api/src/context/sharp-props.ts` pulls DraftKings and Hard Rock player-prop prices from SharpAPI every hour
+(`SHARPAPI_KEY` on the server), pairs each book's Over and Under at the same number and removes the vig.
+`ev.ts` matches them to standard PrizePicks lines by sport, player, stat and exact number, averages the books, and
+compares the better side with the break-even (54.21%, PrizePicks' 5-6 pick Flex; `CROWNIQ_EV_BREAK_EVEN`). Goblins and
+Demons are left out because they pay differently. `GET /v1/ev` serves picks with a positive edge; Top Picks has a
+**+EV** tab that also shows what GKR says about the same line. It never changes a GKR score. Tying the two together
+(for example, sportsbook agreement as a GKR factor) is a separate proposal for the owner. Only exact stat names are
+mapped (`marketKeys`); unmapped stats are left out rather than guessed.

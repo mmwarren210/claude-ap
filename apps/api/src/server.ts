@@ -33,6 +33,8 @@ import type { HistoryBackfillService, InternalHistorySport, InternalHistoryStore
 import type { ProductGradingStatus } from './background-grading.js';
 import type { ContextFeeds, GameLine, InjuryNote, MarketOdds } from './context/feeds.js';
 import { gameLinesFor, injuryFor, marketsFor, normalizedName } from './context/match.js';
+import type { SharpPropsFeed } from './context/sharp-props.js';
+import { DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
 import { serveWebApp } from './web-app.js';
 
 /** How far ahead the public demo shows real lines. */
@@ -79,6 +81,10 @@ export interface ServerOptions {
   scraperPuller?: ScraperPuller | null;
   /** Display-only game context feeds (injuries, Pinnacle, Kalshi, Polymarket); never scored. */
   contextFeeds?: ContextFeeds | null;
+  /** DraftKings and Hard Rock prop prices (SharpAPI) for reference odds and CrownIQ's own +EV; never scored. */
+  sharpProps?: SharpPropsFeed | null;
+  /** Break-even chance per pick for +EV (default 54.21%, PrizePicks' best Flex). */
+  evBreakEven?: number;
 }
 
 function authorized(request: FastifyRequest, token?: string): boolean {
@@ -141,6 +147,7 @@ export function buildServer(options: ServerOptions = {}) {
     options.scraperPuller?.whenLinesChange(()=>startOwnerBoardRefresh());
     options.scraperPuller?.start();
     options.contextFeeds?.start();
+    options.sharpProps?.start(60);
     if(options.ownerNotebook && options.ownerPublicId){
       await options.ownerNotebook.load();options.ownerNotebook.start();
     }
@@ -151,7 +158,7 @@ export function buildServer(options: ServerOptions = {}) {
       async()=>service.persist()) : null;
   const contextScheduler=options.contextRefresh?new ContextRefreshScheduler(service,options.contextRefresh):null;
   app.addHook('onClose', async () => { webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
-    options.scraperPuller?.stop();options.contextFeeds?.stop(); });
+    options.scraperPuller?.stop();options.contextFeeds?.stop();options.sharpProps?.stop(); });
 
   // Every paid provider pull runs through this one job, so two pulls can never overlap or
   // queue back to back. The record is persisted so a restart mid-pull is reported.
@@ -308,6 +315,7 @@ export function buildServer(options: ServerOptions = {}) {
           nbaDailyLimit:options.contextLookupBudget?.limit??0},
         scrapers:await options.scraperPuller?.status()??null,
         contextFeeds:await options.contextFeeds?.status()??null,
+        sharpProps:await options.sharpProps?.status()??null,
         researchHealth:status.researchHealth,secondLook:status.secondLook,
         freshContext:status.freshContext,lineTypes:auditPrizePicksLineTypes(snapshot.board.lines),
         modelSupport:{supported,unsupported:snapshot.board.lines.length-supported,
@@ -640,6 +648,17 @@ export function buildServer(options: ServerOptions = {}) {
       markets:marketsFor(line,[...kalshi.items,...polymarket.items],game),
       fetchedAt:{injuries:injuries.fetchedAt,pinnacle:pinnacle.fetchedAt,kalshi:kalshi.fetchedAt,polymarket:polymarket.fetchedAt}};
   });
+  // CrownIQ's own +EV: sportsbook no-vig chances against the pick'em break-even. Separate from GKR; never scored.
+  app.get('/v1/ev', async (_request, reply) => {
+    const board=service.getBoard();
+    if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    if(!options.sharpProps)return reply.code(503).send({code:'EV_UNCONFIGURED'});
+    const {fetchedAt,prices}=await options.sharpProps.current();
+    const breakEven=options.evBreakEven??DEFAULT_BREAK_EVEN;
+    const picks=evPicks(board,prices,now(),breakEven);
+    return {app:'prizepicks',fetchedAt,breakEven,matched:picks.length,
+      picks:picks.filter((pick)=>pick.edge>0).slice(0,150)};
+  });
   app.get('/v1/board', async (_request, reply) => {
     const snapshot = service.getBoard();
     return snapshot ?? reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
@@ -848,6 +867,8 @@ export function buildServer(options: ServerOptions = {}) {
         trackingStatus:ownerBoardRefresh.trackingStatus,creditsSpent:ownerBoardRefresh.creditsSpent,
         creditsRemaining:ownerBoardRefresh.creditsRemaining};
     };
+    admin.post('/sharp-props/refresh', async (_request, reply) => options.sharpProps
+      ? options.sharpProps.refresh() : reply.code(503).send({ code: 'EV_UNCONFIGURED' }));
     admin.get('/context', async (_request, reply) => options.contextFeeds
       ? { feeds: await options.contextFeeds.status() } : reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' }));
     // Pulls one context feed now; it spends from the shared daily scraper budget.

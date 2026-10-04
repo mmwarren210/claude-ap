@@ -1,6 +1,6 @@
 import type { Analysis, RankingCard, SecondLookCard } from '@crowniq/contracts';
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { evidenceDetail, matchup } from '../../components/BoardCard';
@@ -17,6 +17,7 @@ import { ScoreRing } from '../../components/ui/ScoreRing';
 import { rateTone, StatStrip } from '../../components/ui/StatStrip';
 import { formatLine, gameTime, lineStats, marketLabel, percent } from '../../insights';
 import { colors, radius, rankAccents } from '../../theme';
+import { useAuth } from '../../auth';
 import { useBoard } from '../../use-board';
 import { useTipFlow } from '../../components/TipSheet';
 import { usePlayerGames } from '../../use-player-games';
@@ -80,7 +81,51 @@ function PickCard({ card, rank, accent, photoUrl, analysis, onAdd }: { card: Car
   </View>;
 }
 
+/** One +EV pick from the server: sportsbooks' no-vig chance at the same number against the break-even. */
+type EvPick = { lineId: string; playerName: string; market: string; threshold: number; side: 'MORE' | 'LESS';
+  eventStartTime: string; fairProbability: number; edge: number;
+  books: { book: string; fair: number }[]; gkr: { direction: string; score: number | null } | null };
+type EvResponse = { fetchedAt: string | null; breakEven: number; picks: EvPick[] };
+const bookNames: Readonly<Record<string, string>> = { draftkings: 'DraftKings', hardrock: 'Hard Rock' };
+
+function EvCard({ pick, onAdd }: { pick: EvPick; onAdd: () => void }) {
+  const agrees = pick.gkr && pick.gkr.direction === pick.side && pick.gkr.score !== null;
+  const gkrText = !pick.gkr ? 'Not on the GKR board' : pick.gkr.direction === 'PASS' ? 'GKR: PASS on this line'
+    : agrees ? `GKR agrees: ${pick.gkr.direction} · ${Math.round(pick.gkr.score!)}` : `GKR leans ${pick.gkr.direction}`;
+  return <Pressable accessibilityRole="button" style={styles.evCard}
+    onPress={() => router.push({ pathname: '/player/[lineId]', params: { lineId: pick.lineId } })}>
+    <View style={styles.evTop}>
+      <View style={styles.evBody}>
+        <Text style={styles.evName} numberOfLines={1}>{pick.playerName}</Text>
+        <Text style={styles.evPick}>{marketLabel(pick.market)} · {pick.side} {formatLine(pick.threshold)}</Text>
+        <Text style={styles.note}>{gameTime(pick.eventStartTime)}</Text>
+      </View>
+      <View style={styles.evNumbers}>
+        <Text style={styles.evEdge}>+{(pick.edge * 100).toFixed(1)}%</Text>
+        <Text style={styles.note}>fair {(pick.fairProbability * 100).toFixed(1)}%</Text>
+      </View>
+    </View>
+    <Text style={styles.note}>{pick.books.map((book) => `${bookNames[book.book] ?? book.book} ${(book.fair * 100).toFixed(1)}%`).join(' · ')}</Text>
+    <View style={styles.evTop}>
+      <Text style={[styles.note, agrees && styles.evAgree]}>{gkrText}</Text>
+      <Pressable accessibilityRole="button" onPress={onAdd} hitSlop={8}><Text style={styles.link}>Add to Crown</Text></Pressable>
+    </View>
+  </Pressable>;
+}
+
 export default function TopPicksScreen() {
+  const { request, demo } = useAuth();
+  const [mode, setMode] = useState<'GKR' | 'EV'>('GKR');
+  const [ev, setEv] = useState<{ status: 'idle' | 'loading' | 'ready' | 'error'; value: EvResponse | null }>({ status: 'idle', value: null });
+  useEffect(() => {
+    if (mode !== 'EV' || demo) return;
+    let active = true;
+    void request('/v1/ev').then(async (response) => {
+      if (!active) return;
+      setEv(response.ok ? { status: 'ready', value: await response.json() as EvResponse } : { status: 'error', value: null });
+    }).catch(() => { if (active) setEv({ status: 'error', value: null }); });
+    return () => { active = false; };
+  }, [mode, demo, request]);
   const { data: board, nowMs, freshness } = useBoard();
   const { status, data, message, retry } = useRankings();
   const [size, setSize] = useState(5);
@@ -109,6 +154,24 @@ export default function TopPicksScreen() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Top Picks" />
+      <Segmented label="Pick list" options={[{ value: 'GKR' as const, label: 'GKR picks' }, { value: 'EV' as const, label: '+EV' }]}
+        value={mode} onChange={setMode} />
+      {mode === 'EV' ? <>
+        <Text style={styles.sectionText}>Sportsbooks’ no-vig chance for the same player, stat and number, against the
+          {` ${((ev.value?.breakEven ?? 0.5421) * 100).toFixed(1)}%`} a PrizePicks 5–6 pick Flex needs per pick. Standard lines only.
+          Separate from GKR scores.</Text>
+        {demo ? <Notice title="+EV needs a profile" detail="Sign in to see live +EV picks." />
+          : ev.status !== 'ready' ? <Notice title={ev.status === 'error' ? '+EV unavailable' : 'Loading +EV picks'}
+            detail={ev.status === 'error' ? 'Sportsbook prices are not connected yet. Try again later.' : 'Comparing sportsbook prices.'} />
+            : !ev.value?.picks.length ? <Notice title="No +EV picks right now"
+              detail="No standard line beats the break-even at the sportsbooks' prices. Check back after the next update." />
+              : ev.value.picks.slice(0, 50).map((pick) => <EvCard key={pick.lineId} pick={pick} onAdd={() => {
+                const line = lineById.get(pick.lineId);
+                if (!line) { setNotice('That line is no longer on the board.'); return; }
+                tips.attempt(line, analysisById.get(pick.lineId), pick.side, `Added ${pick.playerName} to your Crown.`);
+              }} />)}
+        {!!notice && <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text>}
+      </> : <>
       <Segmented label="How many top picks" options={sizes} value={size} onChange={setSize} />
       <ChipRow>
         <FilterChip label={filter.sport === 'ALL' ? 'All Sports' : optionLabel('sport', filter.sport)}
@@ -138,6 +201,7 @@ export default function TopPicksScreen() {
           onAdd={() => addCard(card)} />)}
       </View>}
       {!data && <Pressable accessibilityRole="button" onPress={retry}><Text style={styles.link}>Retry</Text></Pressable>}
+      </>}
     </ScrollView>
     {tips.sheet}
     {sheet && <Sheet visible title={{ sport: 'Sport', date: 'Date', lineType: 'Line style' }[sheet]} onClose={() => setSheet(null)}>
@@ -156,6 +220,14 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 16, paddingBottom: 32, gap: 14 },
   note: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
   notice: { color: colors.mint, fontSize: 13, fontWeight: '700' },
+  evCard: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: 14, gap: 8 },
+  evTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  evBody: { flex: 1, gap: 2 },
+  evName: { color: colors.text, fontSize: 17, fontWeight: '800' },
+  evPick: { color: colors.mint, fontSize: 15, fontWeight: '700' },
+  evNumbers: { alignItems: 'flex-end' },
+  evEdge: { color: colors.mint, fontSize: 22, fontWeight: '900' },
+  evAgree: { color: colors.gold, fontWeight: '700' },
   card: { backgroundColor: colors.surface, borderWidth: 1.5, borderRadius: radius.lg, padding: 14, gap: 12,
     shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 0 } },
   top: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
