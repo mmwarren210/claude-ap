@@ -161,7 +161,10 @@ test('provider ID tokens require a trusted signature, audience, issuer, expirati
   await assert.rejects(()=>verifier.verify('GOOGLE',token({exp:now-1}),'server-issued-nonce'));
   await assert.rejects(()=>verifier.verify('GOOGLE',token(),'wrong-nonce'));
   await assert.rejects(()=>verifier.verify('GOOGLE',token({email_verified:false}),'server-issued-nonce'));
-  await assert.rejects(()=>verifier.verify('GOOGLE',token().slice(0,-2)+'ab','server-issued-nonce'));
+  // Change a character in the middle of the signature: the last characters carry padding bits, so swapping them can
+  // leave the decoded signature unchanged and the token valid.
+  const tampered=(value:string)=>{const at=value.length-40;return value.slice(0,at)+(value[at]==='A'?'B':'A')+value.slice(at+1);};
+  await assert.rejects(()=>verifier.verify('GOOGLE',tampered(token()),'server-issued-nonce'));
   const folder=await mkdtemp(join(tmpdir(),'crowniq-oidc-'));
   const app=buildServer({product:new ProductLedger(join(folder,'ledger.json'),
     'CROWN_STRONG',()=>start),identityVerifier:verifier,requireProfiles:true,clock:()=>start});
