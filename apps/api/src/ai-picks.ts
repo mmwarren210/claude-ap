@@ -85,8 +85,10 @@ export function combineReads(reads: readonly ProviderRead[]): { pick: AiPick; sc
   if (!sides.length) return { pick: 'PASS', score: null, agreement: 'BOTH' };
   if (new Set(sides.map((read) => read.pick)).size > 1) return { pick: 'PASS', score: null, agreement: 'SPLIT' };
   const average = sides.reduce((sum, read) => sum + read.confidence, 0) / sides.length;
-  return sides.length === reads.length ? { pick: sides[0].pick, score: Math.round(average), agreement: 'BOTH' }
-    : { pick: sides[0].pick, score: Math.max(0, Math.round(average - 10)), agreement: 'ONE' };
+  const agreement: Agreement = sides.length === reads.length ? 'BOTH' : 'ONE';
+  const score = Math.round(agreement === 'BOTH' ? average : average - 10);
+  // Below 55 is not a play, however the reads combined.
+  return score < 55 ? { pick: 'PASS', score: null, agreement } : { pick: sides[0].pick, score, agreement };
 }
 
 export interface AiRead {

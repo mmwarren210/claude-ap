@@ -8,7 +8,7 @@ export type AiRead = {
     reasons: { text: string; url: string | null }[] }[];
 };
 /** An AI read that names a side, so the line is a play. */
-export const aiPlay = (read: AiRead | undefined) => !!read && read.pick !== 'PASS' && read.score !== null;
+export const aiPlay = (read: AiRead | undefined) => !!read && read.pick !== 'PASS' && read.score !== null && read.score >= 55;
 export const providerName = (provider: string) => provider === 'chatgpt' ? 'ChatGPT' : 'Claude';
 export const agreementText = (read: AiRead) => read.agreement === 'BOTH' ? 'ChatGPT and Claude agree'
   : read.agreement === 'ONE' ? 'One model picked a side, the other passed' : read.agreement === 'SPLIT'

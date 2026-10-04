@@ -27,6 +27,8 @@ test('answers fail closed: a side the line lacks, low confidence or junk becomes
 test('reads combine: agreement averages, one PASS marks down, opposite sides PASS', () => {
   assert.deepEqual(combineReads([read('chatgpt', 'MORE', 60), read('claude', 'MORE', 66)]), { pick: 'MORE', score: 63, agreement: 'BOTH' });
   assert.deepEqual(combineReads([read('chatgpt', 'LESS', 70), read('claude', 'PASS', 50)]), { pick: 'LESS', score: 60, agreement: 'ONE' });
+  assert.deepEqual(combineReads([read('chatgpt', 'MORE', 58), read('claude', 'PASS', 50)]), { pick: 'PASS', score: null, agreement: 'ONE' },
+    'marked down below 55 is a PASS');
   assert.deepEqual(combineReads([read('chatgpt', 'MORE', 60), read('claude', 'LESS', 62)]), { pick: 'PASS', score: null, agreement: 'SPLIT' });
   assert.deepEqual(combineReads([read('claude', 'LESS', 58)]), { pick: 'LESS', score: 58, agreement: 'SINGLE' });
 });
