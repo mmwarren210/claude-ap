@@ -17,6 +17,11 @@ for a long-running server, so it is not used here (it could hold the data later 
    - `THE_ODDS_API_KEY` (optional third PrizePicks source, used on the owner's pull)
    - `CROWNIQ_OWNER_PUBLIC_ID` (your profile id in the app) and `ADMIN_TOKEN` (any long random string)
    - `OPENAI_API_KEY` for web research, and later `ANTHROPIC_API_KEY`
+   - **Scoring settings: the same ones the app was tuned with.** Railway only hosts the app; CrownIQ's own code and
+     these settings decide the scores. Without them the server has no approved models and every line is PASS.
+     - `GKR_MODEL_PRESET=stat_history_v1` (the 20 approved NFL/NBA/MLB markets) and any extra exact versions in
+       `GKR_APPROVED_MODEL_VERSIONS`
+     - `STAT_API_KEY` with `GKR_STAT_EVIDENCE=true` (player history for those markets)
    - Optional schedule and spend settings from `.env.example` (`CROWNIQ_SCRAPER_*`, `CROWNIQ_CONTEXT_*`)
 4. **Settings → Networking → Generate domain.** That gives a URL like `https://crowniq-api.up.railway.app`.
 5. Check `https://<your-domain>/health` shows `{"status":"ok", ...}`. The live server is
