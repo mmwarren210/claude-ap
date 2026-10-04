@@ -203,3 +203,63 @@ test('current context retries one transient MLB source failure without dropping 
   assert.equal(evidence.some((item)=>item.kind==='status:starting_lineup'),true);
   assert.equal(adapter.getHealth().sources?.MLB_SOURCE_HEALTH.failures,0);
 });
+
+test('MLB series games on the same UTC date resolve to the one near the line start; schedule lineups fill an empty boxscore',async()=>{
+  const requested:string[]=[];
+  const fetchFn:typeof fetch=async(input)=>{
+    const url=String(input);requested.push(url);
+    const teams={away:{team:{name:'San Diego Padres',abbreviation:'SD'}},
+      home:{team:{name:'Milwaukee Brewers',abbreviation:'MIL'}}};
+    if(url.includes('/schedule?')){
+      // Saturday's night game (00:08 UTC) and Sunday's afternoon game share the UTC date.
+      return new Response(JSON.stringify({dates:[{games:[
+        {gamePk:1,gameDate:'2030-06-01T00:08:00Z',teams},
+        {gamePk:2,gameDate:'2030-06-01T20:08:00Z',teams,
+          lineups:{awayPlayers:[{id:10,fullName:'Batter One'}],homePlayers:[{id:20,fullName:'Home Batter'}]}},
+      ]}]}),{status:200});
+    }
+    if(url.endsWith('/game/2/feed/live')){
+      return new Response(JSON.stringify({
+        gameData:{probablePitchers:{away:{id:50},home:{id:60}}},
+        liveData:{boxscore:{teams:{
+          away:{battingOrder:[],players:{ID10:{person:{id:10,fullName:'Batter One'}},ID11:{person:{id:11,fullName:'Bench Bat'}}}},
+          home:{battingOrder:[],players:{ID20:{person:{id:20,fullName:'Home Batter'}},
+            ID60:{person:{id:60,fullName:'Home Starter'}}}},
+        }}},
+      }),{status:200});
+    }
+    return new Response('not found',{status:404});
+  };
+  const adapter=new CurrentContextResearch({fetchFn,clock:()=>now,allowedKeys:['MLB:batter_hits']});
+  const sd=target({eventId:'pp-game:1',eventName:'Brewers vs Padres',team:'Padres',opponent:'Brewers',
+    eventStartTime:'2030-06-01T20:00:00.000Z'});
+  const evidence=await adapter.research([sd,target({eventId:'pp-game:1',eventName:'Brewers vs Padres',
+    playerId:'bench',playerName:'Bench Bat',team:'Padres',opponent:'Brewers',eventStartTime:'2030-06-01T20:00:00.000Z'})]);
+  assert.ok(requested.some((url)=>url.includes('hydrate=team,probablePitcher,lineups')));
+  assert.ok(!requested.some((url)=>url.endsWith('/game/1/feed/live')));
+  const lineup=(id:string)=>evidence.find((item)=>item.entityId===id&&item.kind==='status:starting_lineup')?.numeric?.value;
+  assert.equal(lineup('player-1'),1);
+  assert.equal(lineup('bench'),0);
+  const sources=adapter.getHealth().sources??{};
+  const game=Object.entries(sources).find(([key])=>key.startsWith('MLB_GAME '));
+  assert.equal(game?.[1].errorCode,'GAME_2 LINEUP away:schedule,home:schedule');
+});
+
+test('MLB games that cannot be told apart stay unmatched and say so',async()=>{
+  const fetchFn:typeof fetch=async(input)=>{
+    const url=String(input);
+    const teams={away:{team:{name:'New York Yankees'}},home:{team:{name:'Boston Red Sox'}}};
+    if(url.includes('/schedule?')){
+      return new Response(JSON.stringify({dates:[{games:[
+        {gamePk:1,gameDate:'2030-06-01T16:05:00Z',teams},{gamePk:2,gameDate:'2030-06-01T23:35:00Z',teams},
+      ]}]}),{status:200});
+    }
+    throw new Error('feed should not be requested');
+  };
+  const adapter=new CurrentContextResearch({fetchFn,clock:()=>now,allowedKeys:['MLB:batter_hits']});
+  // 20:00 is more than 3 hours from both games of the doubleheader.
+  const evidence=await adapter.research([target({})]);
+  assert.equal(evidence.length,0);
+  const game=Object.entries(adapter.getHealth().sources??{}).find(([key])=>key.startsWith('MLB_GAME '));
+  assert.equal(game?.[1].errorCode,'GAME_UNRESOLVED');
+});

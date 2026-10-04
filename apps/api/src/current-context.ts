@@ -78,6 +78,8 @@ type MlbDiagnostics={
   evidenceTargets:number;
   sourceFailures:number;
   failedGroups:number;
+  /** Where each game's lookup stopped, so a game that gets no context can be traced. */
+  games:{event:string;targets:number;gamePk:number|null;stage:string;lineupSource:string|null}[];
 };
 
 function teamNames(value:unknown):string[]{
@@ -126,6 +128,14 @@ function matchGame(target:ResearchTarget,games:readonly MlbGame[]):MlbGame|null{
     .sort((a,b)=>Number(b.sameDay)-Number(a.sameDay)||b.score-a.score);
   if(exact.length && !(exact.length>1&&exact[0].sameDay===exact[1].sameDay&&
     exact[0].score===exact[1].score))return exact[0].game;
+  // A tie (a doubleheader, or a postponed game listed again) resolves only to the one game starting within
+  // 3 hours of the line's start.
+  if(exact.length>1){
+    const targetStart=Date.parse(target.eventStartTime);
+    const near=exact.filter((item)=>item.game.startTime&&
+      Math.abs(Date.parse(item.game.startTime)-targetStart)<=3*3600_000);
+    if(near.length===1)return near[0].game;
+  }
 
   // MLB postseason schedules can temporarily expose placeholders such as NLWC3
   // after the DFS/odds feed already knows the advancing club. On the exact event
@@ -278,7 +288,7 @@ export class CurrentContextResearch implements ResearchAdapter{
   private async mlb(targets:readonly ResearchTarget[],counters:{searches:number;cacheHits:number}){
     const out:Evidence[]=[],identity:Evidence[]=[];const diagnostics:MlbDiagnostics={groups:0,gameMatchedTargets:0,
       boxscoreMatchedTargets:0,playerMatchedTargets:0,batterTargets:0,lineupPostedTargets:0,
-      starterContextTargets:0,evidenceTargets:0,sourceFailures:0,failedGroups:0};
+      starterContextTargets:0,evidenceTargets:0,sourceFailures:0,failedGroups:0,games:[]};
     if(!targets.length)return {evidence:out,diagnostics};
     const groups=new Map<string,ResearchTarget[]>();
     for(const target of targets)groups.set(target.eventId,[...(groups.get(target.eventId)??[]),target]);
@@ -289,28 +299,47 @@ export class CurrentContextResearch implements ResearchAdapter{
       const day=dateOnly(group[0].eventStartTime),range=addDays(day,-1)+'|'+addDays(day,1);
       if(schedules.has(range))continue;
       const [start,end]=range.split('|');
-      const url=`${MLB_BASE}/schedule?sportId=1&startDate=${start}&endDate=${end}&hydrate=team,probablePitcher`;
+      const url=`${MLB_BASE}/schedule?sportId=1&startDate=${start}&endDate=${end}&hydrate=team,probablePitcher,lineups`;
       try{schedules.set(range,parseSchedule(await this.json(url,5*60_000,undefined,counters)));}
       catch{diagnostics.sourceFailures++;schedules.set(range,[]);}
     }
     for(const group of groups.values()){
       const first=group[0],day=dateOnly(first.eventStartTime),range=addDays(day,-1)+'|'+addDays(day,1);
-      const game=matchGame(first,schedules.get(range)??[]);if(!game)continue;
+      const record={event:`${first.eventName} ${first.eventStartTime}`,targets:group.length,gamePk:null as number|null,
+        stage:'GAME_UNRESOLVED',lineupSource:null as string|null};
+      diagnostics.games.push(record);
+      // One event can carry differently worded lines (e.g. "Padres @ Brewers" and "Brewers vs Padres"), so every
+      // distinct wording gets a try; the first that resolves to one official game wins.
+      const wordings=[...new Map(group.map((target)=>[[target.eventName,target.team,target.opponent].join('|'),target]))
+        .values()];
+      let game:MlbGame|null=null;
+      for(const target of wordings){game=matchGame(target,schedules.get(range)??[]);if(game)break;}
+      if(!game)continue;
+      record.gamePk=game.gamePk;
       diagnostics.gameMatchedTargets+=group.length;
       const sourceUrl=`${MLB_FEED_BASE}/game/${game.gamePk}/feed/live`;
       let feed:JsonObject|null=null;
       try{feed=object(await this.json(sourceUrl,2*60_000,undefined,counters));}
-      catch{diagnostics.sourceFailures++;diagnostics.failedGroups++;continue;}
-      if(!feed)continue;
+      catch{diagnostics.sourceFailures++;diagnostics.failedGroups++;record.stage='FEED_REQUEST_FAILED';continue;}
+      if(!feed){record.stage='FEED_EMPTY';continue;}
       const gameData=object(feed.gameData),liveData=object(feed.liveData),
         box=object(object(liveData?.boxscore)?.teams),probable=object(gameData?.probablePitchers);
-      if(!box)continue;
+      if(!box){record.stage='BOXSCORE_UNAVAILABLE';continue;}
+      record.stage='OK';
       diagnostics.boxscoreMatchedTargets+=group.length;
+      // The posted batting order comes from the game feed's boxscore; the schedule's lineups (same official
+      // source, already fetched) fill in only when the boxscore has none yet.
+      const scheduled=object(game.raw.lineups);
       const sideData=(side:'away'|'home')=>{
-        const team=object(box[side]),players=object(team?.players);
-        return {team,players,battingOrder:ids(team?.battingOrder),pitchers:ids(team?.pitchers)};
+        const team=object(box[side]),players=object(team?.players),boxOrder=ids(team?.battingOrder);
+        const listed=boxOrder.length?[]:ids((Array.isArray(scheduled?.[side+'Players'])
+          ?scheduled[side+'Players'] as unknown[]:[]).map((row)=>object(row)?.id));
+        return {team,players,battingOrder:boxOrder.length?boxOrder:listed,
+          lineupSource:boxOrder.length?'boxscore':listed.length?'schedule':null,pitchers:ids(team?.pitchers)};
       };
       const away=sideData('away'),home=sideData('home');
+      record.lineupSource=[away.lineupSource&&'away:'+away.lineupSource,home.lineupSource&&'home:'+home.lineupSource]
+        .filter(Boolean).join(',')||null;
       const personIndex=new Map<number,string>();
       for(const players of [away.players,home.players]){
         if(!players)continue;
@@ -451,6 +480,10 @@ export class CurrentContextResearch implements ResearchAdapter{
             'PROBABLE_STARTER_UNAVAILABLE');
           sources.MLB_EVIDENCE_TARGETS=stage(mlb.evidenceTargets,job.targets,
             'NO_CANONICAL_CONTEXT');
+          for(const game of mlb.games)sources['MLB_GAME '+game.event]={status:game.stage==='OK'?'OK':'PARTIAL',
+            targets:game.targets,evidence:0,failures:0,
+            errorCode:(game.gamePk?`GAME_${game.gamePk} `:'')+(game.stage!=='OK'?game.stage:game.lineupSource
+              ?'LINEUP '+game.lineupSource:'LINEUP_NOT_POSTED')};
           sources.MLB_SOURCE_HEALTH={status:mlb.sourceFailures?'PARTIAL':'OK',
             targets:mlb.groups,evidence:mlb.groups-mlb.failedGroups,failures:mlb.sourceFailures,
             errorCode:mlb.sourceFailures?'SOURCE_REQUEST_FAILED':null};

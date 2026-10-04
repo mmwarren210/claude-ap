@@ -31,7 +31,9 @@ function mergeEvidence(base:readonly Evidence[],extra:readonly Evidence[]):Evide
 
 export type ContextRefreshReport={at:string;status:'SUCCEEDED'|'PARTIAL'|'FAILED'|'SKIPPED';
   reason:string|null;linesTargeted:number;evidenceAdded:number;evidenceExpiredRemoved:number;
-  oddsCreditsUsed:0;sourceRequests:number};
+  oddsCreditsUsed:0;sourceRequests:number;
+  /** Per-source results of the last refresh (e.g. where each MLB game's lookup stopped). */
+  sources?:NonNullable<ResearchHealth['sources']>};
 
 export class BoardService {
   private snapshot: BoardResponse | null = null;
@@ -150,7 +152,8 @@ export class BoardService {
     const researched=await collectResearch(boardSchema.parse({...board,lines}),adapter);
     const at=this.clock();
     const report={at:at.toISOString(),linesTargeted:lines.length,oddsCreditsUsed:0 as const,
-      sourceRequests:researched.health?.searches??0};
+      sourceRequests:researched.health?.searches??0,
+      ...researched.health?.sources?{sources:researched.health.sources}:{}};
     if(researched.status==='FAILED'&&!researched.evidence.length)
       return this.lastContextRefresh={...report,status:'FAILED',reason:'CONTEXT_SOURCES_FAILED',
         evidenceAdded:0,evidenceExpiredRemoved:0};
