@@ -212,3 +212,17 @@ mapped (`marketKeys`); unmapped stats are left out rather than guessed.
   `BooksBadge`). Display only; scores are unchanged.
 - **In about two weeks:** with graded results in hand, measure whether "books agree" picks hit more often; if so, propose
   a new opt-in GKR model version with a sportsbook-agreement factor, for the owner's approval.
+
+## Built: Underdog and Pick6 boards, all-sport grading (owner, 2026-10-04)
+
+- **Boards:** the Board tab has a pick'em app picker (PrizePicks, Underdog, Pick6). Underdog and Pick6 show their own
+  lines from the 4x/day pulls (`/v1/apps/:app/board`). Their stat labels map to the same market keys PrizePicks uses
+  (`appStatKeys` in `scrapers/markets.ts`). GKR does not score them; the same PrizePicks player and stat show its line
+  and GKR score beside them for reference. Users save slips on them (personal Crowns tagged with the app).
+- **Saving:** a Crown GKR's rules turn down (a leg under the size minimum) is kept as the user's own picks instead of
+  failing. Results has GKR Picks / Your Picks.
+- **Grading:** hourly, every sport box scores carry: MLB from the official MLB Stats API box score; NFL, college
+  football, NBA, WNBA, NHL and soccer from ESPN's public box scores (`box-score-results.ts`). Graded only when the
+  game is final and the player matches exactly one row; DNP only when the box score says so. Quarter/inning splits,
+  esports, tennis, NASCAR and fantasy scores stay pending. Grading never changes a score.
+- **Next:** a proposal for scoring Underdog/Pick6 lines with GKR (owner approval, new opt-in model versions).

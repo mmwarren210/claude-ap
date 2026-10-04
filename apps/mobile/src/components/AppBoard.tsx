@@ -44,7 +44,8 @@ function LineCard({ app, line, picked, onPick }: { app: PickApp; line: AppLine; 
       <View style={styles.grow}>
         <Text style={styles.name} numberOfLines={1}>{line.playerName}</Text>
         <Text style={styles.meta} numberOfLines={1}>{line.league} · {line.team ?? line.eventName}
-          {line.opponent ? ` vs ${line.opponent}` : ''} · {gameTime(line.eventStartTime)}</Text>
+          {line.opponent ? ` vs ${line.opponent}` : ''}</Text>
+        <Text style={styles.meta}>{gameTime(line.eventStartTime)}</Text>
       </View>
       <View style={styles.number}><Text style={styles.threshold}>{formatLine(line.threshold)}</Text>
         <Text style={styles.stat} numberOfLines={2}>{line.stat}</Text></View>
