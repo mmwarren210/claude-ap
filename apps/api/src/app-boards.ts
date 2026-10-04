@@ -4,9 +4,9 @@ import { leagueInfo, lineMarket } from './scrapers/markets.js';
 import type { ScrapedLineStore, StoredLine } from './scrapers/line-store.js';
 import type { DfsApp } from './scrapers/scraped-line.js';
 
-// Underdog and DraftKings Pick6 boards from the scraper store. These are the apps' own lines, shown for picking and
-// line shopping. GKR does not score them: when PrizePicks has the same player and stat, its line and GKR score are
-// shown beside them for reference only. Scoring other apps' lines needs the owner's approval and a new model version.
+// Underdog and DraftKings Pick6 boards from the scraper store: the apps' own lines, for picking and line shopping.
+// The same PrizePicks line and its GKR score show beside them. GKR scores the app lines themselves (owner approved
+// 2026-10-04, CROWNIQ_APP_GKR_SCORES) with the approved models on the PrizePicks line's research; see appScores.
 
 export type OtherApp = Exclude<DfsApp, 'prizepicks'>;
 export const otherApps: readonly OtherApp[] = ['underdog', 'pick6'];
@@ -87,14 +87,17 @@ export async function appBoard(store: ScrapedLineStore, app: OtherApp, board: Bo
 
 /**
  * The app's lines in board shape, so a personal Crown can be saved and graded like any other.
- * There are no analyses: GKR does not score these lines.
+ * GKR scores on the app lines, when given, ride along as analyses so a backed leg keeps its score.
  */
-export function asBoard(lines: readonly AppLine[], fetchedAt: string): BoardResponse {
+export function asBoard(lines: readonly AppLine[], fetchedAt: string,
+  scores: ReadonlyMap<string, AppScore> = new Map()): BoardResponse {
   return { board: { provider: 'prizepicks', fetchedAt,
     lines: lines.map(({ app: _app, stat: _stat, multipliers: _multipliers, prizePicks: _reference, playerImageUrl, ...line }) =>
       ({ ...line, provider: 'prizepicks', sourceLineId: line.id.split(':').slice(1).join(':'),
         availableDirections: [...line.availableDirections], ...(playerImageUrl ? { playerImageUrl } : {}) }) as unknown as PropLine) },
-  analyses: [], rankedLineIds: [], builtAt: fetchedAt } as unknown as BoardResponse;
+  // A leg on the side GKR backs keeps its GKR score on the saved slip.
+  analyses: [...scores].map(([lineId, score]) => ({ lineId, direction: score.direction, score: score.score,
+    modelVersion: score.modelVersion })), rankedLineIds: [], builtAt: fetchedAt } as unknown as BoardResponse;
 }
 
 /** How an app's number compares with the PrizePicks number for the side picked (MORE: lower is easier). */
@@ -146,4 +149,53 @@ export async function appCoverage(store: ScrapedLineStore, app: OtherApp, board:
       return [league, { lines: group.length, onPrizePicks: group.filter((line) => line.prizePicks).length,
         gkrRead: group.filter((line) => line.prizePicks?.gkr).length }];
     })) };
+}
+
+/** PrizePicks lines by player, stat and day, for finding the line whose research applies to an app line. */
+export function prizePicksIndex(lines: readonly PropLine[]): Map<string, PropLine[]> {
+  const byKey = new Map<string, PropLine[]>();
+  for (const line of lines) {
+    const key = JSON.stringify([line.playerId, statKey(line.market), line.eventStartTime.slice(0, 10)]);
+    byKey.set(key, [...byKey.get(key) ?? [], line]);
+  }
+  return byKey;
+}
+
+/** The PrizePicks line whose research applies to an app line: same player, stat and day; standard first, then closest. */
+export function researchLineFor(line: Pick<AppLine, 'playerId' | 'market' | 'eventStartTime' | 'threshold'>,
+  index: Map<string, PropLine[]>): PropLine | null {
+  const options = index.get(JSON.stringify([line.playerId, statKey(line.market), line.eventStartTime.slice(0, 10)])) ?? [];
+  return [...options].sort((a, b) => Number(b.lineType === 'REGULAR') - Number(a.lineType === 'REGULAR') ||
+    Math.abs(a.threshold - line.threshold) - Math.abs(b.threshold - line.threshold))[0] ?? null;
+}
+
+/** The app line as a board line on the PrizePicks game, so the PrizePicks research applies at the app's number. */
+export function scoredLine(app: Pick<AppLine, 'id' | 'threshold' | 'availableDirections' | 'lineType' | 'fetchedAt'>,
+  prizePicks: PropLine): PropLine {
+  return { ...prizePicks, id: app.id, sourceLineId: app.id, threshold: app.threshold,
+    availableDirections: [...app.availableDirections], lineType: app.lineType as PropLine['lineType'],
+    fetchedAt: app.fetchedAt };
+}
+
+export interface AppScore { readonly direction: PlayableDirection; readonly score: number; readonly modelVersion: string }
+
+/**
+ * GKR on an app's lines (owner approved 2026-10-04): each line PrizePicks also lists runs through the same approved
+ * model, at the app's number and sides, on the PrizePicks line's research. Lines GKR passes on have no entry.
+ */
+export function appScores(lines: readonly AppLine[], boardLines: readonly PropLine[],
+  scoreLines: (lines: readonly PropLine[]) => Analysis[], now: Date): Map<string, AppScore> {
+  const index = prizePicksIndex(boardLines);
+  const pairs = lines.flatMap((line) => {
+    const prizePicks = Date.parse(line.eventStartTime) > now.getTime() ? researchLineFor(line, index) : null;
+    return prizePicks ? [{ line, prizePicks }] : [];
+  });
+  const analyses = scoreLines(pairs.map(({ line, prizePicks }) => scoredLine(line, prizePicks)));
+  const scores = new Map<string, AppScore>();
+  pairs.forEach(({ line }, index) => {
+    const analysis = analyses[index];
+    if (analysis && analysis.direction !== 'PASS' && analysis.score !== null && analysis.modelVersion)
+      scores.set(line.id, { direction: analysis.direction, score: analysis.score, modelVersion: analysis.modelVersion });
+  });
+  return scores;
 }

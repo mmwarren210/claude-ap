@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Analysis, PropLine } from '@crowniq/contracts';
-import { appBoard, otherApps, statKey } from './app-boards.js';
+import { appBoard, otherApps, prizePicksIndex, researchLineFor, scoredLine } from './app-boards.js';
 import type { AppLine, OtherApp } from './app-boards.js';
 import type { BoxScoreResults } from './box-score-results.js';
 import type { ResultFact } from './product-ledger.js';
@@ -39,12 +39,7 @@ export interface ShadowBoardSource {
 /** PrizePicks GKR's own graded plays over the same window, for the comparison bar. */
 export type PrizePicksRecord = (since: string, minScore: number) => Promise<{ graded: number; wins: number }>;
 
-/** The app line as a board line on the PrizePicks game, so the PrizePicks research applies to it. */
-export function shadowLine(app: AppLine, prizePicks: PropLine): PropLine {
-  return { ...prizePicks, id: app.id, sourceLineId: app.id, threshold: app.threshold,
-    availableDirections: [...app.availableDirections], lineType: app.lineType as PropLine['lineType'],
-    fetchedAt: app.fetchedAt };
-}
+export const shadowLine = (app: AppLine, prizePicks: PropLine): PropLine => scoredLine(app, prizePicks);
 
 export class AppShadowScorer {
   private picks: ShadowPick[] = [];
@@ -80,21 +75,14 @@ export class AppShadowScorer {
     await this.load();
     const published = this.board.getBoard(), now = this.clock();
     if (!published) return { scored: 0, plays: 0, added: 0 };
-    const byKey = new Map<string, PropLine[]>();
-    for (const line of published.board.lines) {
-      const key = JSON.stringify([line.playerId, statKey(line.market), line.eventStartTime.slice(0, 10)]);
-      byKey.set(key, [...byKey.get(key) ?? [], line]);
-    }
+    const index = prizePicksIndex(published.board.lines);
     const known = new Set(this.picks.map((pick) => pick.id));
     let scored = 0, plays = 0, added = 0;
     for (const app of otherApps) {
       const { lines } = await appBoard(this.store, app, null);
       const pairs = lines.flatMap((line) => {
-        const options = byKey.get(JSON.stringify([line.playerId, statKey(line.market), line.eventStartTime.slice(0, 10)])) ?? [];
-        // The PrizePicks line whose research applies: standard first, then the closest number.
-        const prizePicks = [...options].sort((a, b) => Number(b.lineType === 'REGULAR') - Number(a.lineType === 'REGULAR') ||
-          Math.abs(a.threshold - line.threshold) - Math.abs(b.threshold - line.threshold))[0];
-        return prizePicks && Date.parse(line.eventStartTime) > now.getTime() ? [{ line, prizePicks }] : [];
+        const prizePicks = Date.parse(line.eventStartTime) > now.getTime() ? researchLineFor(line, index) : null;
+        return prizePicks ? [{ line, prizePicks }] : [];
       });
       const analyses = this.board.scoreLines(pairs.map(({ line, prizePicks }) => shadowLine(line, prizePicks)));
       scored += pairs.length;

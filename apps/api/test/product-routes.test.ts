@@ -182,10 +182,13 @@ test('Underdog lines are served with the PrizePicks reference, and a slip on the
     eventStartTime:'2030-09-25T00:00:00Z',fetchedAt:'2030-09-24T11:00:00Z'})]}),
   evidence:[],researchStatus:'UNCONFIGURED',lastSuccessfulRefresh:null,secondLookAudits:{}});
   const ledger=new ProductLedger(join(folder,'product.json'),'CROWN_STRONG',clock);
-  const app=buildServer({boardCache:cache,clock,product:ledger,scrapedLines:store});
+  const app=buildServer({boardCache:cache,clock,product:ledger,scrapedLines:store,appGkrScores:true});
   try {
-    const board=(await app.inject('/v1/apps/underdog/board')).json() as {lines:{id:string;market:string;
-      prizePicks:{threshold:number}|null}[]};
+    const board=(await app.inject('/v1/apps/underdog/board')).json() as {gkrScored:boolean;lines:{id:string;market:string;
+      prizePicks:{threshold:number}|null;gkr:unknown}[]};
+    // Scored, but with no research yet GKR has no read on either line.
+    assert.equal(board.gkrScored,true);
+    assert.deepEqual(board.lines.map((line)=>line.gkr),[null,null]);
     assert.deepEqual(board.lines.map((line)=>[line.id,line.market,line.prizePicks?.threshold??null]),
       [['ud:u1','player_reception_yds',54.5],['ud:u2','player_rush_yds',null]]);
     assert.equal((await app.inject('/v1/apps/betr/board')).statusCode,404);

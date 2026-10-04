@@ -21,11 +21,19 @@ export const NFL_TEAMS:Readonly<Record<string,string>>={ARI:'Arizona Cardinals',
   SEA:'Seattle Seahawks',TB:'Tampa Bay Buccaneers',TEN:'Tennessee Titans',WAS:'Washington Commanders'};
 const sleeperPhoto=(id:string)=>`https://sleepercdn.com/content/nfl/players/${encodeURIComponent(id)}.jpg`;
 const mlbPhoto=(id:number)=>`https://img.mlbstatic.com/mlb-photos/image/upload/w_213,q_auto:best/v1/people/${id}/headshot/67/current`;
-const MLB_MARKETS=new Set(['batter_hits_runs_rbis','batter_hits','batter_walks',
-  'batter_home_runs','pitcher_strikeouts']);
+/** MLB pitcher markets: they need this pitcher's probable start; every other MLB market is a batter's. */
+const MLB_PITCHER_MARKETS=new Set(['pitcher_strikeouts','hits_allowed','pitcher_hits_allowed','walks_allowed',
+  'pitcher_earned_runs','earned_runs_allowed','pitching_outs','pitches_thrown','batters_faced']);
+const MLB_MARKETS=new Set(['batter_hits_runs_rbis','batter_hits','batter_walks','batter_home_runs',
+  'batter_total_bases','singles','batter_singles','doubles','triples','rbis','runs','batter_runs_scored','runs_rbis',
+  'extra_base_hits','sb','hitter_ks','plate_appearances',...MLB_PITCHER_MARKETS]);
 const NFL_MARKETS=new Set(['passing_yards','player_pass_attempts','player_pass_completions',
   'player_rush_yds','player_rush_attempts','player_reception_yds','player_receptions',
-  'player_receiving_targets']);
+  'player_receiving_targets','player_rush_reception_yds','rush_plus_rec_yds','player_pass_rush_yds','pass_plus_rush_yds',
+  'player_pass_tds','player_pass_interceptions','int','anytime_tds','rush_tds','player_tackles_assists','player_solo_tackles',
+  'player_tackle_assists','player_sacks','player_defensive_interceptions','player_kicking_points','player_field_goals',
+  'fg_made','player_extra_points','player_reception_longest','longest_rec','player_rush_longest','longest_rush',
+  'player_pass_longest_completion','player_punts','player_completion_percentage']);
 const NBA_MARKETS=new Set(['player_points','player_rebounds','player_assists',
   'player_points_rebounds_assists','player_points_rebounds','player_points_assists',
   'player_rebounds_assists']);
@@ -293,7 +301,7 @@ export class CurrentContextResearch implements ResearchAdapter{
     const groups=new Map<string,ResearchTarget[]>();
     for(const target of targets)groups.set(target.eventId,[...(groups.get(target.eventId)??[]),target]);
     diagnostics.groups=groups.size;
-    diagnostics.batterTargets=targets.filter((target)=>target.market!=='pitcher_strikeouts').length;
+    diagnostics.batterTargets=targets.filter((target)=>!MLB_PITCHER_MARKETS.has(target.market)).length;
     const schedules=new Map<string,MlbGame[]>();
     for(const group of groups.values()){
       const day=dateOnly(group[0].eventStartTime),range=addDays(day,-1)+'|'+addDays(day,1);
@@ -366,7 +374,7 @@ export class CurrentContextResearch implements ResearchAdapter{
         if(team)identity.push(this.evidence(target,'identity:team',1,team,'MLB Stats API',sourceUrl,'OFFICIAL','HIGH',.95,30*60_000));
         identity.push(this.evidence(target,'identity:photo',1,'Player headshot','MLB player photos',mlbPhoto(playerId),
           'OFFICIAL','HIGH',.95,30*60_000));
-        if(target.market==='pitcher_strikeouts'){
+        if(MLB_PITCHER_MARKETS.has(target.market)){
           const starter=probableId(side);
           if(starter){
             diagnostics.starterContextTargets++;

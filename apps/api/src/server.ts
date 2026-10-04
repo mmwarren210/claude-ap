@@ -23,7 +23,8 @@ import type { BoardCache } from './board-cache.js';
 import { boardFunnel, outcomeCounts } from './board-funnel.js';
 import { liteBoard, windowBoard } from './board-lite.js';
 import { ContextRefreshScheduler } from './context-refresh.js';
-import { appBoard, appCoverage, asBoard, otherApps, portLegs } from './app-boards.js';
+import { appBoard, appCoverage, appScores, asBoard, otherApps, portLegs } from './app-boards.js';
+import type { AppScore } from './app-boards.js';
 import type { OtherApp } from './app-boards.js';
 import type { ScrapedLineStore } from './scrapers/line-store.js';
 import { AppShadowScorer } from './app-shadow.js';
@@ -75,6 +76,8 @@ export interface ServerOptions {
   scrapedLines?: ScrapedLineStore | null;
   /** Underdog/Pick6 shadow scoring (Phase 1 of docs/PROPOSAL_APP_SCORING.md): where its record is kept, and its grader. */
   appShadow?: { file: string | null; boxScores: BoxScoreResults | null } | null;
+  /** GKR scores on Underdog/Pick6 lines (owner approved 2026-10-04; CROWNIQ_APP_GKR_SCORES). */
+  appGkrScores?: boolean;
   /** Trusted authentication integration only; never use client-provided public IDs as identity. */
   socialActor?: (request: FastifyRequest) => Promise<string | null> | string | null;
   requireProfiles?: boolean;
@@ -659,7 +662,8 @@ export function buildServer(options: ServerOptions = {}) {
       const appLines=await appBoard(options.scrapedLines,input.data.app,null);
       try{return reply.code(201).send({...await options.product!.savePersonalCrown(user.accountId,
         input.data.lineIds.map((lineId)=>({lineId,direction:input.data.directions![lineId]!})),
-        asBoard(appLines.lines,appLines.fetchedAt??new Date().toISOString()),input.data.app),personal:true,app:input.data.app});}
+        asBoard(appLines.lines,appLines.fetchedAt??new Date().toISOString(),await scoresFor(input.data.app)),input.data.app),
+        personal:true,app:input.data.app});}
       catch(error){return reply.code(422).send({code:'CROWN_VALIDATION_FAILED',issues:crownIssues(error)});}
     }
     const board=service.getBoard();if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
@@ -730,8 +734,24 @@ export function buildServer(options: ServerOptions = {}) {
     const parsed=z.object({app:z.enum(otherApps as [OtherApp,...OtherApp[]])}).safeParse(request.params);
     if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_APP'});
     if(!options.scrapedLines)return reply.code(503).send({code:'APP_LINES_UNAVAILABLE'});
-    return appBoard(options.scrapedLines,parsed.data.app,service.getBoard());
+    const board=await appBoard(options.scrapedLines,parsed.data.app,service.getBoard());
+    const scores=await scoresFor(parsed.data.app);
+    return {...board,gkrScored:!!options.appGkrScores,
+      lines:board.lines.map((line)=>({...line,gkr:scores.get(line.id)??null}))};
   });
+  // App scores are rebuilt at most every 2 minutes, or sooner when the PrizePicks board or its research changes.
+  const appScoreCache=new Map<OtherApp,{at:number;key:readonly unknown[];scores:Map<string,AppScore>}>();
+  async function scoresFor(app:OtherApp):Promise<Map<string,AppScore>>{
+    const board=service.getBoard();
+    if(!options.appGkrScores||!options.scrapedLines||!board)return new Map();
+    const now=(options.clock??(()=>new Date()))(),key=[board,service.getEvidence()];
+    const cached=appScoreCache.get(app);
+    if(cached&&now.getTime()-cached.at<2*60_000&&cached.key[0]===key[0]&&cached.key[1]===key[1])return cached.scores;
+    const {lines}=await appBoard(options.scrapedLines,app,null);
+    const scores=appScores(lines,board.board.lines,(items)=>service.scoreLines(items),now);
+    appScoreCache.set(app,{at:now.getTime(),key,scores});
+    return scores;
+  }
   // Carry PrizePicks picks over to Underdog or Pick6: each pick's line on that app and how its number compares.
   app.post('/v1/apps/:app/port',async(request,reply)=>{
     const parsed=z.object({app:z.enum(otherApps as [OtherApp,...OtherApp[]])}).safeParse(request.params);

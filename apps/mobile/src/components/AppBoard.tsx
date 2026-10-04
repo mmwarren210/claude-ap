@@ -22,7 +22,9 @@ type Side = 'MORE' | 'LESS';
 type AppLine = { id: string; sport: string; league: string; eventName: string; eventStartTime: string; playerId: string;
   playerName: string; team: string | null; opponent: string | null; stat: string; threshold: number; lineType: string;
   availableDirections: Side[]; multipliers: Partial<Record<Side, number>> | null; playerImageUrl: string | null;
-  prizePicks: { threshold: number; lineType: string; gkr: { direction: Side; score: number } | null } | null };
+  prizePicks: { threshold: number; lineType: string; gkr: { direction: Side; score: number } | null } | null;
+  /** GKR on this app line itself (its number and sides), or null when GKR passes or can't read it. */
+  gkr?: { direction: Side; score: number } | null };
 
 const sideLabel = (app: PickApp, side: Side) => app === 'underdog' ? side === 'MORE' ? 'Higher' : 'Lower'
   : side === 'MORE' ? 'More' : 'Less';
@@ -51,20 +53,24 @@ function LineCard({ app, line, picked, onPick }: { app: PickApp; line: AppLine; 
       <View style={styles.number}><Text style={styles.threshold}>{formatLine(line.threshold)}</Text>
         <Text style={styles.stat} numberOfLines={2}>{line.stat}</Text></View>
     </View>
+    {line.gkr && <View style={styles.gkr}>
+      <Text style={styles.gkrScore}>GKR {Math.round(line.gkr.score)}</Text>
+      <Text style={styles.gkrSide}>{sideLabel(app, line.gkr.direction)} {formatLine(line.threshold)}</Text>
+    </View>}
     <Reference line={line} />
     <View style={styles.sides}>
       {line.availableDirections.map((side) => <Pressable key={side} accessibilityRole="button"
         accessibilityState={{ selected: picked === side }} onPress={() => onPick(side)}
-        style={[styles.side, picked === side && styles.sideActive]}>
+        style={[styles.side, line.gkr?.direction === side && styles.sideBacked, picked === side && styles.sideActive]}>
         <Text style={[styles.sideText, picked === side && styles.sideTextActive]}>{sideLabel(app, side)}
-          {line.multipliers?.[side] ? ` · ${line.multipliers[side]}x` : ''}</Text></Pressable>)}
+          {line.multipliers?.[side] ? ` · ${line.multipliers[side]}x` : ''}{line.gkr?.direction === side ? ' · GKR' : ''}</Text></Pressable>)}
     </View>
   </View>;
 }
 
 /**
- * An Underdog or Pick6 board: the app's own lines, picked and saved as the user's own slip. GKR does not score these
- * lines; the same PrizePicks line and its GKR score show beside them for reference.
+ * An Underdog or Pick6 board: the app's own lines, picked and saved as the user's own slip. GKR scores each line it can
+ * read at the app's own number; the same PrizePicks line and its GKR score show beside it.
  */
 export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; onApp: (app: PickApp) => void }) {
   const { request, demo } = useAuth();
@@ -72,6 +78,8 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   const [lines, setLines] = useState<AppLine[]>([]), [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [sport, setSport] = useState('ALL');
+  const [gkrOnly, setGkrOnly] = useState(false);
+  const [scored, setScored] = useState(false);
   const [slip, setSlip] = useState<{ line: AppLine; side: Side }[]>([]);
   const [message, setMessage] = useState('');
   const load = useCallback(async () => {
@@ -79,14 +87,20 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     try {
       const response = await request(`/v1/apps/${app}/board`);
       if (!response.ok) throw new Error('unavailable');
-      const body = await response.json() as { lines: AppLine[]; fetchedAt: string | null };
+      const body = await response.json() as { lines: AppLine[]; fetchedAt: string | null; gkrScored?: boolean };
+      setScored(!!body.gkrScored);
       setLines(body.lines); setFetchedAt(body.fetchedAt); setState('ready');
     } catch { setState('error'); }
   }, [app, request, demo]);
   useFocusEffect(useCallback(() => { setState('loading'); void load(); }, [load]));
 
   const sports = useMemo(() => [...new Set(lines.map((line) => line.league))].sort(), [lines]);
-  const shown = useMemo(() => lines.filter((line) => sport === 'ALL' || line.league === sport), [lines, sport]);
+  // GKR picks: only lines GKR backs, strongest first.
+  const shown = useMemo(() => {
+    const inLeague = lines.filter((line) => sport === 'ALL' || line.league === sport);
+    return gkrOnly ? inLeague.filter((line) => line.gkr).sort((a, b) => b.gkr!.score - a.gkr!.score) : inLeague;
+  }, [lines, sport, gkrOnly]);
+  const backed = useMemo(() => lines.filter((line) => line.gkr).length, [lines]);
   const picks = new Map(slip.map((item) => [item.line.id, item.side]));
   const pick = (line: AppLine, side: Side) => {
     setMessage('');
@@ -117,9 +131,13 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
       <FilterChip label="All leagues" active={sport === 'ALL'} onPress={() => setSport('ALL')} />
       {sports.map((league) => <FilterChip key={league} label={league} active={sport === league} onPress={() => setSport(league)} />)}
     </ChipRow>}
+    {scored && <Segmented label="Which lines" value={gkrOnly ? 'GKR' : 'ALL'} onChange={(value) => setGkrOnly(value === 'GKR')}
+      options={[{ value: 'ALL', label: 'All lines' }, { value: 'GKR', label: `GKR picks (${backed})` }]} />}
     <Text style={styles.status}>{shown.length} lines{age === null ? '' : ` · captured ${age < 90 ? `${age} min` : `${Math.round(age / 60)} h`} ago`}</Text>
-    <Text style={styles.note}>GKR doesn’t score {appNames[app]} lines yet. When PrizePicks has the same player and stat, its
-      line and GKR score show for reference. Confirm the line in {appNames[app]} before you play it.</Text>
+    <Text style={styles.note}>{scored ? `GKR scores ${appNames[app]} lines at ${appNames[app]}’s own number, using the same
+      research as PrizePicks. These scores are new on ${appNames[app]} and are being tracked.` : `GKR doesn’t score
+      ${appNames[app]} lines yet.`} PrizePicks’ line for the same player and stat shows for comparison. Confirm the line in
+      {' '}{appNames[app]} before you play it.</Text>
     {!!message && <Text accessibilityRole="alert" style={styles.message}>{message}</Text>}
   </View>;
 
@@ -169,6 +187,12 @@ const styles = StyleSheet.create({
   sideActive: { backgroundColor: colors.mint, borderColor: colors.mint },
   sideText: { color: colors.text, fontSize: 14, fontWeight: '700' },
   sideTextActive: { color: colors.mintInk },
+  sideBacked: { borderColor: colors.mint },
+  gkr: { flexDirection: 'row', alignItems: 'center', gap: 10, alignSelf: 'flex-start', paddingVertical: 4,
+    paddingHorizontal: 10, borderRadius: radius.pill, backgroundColor: colors.mintWash,
+    borderWidth: 1, borderColor: colors.mint },
+  gkrScore: { color: colors.mint, fontSize: 14, fontWeight: '900' },
+  gkrSide: { color: colors.text, fontSize: 13, fontWeight: '700' },
   tray: { position: 'absolute', left: 16, right: 16, bottom: 12, gap: 8, padding: 12, borderRadius: radius.lg,
     borderWidth: 1, borderColor: colors.mint, backgroundColor: colors.surface },
   trayText: { color: colors.text, fontSize: 14, fontWeight: '700' },

@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegistry, lessAwareVersion, marketDefinitions,
-  statHistoryReadyVersions } from '@crowniq/engine';
+  statHistoryReadyVersions, statHistoryV2Versions } from '@crowniq/engine';
 import type { OddsProvider } from '@crowniq/engine';
 import { buildServer } from './server.js';
 import { FullPrizePicksProvider } from './full-prizepicks-provider.js';
@@ -142,12 +142,14 @@ if (['claude_web', 'both'].includes(researchProvider) && !claudeResearch) {
 const band=process.env.CROWNIQ_AUTO_TRACK_MIN_BAND ?? 'CROWN_STRONG';
 if(band!=='CROWN_STRONG' && band!=='PLAYABLE')throw new Error('Invalid CROWNIQ_AUTO_TRACK_MIN_BAND');
 const modelPreset=process.env.GKR_MODEL_PRESET??'custom';
-if(!['custom','stat_history_v1'].includes(modelPreset))throw new Error('Invalid GKR_MODEL_PRESET');
+// stat_history_v2 = v1 plus every other Stat API stat the board offers (owner approved 2026-10-04).
+if(!['custom','stat_history_v1','stat_history_v2'].includes(modelPreset))throw new Error('Invalid GKR_MODEL_PRESET');
 const configuredModelVersions=(process.env.GKR_APPROVED_MODEL_VERSIONS??'')
   .split(',').map((version)=>version.trim()).filter(Boolean);
-const approvedModelVersions=[...new Set(modelPreset==='stat_history_v1'
-  ? [...configuredModelVersions,...statHistoryReadyVersions]
-  : configuredModelVersions)];
+const approvedModelVersions=[...new Set(modelPreset==='stat_history_v2'
+  ? [...configuredModelVersions,...statHistoryReadyVersions,...statHistoryV2Versions]
+  : modelPreset==='stat_history_v1' ? [...configuredModelVersions,...statHistoryReadyVersions]
+    : configuredModelVersions)];
 const models=createGkrRegistry(approvedModelVersions);
 const knownModelVersions=new Set(marketDefinitions.flatMap((definition)=>
   [definition.version,lessAwareVersion(definition.version)]));
@@ -272,7 +274,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provid
   allowedWebOrigins:(process.env.CROWNIQ_ALLOWED_WEB_ORIGINS??'').split(',')
     .map((origin)=>origin.trim()).filter(Boolean),
   ownerJobStore:new OwnerPullJobStore(process.env.CROWNIQ_OWNER_JOB_FILE ?? `${dataDir}/owner-pull-job.json`),
-  scrapedLines,appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults()}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,
+  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults()}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,

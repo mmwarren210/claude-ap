@@ -135,8 +135,123 @@ const specs:Readonly<Record<StatApiSport,Readonly<Record<string,MarketSpec>>>>={
   PGA:{},
 };
 
+/** Stat-history set 2 (owner approved 2026-10-04): the remaining Stat API stats, read the same way. */
+const pa=(r:Row)=>n(r,'plate_appearances');
+const per=(key:string)=>(r:Row)=>ratio(n(r,key),pa(r));
+const tb=(r:Row)=>n(r,'total_bases');
+const batterSpec=(value:(r:Row)=>number|null,unit:string,factors:MarketSpec['factors']):MarketSpec=>
+  ({table:'game_player_batter_stats',value,unit,factors:{expected_pa:pa,...factors}});
+const bf=(r:Row)=>n(r,'batters_faced');
+const pitcherSpec=(value:(r:Row)=>number|null,unit:string,factors:MarketSpec['factors']):MarketSpec=>
+  ({table:'game_player_pitching_stats',value,unit,
+    factors:{expected_batters_faced:bf,pitch_count_innings:(r)=>n(r,'innings_pitched'),...factors}});
+const nfl=(value:(r:Row)=>number|null,unit:string,factors:MarketSpec['factors']):MarketSpec=>
+  ({table:'game_player_stats',value,unit,factors});
+const touches=(r:Row)=>sum(n(r,'rushing_attempts'),n(r,'targets'));
+const scrimmage=(r:Row)=>sum(n(r,'rushing_yds'),n(r,'receiving_yds'));
+const tackles=(r:Row)=>sum(n(r,'solo_tackles'),n(r,'assisted_tackles'));
+const kicking=(r:Row)=>{const fg=n(r,'field_goals_made'),xp=n(r,'extra_pts_made');
+  return fg===null||xp===null?null:fg*3+xp;};
+const v2:Readonly<Partial<Record<StatApiSport,Readonly<Record<string,MarketSpec>>>>>={
+  MLB:{
+    batter_total_bases:batterSpec(tb,'total bases',{power_rate:(r)=>ratio(tb(r),pa(r)),historical_tb_volume:tb,
+      contact_ability:(r)=>ratio(n(r,'hits'),n(r,'at_bats'))}),
+    singles:batterSpec((r)=>n(r,'singles'),'singles',{single_rate:per('singles'),historical_single_volume:(r)=>n(r,'singles'),
+      contact_ability:(r)=>ratio(n(r,'hits'),n(r,'at_bats'))}),
+    doubles:batterSpec((r)=>n(r,'doubles'),'doubles',{double_rate:per('doubles'),historical_double_volume:(r)=>n(r,'doubles'),
+      power_rate:(r)=>ratio(tb(r),pa(r))}),
+    triples:batterSpec((r)=>n(r,'triples'),'triples',{triple_rate:per('triples'),historical_triple_volume:(r)=>n(r,'triples'),
+      speed:(r)=>ratio(sum(n(r,'stolen_bases'),n(r,'caught_stealing')),pa(r))}),
+    rbis:batterSpec((r)=>n(r,'runs_batted_in'),'RBIs',{rbi_rate:per('runs_batted_in'),
+      historical_rbi_volume:(r)=>n(r,'runs_batted_in'),power_rate:(r)=>ratio(tb(r),pa(r))}),
+    runs:batterSpec((r)=>n(r,'runs'),'runs',{on_base_rate:(r)=>ratio(sum(n(r,'hits'),n(r,'walks')),pa(r)),
+      run_rate:per('runs'),historical_run_volume:(r)=>n(r,'runs')}),
+    runs_rbis:batterSpec((r)=>sum(n(r,'runs'),n(r,'runs_batted_in')),'runs+RBIs',{
+      run_creation_rate:(r)=>ratio(sum(n(r,'runs'),n(r,'runs_batted_in')),pa(r)),
+      historical_volume:(r)=>sum(n(r,'runs'),n(r,'runs_batted_in')),power_rate:(r)=>ratio(tb(r),pa(r))}),
+    extra_base_hits:batterSpec((r)=>sum(n(r,'doubles'),n(r,'triples'),n(r,'home_runs')),'extra-base hits',{
+      extra_base_rate:(r)=>ratio(sum(n(r,'doubles'),n(r,'triples'),n(r,'home_runs')),pa(r)),
+      historical_xbh_volume:(r)=>sum(n(r,'doubles'),n(r,'triples'),n(r,'home_runs')),power_rate:(r)=>ratio(tb(r),pa(r))}),
+    sb:batterSpec((r)=>n(r,'stolen_bases'),'stolen bases',{
+      steal_attempt_rate:(r)=>ratio(sum(n(r,'stolen_bases'),n(r,'caught_stealing')),pa(r)),
+      steal_success_rate:(r)=>ratio(n(r,'stolen_bases'),sum(n(r,'stolen_bases'),n(r,'caught_stealing'))),
+      on_base_rate:(r)=>ratio(sum(n(r,'hits'),n(r,'walks')),pa(r)),historical_sb_volume:(r)=>n(r,'stolen_bases')}),
+    hitter_ks:batterSpec((r)=>n(r,'strikeouts'),'strikeouts',{hitter_k_rate:per('strikeouts'),
+      historical_k_volume:(r)=>n(r,'strikeouts')}),
+    plate_appearances:batterSpec(pa,'plate appearances',{on_base_rate:(r)=>ratio(sum(n(r,'hits'),n(r,'walks')),pa(r)),
+      historical_pa_volume:pa}),
+    hits_allowed:pitcherSpec((r)=>n(r,'hits_allowed'),'hits allowed',{hits_per_batter:(r)=>ratio(n(r,'hits_allowed'),bf(r)),
+      historical_hits_allowed:(r)=>n(r,'hits_allowed')}),
+    walks_allowed:pitcherSpec((r)=>n(r,'walks_allowed'),'walks allowed',{walk_rate:(r)=>ratio(n(r,'walks_allowed'),bf(r)),
+      historical_walks_allowed:(r)=>n(r,'walks_allowed')}),
+    pitcher_earned_runs:pitcherSpec((r)=>n(r,'earned_runs'),'earned runs',{runs_per_batter:(r)=>ratio(n(r,'earned_runs'),bf(r)),
+      historical_earned_runs:(r)=>n(r,'earned_runs')}),
+    pitching_outs:pitcherSpec((r)=>n(r,'outs'),'outs',{historical_outs:(r)=>n(r,'outs'),
+      pitch_efficiency:(r)=>ratio(n(r,'outs'),n(r,'pitches_thrown'))}),
+    pitches_thrown:pitcherSpec((r)=>n(r,'pitches_thrown'),'pitches',{historical_pitch_volume:(r)=>n(r,'pitches_thrown'),
+      pitch_efficiency:(r)=>ratio(n(r,'pitches_thrown'),bf(r))}),
+    batters_faced:pitcherSpec(bf,'batters faced',{historical_bf_volume:bf}),
+  },
+  NFL:{
+    player_rush_reception_yds:nfl(scrimmage,'yards',{expected_touches:touches,yards_per_touch:(r)=>ratio(scrimmage(r),touches(r)),
+      historical_scrimmage_volume:scrimmage,offensive_snap_volume:(r)=>n(r,'offensive_snaps')}),
+    player_pass_rush_yds:nfl((r)=>sum(n(r,'passing_yds'),n(r,'rushing_yds')),'yards',{expected_attempts:(r)=>n(r,'pass_attempts'),
+      efficiency_environment:(r)=>ratio(n(r,'passing_yds'),n(r,'pass_attempts')),rushing_role:(r)=>n(r,'rushing_attempts'),
+      historical_total_yards:(r)=>sum(n(r,'passing_yds'),n(r,'rushing_yds'))}),
+    player_pass_tds:nfl((r)=>n(r,'passing_tds'),'touchdowns',{expected_attempts:(r)=>n(r,'pass_attempts'),
+      td_rate:(r)=>ratio(n(r,'passing_tds'),n(r,'pass_attempts')),historical_td_volume:(r)=>n(r,'passing_tds')}),
+    player_pass_interceptions:nfl((r)=>n(r,'interceptions_thrown'),'interceptions',{expected_attempts:(r)=>n(r,'pass_attempts'),
+      interception_rate:(r)=>ratio(n(r,'interceptions_thrown'),n(r,'pass_attempts')),
+      historical_int_volume:(r)=>n(r,'interceptions_thrown')}),
+    anytime_tds:nfl((r)=>sum(n(r,'rushing_tds'),n(r,'receiving_tds')),'touchdowns',{expected_touches:touches,
+      td_rate:(r)=>ratio(sum(n(r,'rushing_tds'),n(r,'receiving_tds')),touches(r)),
+      historical_td_volume:(r)=>sum(n(r,'rushing_tds'),n(r,'receiving_tds'))}),
+    rush_tds:nfl((r)=>n(r,'rushing_tds'),'touchdowns',{expected_carries:(r)=>n(r,'rushing_attempts'),
+      td_rate:(r)=>ratio(n(r,'rushing_tds'),n(r,'rushing_attempts')),historical_td_volume:(r)=>n(r,'rushing_tds')}),
+    player_tackles_assists:nfl(tackles,'tackles',{historical_tackle_volume:tackles,
+      solo_tackle_share:(r)=>ratio(n(r,'solo_tackles'),tackles(r))}),
+    player_solo_tackles:nfl((r)=>n(r,'solo_tackles'),'solo tackles',{historical_solo_volume:(r)=>n(r,'solo_tackles'),
+      solo_tackle_share:(r)=>ratio(n(r,'solo_tackles'),tackles(r))}),
+    player_tackle_assists:nfl((r)=>n(r,'assisted_tackles'),'assisted tackles',{
+      historical_assist_volume:(r)=>n(r,'assisted_tackles'),assist_share:(r)=>ratio(n(r,'assisted_tackles'),tackles(r))}),
+    player_sacks:nfl((r)=>n(r,'defensive_sacks'),'sacks',{historical_sack_volume:(r)=>n(r,'defensive_sacks'),
+      pressure_rate:(r)=>n(r,'quarterback_hits')}),
+    player_defensive_interceptions:nfl((r)=>n(r,'defensive_interceptions'),'interceptions',{
+      historical_int_volume:(r)=>n(r,'defensive_interceptions'),passes_defended_rate:(r)=>n(r,'passes_defended')}),
+    player_kicking_points:nfl(kicking,'points',{historical_kicking_points:kicking,
+      field_goal_volume:(r)=>n(r,'field_goals_made'),extra_point_volume:(r)=>n(r,'extra_pts_made')}),
+    player_field_goals:nfl((r)=>n(r,'field_goals_made'),'field goals',{field_goal_volume:(r)=>n(r,'field_goals_made'),
+      historical_fg_attempts:(r)=>n(r,'field_goals_attempted'),
+      kicker_accuracy:(r)=>ratio(n(r,'field_goals_made'),n(r,'field_goals_attempted'))}),
+    player_extra_points:nfl((r)=>n(r,'extra_pts_made'),'extra points',{extra_point_volume:(r)=>n(r,'extra_pts_made'),
+      historical_xp:(r)=>n(r,'extra_pts_made')}),
+    player_reception_longest:nfl((r)=>n(r,'receiving_long'),'yards',{historical_longest:(r)=>n(r,'receiving_long'),
+      target_volume:(r)=>n(r,'targets'),yards_per_reception:(r)=>ratio(n(r,'receiving_yds'),n(r,'receptions')),
+      offensive_snap_volume:(r)=>n(r,'offensive_snaps')}),
+    player_rush_longest:nfl((r)=>n(r,'rushing_long'),'yards',{historical_longest:(r)=>n(r,'rushing_long'),
+      carry_volume:(r)=>n(r,'rushing_attempts'),yards_per_carry:(r)=>ratio(n(r,'rushing_yds'),n(r,'rushing_attempts'))}),
+    player_pass_longest_completion:nfl((r)=>n(r,'passing_long'),'yards',{historical_longest:(r)=>n(r,'passing_long'),
+      expected_attempts:(r)=>n(r,'pass_attempts'),air_yards_style:(r)=>ratio(n(r,'passing_air_yds'),n(r,'completions'))}),
+    player_punts:nfl((r)=>n(r,'punts'),'punts',{historical_punt_volume:(r)=>n(r,'punts')}),
+    player_completion_percentage:nfl((r)=>{const rate=ratio(n(r,'completions'),n(r,'pass_attempts'));
+      return rate===null?null:rate*100;},'percent',{completion_rate:(r)=>ratio(n(r,'completions'),n(r,'pass_attempts')),
+      attempts:(r)=>n(r,'pass_attempts'),passing_style:(r)=>ratio(n(r,'passing_yds'),n(r,'pass_attempts'))}),
+  },
+};
+/** Other keys the same stats go by on the apps' boards. */
+const v2Aliases:Readonly<Record<string,readonly [StatApiSport,string]>>={
+  batter_singles:['MLB','singles'],batter_runs_scored:['MLB','runs'],pitcher_hits_allowed:['MLB','hits_allowed'],
+  earned_runs_allowed:['MLB','pitcher_earned_runs'],rush_plus_rec_yds:['NFL','player_rush_reception_yds'],
+  pass_plus_rush_yds:['NFL','player_pass_rush_yds'],int:['NFL','player_pass_interceptions'],fg_made:['NFL','player_field_goals'],
+  longest_rec:['NFL','player_reception_longest'],longest_rush:['NFL','player_rush_longest'],
+};
+const specFor=(sport:StatApiSport,market:string):MarketSpec|undefined=>{
+  const alias=v2Aliases[market];
+  return specs[sport][market]??v2[sport]?.[market]??(alias&&alias[0]===sport?v2[sport]?.[alias[1]]:undefined);
+};
+
 export function statHistoryFactorsFor(sport:string,market:string):readonly string[]{
-  const spec=specs[sport as StatApiSport]?.[market];
+  const spec=['NFL','NBA','MLB','PGA'].includes(sport)?specFor(sport as StatApiSport,market):undefined;
   return spec?[...Object.keys(spec.factors),'stability']:[];
 }
 
@@ -204,7 +319,7 @@ export class StatApiGkrEvidence implements ResearchAdapter {
   supports(target:ResearchTarget):boolean{
     const key=`${target.sport}:${target.market.trim().toLowerCase()}`;
     return ['NFL','NBA','MLB'].includes(target.sport) &&
-      !!specs[target.sport as StatApiSport]?.[target.market] &&
+      !!specFor(target.sport as StatApiSport,target.market) &&
       (!this.allowedKeys||this.allowedKeys.has(key));
   }
 
@@ -234,7 +349,7 @@ export class StatApiGkrEvidence implements ResearchAdapter {
     const ambiguous:{playerTargets:ResearchTarget[];candidates:StatApiPlayer[]}[]=[];
     const resolve=async(playerTargets:ResearchTarget[],player:StatApiPlayer)=>{
       const first=playerTargets[0],sport=first.sport as StatApiSport;
-      const tables=[...new Set(playerTargets.map((target)=>specs[sport][target.market].table))];
+      const tables=[...new Set(playerTargets.map((target)=>specFor(sport,target.market)!.table))];
       const details=new Map<Table,Detail>();
       for(const table of tables){
         searches++;
@@ -243,7 +358,7 @@ export class StatApiGkrEvidence implements ResearchAdapter {
         if(this.onDetail)await this.onDetail({sport,target:first,player,detail}).catch(()=>undefined);
       }
       for(const target of playerTargets){
-        const spec=specs[sport][target.market],detail=details.get(spec.table)!;
+        const spec=specFor(sport,target.market)!,detail=details.get(spec.table)!;
         const findings=this.forTarget(target,spec,detail,now);
         if(findings.length)producedTargets++;else sampleMisses++;
         evidence.push(...findings);

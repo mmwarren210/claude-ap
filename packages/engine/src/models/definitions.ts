@@ -40,21 +40,71 @@ function define(sport: Sport, market: string, factors: readonly WeightedFactor[]
     criticalKinds: options.criticalKinds ?? [], ...options };
 }
 
+const batter = { criticalKinds: ['status:starting_lineup', 'status:starting_pitcher'],
+  hardCriticalKinds: ['status:starting_lineup', 'status:starting_pitcher'], partialCoverageNormalization: true } as const;
+const pitcher = { criticalKinds: ['status:starting_pitcher'], hardCriticalKinds: ['status:starting_pitcher'],
+  partialCoverageNormalization: true } as const;
+const nflPlayer = { criticalKinds: ['status:player_available'], hardCriticalKinds: ['status:player_available'],
+  partialCoverageNormalization: true } as const;
+const nflQb = { criticalKinds: ['status:qb_available'], hardCriticalKinds: ['status:qb_available'],
+  partialCoverageNormalization: true } as const;
+/** One model under each market key a stat goes by (e.g. Underdog's "Rush + Rec Yards" and PrizePicks' key). */
+const v2 = (sport: Sport, markets: readonly string[], factors: readonly WeightedFactor[],
+  options: Partial<Pick<MarketDefinition, 'criticalKinds' | 'hardCriticalKinds' | 'partialCoverageNormalization' |
+    'highVariance' | 'blowoutMode'>>, revision = '1.0') => markets.map((market) => define(sport, market, factors,
+  { ...options, version: `GKR-${sport}-${market.toUpperCase().replace(/_/g, '-')}-SH2-${revision}` }));
+
+const statHistoryV2: readonly MarketDefinition[] = [
+  ...v2('MLB', ['batter_total_bases'], [['expected_pa',20],['power_rate',25],['historical_tb_volume',25],['contact_ability',15],['pitcher_matchup',10],['stability',5]], batter),
+  ...v2('MLB', ['singles','batter_singles'], [['expected_pa',20],['single_rate',30],['historical_single_volume',25],['contact_ability',15],['pitcher_matchup',5],['stability',5]], batter),
+  ...v2('MLB', ['doubles'], [['expected_pa',20],['double_rate',30],['historical_double_volume',25],['power_rate',15],['pitcher_matchup',5],['stability',5]], { ...batter, highVariance: true }),
+  ...v2('MLB', ['triples'], [['expected_pa',20],['triple_rate',35],['historical_triple_volume',25],['speed',10],['pitcher_matchup',5],['stability',5]], { ...batter, highVariance: true }),
+  ...v2('MLB', ['rbis'], [['expected_pa',20],['rbi_rate',25],['historical_rbi_volume',25],['power_rate',20],['pitcher_matchup',5],['stability',5]], { ...batter, highVariance: true }),
+  ...v2('MLB', ['runs','batter_runs_scored'], [['expected_pa',20],['on_base_rate',25],['run_rate',25],['historical_run_volume',20],['pitcher_matchup',5],['stability',5]], batter),
+  ...v2('MLB', ['runs_rbis'], [['expected_pa',20],['run_creation_rate',30],['historical_volume',25],['power_rate',15],['pitcher_matchup',5],['stability',5]], batter),
+  ...v2('MLB', ['extra_base_hits'], [['expected_pa',20],['extra_base_rate',30],['historical_xbh_volume',25],['power_rate',15],['pitcher_matchup',5],['stability',5]], { ...batter, highVariance: true }),
+  ...v2('MLB', ['sb'], [['expected_pa',15],['steal_attempt_rate',35],['steal_success_rate',15],['on_base_rate',15],['historical_sb_volume',15],['stability',5]], { ...batter, highVariance: true }),
+  ...v2('MLB', ['hitter_ks'], [['expected_pa',20],['hitter_k_rate',35],['historical_k_volume',25],['pitcher_matchup',15],['stability',5]], batter),
+  ...v2('MLB', ['plate_appearances'], [['expected_pa',45],['on_base_rate',30],['historical_pa_volume',20],['stability',5]], batter),
+  ...v2('MLB', ['hits_allowed','pitcher_hits_allowed'], [['expected_batters_faced',25],['hits_per_batter',30],['historical_hits_allowed',25],['pitch_count_innings',10],['opponent_contact',5],['stability',5]], pitcher),
+  ...v2('MLB', ['walks_allowed'], [['expected_batters_faced',25],['walk_rate',35],['historical_walks_allowed',25],['pitch_count_innings',10],['stability',5]], pitcher),
+  ...v2('MLB', ['pitcher_earned_runs','earned_runs_allowed'], [['expected_batters_faced',20],['runs_per_batter',30],['historical_earned_runs',25],['pitch_count_innings',10],['opponent_offense',10],['stability',5]], { ...pitcher, highVariance: true }),
+  ...v2('MLB', ['pitching_outs'], [['pitch_count_innings',35],['historical_outs',30],['expected_batters_faced',20],['pitch_efficiency',10],['stability',5]], pitcher),
+  ...v2('MLB', ['pitches_thrown'], [['pitch_count_innings',30],['historical_pitch_volume',35],['expected_batters_faced',20],['pitch_efficiency',10],['stability',5]], pitcher),
+  ...v2('MLB', ['batters_faced'], [['expected_batters_faced',45],['historical_bf_volume',30],['pitch_count_innings',20],['stability',5]], pitcher),
+
+  ...v2('NFL', ['player_rush_reception_yds','rush_plus_rec_yds'], [['expected_touches',30],['yards_per_touch',20],['historical_scrimmage_volume',25],['offensive_snap_volume',15],['game_script',5],['stability',5]], { ...nflPlayer, blowoutMode: 'VOLUME_LOSS' }),
+  ...v2('NFL', ['player_pass_rush_yds','pass_plus_rush_yds'], [['expected_attempts',25],['efficiency_environment',20],['rushing_role',15],['historical_total_yards',25],['game_script',10],['stability',5]], { ...nflQb, blowoutMode: 'VOLUME_LOSS' }),
+  ...v2('NFL', ['player_pass_tds'], [['expected_attempts',25],['td_rate',25],['historical_td_volume',25],['team_scoring_environment',15],['game_script',5],['stability',5]], { ...nflQb, highVariance: true }, '1.1'),
+  ...v2('NFL', ['player_pass_interceptions','int'], [['expected_attempts',30],['interception_rate',35],['historical_int_volume',20],['pressure',10],['stability',5]], { ...nflQb, highVariance: true }),
+  ...v2('NFL', ['anytime_tds'], [['expected_touches',25],['td_rate',30],['historical_td_volume',25],['team_scoring_environment',15],['stability',5]], { ...nflPlayer, highVariance: true }),
+  ...v2('NFL', ['rush_tds'], [['expected_carries',25],['td_rate',30],['historical_td_volume',25],['team_scoring_environment',15],['stability',5]], { ...nflPlayer, highVariance: true }),
+  ...v2('NFL', ['player_tackles_assists'], [['historical_tackle_volume',45],['solo_tackle_share',20],['opponent_play_style',15],['position_role',15],['stability',5]], nflPlayer, '1.1'),
+  ...v2('NFL', ['player_solo_tackles'], [['historical_solo_volume',45],['solo_tackle_share',20],['opponent_play_style',15],['position_role',15],['stability',5]], nflPlayer),
+  ...v2('NFL', ['player_tackle_assists'], [['historical_assist_volume',45],['assist_share',20],['opponent_play_style',15],['position_role',15],['stability',5]], nflPlayer),
+  ...v2('NFL', ['player_sacks'], [['historical_sack_volume',40],['pressure_rate',25],['opponent_pressure_rate',15],['game_script',15],['stability',5]], { ...nflPlayer, highVariance: true }, '1.1'),
+  ...v2('NFL', ['player_defensive_interceptions'], [['historical_int_volume',45],['passes_defended_rate',30],['opponent_pass_volume',20],['stability',5]], { ...nflPlayer, highVariance: true }),
+  ...v2('NFL', ['player_kicking_points'], [['historical_kicking_points',35],['field_goal_volume',25],['extra_point_volume',20],['team_scoring_environment',10],['weather',5],['stability',5]], nflPlayer, '1.1'),
+  ...v2('NFL', ['player_field_goals','fg_made'], [['field_goal_volume',40],['historical_fg_attempts',25],['kicker_accuracy',20],['team_scoring_environment',10],['stability',5]], nflPlayer),
+  ...v2('NFL', ['player_extra_points'], [['extra_point_volume',45],['team_scoring_environment',30],['historical_xp',20],['stability',5]], nflPlayer),
+  ...v2('NFL', ['player_reception_longest','longest_rec'], [['historical_longest',35],['target_volume',25],['yards_per_reception',25],['offensive_snap_volume',10],['stability',5]], { ...nflPlayer, highVariance: true }),
+  ...v2('NFL', ['player_rush_longest','longest_rush'], [['historical_longest',35],['carry_volume',30],['yards_per_carry',25],['stability',10]], { ...nflPlayer, highVariance: true }),
+  ...v2('NFL', ['player_pass_longest_completion'], [['historical_longest',40],['expected_attempts',30],['air_yards_style',25],['stability',5]], { ...nflQb, highVariance: true }),
+  ...v2('NFL', ['player_punts'], [['historical_punt_volume',50],['offensive_efficiency',25],['opponent_defense',20],['stability',5]], nflPlayer, '1.1'),
+  ...v2('NFL', ['player_completion_percentage'], [['completion_rate',40],['attempts',20],['passing_style',20],['pressure',15],['stability',5]], nflQb, '1.1'),
+];
+/** The stat-history set 2 versions, approved together by GKR_MODEL_PRESET=stat_history_v2. */
+export const statHistoryV2Versions = statHistoryV2.map((definition) => definition.version);
+
 export const marketDefinitions: readonly MarketDefinition[] = [
   define('NFL','passing_yards', [['expected_attempts',25],['efficiency_environment',20],['protection_pressure',15],['game_script',15],['personnel',10],['historical_current_form',10],['stability',5]], {version:'GKR-NFL-PASSING-YARDS-1.2',criticalKinds:['status:qb_available','status:weather_clear','status:protection_confirmed'],hardCriticalKinds:['status:qb_available'],partialCoverageNormalization:true,blowoutMode:'VOLUME_LOSS'}),
   define('NFL','player_pass_attempts', [['game_script',30],['expected_offensive_plays',20],['pass_rate',20],['qb_role_security',10],['opponent_run_pass_funnel',10],['historical_volume',5],['stability',5]], {version:'GKR-NFL-PLAYER-PASS-ATTEMPTS-1.2',criticalKinds:['status:qb_available'],partialCoverageNormalization:true,blowoutMode:'VOLUME_LOSS'}),
   define('NFL','player_pass_completions', [['attempts',30],['completion_rate',20],['passing_style',15],['opponent_coverage',15],['game_script',10],['pressure',5],['stability',5]], {version:'GKR-NFL-PLAYER-PASS-COMPLETIONS-1.2',criticalKinds:['status:qb_available'],partialCoverageNormalization:true,blowoutMode:'VOLUME_LOSS'}),
-  define('NFL','player_pass_tds', [['team_scoring_environment',25],['red_zone_pass_rate',20],['qb_red_zone_role',15],['opponent_red_zone_defense',15],['receiver_availability',10],['expected_attempts',10],['stability',5]], {criticalKinds:['status:qb_available','status:receivers_confirmed'],highVariance:true,blowoutMode:'VOLUME_LOSS'}),
   define('NFL','player_rush_yds', [['expected_carries',30],['rush_attempt_rate',25],['rb_efficiency_skill',20],['historical_rush_volume',10],['game_script',5],['opponent_rush_defense',5],['stability',5]], {version:'GKR-NFL-PLAYER-RUSH-YDS-1.3',criticalKinds:['status:player_available'],hardCriticalKinds:['status:player_available'],partialCoverageNormalization:true,blowoutMode:'RUSH_GAIN'}),
   define('NFL','player_rush_attempts', [['rush_attempt_rate',35],['historical_volume',25],['offensive_snap_volume',15],['game_script',10],['team_rush_environment',10],['stability',5]], {version:'GKR-NFL-PLAYER-RUSH-ATTEMPTS-1.3',criticalKinds:['status:player_available'],hardCriticalKinds:['status:player_available'],partialCoverageNormalization:true,blowoutMode:'RUSH_GAIN'}),
   define('NFL','player_reception_yds', [['target_opportunity_rate',25],['receiving_efficiency',20],['offensive_snap_volume',20],['historical_receiving_volume',15],['coverage_matchup',10],['qb_environment',5],['stability',5]], {version:'GKR-NFL-PLAYER-RECEPTION-YDS-1.3',criticalKinds:['status:player_available'],hardCriticalKinds:['status:player_available'],partialCoverageNormalization:true,blowoutMode:'VOLUME_LOSS'}),
   define('NFL','player_receptions', [['target_floor',25],['catch_rate',20],['offensive_snap_volume',20],['historical_reception_volume',15],['matchup_coverage',10],['qb_completion_environment',5],['stability',5]], {version:'GKR-NFL-PLAYER-RECEPTIONS-1.3',criticalKinds:['status:player_available'],hardCriticalKinds:['status:player_available'],partialCoverageNormalization:true,blowoutMode:'VOLUME_LOSS'}),
   define('NFL','player_receiving_targets', [['target_opportunity_rate',30],['offensive_snap_volume',25],['historical_target_volume',20],['personnel_changes',10],['coverage_influence',10],['stability',5]], {version:'GKR-NFL-PLAYER-RECEIVING-TARGETS-1.3',criticalKinds:['status:player_available'],hardCriticalKinds:['status:player_available'],partialCoverageNormalization:true}),
-  define('NFL','player_tackles_assists', [['expected_defensive_snaps',25],['player_snap_share',20],['position_role',15],['opponent_play_style',15],['opponent_rush_short_pass_volume',10],['tackle_efficiency',10],['stability',5]]),
-  define('NFL','player_sacks', [['opponent_pressure_rate',25],['offensive_line',20],['qb_sack_tendency',20],['expected_dropbacks',15],['game_script',10],['qb_mobility_time_to_throw',5],['stability',5]]),
-  define('NFL','player_kicking_points', [['team_scoring_environment',25],['field_goal_opportunity',20],['red_zone_stalling',15],['weather',10],['kicker_accuracy',10],['competitiveness',10],['opponent_profile',5],['stability',5]], {criticalKinds:['status:kicker_available','status:weather_clear']}),
-  define('NFL','player_punts', [['expected_drives',20],['offensive_efficiency',25],['opponent_defense',20],['field_position_game_script',15],['fourth_down_aggressiveness',10],['historical_punt_rate',5],['stability',5]]),
-  define('NFL','player_completion_percentage', [['passing_style',25],['qb_accuracy',20],['opponent_coverage',15],['pressure',15],['expected_adot',10],['weather',5],['receiver_availability',5],['stability',5]], {criticalKinds:['status:qb_available','status:weather_clear']}),
 
   define('MLB','batter_hits_runs_rbis', [['expected_pa',20],['historical_hrrbi_volume',20],['run_creation_rate',15],['contact_obp_skill',15],['home_run_rate',15],['pitcher_matchup',10],['stability',5]], {version:'GKR-MLB-BATTER-HITS-RUNS-RBIS-1.3',criticalKinds:['status:starting_lineup','status:starting_pitcher'],partialCoverageNormalization:true}),
   define('MLB','batter_hits', [['expected_pa',20],['contact_ability',25],['historical_hit_volume',25],['hit_rate',20],['pitcher_matchup',5],['stability',5]], {version:'GKR-MLB-BATTER-HITS-1.3',criticalKinds:['status:starting_lineup','status:starting_pitcher'],partialCoverageNormalization:true}),
@@ -83,6 +133,9 @@ export const marketDefinitions: readonly MarketDefinition[] = [
   define('TABLE_TENNIS','full_match_total_points', [['player_strength_gap',25],['straight_set_probability',25],['set_competitiveness',20],['recent_form',10],['style_matchup',10],['ranking',5],['stability',5]]),
   define('TABLE_TENNIS','first_game_total_points', [['opening_game_competitiveness',30],['serve_return_style',20],['player_strength_gap',20],['recent_first_game_history',15],['matchup',10],['stability',5]]),
   define('BADMINTON','match_context', [['ranking_differential',20],['tournament_level',15],['tournament_round',15],['recent_form',15],['opponent_quality',15],['seeding',10],['fatigue',5],['stability',5]], {criticalKinds:['status:tournament_round']}),
+  // Stat-history set 2 (owner approved 2026-10-04): every Stat API stat the board offers. Opt-in through
+  // GKR_MODEL_PRESET=stat_history_v2; batters need the posted lineup, pitchers the probable start, NFL players active.
+  ...statHistoryV2,
   define('BADMINTON','game_point_totals', [['expected_competitiveness',30],['straight_game_probability',20],['ranking_gap',15],['style_matchup',15],['recent_match_length',10],['tournament_context',5],['stability',5]], {criticalKinds:['status:tournament_round']}),
 
   define('CS2','maps_1_2_kills', [['expected_round_volume',25],['kill_share',20],['role',15],['form_rating',15],['opponent',10],['team_strength_series_script',10],['stability',5]], {criticalKinds:['status:roster_confirmed','status:series_format'],dangerUnits:1.5}),

@@ -4,7 +4,7 @@ import type { Evidence, PropLine } from '@crowniq/contracts';
 import { boardSchema, evidenceSchema } from '@crowniq/contracts';
 import { auditCrown, buildAutoCrown, createGkrRegistry, evaluateBoard, fantasyDistribution,
   fantasyRules, marketDefinitions, prizepicksFantasyRegistryV1, reviewManualCrown,
-  scoreBand, scoreFantasyStats, snapshotSelection, statHistoryReadyVersions, lessAwareDefinition, lessAwareVersion,
+  scoreBand, scoreFantasyStats, snapshotSelection, statHistoryReadyVersions, statHistoryV2Versions, lessAwareDefinition, lessAwareVersion,
   flipsForLess, reliabilityFactors } from '../src/index.js';
 import { fixtureAnalysis, fixtureLine, now } from './fixtures.js';
 
@@ -32,9 +32,9 @@ function run(lines: PropLine[], evidence: Evidence[]) {
     evidence, createGkrRegistry(marketDefinitions.map((item) => item.version)), now);
 }
 
-test('69 versioned market definitions have auditable weights and never score missing live inputs', () => {
+test('109 versioned market definitions have auditable weights and never score missing live inputs', () => {
   const registry = createGkrRegistry();
-  assert.equal(marketDefinitions.length, 69);
+  assert.equal(marketDefinitions.length, 109);
   for (const definition of marketDefinitions) {
     assert.equal(definition.factors.reduce((sum, [, weight]) => sum + weight, 0), 100);
     assert.equal(registry.resolve({ sport: definition.sport, market: definition.market })?.version,
@@ -68,6 +68,22 @@ test('stat-history preset expands model-ready coverage without removing hard sta
     threshold:5.5,availableDirections:['MORE']});
   const mlbEvidence=inputs(mlb,1.2,8,1.5).filter((item)=>item.kind!=='status:starting_pitcher');
   assert.equal(run([mlb],mlbEvidence).analyses[0].reasonCode,'STALE_OR_MISSING_EVIDENCE');
+});
+
+test('stat-history set 2 is opt-in, keeps every hard status gate, and scores only with them', () => {
+  assert.equal(statHistoryV2Versions.length, 46, '36 stats, 10 under a second key');
+  assert.ok(statHistoryV2Versions.every((version) => /-SH2-\d+\.\d+$/.test(version)));
+  assert.ok(!statHistoryV2Versions.some((version) => statHistoryReadyVersions.includes(version)), 'not in the v1 preset');
+  const set2 = marketDefinitions.filter((definition) => statHistoryV2Versions.includes(definition.version));
+  assert.ok(set2.every((definition) => (definition.hardCriticalKinds ?? []).length > 0));
+  assert.equal(createGkrRegistry().requirements()['MLB:batter_total_bases'].approved, false, 'off unless approved');
+  const tb = fixtureLine({ sport: 'MLB', market: 'batter_total_bases', threshold: 1.5, availableDirections: ['MORE', 'LESS'] });
+  const withoutLineup = inputs(tb, 1.2, 2.4, 0.8).filter((item) => item.kind !== 'status:starting_lineup');
+  assert.equal(run([tb], withoutLineup).analyses[0].reasonCode, 'STALE_OR_MISSING_EVIDENCE');
+  const scored = run([tb], inputs(tb, 1.2, 2.4, 0.8)).analyses[0];
+  assert.equal(scored.modelVersion, 'GKR-MLB-BATTER-TOTAL-BASES-SH2-1.0');
+  assert.notEqual(scored.reasonCode, 'STALE_OR_MISSING_EVIDENCE');
+  assert.notEqual(scored.reasonCode, 'MODEL_CALIBRATION_UNAPPROVED');
 });
 
 test('approved modules can score sufficiently covered attributed factors without fabricating missing ones', () => {
