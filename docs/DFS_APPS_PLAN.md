@@ -172,3 +172,24 @@ Display-only, never scored (`apps/api/src/context/`). They share the scraper bud
 The player screen shows them under **Game news** ("Not part of the GKR score"); `GET /v1/context/line/:lineId` serves
 them, owner diagnostics show each feed's last run and `blankRunsInARow`, and `POST /v1/admin/context/pull` runs one now.
 Using any of them inside scoring needs the owner's approval and a new opt-in model version.
+
+## Platforms, boards and +EV (owner, 2026-10-04)
+
+**Order:** (1) store every platform's lines per player/stat over time (no score change; player screens show other apps'
+lines); (2) a platform picker on the Board, one board per pick'em app with its own rules, a Crown from one app only;
+(3) a proposal to use cross-platform lines in scoring, as new opt-in model versions, measured on tracked results first.
+
+| Platform | Role | Source |
+|---|---|---|
+| PrizePicks | Board (default) | Zen + lergassy scrapers, The Odds API; SharpAPI when its PrizePicks feed returns (upstream gap 2026-10-04) |
+| Underdog | Board | Zen scraper (already stored), SharpAPI |
+| DraftKings Pick6 | Board, its own section | `zen-studio/draftkings-pick6-player-props` (tested 2026-10-04: real rows, $0.01 for NFL). Not on SharpAPI; `crawloop` returned 0 twice |
+| DraftKings Sportsbook | Reference odds only, its own section | SharpAPI (Hobby) |
+| Hard Rock | Reference odds only | SharpAPI (Hobby) |
+| Kalshi, Polymarket | Reference odds (Game news) | Apify feeds; SharpAPI also carries Kalshi |
+| Onyx | Wanted | No source found yet: not on SharpAPI or the Apify store |
+
+**+EV (wanted):** SharpAPI's ready-made `/opportunities/ev` needs its Pro plan (the account is Hobby). CrownIQ can
+compute its own: remove the vig from a sharp book's Over/Under prices for the same player, stat and number (DraftKings
+and Hard Rock props via SharpAPI; Pinnacle for game lines) to get a fair probability, then compare it with each pick'em
+app's break-even for its payout. Shown as its own +EV view; it does not change GKR scores unless approved as a model version.
