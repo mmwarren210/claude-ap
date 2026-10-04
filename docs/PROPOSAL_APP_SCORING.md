@@ -1,6 +1,7 @@
 # Proposal: GKR scores on Underdog and Pick6 lines
 
-Status: **waiting for the owner's decision** (written 2026-10-04). Nothing here is built or turned on. Anything that
+Status: **Phase 1 approved and running** (owner, 2026-10-04): shadow run on, A and B both included ("all lines need to
+score"), go-live bars approved as written. Users see no change until an app passes and the owner turns it on. Anything that
 changes model scores needs the owner's approval and ships as new, opt-in model versions.
 
 ## Where things stand
@@ -81,3 +82,11 @@ fails, it stays reference-only and I report why.
 None of the three apps publishes a link that pre-fills an entry. CrownIQ copies the picks and opens the app (see the
 Crown tab's **Play it on**). Pre-filled entries would need a partner agreement with each app. That's a business step
 for you to pursue if you want it.
+
+## Decisions (owner, 2026-10-04)
+
+1. Phase 1 approved. Built in `apps/api/src/app-shadow.ts`, record in `app-shadow.json`, report at `/v1/admin/app-shadow`.
+   Scores every 15 minutes, grades hourly.
+2. All lines score: same-number (A) and different-number (B) lines are both in the shadow. App-only players (C) need
+   Stat API research for players PrizePicks doesn't list; next step, inside the existing Stat API row budget.
+3. Go-live bars approved: at least 150 graded plays scoring 80+, at least 56% hit rate, within 3 points of PrizePicks GKR.

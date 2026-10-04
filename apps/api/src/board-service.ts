@@ -1,6 +1,6 @@
 import { boardSchema, propLineSchema } from '@crowniq/contracts';
 import type { Analysis, Board, BoardResponse, Evidence, PlayerMedia, PropLine, SecondLookAudit } from '@crowniq/contracts';
-import { collectResearch, effectiveEvidenceExpiry, evaluateBoard, ModelRegistry, researchTargetsFor } from '@crowniq/engine';
+import { collectResearch, effectiveEvidenceExpiry, evaluateBoard, evaluateLine, ModelRegistry, researchTargetsFor } from '@crowniq/engine';
 import type { OddsProvider, ResearchAdapter, ResearchHealth } from '@crowniq/engine';
 import { classifyPrizePicksLineTypes, normalizeCachedPrizePicksLines } from './prizepicks-line-types.js';
 import type { BoardCache } from './board-cache.js';
@@ -192,6 +192,11 @@ export class BoardService {
   }
 
   getEvidence(): readonly Evidence[] { this.getBoard(); return this.evidence; }
+  /** The approved models on lines outside the board (the Underdog/Pick6 shadow run), with the board's current research. */
+  scoreLines(lines: readonly PropLine[]): Analysis[] {
+    const now=this.clock(),evidence=this.getEvidence();
+    return lines.map((line)=>evaluateLine(line,evidence,this.models,now));
+  }
 
   /**
    * Team identity from exact source matches. A line gets a team only when the matched team is one

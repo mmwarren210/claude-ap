@@ -26,6 +26,8 @@ import { ContextRefreshScheduler } from './context-refresh.js';
 import { appBoard, appCoverage, asBoard, otherApps, portLegs } from './app-boards.js';
 import type { OtherApp } from './app-boards.js';
 import type { ScrapedLineStore } from './scrapers/line-store.js';
+import { AppShadowScorer } from './app-shadow.js';
+import type { BoxScoreResults } from './box-score-results.js';
 import type { ScraperPuller } from './scrapers/scraper-puller.js';
 import type { ContextRefreshOptions, DailyLookupBudget } from './context-refresh.js';
 import type { ProviderName } from './provider-identity.js';
@@ -71,6 +73,8 @@ export interface ServerOptions {
   autoGradingStatus?: () => ProductGradingStatus | null;
   /** Scraped pick'em lines (Underdog, Pick6 boards). */
   scrapedLines?: ScrapedLineStore | null;
+  /** Underdog/Pick6 shadow scoring (Phase 1 of docs/PROPOSAL_APP_SCORING.md): where its record is kept, and its grader. */
+  appShadow?: { file: string | null; boxScores: BoxScoreResults | null } | null;
   /** Trusted authentication integration only; never use client-provided public IDs as identity. */
   socialActor?: (request: FastifyRequest) => Promise<string | null> | string | null;
   requireProfiles?: boolean;
@@ -169,6 +173,7 @@ export function buildServer(options: ServerOptions = {}) {
         await appendFile(options.booksHistoryFile,rows.join('\n')+'\n');}
     });
     options.sharpProps?.start(60);
+    appShadow?.start();
     if(options.ownerNotebook && options.ownerPublicId){
       await options.ownerNotebook.load();options.ownerNotebook.start();
     }
@@ -178,7 +183,19 @@ export function buildServer(options: ServerOptions = {}) {
       if(board){await service.persist();await options.product!.track(board,service.getEvidence());}} :
       async()=>service.persist()) : null;
   const contextScheduler=options.contextRefresh?new ContextRefreshScheduler(service,options.contextRefresh):null;
-  app.addHook('onClose', async () => { webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
+  // Shadow only: app plays are recorded and graded under shadow versions, never shown or added to GKR's record.
+  const appShadow=options.appShadow&&options.scrapedLines?new AppShadowScorer(options.scrapedLines,service,
+    options.appShadow.file,options.appShadow.boxScores,options.product?async(since,minScore)=>{
+      let graded=0,wins=0;
+      for(let offset=0;;offset+=500){
+        const page=await options.product!.listDecisions(offset,500);
+        for(const item of page.decisions)if(item.lineScore>=minScore&&item.eventStartTime>=since&&
+          (item.grade==='WIN'||item.grade==='LOSS')){graded++;if(item.grade==='WIN')wins++;}
+        if(offset+500>=page.total)break;
+      }
+      return {graded,wins};
+    }:null,options.clock):null;
+  app.addHook('onClose', async () => {appShadow?.stop(); webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
     options.scraperPuller?.stop();options.contextFeeds?.stop();options.sharpProps?.stop(); });
 
   // Every paid provider pull runs through this one job, so two pulls can never overlap or
@@ -886,6 +903,11 @@ export function buildServer(options: ServerOptions = {}) {
     });
     admin.get('/status', async () => service.getStatus());
     admin.get('/grading', async () => ({ worker: options.autoGradingStatus?.() ?? null }));
+    // The Underdog/Pick6 shadow run: plays, graded record at 80+, and the go-live bars.
+    admin.get('/app-shadow', async (_request, reply) => appShadow ? appShadow.summary()
+      : reply.code(503).send({ code: 'APP_SHADOW_OFF' }));
+    admin.post('/app-shadow/run', async (_request, reply) => appShadow
+      ? { scored: await appShadow.score(), graded: await appShadow.grade() } : reply.code(503).send({ code: 'APP_SHADOW_OFF' }));
     // What the Stat API returns for a player name (ids, names, team ids, and whether the scan was cut short).
     admin.get('/stat-search', async (request, reply) => {
       const query=z.object({sport:z.enum(['NFL','NBA','MLB','PGA']),q:z.string().min(2).max(80),
