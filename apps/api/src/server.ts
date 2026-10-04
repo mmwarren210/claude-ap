@@ -888,10 +888,13 @@ export function buildServer(options: ServerOptions = {}) {
     admin.get('/grading', async () => ({ worker: options.autoGradingStatus?.() ?? null }));
     // What the Stat API returns for a player name (ids, names, team ids, and whether the scan was cut short).
     admin.get('/stat-search', async (request, reply) => {
-      const query=z.object({sport:z.enum(['NFL','NBA','MLB','PGA']),q:z.string().min(2).max(80)}).safeParse(request.query);
+      const query=z.object({sport:z.enum(['NFL','NBA','MLB','PGA']),q:z.string().min(2).max(80),
+        scope:z.enum(['active','all']).default('active')}).safeParse(request.query);
       if(!query.success)return reply.code(400).send({code:'INVALID_QUERY'});
       if(!options.ownerResearch)return reply.code(503).send({code:'STAT_API_UNCONFIGURED'});
-      try{return await options.ownerResearch.search(query.data.sport,query.data.q);}
+      try{return query.data.scope==='all'&&query.data.sport!=='NBA'
+        ? await options.ownerResearch.searchAnyStatus(query.data.sport,query.data.q)
+        : await options.ownerResearch.search(query.data.sport,query.data.q);}
       catch(error){return reply.code(502).send({code:error instanceof Error?error.message:'STAT_API_FAILED'});}
     });
     // What the Underdog and Pick6 pulls hold: line counts per app, league and stat label.

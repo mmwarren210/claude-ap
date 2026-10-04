@@ -211,6 +211,28 @@ export class StatApiOwnerResearch {
       partial: page.nextFromId !== null, sourceUrl: page.url, retrievedAt: page.retrievedAt };
   }
 
+  /**
+   * Players of any roster status whose name contains `query`, paging the full player table (up to `maxPages` pages
+   * of 2,500). For players the active-roster scan misses. Cached like a search; it uses rows from the daily budget.
+   */
+  async searchAnyStatus(sport: Exclude<StatApiSport, 'NBA'>, query: string, maxPages = 8) {
+    const wanted = normalizePlayerName(query);
+    if (wanted.length < 2 || wanted.length > 80) throw new StatApiOwnerError('INVALID_PLAYER_QUERY', 400);
+    const found: (StatApiPlayer & { rosterStatus: string | null })[] = [];
+    let fromId: number | null = 0, pages = 0;
+    while (fromId !== null && pages < maxPages) {
+      const page: ApiPage = await this.page(sport, 'players', { limit: '2500', from_id: String(fromId) }, SEARCH_TTL, 2500);
+      pages++;
+      for (const row of page.rows) {
+        const match = player(row);
+        if (match && normalizePlayerName(match.name).includes(wanted))
+          found.push({ ...match, rosterStatus: typeof row.roster_status === 'string' ? row.roster_status : null });
+      }
+      fromId = page.nextFromId;
+    }
+    return { players: found, pages, partial: fromId !== null };
+  }
+
   async currentAvailability(sport: 'NBA', query: string): Promise<StatApiAvailability | null> {
     const q=query.trim();
     if(q.length<2||q.length>80)throw new StatApiOwnerError('INVALID_PLAYER_QUERY',400);
