@@ -22,6 +22,8 @@ for a long-running server, so it is not used here (it could hold the data later 
      - `GKR_MODEL_PRESET=stat_history_v1` (the 20 approved NFL/NBA/MLB markets) and any extra exact versions in
        `GKR_APPROVED_MODEL_VERSIONS`
      - `STAT_API_KEY` with `GKR_STAT_EVIDENCE=true` (player history for those markets)
+   - `CROWNIQ_NFLVERSE_AUTO_GRADE=true` grades saved NFL picks from public nflverse results after games (results
+     only, never scores). `NFLVERSE_MAPPING_FILE` is an optional manual override; the exact auto resolver works without it.
    - Optional schedule and spend settings from `.env.example` (`CROWNIQ_SCRAPER_*`, `CROWNIQ_CONTEXT_*`)
 4. **Settings → Networking → Generate domain.** That gives a URL like `https://crowniq-api.up.railway.app`.
 5. Check `https://<your-domain>/health` shows `{"status":"ok", ...}`. The live server is
