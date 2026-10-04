@@ -1,5 +1,7 @@
 import { BooksBadge } from './ui/BooksBadge';
 import { useBooks } from '../use-books';
+import { aiPlay } from '../use-ai-picks';
+import type { AiRead } from '../use-ai-picks';
 import type { Analysis, PropLine } from '@crowniq/contracts';
 import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -42,14 +44,17 @@ export function windowStats(stats: ReturnType<typeof lineStats>, l10: ReturnType
   ];
 }
 
-export const BoardCard = memo(function BoardCard({ line, analysis, photoUrl, accent, window, expired = false, onPress }: {
-  line: PropLine; analysis: Analysis | undefined; photoUrl: string | null | undefined; accent: string;
-  window: Window; expired?: boolean; onPress: () => void }) {
-  const direction = analysis?.direction === 'LESS' ? 'LESS' : 'MORE';
+export const BoardCard = memo(function BoardCard({ line, analysis, ai, more = 0, photoUrl, accent, window, expired = false,
+  onPress }: { line: PropLine; analysis: Analysis | undefined; ai?: AiRead; more?: number; photoUrl: string | null | undefined;
+  accent: string; window: Window; expired?: boolean; onPress: () => void }) {
+  const gkrPass = !analysis || analysis.direction === 'PASS';
+  // Where GKR can't score, the AI read (ChatGPT + Claude) is the pick, labeled as such.
+  const aiPick = gkrPass && aiPlay(ai) ? ai! : null;
+  const direction = aiPick ? aiPick.pick as 'MORE' | 'LESS' : analysis?.direction === 'LESS' ? 'LESS' : 'MORE';
   const { log } = usePlayerGames(line);
   const stats = lineStats(log, line.threshold, direction, window, line.opponent);
   const l10 = lineStats(log, line.threshold, direction, 'L10');
-  const pass = !analysis || analysis.direction === 'PASS';
+  const pass = gkrPass && !aiPick;
   const books = useBooks();
   return <Pressable accessibilityRole="button" onPress={onPress}
     accessibilityLabel={`${line.playerName}, ${marketLabel(line.market)} ${pass ? 'PASS' : direction} ${line.threshold}`}>
@@ -74,7 +79,9 @@ export const BoardCard = memo(function BoardCard({ line, analysis, photoUrl, acc
           <Text style={[styles.pick, pass && styles.passPick]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
             {pass ? 'PASS' : direction} {formatLine(line.threshold)}</Text>
         </View>
-        <View style={styles.ringBox}><ScoreRing score={analysis?.score ?? null} band={analysis?.scoreBand} size={64} /></View>
+        <View style={styles.ringBox}><ScoreRing score={aiPick ? aiPick.score : analysis?.score ?? null}
+          band={aiPick ? undefined : analysis?.scoreBand} size={64} />
+          {aiPick && <Text style={styles.aiTag}>AI read</Text>}</View>
         <View style={styles.edgeBox}>
           <Text style={[styles.edge, (stats.edge ?? 0) < 0 && styles.edgeBad]}>
             {stats.edge === null ? '—' : `${signed(stats.edge * 100)}%`}</Text>
@@ -87,6 +94,9 @@ export const BoardCard = memo(function BoardCard({ line, analysis, photoUrl, acc
       <View style={styles.evidence}><EvidenceBadge quality={analysis?.evidenceQuality ?? 'NONE'}
         detail={evidenceDetail(analysis)} /></View>
       <BooksBadge view={books?.get(line.id)} side={pass ? null : direction} />
+      {aiPick && <Text style={styles.aiNote}>GKR can’t score this stat yet. ChatGPT and Claude researched it; this is their
+        read, not a GKR score.</Text>}
+      {more > 0 && <Text style={styles.more}>+{more} more {more === 1 ? 'play' : 'plays'} on {line.playerName.split(' ')[0]}’s page</Text>}
       {expired && <Text style={styles.expired}>Evidence expired, reanalysis needed</Text>}
     </GlowCard>
   </Pressable>;
@@ -114,6 +124,9 @@ const styles = StyleSheet.create({
   edgeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   edgeLabel: { color: colors.textMuted, fontSize: 13 },
   expired: { color: colors.amber, fontSize: 13, fontWeight: '700', marginTop: 8 },
+  aiTag: { color: colors.blue, fontSize: 10.5, fontWeight: '800', marginTop: 2 },
+  aiNote: { color: colors.textMuted, fontSize: 12, marginTop: 8, lineHeight: 16 },
+  more: { color: colors.mint, fontSize: 13, fontWeight: '700', marginTop: 8 },
   strip: { marginTop: 10, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
     paddingVertical: 6, backgroundColor: colors.surfaceSunken },
   evidence: { marginTop: 8, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,

@@ -1,9 +1,10 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Window } from '../insights';
-import { boardLinesForMode, evidenceExpired } from '../state';
+import { boardLinesForMode, evidenceExpired, playCounts } from '../state';
+import { useAiPicks } from '../use-ai-picks';
 import type { Filters } from '../state';
 import { colors, radius, rankAccents } from '../theme';
 import { useBoard } from '../use-board';
@@ -56,8 +57,24 @@ function PrizePicksBoard({ onApp }: { onApp: (app: PickApp) => void }) {
   const [sheet, setSheet] = useState<keyof Filters | 'ALL' | null>(null);
   const [window, setWindow] = useState<Window>('L5');
   const [confirmPull, setConfirmPull] = useState(false);
-  const lines = useMemo(() => data && ready ? boardLinesForMode(data, filters, viewMode, nowMs) : [],
-    [data, filters, viewMode, ready, nowMs]);
+  const { reads: aiReads } = useAiPicks();
+  const lines = useMemo(() => data && ready ? boardLinesForMode(data, filters, viewMode, nowMs, aiReads ?? undefined) : [],
+    [data, filters, viewMode, ready, nowMs, aiReads]);
+  const counts = useMemo(() => data ? playCounts(data, aiReads ?? undefined, nowMs) : new Map<string, number>(),
+    [data, aiReads, nowMs]);
+  // Player search reaches every player on the board, including those with no play (their page shows every stat).
+  const [query, setQuery] = useState('');
+  const found = useMemo(() => {
+    const wanted = query.trim().toLowerCase();
+    if (!data || wanted.length < 2) return null;
+    const players = new Map<string, { line: (typeof data.board.lines)[number]; stats: number }>();
+    for (const line of data.board.lines) {
+      if (Date.parse(line.eventStartTime) <= nowMs || !line.playerName.toLowerCase().includes(wanted)) continue;
+      const key = line.eventId + '|' + line.playerId, current = players.get(key);
+      players.set(key, { line: current?.line ?? line, stats: (current?.stats ?? 0) + 1 });
+    }
+    return [...players.values()].slice(0, 30);
+  }, [data, query, nowMs]);
   const analyses = useMemo(() => new Map(data?.analyses.map((item) => [item.lineId, item])), [data]);
   const open = useCallback((lineId: string) => router.push({ pathname: '/player/[lineId]', params: { lineId } }), []);
   const warn = ['STALE', 'UNREACHABLE', 'OFFLINE'].includes(freshness);
@@ -65,6 +82,16 @@ function PrizePicksBoard({ onApp }: { onApp: (app: PickApp) => void }) {
   const header = <View style={styles.header}>
     <AppHeader subtitle="Sports Intelligence · Powered by GKR" />
     <Segmented label="Pick'em app" options={pickApps} value={'prizepicks' as PickApp} onChange={onApp} />
+    {data && <TextInput value={query} onChangeText={setQuery} placeholder="Search any player" placeholderTextColor={colors.textFaint}
+      accessibilityLabel="Search players" style={styles.search} autoCorrect={false} />}
+    {found && <View style={styles.results}>
+      {found.length === 0 && <Text style={styles.note}>No player by that name on this board.</Text>}
+      {found.map(({ line, stats }) => <Pressable key={line.eventId + line.playerId} accessibilityRole="button"
+        onPress={() => { setQuery(''); open(line.id); }} style={styles.result}>
+        <Text style={styles.resultName}>{line.playerName}</Text>
+        <Text style={styles.note}>{line.league} · {line.eventName} · {stats} {stats === 1 ? 'stat' : 'stats'}</Text>
+      </Pressable>)}
+    </View>}
     {data && <ChipRow>
       {chipKeys.map((key) => <FilterChip key={key} active={filters[key] !== 'ALL'} onPress={() => setSheet(key)}
         label={filters[key] === 'ALL' ? chipNames[key]! : optionLabel(key, filters[key])} />)}
@@ -76,7 +103,7 @@ function PrizePicksBoard({ onApp }: { onApp: (app: PickApp) => void }) {
     </View>
     <View style={styles.statusRow}>
       <Text style={[styles.status, warn && styles.warning]} numberOfLines={1}>
-        {viewMode === 'LITE' ? `Top ${lines.length} qualified` : `${lines.length} lines`} · {data
+        {viewMode === 'LITE' ? `Top ${lines.length} qualified` : `${lines.length} players with a play`} · {data
           ? freshnessLine(freshness, data.board.fetchedAt, nowMs) : message || 'Loading'}</Text>
       <Pressable accessibilityRole="button" disabled={refreshing || status === 'loading'}
         onPress={() => needsBootstrap ? setConfirmPull(true) : reload()} hitSlop={8}>
@@ -92,14 +119,15 @@ function PrizePicksBoard({ onApp }: { onApp: (app: PickApp) => void }) {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <FlatList data={lines} keyExtractor={(line) => line.id} initialNumToRender={6} maxToRenderPerBatch={8} windowSize={7}
       contentContainerStyle={styles.content} ListHeaderComponent={header}
-      renderItem={({ item, index }) => <BoardCard line={item} analysis={analyses.get(item.id)}
+      renderItem={({ item, index }) => <BoardCard line={item} analysis={analyses.get(item.id)} ai={aiReads?.get(item.id)}
+        more={(counts.get(item.eventId + '|' + item.playerId) ?? 1) - 1}
         photoUrl={data?.playerMedia?.[item.playerId]?.photoUrl} accent={rankAccents[index % rankAccents.length]}
         window={window} expired={(() => { const analysis = analyses.get(item.id);
           return analysis?.direction !== 'PASS' && evidenceExpired(analysis, nowMs); })()} onPress={() => open(item.id)} />}
       ListEmptyComponent={<Notice title={!ready || status === 'loading' ? 'Loading board' : data && viewMode === 'LITE'
         ? 'No qualified plays yet' : data ? 'No matching lines' : 'Board unavailable'}
         detail={!ready ? 'Loading your saved view.' : status === 'loading' ? 'Looking for the latest saved board.'
-          : data && viewMode === 'LITE' ? 'Nothing on this board qualifies for these filters. PASS is a valid result. Full view in More shows every line.'
+          : data && viewMode === 'LITE' ? 'Nothing on this board qualifies for these filters. PASS is a valid result. Full view in More shows every play.'
             : data ? 'Reset filters or try another sport.' : message} />} />
     <CrownTray />
     {data && sheet && <FilterSheet key={sheet} visible onClose={() => setSheet(null)} mode={viewMode} data={data}
@@ -127,4 +155,9 @@ const styles = StyleSheet.create({
   note: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
   warning: { color: colors.red, fontSize: 12 },
   sheetText: { color: colors.textMuted, fontSize: 14, lineHeight: 20 },
+  search: { minHeight: 46, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.md, paddingHorizontal: 14,
+    color: colors.text, fontSize: 15, backgroundColor: colors.surface },
+  results: { gap: 6 },
+  result: { padding: 12, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, gap: 2 },
+  resultName: { color: colors.text, fontSize: 16, fontWeight: '800' },
 });

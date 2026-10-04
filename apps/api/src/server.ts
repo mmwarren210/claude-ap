@@ -28,6 +28,7 @@ import type { AppScore } from './app-boards.js';
 import type { OtherApp } from './app-boards.js';
 import type { ScrapedLineStore } from './scrapers/line-store.js';
 import { AppShadowScorer } from './app-shadow.js';
+import type { AiPickService, AiRead } from './ai-picks.js';
 import type { BoxScoreResults } from './box-score-results.js';
 import type { ScraperPuller } from './scrapers/scraper-puller.js';
 import type { ContextRefreshOptions, DailyLookupBudget } from './context-refresh.js';
@@ -78,6 +79,8 @@ export interface ServerOptions {
   appShadow?: { file: string | null; boxScores: BoxScoreResults | null } | null;
   /** GKR scores on Underdog/Pick6 lines (owner approved 2026-10-04; CROWNIQ_APP_GKR_SCORES). */
   appGkrScores?: boolean;
+  /** AI reads (ChatGPT + Claude) on lines GKR can't score; their own score, never GKR's. */
+  aiPicks?: AiPickService | null;
   /** Trusted authentication integration only; never use client-provided public IDs as identity. */
   socialActor?: (request: FastifyRequest) => Promise<string | null> | string | null;
   requireProfiles?: boolean;
@@ -177,6 +180,11 @@ export function buildServer(options: ServerOptions = {}) {
     });
     options.sharpProps?.start(60);
     appShadow?.start();
+    // The scheduled AI run reads the books' fair prices through the same cache as the routes.
+    let latestFair=new Map<string,number>();
+    const refreshFair=()=>{void fairMoreFor().then((views)=>{latestFair=views;}).catch(()=>undefined);};
+    if(options.aiPicks?.configured){refreshFair();const every=setInterval(refreshFair,10*60_000);every.unref();}
+    options.aiPicks?.start(()=>service.getBoard(),()=>service.getEvidence(),(lineId)=>latestFair.get(lineId)??null);
     if(options.ownerNotebook && options.ownerPublicId){
       await options.ownerNotebook.load();options.ownerNotebook.start();
     }
@@ -198,7 +206,7 @@ export function buildServer(options: ServerOptions = {}) {
       }
       return {graded,wins};
     }:null,options.clock):null;
-  app.addHook('onClose', async () => {appShadow?.stop(); webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
+  app.addHook('onClose', async () => {appShadow?.stop();options.aiPicks?.stop(); webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
     options.scraperPuller?.stop();options.contextFeeds?.stop();options.sharpProps?.stop(); });
 
   // Every paid provider pull runs through this one job, so two pulls can never overlap or
@@ -722,6 +730,42 @@ export function buildServer(options: ServerOptions = {}) {
       picks:picks.filter((pick)=>pick.edge>0).slice(0,150)};
   });
   // The sportsbooks' no-vig chance for each standard board line they price (for "Books agree" badges). Never scored.
+  // The books' no-vig chance of MORE per board line, for the AI reads (refreshed with the SharpAPI prices).
+  let fairCache:{at:number;board:unknown;views:Map<string,number>}|null=null;
+  async function fairMoreFor(){
+    const board=service.getBoard();
+    if(!board||!options.sharpProps)return new Map<string,number>();
+    if(fairCache&&fairCache.board===board&&now().getTime()-fairCache.at<10*60_000)return fairCache.views;
+    const {prices}=await options.sharpProps.current();
+    const views=new Map([...bookViews(board,prices,now())].map(([lineId,view])=>[lineId,view.fairMore]));
+    fairCache={at:now().getTime(),board,views};
+    return views;
+  }
+  const aiView=(read:AiRead)=>({pick:read.pick,score:read.score,agreement:read.agreement,researchedAt:read.researchedAt,
+    providers:read.providers.map((item)=>({provider:item.provider,pick:item.pick,confidence:item.confidence,summary:item.summary,
+      reasons:item.reasons}))});
+  // AI reads for the current board: lines GKR couldn't score that ChatGPT and Claude researched.
+  app.get('/v1/ai-picks', async (_request, reply) => {
+    const board=service.getBoard();
+    if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    if(!options.aiPicks)return {configured:false,reads:{}};
+    const reads=await options.aiPicks.current(board);
+    return {configured:options.aiPicks.configured,reads:Object.fromEntries([...reads].map(([lineId,read])=>[lineId,aiView(read)]))};
+  });
+  // Ask AI: research one line GKR can't score, now, within the user's daily allowance.
+  app.post('/v1/ai-picks/:lineId', async (request, reply) => {
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    const parsed=z.object({lineId:z.string().min(1).max(300)}).safeParse(request.params);
+    if(!parsed.success)return reply.code(400).send({code:'INVALID_LINE'});
+    const board=service.getBoard(),line=board?.board.lines.find((item)=>item.id===parsed.data.lineId);
+    if(!board||!line)return reply.code(404).send({code:'LINE_NOT_FOUND'});
+    if(!options.aiPicks)return reply.code(503).send({code:'AI_UNCONFIGURED'});
+    const result=await options.aiPicks.ask(user.accountId,line,board.analyses.find((item)=>item.lineId===line.id),
+      service.getEvidence(),(await fairMoreFor()).get(line.id)??null);
+    if(!result.read)return reply.code(result.error==='DAILY_LIMIT_REACHED'?429:result.error==='AI_UNAVAILABLE'?502:422)
+      .send({code:result.error});
+    return {read:aiView(result.read)};
+  });
   app.get('/v1/books', async (_request, reply) => {
     const board=service.getBoard();
     if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
@@ -923,6 +967,14 @@ export function buildServer(options: ServerOptions = {}) {
     });
     admin.get('/status', async () => service.getStatus());
     admin.get('/grading', async () => ({ worker: options.autoGradingStatus?.() ?? null }));
+    admin.get('/ai-picks', async (_request, reply) => options.aiPicks ? options.aiPicks.status()
+      : reply.code(503).send({ code: 'AI_UNCONFIGURED' }));
+    admin.post('/ai-picks/run', async (_request, reply) => {
+      const board=service.getBoard();
+      if(!options.aiPicks||!board)return reply.code(503).send({ code: 'AI_UNCONFIGURED' });
+      const fair=await fairMoreFor();
+      return options.aiPicks.runOnce(board,service.getEvidence(),(lineId)=>fair.get(lineId)??null);
+    });
     // The Underdog/Pick6 shadow run: plays, graded record at 80+, and the go-live bars.
     admin.get('/app-shadow', async (_request, reply) => appShadow ? appShadow.summary()
       : reply.code(503).send({ code: 'APP_SHADOW_OFF' }));

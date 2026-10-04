@@ -38,10 +38,50 @@ export function visibleLines(data: BoardResponse, filters: Filters, nowMs=Date.n
       (filters.date === 'ALL' || line.eventStartTime.slice(0,10) === filters.date);
   });
 }
-/** Lite uses only the engine's ranked exact lines; Full retains the complete provider board. */
+/** A line is a play when GKR scores a side on it, or (where GKR can't score) the AI read picks one. */
+export function isPlay(analysis:Analysis|undefined,ai?:{pick:string;score:number|null}):boolean{
+  if(analysis&&analysis.direction!=='PASS'&&analysis.score!==null)return true;
+  return !!ai&&ai.pick!=='PASS'&&ai.score!==null;
+}
+/**
+ * One card per player per game: the player's strongest play (GKR first by score, then the AI read). Every other line,
+ * PASS included, stays on the player's page.
+ */
+export function onePerPlayer(lines:readonly PropLine[],analyses:ReadonlyMap<string,Analysis>,
+  ai:ReadonlyMap<string,{pick:string;score:number|null}>=new Map()):PropLine[]{
+  const strength=(line:PropLine)=>{const analysis=analyses.get(line.id);
+    return analysis&&analysis.direction!=='PASS'&&analysis.score!==null?1000+analysis.score:ai.get(line.id)?.score??0;};
+  const best=new Map<string,PropLine>();
+  for(const line of lines){
+    const key=line.eventId+'|'+line.playerId,current=best.get(key);
+    if(!current||strength(line)>strength(current))best.set(key,line);
+  }
+  // Keep the incoming order (ranked, or board order), placing each player where their best play falls.
+  const keep=new Set(best.values());
+  return lines.filter((line)=>keep.has(line));
+}
+/** How many plays each player has in a game, for the card's "more plays" note. */
+export function playCounts(data:BoardResponse,ai:ReadonlyMap<string,{pick:string;score:number|null}>=new Map(),
+  nowMs=Date.now()):Map<string,number>{
+  const analyses=new Map(data.analyses.map((analysis)=>[analysis.lineId,analysis]));
+  const counts=new Map<string,number>();
+  for(const line of data.board.lines)if(Date.parse(line.eventStartTime)>nowMs&&isPlay(analyses.get(line.id),ai.get(line.id)))
+    counts.set(line.eventId+'|'+line.playerId,(counts.get(line.eventId+'|'+line.playerId)??0)+1);
+  return counts;
+}
+/**
+ * Lite: the engine's ranked exact lines. Full: every play on the board (GKR or AI read), never a PASS. Both show one
+ * card per player; the rest of a player's lines are on their page.
+ */
 export function boardLinesForMode(data:BoardResponse,filters:Filters,mode:ViewMode,
-  nowMs=Date.now()):PropLine[]{
-  if(mode==='FULL')return visibleLines(data,filters,nowMs);
+  nowMs=Date.now(),ai:ReadonlyMap<string,{pick:string;score:number|null}>=new Map()):PropLine[]{
+  if(mode==='FULL'){
+    const analyses=new Map(data.analyses.map((analysis)=>[analysis.lineId,analysis]));
+    const strength=(line:PropLine)=>{const analysis=analyses.get(line.id);
+      return analysis&&analysis.direction!=='PASS'&&analysis.score!==null?1000+analysis.score:ai.get(line.id)?.score??0;};
+    return onePerPlayer(visibleLines(data,filters,nowMs).filter((line)=>isPlay(analyses.get(line.id),ai.get(line.id))),
+      analyses,ai).sort((a,b)=>strength(b)-strength(a));
+  }
   const lines=new Map(data.board.lines.map((line)=>[line.id,line]));
   const analyses=new Map(data.analyses.map((analysis)=>[analysis.lineId,analysis]));
   const ranked:PropLine[]=[];
@@ -59,6 +99,7 @@ export function boardLinesForMode(data:BoardResponse,filters:Filters,mode:ViewMo
       (filters.lineType!=='ALL'&&line.lineType!==filters.lineType)||
       (filters.evidence!=='ALL'&&analysis.evidenceQuality!==filters.evidence)||
       (filters.date!=='ALL'&&line.eventStartTime.slice(0,10)!==filters.date))continue;
+    if(ranked.some((item)=>item.eventId===line.eventId&&item.playerId===line.playerId))continue;
     ranked.push(line);
     if(ranked.length===LITE_LIMIT)break;
   }

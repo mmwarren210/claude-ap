@@ -10,7 +10,9 @@
   college football) to the v1 set. Every model keeps a hard status gate (lineup, probable starter, active player).
   Betr and Dabble come later. See `docs/DFS_APPS_PLAN.md` and `docs/PROPOSAL_APP_SCORING.md`.
 - **Anything that changes model scores needs the owner's explicit approval** and ships as new, opt-in model
-  versions. Identity and web findings are display-only and never scored.
+  versions. Identity and web findings are display-only and never feed GKR. Exception (owner, 2026-10-04): **AI reads**,
+  where ChatGPT and Claude give MORE/LESS/PASS with a 0-100 score on lines GKR can't score, shown as their own labeled
+  score, graded in their own record, never mixed into GKR (`ai-picks.ts`; `CROWNIQ_AI_PICKS_DAILY` caps the spend).
 
 ## Checks
 

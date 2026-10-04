@@ -28,16 +28,16 @@ test('filters reset and select exact lines without modifying the provider board'
   assert.deepEqual(boardLinesForMode(board,emptyFilters,'LITE',eventStart),[]);
   assert.deepEqual(boardLinesForMode(board,emptyFilters,'FULL',eventStart),[]);
 });
-test('Lite follows GKR ranking, excludes PASS and ignores Full-only grade/direction filters; Full keeps every line',()=>{
+test('Lite follows GKR ranking and ignores Full-only filters; Full shows plays only, never a PASS',()=>{
   const pass=analysisSchema.parse({...analysis,lineId:'two',direction:'PASS',score:null,
     scoreBand:'PASS',modelVersion:null});
   const suspicious=boardResponseSchema.parse({...board,analyses:[analysis,pass],
     rankedLineIds:['two','one']});
   assert.deepEqual(boardLinesForMode(suspicious,emptyFilters,'LITE').map((item)=>item.id),['one']);
-  assert.deepEqual(boardLinesForMode(suspicious,emptyFilters,'FULL').map((item)=>item.id),['one','two']);
+  assert.deepEqual(boardLinesForMode(suspicious,emptyFilters,'FULL').map((item)=>item.id),['one']);
   const hiddenFullFilter={...emptyFilters,direction:'PASS',grade:'PASS'};
   assert.deepEqual(boardLinesForMode(suspicious,hiddenFullFilter,'LITE').map((item)=>item.id),['one']);
-  assert.deepEqual(boardLinesForMode(suspicious,hiddenFullFilter,'FULL').map((item)=>item.id),['two']);
+  assert.deepEqual(boardLinesForMode(suspicious,hiddenFullFilter,'FULL'),[],'a PASS never shows on the Board');
   // Line style is a Board chip, so it applies in Lite too.
   assert.deepEqual(boardLinesForMode(suspicious,{...emptyFilters,lineType:'REGULAR'},'LITE'),[]);
   assert.deepEqual(boardLinesForMode(suspicious,{...emptyFilters,lineType:'GOBLIN'},'LITE').map((item)=>item.id),['one']);
@@ -93,12 +93,12 @@ test('a saved line can enter a draft until event start, unless evidence has expi
   assert.deepEqual(addLeg([],line,expiring,'MORE',captured+60*60_000).tips.map((tip)=>tip.id),['STALE_EVIDENCE']);
 });
 
-test('Lite drops lines whose evidence expired; Full keeps them for labelling',()=>{
+test('Lite drops lines whose evidence expired; Full keeps the play for labelling',()=>{
   const expiring=boardResponseSchema.parse({...board,analyses:[{...analysis,evidenceExpiresAt:'2030-01-01T13:00:00Z'}]});
   const before=Date.parse('2030-01-01T12:30:00Z'),after=Date.parse('2030-01-01T13:30:00Z');
   assert.deepEqual(boardLinesForMode(expiring,emptyFilters,'LITE',before).map((item)=>item.id),['one']);
   assert.deepEqual(boardLinesForMode(expiring,emptyFilters,'LITE',after),[]);
-  assert.deepEqual(boardLinesForMode(expiring,emptyFilters,'FULL',after).map((item)=>item.id),['one','two']);
+  assert.deepEqual(boardLinesForMode(expiring,emptyFilters,'FULL',after).map((item)=>item.id),['one']);
   assert.equal(evidenceExpired(expiring.analyses[0],after),true);
   assert.equal(evidenceExpired(expiring.analyses[0],before),false);
 });
@@ -140,4 +140,14 @@ test('a clearly stronger qualified pick is offered for the weakest leg',()=>{
   const swap=betterSwap(legs,candidates,now);
   assert.equal(swap?.weakest.line.id,'weak');assert.equal(swap?.line.id,'strong');
   assert.equal(betterSwap(legs,candidates.slice(0,1),now),null,'a small gain is not worth a tip');
+});
+
+test('Full shows one card per player: their strongest play, GKR first, then the AI read where GKR cannot score',()=>{
+  const other=propLineSchema.parse({...line,id:'three',sourceLineId:'three',playerId:'b',playerName:'Other Player'});
+  const withOther=boardResponseSchema.parse({...board,board:{...board.board,lines:[line,alternate,other]}});
+  const ai=new Map([['two',{pick:'LESS',score:66}],['three',{pick:'MORE',score:61}]]);
+  // Test Player has a GKR play (one) and an AI play (two): one card, the GKR play. Other Player shows by the AI read.
+  assert.deepEqual(boardLinesForMode(withOther,emptyFilters,'FULL',undefined,ai).map((item)=>item.id),['one','three']);
+  const aiOnly=new Map([['three',{pick:'PASS',score:null}]]);
+  assert.deepEqual(boardLinesForMode(withOther,emptyFilters,'FULL',undefined,aiOnly).map((item)=>item.id),['one']);
 });

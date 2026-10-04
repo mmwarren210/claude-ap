@@ -19,6 +19,9 @@ import { ProductLedger } from './product-ledger.js';
 import { ProductGradingWorker } from './background-grading.js';
 import { BoxScoreResults } from './box-score-results.js';
 import { EspnGkrEvidence } from './espn-gkr-evidence.js';
+import { AiPickService } from './ai-picks.js';
+import { ClaudePickResearcher } from './claude-ai-picks.js';
+import { OpenAiPickResearcher } from './openai-ai-picks.js';
 import { BoardCache } from './board-cache.js';
 import { ApifyClient } from './scrapers/apify-client.js';
 import { ScrapedLineStore } from './scrapers/line-store.js';
@@ -132,6 +135,12 @@ const claudeResearch = wantsClaude && claudeKey
     catalog: new WebResearchCatalog(process.env.CROWNIQ_CLAUDE_RESEARCH_CATALOG_FILE ??
       `${dataDir}/research-catalog-claude.json`) }) : null;
 const researchProviders = [openAiResearch, claudeResearch].filter((item) => item !== null);
+// AI reads (owner approved 2026-10-04): ChatGPT and Claude give MORE/LESS/PASS on lines GKR can't score, as their own
+// labeled score. CROWNIQ_AI_PICKS=false turns it off; the daily caps bound what it spends.
+const aiPickers = process.env.CROWNIQ_AI_PICKS === 'false' ? [] : [
+  ...(webKey ? [new OpenAiPickResearcher(webKey, process.env.WEB_RESEARCH_MODEL ?? 'gpt-5.4-mini')] : []),
+  ...(claudeKey ? [new ClaudePickResearcher({ apiKey: claudeKey, model: process.env.CLAUDE_RESEARCH_MODEL ?? 'claude-opus-5-5' })] : []),
+];
 const webResearch = researchProviders.length > 1 ? new CombinedWebResearch(researchProviders)
   : researchProviders[0] ?? null;
 if (['openai_web', 'both'].includes(researchProvider) && !openAiResearch) {
@@ -277,6 +286,9 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provid
   allowedWebOrigins:(process.env.CROWNIQ_ALLOWED_WEB_ORIGINS??'').split(',')
     .map((origin)=>origin.trim()).filter(Boolean),
   ownerJobStore:new OwnerPullJobStore(process.env.CROWNIQ_OWNER_JOB_FILE ?? `${dataDir}/owner-pull-job.json`),
+  aiPicks:aiPickers.length?new AiPickService(aiPickers,`${dataDir}/ai-picks.json`,{
+    dailyAuto:Number(process.env.CROWNIQ_AI_PICKS_DAILY ?? 120),dailyPerUser:Number(process.env.CROWNIQ_AI_PICKS_USER_DAILY ?? 15),
+    perRun:Number(process.env.CROWNIQ_AI_PICKS_PER_RUN ?? 15)},new BoxScoreResults()):null,
   scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults()}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,

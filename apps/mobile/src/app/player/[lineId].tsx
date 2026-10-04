@@ -1,7 +1,7 @@
 import type { Analysis, PropLine } from '@crowniq/contracts';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../auth';
 import { evidenceDetail, matchup } from '../../components/BoardCard';
@@ -27,17 +27,29 @@ import type { LineStyle } from '../../theme';
 import { useBoard } from '../../use-board';
 import { useDraft } from '../../use-draft';
 import { usePlayerGames } from '../../use-player-games';
+import { agreementText, aiPlay, providerName, useAiPicks } from '../../use-ai-picks';
+
+/** GKR couldn't score these (no model for the stat, or its data is missing); ChatGPT and Claude can research them. */
+const AI_ELIGIBLE = new Set(['MODEL_SUPPORT_INCOMPLETE', 'STALE_OR_MISSING_EVIDENCE', 'INSUFFICIENT_MODEL_COVERAGE',
+  'MODEL_CALIBRATION_UNAPPROVED']);
+const askErrors: Readonly<Record<string, string>> = {
+  DAILY_LIMIT_REACHED: 'You’ve used today’s Ask AI picks. More tomorrow.',
+  GKR_SCORES_THIS_LINE: 'GKR already has a read on this line.', EVENT_STARTED: 'This game has started.',
+  AI_UNCONFIGURED: 'AI research is off on this server.',
+};
 
 type TrackedHistory = { label: string; recent: { eventDate: string; actual: number | null; grade: string;
   line: number; direction: string }[] };
 
-function SupportingStat({ line, selected, onPress }: { line: PropLine; selected: boolean; onPress: () => void }) {
+function SupportingStat({ line, selected, status, onPress }: { line: PropLine; selected: boolean; status: string;
+  onPress: () => void }) {
   const { log } = usePlayerGames(line);
   const avg = lineStats(log, line.threshold, 'MORE', 'L10').average;
   return <Pressable accessibilityRole="button" onPress={onPress} style={[styles.support, selected && styles.supportActive]}>
     <Text style={styles.supportLabel}>{marketAbbrev(line.market)}</Text>
     <Text style={[styles.supportValue, selected && { color: colors.mint }]}>{avg === null ? '—' : avg.toFixed(1)}</Text>
     <Text style={styles.supportSub}>L10 AVG</Text>
+    <Text style={[styles.supportStatus, status !== 'PASS' && { color: colors.mint }]} numberOfLines={1}>{status}</Text>
   </Pressable>;
 }
 
@@ -114,7 +126,22 @@ export default function PlayerResearch() {
     }
     return [...best.values()];
   }, [related]);
-  const direction = analysis?.direction === 'LESS' ? 'LESS' : 'MORE';
+  const { reads: aiReads, ask } = useAiPicks();
+  const ai = line ? aiReads?.get(line.id) : undefined;
+  const [asking, setAsking] = useState(false);
+  // Each stat's status: GKR's best play, else the AI read's, else PASS. Choosing a stat opens its best line.
+  const statusOf = (market: string): { text: string; lineId: string | null } => {
+    const lines = related.filter((item) => item.market === market);
+    const gkr = lines.map((item) => ({ item, a: analyses.get(item.id) })).filter(({ a }) => a && a.direction !== 'PASS' && a.score !== null)
+      .sort((x, y) => y.a!.score! - x.a!.score!)[0];
+    if (gkr) return { text: `GKR ${Math.round(gkr.a!.score!)} ${gkr.a!.direction} ${formatLine(gkr.item.threshold)}`, lineId: gkr.item.id };
+    const read = lines.map((item) => ({ item, r: aiReads?.get(item.id) })).filter(({ r }) => aiPlay(r))
+      .sort((x, y) => (y.r!.score ?? 0) - (x.r!.score ?? 0))[0];
+    if (read) return { text: `AI ${read.r!.score} ${read.r!.pick} ${formatLine(read.item.threshold)}`, lineId: read.item.id };
+    return { text: 'PASS', lineId: null };
+  };
+  const aiSide = (!analysis || analysis.direction === 'PASS') && aiPlay(ai) ? ai!.pick as 'MORE' | 'LESS' : null;
+  const direction = aiSide ?? (analysis?.direction === 'LESS' ? 'LESS' : 'MORE');
   const { log } = usePlayerGames(line);
   const stats = line ? lineStats(log, line.threshold, direction, window, line.opponent) : null;
   const [history, setHistory] = useState<{ key: string; value: TrackedHistory } | null>(null);
@@ -149,7 +176,15 @@ export default function PlayerResearch() {
   </ScrollView></SafeAreaView>;
 
   const started = Date.parse(line.eventStartTime) <= nowMs;
-  const pass = !analysis || analysis.direction === 'PASS';
+  const pass = (!analysis || analysis.direction === 'PASS') && !aiSide;
+  const gkrPass = !analysis || analysis.direction === 'PASS';
+  const canAsk = gkrPass && !ai && !started && !demo && (!analysis || !analysis.reasonCode || AI_ELIGIBLE.has(analysis.reasonCode));
+  const askAi = async () => {
+    setAsking(true); setNotice('');
+    const result = await ask(line.id);
+    setAsking(false);
+    if (result.error) setNotice(askErrors[result.error] ?? 'ChatGPT and Claude couldn’t answer right now. Try again soon.');
+  };
   const styleOf = lineStyleOf(line.lineType);
   const pickStyle = (style: LineStyle) => {
     const options = ladder.filter((item) => lineStyleOf(item.lineType) === style);
@@ -163,7 +198,7 @@ export default function PlayerResearch() {
   };
   const inCrown = legs.some((leg) => leg.line.id === line.id);
   // GKR's side when it scores one; otherwise the first side PrizePicks offers, as the user's own call.
-  const modelSide = !pass && analysis ? analysis.direction as 'MORE' | 'LESS' : null;
+  const modelSide = !gkrPass && analysis ? analysis.direction as 'MORE' | 'LESS' : aiSide;
   const otherSide = line.availableDirections.find((side) => side !== modelSide) ?? null;
   const addSide = (side: 'MORE' | 'LESS') => tips.attempt(line, analysis, side, `Added ${side} to your Crown.`);
   const addToCrown = () => addSide(modelSide ?? otherSide ?? 'MORE');
@@ -254,7 +289,7 @@ export default function PlayerResearch() {
         <Text style={styles.sectionTitle}>Supporting stats</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.supportRow}>
           {markets.map((item) => <SupportingStat key={item.market} line={item} selected={item.market === line.market}
-            onPress={() => setSelectedId(item.id)} />)}
+            status={statusOf(item.market).text} onPress={() => setSelectedId(statusOf(item.market).lineId ?? item.id)} />)}
         </ScrollView>
       </View>}
 
@@ -293,6 +328,23 @@ export default function PlayerResearch() {
             <Text style={{ color: colors.red }}>− </Text>{item}</Text>)}
         </View>
       </View>}
+      {gkrPass && ai && <View style={styles.section}>
+        <Text style={styles.sectionTitle}>AI read · {ai.pick === 'PASS' ? 'PASS' : `${ai.pick} ${formatLine(line.threshold)}`}
+          {ai.score !== null ? ` · ${ai.score}` : ''}</Text>
+        <View style={styles.panel}>
+          <Text style={styles.factorDetail}>{agreementText(ai)}. GKR can’t score this stat yet, so this is ChatGPT and Claude’s
+            research, not a GKR score.</Text>
+          {ai.providers.map((item) => <View key={item.provider} style={styles.aiProvider}>
+            <Text style={styles.factorName}>{providerName(item.provider)} · {item.pick}{item.pick !== 'PASS' ? ` · ${item.confidence}` : ''}</Text>
+            {!!item.summary && <Text style={styles.factorLine}>{item.summary}</Text>}
+            {item.reasons.map((reason, index) => <Text key={index} style={styles.factorDetail}>
+              • {reason.text}{reason.url ? <Text style={styles.link} onPress={() => void Linking.openURL(reason.url!)}> (source)</Text> : null}
+            </Text>)}
+          </View>)}
+        </View>
+      </View>}
+      {canAsk && <GhostButton label={asking ? 'ChatGPT and Claude are researching…' : 'Ask AI (ChatGPT + Claude)'} icon="robot-outline"
+        onPress={() => void askAi()} disabled={asking} />}
       {pass && analysis && <Notice title="PASS" detail={analysis.rationale} />}
       {analysis?.reviewStatus === 'SECOND_LOOK' && <Notice title="2nd Look"
         detail="CrownIQ gave this line another research pass after an initial PASS. It is a review flag, not a score bonus." />}
@@ -327,9 +379,10 @@ export default function PlayerResearch() {
     {tips.sheet}
     <Sheet visible={marketOpen} title="Market" onClose={() => setMarketOpen(false)}>
       {markets.map((item) => <Pressable key={item.market} accessibilityRole="button" style={styles.marketOption}
-        onPress={() => { setSelectedId(item.id); setMarketOpen(false); }}>
+        onPress={() => { setSelectedId(statusOf(item.market).lineId ?? item.id); setMarketOpen(false); }}>
         <Text style={styles.marketName}>{marketLabel(item.market)}</Text>
-        <Text style={styles.small}>{formatLine(item.threshold)}</Text></Pressable>)}
+        <Text style={[styles.small, statusOf(item.market).text !== 'PASS' && { color: colors.mint }]}>
+          {statusOf(item.market).text === 'PASS' ? `PASS · ${formatLine(item.threshold)}` : statusOf(item.market).text}</Text></Pressable>)}
     </Sheet>
   </SafeAreaView>;
 }
@@ -393,6 +446,8 @@ const styles = StyleSheet.create({
   supportLabel: { color: colors.text, fontSize: 13, fontWeight: '800' },
   supportValue: { color: colors.text, fontSize: 22, fontWeight: '900' },
   supportSub: { color: colors.textMuted, fontSize: 11 },
+  supportStatus: { color: colors.textFaint, fontSize: 11, fontWeight: '800', marginTop: 2 },
+  aiProvider: { gap: 3, marginTop: 8 },
   groupTitle: { color: colors.textMuted, fontSize: 12, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase' },
   groupGap: { marginTop: 8 },
   factor: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 },
