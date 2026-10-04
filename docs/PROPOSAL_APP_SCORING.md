@@ -90,3 +90,21 @@ for you to pursue if you want it.
 2. All lines score: same-number (A) and different-number (B) lines are both in the shadow. App-only players (C) need
    Stat API research for players PrizePicks doesn't list; next step, inside the existing Stat API row budget.
 3. Go-live bars approved: at least 150 graded plays scoring 80+, at least 56% hit rate, within 3 points of PrizePicks GKR.
+
+## Owner override: score everything (2026-10-04)
+
+The owner asked for GKR to score every line now, Underdog and Pick6 included, without waiting for the go-live check:
+
+- **App boards:** GKR scores show on every Underdog/Pick6 line PrizePicks also lists, at the app's own number, with a
+  GKR picks filter (`CROWNIQ_APP_GKR_SCORES=true`). The shadow record keeps measuring them against the bars above.
+- **Stat-history set 2** (`GKR_MODEL_PRESET=stat_history_v2`): 59 more stats, each a new `-SH2-` model version.
+  MLB and NFL from Stat API game logs (total bases, singles, doubles, triples, RBIs, runs, stolen bases, hitter
+  strikeouts, pitcher hits/walks/earned runs/outs/pitches/batters faced; rush+rec and pass+rush yards, TDs,
+  interceptions, tackles, sacks, kicking, longest plays, punts, completion %). NHL, soccer and college football from
+  ESPN's public game logs (shots, goals, assists, points, plus/minus; soccer shots, shots on target, goals, assists,
+  fouls; college passing, rushing and receiving).
+- **Gates kept:** batters need the posted lineup and pitchers the probable start; NFL, NHL, soccer and college players
+  must be active and uninjured on the roster; NHL goalies need a confirmed start (no source yet, so saves wait) and
+  soccer keepers the posted lineup.
+- **Still unscored:** quarter/half/inning splits, esports, tennis, NASCAR, fantasy scores, and stats no source carries
+  (NHL hits, blocks, faceoffs; soccer tackles and passes; app-only players without a PrizePicks match).
