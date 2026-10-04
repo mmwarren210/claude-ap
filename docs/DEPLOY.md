@@ -30,10 +30,11 @@ for a long-running server, so it is not used here (it could hold the data later 
 
 ### Deploys on push
 
-Railway deploys a push only when the service's **Settings → Source → Branch connected to production** names the branch
-(`claude/crowniq-redesign`). Until 2026-10-04 no branch was connected, so pushes were skipped and each deploy was started
-by hand. Watch paths are empty and Wait for CI is off, so neither blocks a deploy. Claude sessions can also start a deploy
-of a given commit through Railway's API with the project token (`serviceInstanceDeployV2`).
+Railway does not deploy pushes on its own for this service: no branch shows under the service's **Settings → Source →
+Branch connected to production** (checked 2026-10-04: a push waited 3 minutes with no deploy). Watch paths are empty and
+Wait for CI is off, so neither is the cause. Instead, Claude sessions deploy after every push with
+`scripts/railway-deploy.sh`, which starts the deploy through Railway's API with the project token, waits for it and checks
+`/health` and the web app. If the branch connection starts working, the script just deploys the same commit again.
 
 ## Render (alternative)
 

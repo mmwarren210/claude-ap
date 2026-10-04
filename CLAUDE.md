@@ -12,3 +12,8 @@
 ## Checks
 
 Run from the repo root: `npm run typecheck`, `npm test`, `npm run lint`. Tests use `node --import tsx --test`.
+
+## Deploys
+
+Railway does not deploy pushes on its own. After pushing to `claude/crowniq-redesign`, run `scripts/railway-deploy.sh`
+and confirm it ends with a healthy `/health` (see `docs/DEPLOY.md`).
