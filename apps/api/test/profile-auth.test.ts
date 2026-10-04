@@ -192,3 +192,47 @@ test('the first 20 accounts are lifetime members and later ones are free',async(
     assert.equal((await restarted.login('member20@example.org','long-private-passphrase')).profile.plan,'FREE');
   }finally{await rm(folder,{recursive:true,force:true});}
 });
+
+test('a guest link gives up to four devices their own three-day account and keeps it for the same device',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-guest-'));
+  try{let clock=start;const path=join(folder,'ledger.json');
+    const ledger=new ProductLedger(path,'CROWN_STRONG',()=>clock,()=>[]);
+    const owner=await ledger.register('owner@example.org','long-private-passphrase','Owner_1');
+    const pass={code:'testers-2030',maxGuests:4,days:3};
+    const device=(index:number)=>`device-${index}-0123456789abcdef`;
+    await assert.rejects(()=>ledger.guestLogin(pass,'wrong-code',device(1)),/GUEST_PASS_INVALID/);
+    const first=await ledger.guestLogin(pass,'testers-2030',device(1));
+    assert.equal(first.profile.username,'Guest_1');
+    assert.equal(first.profile.plan,'GUEST');
+    assert.equal(first.guestExpiresAt,'2030-09-27T12:00:00.000Z');
+    const again=await ledger.guestLogin(pass,'testers-2030',device(1));
+    assert.equal(again.profile.publicId,first.profile.publicId,'the same device keeps its account');
+    for(const index of [2,3,4])await ledger.guestLogin(pass,'testers-2030',device(index));
+    await assert.rejects(()=>ledger.guestLogin(pass,'testers-2030',device(5)),/GUEST_PASS_FULL/);
+    const sample=board();
+    const guest=(await ledger.authenticate(first.token))!;
+    await ledger.saveUserPick(guest.accountId,sample.board.lines[0].id,sample,[]);
+    clock=new Date('2030-09-27T12:00:01Z');
+    assert.equal(await ledger.authenticate(first.token),null,'the pass ends after three days');
+    await assert.rejects(()=>ledger.guestLogin(pass,'testers-2030',device(1)),/GUEST_PASS_EXPIRED/);
+    assert.equal((await ledger.userPicks(guest.accountId)).total,1,'the guest picks are kept');
+    assert.equal((await ledger.login('Owner_1','long-private-passphrase')).profile.plan,'LIFETIME');
+    assert.equal((await ledger.authenticate(owner.token))?.plan,'LIFETIME');
+  }finally{await rm(folder,{recursive:true,force:true});}
+});
+
+test('the guest route is off without a configured pass and needs a device id',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-guest-route-'));
+  const product=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>start);
+  const payload={code:'testers-2030',deviceId:'device-1-0123456789abcdef'};
+  const off=buildServer({product,requireProfiles:true,clock:()=>start});
+  const on=buildServer({product,requireProfiles:true,clock:()=>start,guestPass:{code:'testers-2030',maxGuests:4,days:3}});
+  try{
+    assert.equal((await off.inject({method:'POST',url:'/v1/auth/guest',payload})).statusCode,404);
+    assert.equal((await on.inject({method:'POST',url:'/v1/auth/guest',payload:{code:'testers-2030',deviceId:'short'}})).statusCode,400);
+    const signedIn=await on.inject({method:'POST',url:'/v1/auth/guest',payload});
+    assert.equal(signedIn.statusCode,200);
+    const me=await on.inject({url:'/v1/auth/me',headers:{authorization:`Bearer ${signedIn.json().token}`}});
+    assert.equal(me.json().profile.plan,'GUEST');
+  }finally{await off.close();await on.close();await rm(folder,{recursive:true,force:true});}
+});

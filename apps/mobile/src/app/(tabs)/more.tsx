@@ -64,7 +64,7 @@ export default function MoreScreen() {
     } catch { setMessage('That username is unavailable. Try a different one.'); }
   };
   const go = (path: Href) => router.push(path);
-  const plan = profile?.plan === 'DEMO' ? 'Demo' : profile?.plan === 'LIFETIME' ? 'Lifetime Member'
+  const plan = profile?.plan === 'DEMO' ? 'Demo' : profile?.plan === 'LIFETIME' ? 'Lifetime Member' : profile?.plan === 'GUEST' ? 'Guest pass · 3 days'
     : profile?.plan === 'FREE' ? 'Free Plan' : profile?.plan ?? 'Free Plan';
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>

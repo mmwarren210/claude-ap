@@ -69,3 +69,11 @@ test('demo mode shows the server demo feed when it has scored picks and the samp
     delete g.location;
   }
 });
+
+test('a ?guest link carries its code and takes priority over ?demo', async () => {
+  const { guestCode, startsInDemo } = await import('../src/auth');
+  assert.equal(guestCode('?guest=testers-2030'), 'testers-2030');
+  assert.equal(guestCode('?demo'), null);
+  assert.equal(guestCode(''), null);
+  assert.equal(startsInDemo('?guest=testers-2030&demo'), false);
+});

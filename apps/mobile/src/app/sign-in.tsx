@@ -8,7 +8,7 @@ import { GhostButton, PrimaryButton } from '../components/ui/Controls';
 import { colors, radius } from '../theme';
 
 export default function SignIn() {
-  const { login, register, enterDemo } = useAuth();
+  const { login, register, enterDemo, guest } = useAuth();
   const [creating, setCreating] = useState(true), [username, setUsername] = useState(''),
     [email, setEmail] = useState(''), [password, setPassword] = useState(''),
     [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -28,6 +28,12 @@ export default function SignIn() {
           <Text style={styles.tag}>Sports Intelligence · Powered by GKR</Text>
         </View>
 
+        {(guest.signingIn || !!guest.message) && <View style={styles.panel}>
+          <Text style={styles.title}>Guest pass</Text>
+          {guest.signingIn ? <><Text style={styles.detail}>Opening CrownIQ with your guest pass…</Text>
+            <ActivityIndicator color={colors.mint} style={styles.busy} /></>
+            : <Text accessibilityRole="alert" style={styles.error}>{guest.message}</Text>}
+        </View>}
         <View style={styles.panel}>
           <Text style={styles.title}>{creating ? 'Create your profile' : 'Welcome back'}</Text>
           <Text style={styles.detail}>Your saved picks and private Crowns belong to your profile.</Text>

@@ -45,13 +45,18 @@ export interface Follow {followerPublicId:string;followedPublicId:string;created
 type IdentityProvider='GOOGLE'|'APPLE';
 interface Account {id:string;username:string;email:string|null;passwordSalt:string|null;
   passwordHash:string|null;identities:{provider:IdentityProvider;subject:string}[];
-  createdAt:string;status:'FREE'|'SUSPENDED'}
+  createdAt:string;status:'FREE'|'SUSPENDED';
+  /** A guest-pass account: no username or password, full access until `expiresAt`, kept afterwards for its picks. */
+  guest?:{pass:string;deviceHash:string;expiresAt:string}}
+/** A shared guest link: up to `maxGuests` devices each get their own account for `days` days. */
+export interface GuestPass {code:string;maxGuests:number;days:number}
 /** The first accounts ever created (the owner's included) are lifetime members: no code, never charged. */
 export const LIFETIME_MEMBERS=20;
-const lifetimeIds=(accounts:readonly Account[])=>new Set([...accounts]
+const lifetimeIds=(accounts:readonly Account[])=>new Set(accounts.filter((item)=>!item.guest)
   .sort((a,b)=>a.createdAt.localeCompare(b.createdAt)).slice(0,LIFETIME_MEMBERS).map((item)=>item.id));
 const planOf=(account:Account,lifetime:ReadonlySet<string>)=>account.status==='SUSPENDED'?'SUSPENDED' as const
-  :lifetime.has(account.id)?'LIFETIME' as const:'FREE' as const;
+  :account.guest?'GUEST' as const:lifetime.has(account.id)?'LIFETIME' as const:'FREE' as const;
+const guestExpired=(account:Account,now:Date)=>!!account.guest&&Date.parse(account.guest.expiresAt)<=now.getTime();
 interface Session {hash:string;accountId:string;expiresAt:string;createdAt:string}
 interface SavedPick {accountId:string;trackedPickId:string;savedAt:string;removedAt:string|null}
 interface PrivateCrown {id:string;accountId:string;trackedPickIds:string[];savedAt:string;removedAt:string|null}
@@ -250,11 +255,14 @@ export class ProductLedger {
     const recent=new Set(active.filter((item)=>item.accountId===account.id)
       .sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,9).map((item)=>item.hash));
     data.sessions=active.filter((item)=>item.accountId!==account.id || recent.has(item.hash));
+    const expires=Math.min(this.clock().getTime()+30*24*60*60_000,
+      account.guest?Date.parse(account.guest.expiresAt):Infinity);
     data.sessions.push({hash:tokenHash(token),accountId:account.id,createdAt:now,
-      expiresAt:new Date(this.clock().getTime()+30*24*60*60_000).toISOString()});
+      expiresAt:new Date(expires).toISOString()});
     const profile=data.profiles.find((item)=>item.actorKey===account.id)!;
     return {token,profile:{publicId:profile.publicId,username:account.username,
-      email:account.email,plan:planOf(account,lifetimeIds(data.accounts))}};
+      email:account.email,plan:planOf(account,lifetimeIds(data.accounts))},
+      ...(account.guest?{guestExpiresAt:account.guest.expiresAt}:{})};
   }
   async register(email:string,password:string,username:string){return this.exclusive(async()=>{
     const data=await this.read(),name=username.trim(),address=normalizedEmail(email);
@@ -267,6 +275,31 @@ export class ProductLedger {
     data.accounts.push(account);data.profiles.push({publicId:randomUUID(),actorKey:account.id,
       displayName:name,avatarUrl:null,socialEnabled:true,profileVisible:true,
       isSuspended:false,createdAt:account.createdAt});
+    const result=this.session(data,account);await this.write(data);return result;
+  });}
+  /**
+   * Sign in with a guest link. The same device (by its random id) always gets the same account; a new device gets a
+   * new account while the pass has room. Each account lasts the pass's days from its first use.
+   */
+  async guestLogin(pass:GuestPass,code:string,deviceId:string){return this.exclusive(async()=>{
+    const entered=createHash('sha256').update(code).digest(),expected=createHash('sha256').update(pass.code).digest();
+    if(!timingSafeEqual(entered,expected))throw new Error('GUEST_PASS_INVALID');
+    const data=await this.read(),deviceHash=tokenHash(`${pass.code}:${deviceId}`),now=this.clock();
+    const guests=data.accounts.filter((item)=>item.guest?.pass===tokenHash(pass.code));
+    let account=guests.find((item)=>item.guest!.deviceHash===deviceHash);
+    if(!account){
+      if(guests.length>=pass.maxGuests)throw new Error('GUEST_PASS_FULL');
+      let number=guests.length+1,name=`Guest_${number}`;
+      while(data.profiles.some((item)=>normalizedName(item.displayName)===normalizedName(name)))name=`Guest_${++number}`;
+      account={id:randomUUID(),username:name,email:null,passwordSalt:null,passwordHash:null,identities:[],
+        createdAt:now.toISOString(),status:'FREE',guest:{pass:tokenHash(pass.code),deviceHash,
+          expiresAt:new Date(now.getTime()+pass.days*24*60*60_000).toISOString()}};
+      data.accounts.push(account);data.profiles.push({publicId:randomUUID(),actorKey:account.id,
+        displayName:name,avatarUrl:null,socialEnabled:true,profileVisible:true,
+        isSuspended:false,createdAt:account.createdAt});
+    }
+    if(account.status==='SUSPENDED')throw new Error('ACCOUNT_SUSPENDED');
+    if(guestExpired(account,now))throw new Error('GUEST_PASS_EXPIRED');
     const result=this.session(data,account);await this.write(data);return result;
   });}
   /** Sign in with the account's email or its current username (either, case-insensitive). */
@@ -318,7 +351,7 @@ export class ProductLedger {
     if(!session||Date.parse(session.expiresAt)<=this.clock().getTime())return null;
     const account=this.authCache!.accounts.get(session.accountId);
     if(!account)return null;
-    if(account.status==='SUSPENDED')return null;
+    if(account.status==='SUSPENDED'||guestExpired(account,this.clock()))return null;
     const profile=this.authCache!.profiles.get(account.id);
     return profile?{accountId:account.id,publicId:profile.publicId,username:account.username,
       email:account.email,plan:planOf(account,this.authCache!.lifetime)}:null;

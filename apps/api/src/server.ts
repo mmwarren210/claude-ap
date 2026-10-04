@@ -16,6 +16,7 @@ import { nflverseTrackedMarkets, NflverseResultsFeed, readNflverseMappings,
 import { WebResearchAdapter } from './web-research.js';
 import { ResearchBuild } from './research-build.js';
 import { ProductLedger, resultFactSchema } from './product-ledger.js';
+import type { GuestPass } from './product-ledger.js';
 import type { BoardCache } from './board-cache.js';
 import { boardFunnel, outcomeCounts } from './board-funnel.js';
 import { liteBoard, windowBoard } from './board-lite.js';
@@ -44,6 +45,8 @@ export interface ServerOptions {
   webResearch?: WebResearchAdapter | null;
   models?: ModelRegistry;
   adminToken?: string;
+  /** A shared guest link (`/?guest=<code>`); unset means no guest link works. */
+  guestPass?: GuestPass | null;
   ownerPublicId?: string;
   ownerResearch?: StatApiOwnerResearch | null;
   ownerNotebook?: OwnerResearchNotebook | null;
@@ -227,6 +230,18 @@ export function buildServer(options: ServerOptions = {}) {
     if(!input.success)return reply.code(400).send({code:'INVALID_LOGIN'});
     try{return await options.product.login((input.data.login??input.data.email)!,input.data.password);}
     catch{return reply.code(401).send({code:'INVALID_CREDENTIALS'});}
+  });
+  app.post('/v1/auth/guest',async(request,reply)=>{
+    if(!options.product||!options.guestPass)return reply.code(404).send({code:'GUEST_PASS_INVALID'});
+    if(limited(`guest:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
+    const input=z.object({code:z.string().trim().min(1).max(100),deviceId:z.string().min(16).max(100)})
+      .strict().safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'GUEST_PASS_INVALID'});
+    try{return await options.product.guestLogin(options.guestPass,input.data.code,input.data.deviceId);}
+    catch(error){const code=(error as Error).message;
+      if(code==='GUEST_PASS_FULL'||code==='GUEST_PASS_EXPIRED')return reply.code(403).send({code});
+      if(code==='GUEST_PASS_INVALID'||code==='ACCOUNT_SUSPENDED')return reply.code(404).send({code:'GUEST_PASS_INVALID'});
+      return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
   });
   app.get('/v1/auth/me',async(request,reply)=>{
     const user=await currentUser(request);

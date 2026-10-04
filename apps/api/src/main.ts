@@ -214,7 +214,13 @@ const autoGrade=process.env.CROWNIQ_NFLVERSE_AUTO_GRADE==='true'
   ? new ProductGradingWorker(product,process.env.NFLVERSE_MAPPING_FILE||null) : null;
 // The exported web app (npx expo export -p web), served by this server when present.
 const webAppDir=process.env.CROWNIQ_WEB_DIR ?? fileURLToPath(new URL('../../mobile/dist',import.meta.url));
-const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, provider,
+// A shared guest link for testers: CROWNIQ_GUEST_PASS_CODE, up to CROWNIQ_GUEST_PASS_MAX devices for
+// CROWNIQ_GUEST_PASS_DAYS days each. Unset code means no guest link works.
+const guestCode=process.env.CROWNIQ_GUEST_PASS_CODE?.trim();
+const guestPass=guestCode&&guestCode.length>=8?{code:guestCode,
+  maxGuests:Number(process.env.CROWNIQ_GUEST_PASS_MAX??4),days:Number(process.env.CROWNIQ_GUEST_PASS_DAYS??3)}:null;
+if(guestCode&&!guestPass)console.warn('CROWNIQ_GUEST_PASS_CODE must be at least 8 characters; guest link is off.');
+const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provider,
   webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,
   autoGradingEnabled:!!autoGrade,autoGradingStatus:()=>autoGrade?.status()??null,
   requireProfiles:true,identityVerifier,
