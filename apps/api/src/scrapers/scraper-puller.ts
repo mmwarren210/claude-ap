@@ -135,7 +135,7 @@ export class ScraperPuller {
   /** Runs each source once per scheduled Eastern-time hour; checks once a minute. */
   start(): void {
     if (this.timer || !this.sources.some(({ hoursEt }) => hoursEt.length)) return;
-    this.timer = setInterval(() => { void this.tick(); }, 60_000);
+    this.timer = setInterval(() => { this.tick().catch(() => undefined); }, 60_000);
     this.timer.unref();
   }
 

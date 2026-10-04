@@ -256,6 +256,10 @@ const guestCode=process.env.CROWNIQ_GUEST_PASS_CODE?.trim();
 const guestPass=guestCode&&guestCode.length>=8?{code:guestCode,
   maxGuests:Number(process.env.CROWNIQ_GUEST_PASS_MAX??4),days:Number(process.env.CROWNIQ_GUEST_PASS_DAYS??3)}:null;
 if(guestCode&&!guestPass)console.warn('CROWNIQ_GUEST_PASS_CODE must be at least 8 characters; guest link is off.');
+// A failed background task (a scheduled pull, a feed refresh) must never take the whole server down: log it and go on.
+process.on('unhandledRejection', (reason) => {
+  console.error('Background task failed:', reason instanceof Error ? reason.message : reason);
+});
 const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provider,
   webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,
   autoGradingEnabled:!!autoGrade,autoGradingStatus:()=>autoGrade?.status()??null,

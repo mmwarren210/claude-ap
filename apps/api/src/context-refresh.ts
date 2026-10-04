@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ResearchAdapter } from '@crowniq/engine';
@@ -30,7 +31,7 @@ export class DailyLookupBudget {
     if (state.used >= this.limit) return false;
     state.used++;
     await mkdir(dirname(this.file), { recursive: true });
-    const temporary = `${this.file}.${process.pid}.tmp`;
+    const temporary = `${this.file}.${randomUUID()}.tmp`;
     await writeFile(temporary, JSON.stringify(state));
     await rename(temporary, this.file);
     return true;
@@ -66,7 +67,7 @@ export class ContextRefreshScheduler {
 
   start(): void {
     if (this.timer || this.options.intervalMinutes <= 0) return;
-    this.timer = setInterval(() => { void this.tick(); }, this.options.intervalMinutes * 60_000);
+    this.timer = setInterval(() => { this.tick().catch(() => undefined); }, this.options.intervalMinutes * 60_000);
     this.timer.unref();
   }
 

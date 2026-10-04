@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ApifyClient } from '../scrapers/apify-client.js';
@@ -126,7 +127,7 @@ export class ContextFeeds {
   private async save() {
     if (!this.file) return;
     await mkdir(dirname(this.file), { recursive: true });
-    const temporary = `${this.file}.tmp`;
+    const temporary = `${this.file}.${randomUUID()}.tmp`;
     await writeFile(temporary, JSON.stringify(Object.fromEntries(this.snapshots)));
     await rename(temporary, this.file);
   }
@@ -178,7 +179,7 @@ export class ContextFeeds {
   /** Runs each feed once per scheduled Eastern-time hour; checks once a minute. */
   start(): void {
     if (this.timer || !this.sources.some(({ hoursEt }) => hoursEt.length)) return;
-    this.timer = setInterval(() => { void this.tick(); }, 60_000);
+    this.timer = setInterval(() => { this.tick().catch(() => undefined); }, 60_000);
     this.timer.unref();
   }
 

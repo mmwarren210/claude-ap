@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -31,7 +32,7 @@ export class SlotLedger {
     } catch { /* first slot of the day */ }
     if (done.includes(key)) return false;
     await mkdir(dirname(this.file), { recursive: true });
-    const temporary = `${this.file}.${process.pid}.tmp`;
+    const temporary = `${this.file}.${randomUUID()}.tmp`;
     await writeFile(temporary, JSON.stringify({ day, done: [...done, key] }));
     await rename(temporary, this.file);
     return true;

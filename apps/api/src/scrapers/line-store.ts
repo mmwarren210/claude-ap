@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { sameLineKey } from './markets.js';
@@ -55,7 +56,7 @@ export class ScrapedLineStore {
   private async save() {
     if (!this.file) return;
     await mkdir(dirname(this.file), { recursive: true });
-    const temporary = `${this.file}.${process.pid}.tmp`;
+    const temporary = `${this.file}.${randomUUID()}.tmp`;
     await writeFile(temporary, JSON.stringify({ lines: [...this.lines.values()] }));
     await rename(temporary, this.file);
   }

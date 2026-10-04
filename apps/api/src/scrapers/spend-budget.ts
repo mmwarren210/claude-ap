@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -36,7 +37,7 @@ export class DailySpendBudget {
     const state = await this.load();
     state.spentUsd = Math.round((state.spentUsd + Math.max(0, usd)) * 10_000) / 10_000;
     await mkdir(dirname(this.file), { recursive: true });
-    const temporary = `${this.file}.${process.pid}.tmp`;
+    const temporary = `${this.file}.${randomUUID()}.tmp`;
     await writeFile(temporary, JSON.stringify(state));
     await rename(temporary, this.file);
   }

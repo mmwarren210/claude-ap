@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Sport } from '@crowniq/contracts';
@@ -163,8 +164,9 @@ export class SharpPropsFeed {
     this.prices = prices; this.fetchedAt = this.clock().toISOString(); this.lastError = null;
     if (this.file) {
       await mkdir(dirname(this.file), { recursive: true });
-      await writeFile(`${this.file}.tmp`, JSON.stringify({ fetchedAt: this.fetchedAt, prices }));
-      await rename(`${this.file}.tmp`, this.file);
+      const temporary = `${this.file}.${randomUUID()}.tmp`;
+      await writeFile(temporary, JSON.stringify({ fetchedAt: this.fetchedAt, prices }));
+      await rename(temporary, this.file);
     }
     try { await this.onRefreshed?.(prices, this.clock()); } catch { /* history is best effort */ }
     return this.status();
@@ -172,8 +174,8 @@ export class SharpPropsFeed {
 
   start(intervalMinutes: number): void {
     if (this.timer || !this.apiKey || intervalMinutes <= 0) return;
-    void this.refresh();
-    this.timer = setInterval(() => { void this.refresh(); }, intervalMinutes * 60_000);
+    this.refresh().catch(() => undefined);
+    this.timer = setInterval(() => { this.refresh().catch(() => undefined); }, intervalMinutes * 60_000);
     this.timer.unref();
   }
 
