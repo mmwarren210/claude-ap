@@ -100,9 +100,10 @@ With two scrapers instead of six, the extra budget goes to more pulls a day. Tot
 
 ## Next after scrapers (owner, 2026-10-03)
 
-**Reminder for the owner before moving past the scraper work:** add Claude as a second web-research provider
-next to ChatGPT, and run **both**. Needs `ANTHROPIC_API_KEY` on the API server. Findings stay display-only;
-findings both providers agree on can be marked as such.
+**Built (2026-10-04):** Claude runs as a second web-research provider next to ChatGPT (`claude-web-research.ts`,
+`CombinedWebResearch`). With both `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` on the server, an owner research run
+searches with both; each keeps its own budget and catalog, findings stay display-only, and a finding both make
+(same player, event, kind and source page) is shown once with "ChatGPT and Claude both found this."
 
 ## Built: PrizePicks lines from `lergassy/dfs-props-scraper` (2026-10-03)
 

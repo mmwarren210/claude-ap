@@ -3,7 +3,7 @@ import type { Board } from '@crowniq/contracts';
 import { researchTargetsFor } from '@crowniq/engine';
 import type { ResearchHealth } from '@crowniq/engine';
 import { BoardService } from './board-service.js';
-import { WebResearchAdapter } from './web-research.js';
+import type { WebResearchService } from './web-research.js';
 
 export interface ResearchJobStatus {
   readonly id: string;
@@ -21,7 +21,7 @@ export class ResearchBuild {
   private status: ResearchJobStatus | null = null;
   private controller: AbortController | null = null;
   constructor(private readonly board: BoardService,
-    private readonly adapter: WebResearchAdapter,
+    private readonly adapter: WebResearchService,
     private readonly clock: () => Date = () => new Date(),
     private readonly onApplied?: () => Promise<unknown>) {}
 

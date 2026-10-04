@@ -10,7 +10,8 @@ import { FullPrizePicksProvider } from './full-prizepicks-provider.js';
 import { TheOddsApiProvider } from './the-odds-api-provider.js';
 import { NflPassingFileResearch } from './nfl-evidence-file.js';
 import { JsonSelectionLedger } from './selection-ledger.js';
-import { WebResearchAdapter, WebResearchCatalog } from './web-research.js';
+import { CombinedWebResearch, WebResearchAdapter, WebResearchCatalog } from './web-research.js';
+import { ClaudeWebResearchAdapter } from './claude-web-research.js';
 import { ProductLedger } from './product-ledger.js';
 import { ProductGradingWorker } from './background-grading.js';
 import { BoardCache } from './board-cache.js';
@@ -85,22 +86,37 @@ const provider: OddsProvider | null = scrapedLines ? new ScrapedPrizePicksProvid
 if (providerName === 'the_odds_api' && !provider) {
   console.warn('The Odds API is selected but THE_ODDS_API_KEY is not set in this server runtime.');
 }
+// Web research providers: ChatGPT (OPENAI_API_KEY) and Claude (ANTHROPIC_API_KEY). `auto` runs every provider that
+// has a key, side by side; findings stay display-only.
 const researchProvider = process.env.RESEARCH_PROVIDER ?? 'auto';
-if (!['auto', 'none', 'openai_web'].includes(researchProvider)) {
+if (!['auto', 'none', 'openai_web', 'claude_web', 'both'].includes(researchProvider)) {
   throw new Error('Unknown RESEARCH_PROVIDER');
 }
+const researchBudget = { maxSearches: process.env.WEB_RESEARCH_MAX_SEARCHES
+  ? Number(process.env.WEB_RESEARCH_MAX_SEARCHES) : undefined,
+concurrency: process.env.WEB_RESEARCH_CONCURRENCY ? Number(process.env.WEB_RESEARCH_CONCURRENCY) : undefined };
 const webKey = process.env.OPENAI_API_KEY ?? process.env.AI_API_KEY;
-const webResearch = researchProvider !== 'none' && webKey
-  ? new WebResearchAdapter({ apiKey: webKey,
+const claudeKey = process.env.ANTHROPIC_API_KEY;
+const wantsOpenAi = ['auto', 'openai_web', 'both'].includes(researchProvider);
+const wantsClaude = ['auto', 'claude_web', 'both'].includes(researchProvider);
+const openAiResearch = wantsOpenAi && webKey
+  ? new WebResearchAdapter({ apiKey: webKey, ...researchBudget,
     model: process.env.WEB_RESEARCH_MODEL ?? 'gpt-5.4-mini',
-    maxSearches: process.env.WEB_RESEARCH_MAX_SEARCHES
-      ? Number(process.env.WEB_RESEARCH_MAX_SEARCHES) : undefined,
-    concurrency: process.env.WEB_RESEARCH_CONCURRENCY
-      ? Number(process.env.WEB_RESEARCH_CONCURRENCY) : undefined,
     catalog: new WebResearchCatalog(process.env.CROWNIQ_RESEARCH_CATALOG_FILE ??
       `${dataDir}/research-catalog.json`) }) : null;
-if (researchProvider === 'openai_web' && !webResearch) {
-  console.warn('Web research selected but OPENAI_API_KEY is absent from this server runtime.');
+const claudeResearch = wantsClaude && claudeKey
+  ? new ClaudeWebResearchAdapter({ apiKey: claudeKey, ...researchBudget,
+    model: process.env.CLAUDE_RESEARCH_MODEL ?? 'claude-opus-5-5',
+    catalog: new WebResearchCatalog(process.env.CROWNIQ_CLAUDE_RESEARCH_CATALOG_FILE ??
+      `${dataDir}/research-catalog-claude.json`) }) : null;
+const researchProviders = [openAiResearch, claudeResearch].filter((item) => item !== null);
+const webResearch = researchProviders.length > 1 ? new CombinedWebResearch(researchProviders)
+  : researchProviders[0] ?? null;
+if (['openai_web', 'both'].includes(researchProvider) && !openAiResearch) {
+  console.warn('ChatGPT web research selected but OPENAI_API_KEY is absent from this server runtime.');
+}
+if (['claude_web', 'both'].includes(researchProvider) && !claudeResearch) {
+  console.warn('Claude web research selected but ANTHROPIC_API_KEY is absent from this server runtime.');
 }
 const band=process.env.CROWNIQ_AUTO_TRACK_MIN_BAND ?? 'CROWN_STRONG';
 if(band!=='CROWN_STRONG' && band!=='PLAYABLE')throw new Error('Invalid CROWNIQ_AUTO_TRACK_MIN_BAND');

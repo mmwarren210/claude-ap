@@ -13,7 +13,7 @@ import type { SelectionLedger } from './selection-ledger.js';
 import { summarizeNflPilot } from './selection-ledger.js';
 import { nflverseTrackedMarkets, NflverseResultsFeed, readNflverseMappings,
   resultFromNflverse } from './nflverse-results.js';
-import { WebResearchAdapter } from './web-research.js';
+import type { WebResearchService } from './web-research.js';
 import { ResearchBuild } from './research-build.js';
 import { ProductLedger, resultFactSchema } from './product-ledger.js';
 import type { GuestPass } from './product-ledger.js';
@@ -42,7 +42,7 @@ export interface ServerOptions {
   webAppDir?: string | null;
   research?: ResearchAdapter | null;
   secondLookResearch?: ResearchAdapter | null;
-  webResearch?: WebResearchAdapter | null;
+  webResearch?: WebResearchService | null;
   models?: ModelRegistry;
   adminToken?: string;
   /** A shared guest link (`/?guest=<code>`); unset means no guest link works. */

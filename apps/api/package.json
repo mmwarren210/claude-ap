@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@crowniq/contracts": "0.1.0",
     "@crowniq/engine": "0.1.0",
     "dotenv": "^17.2.0",

@@ -4,6 +4,18 @@ GKR's owner-triggered board refresh evaluates every imported line and launches a
 
 The September 24, 2026 saved board contains **20,081 directional lines**, **67 events**, and **1,184 event-player search groups**. An offline run evaluated and planned every line: MLB 6,923 lines / 273 searches; NBA 188 / 5; NCAAFB 4,589 / 304; NFL 6,188 / 284; MLS (`OTHER`) 2,131 / 316; WNBA 62 / 2. With no approved numeric evidence, the run yielded zero ranked lines: 9,568 unsupported market, 8,009 missing required evidence, and 2,504 unclassified alternate PASS results. These are saved-board results, not live search results.
 
+## Two providers: ChatGPT and Claude (2026-10-04)
+
+Web research can run on ChatGPT (OpenAI Responses API with web search, `OPENAI_API_KEY`) and Claude (Claude's web
+search tool, `ANTHROPIC_API_KEY`, `apps/api/src/claude-web-research.ts`). With both keys, `RESEARCH_PROVIDER=auto`
+runs both on every owner research run. They share the same plan, instructions, findings shape and provenance rule (a
+finding is kept only when its link was returned by that provider's own search), but each has its own search budget
+and catalog file (`research-catalog.json`, `research-catalog-claude.json`). One provider failing never stops the
+other. A finding both make (same player, event, kind and source page) is kept once with "ChatGPT and Claude both found
+this." Findings remain `AI_STRUCTURED`, which the engine never scores; agreement changes the label only, never quality
+or confidence. Claude requests use `claude-opus-5-5` at low effort, at most 3 searches per player-event, and the API's
+default refusal fallback.
+
 ## Source discovery conducted for this implementation
 
 These are search queries and official pages found on September 24, 2026. They are **discovery hints**, not evidence that a particular player appeared on a page. The live job records each player/event query and only retains cited URLs actually returned by its web search.
