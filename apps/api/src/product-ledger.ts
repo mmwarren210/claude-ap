@@ -61,7 +61,9 @@ interface Session {hash:string;accountId:string;expiresAt:string;createdAt:strin
 interface SavedPick {accountId:string;trackedPickId:string;savedAt:string;removedAt:string|null}
 interface PrivateCrown {id:string;accountId:string;trackedPickIds:string[];savedAt:string;removedAt:string|null;
   /** A personal Crown's legs, as saved. It holds the user's own calls, so it stays out of GKR's tracked record. */
-  personalLegs?:PersonalLeg[]}
+  personalLegs?:PersonalLeg[];
+  /** The pick'em app a personal Crown was built on, when not PrizePicks (Underdog, Pick6). */
+  app?:string}
 interface PersonalLeg {lineId:string;playerName:string;market:string;threshold:number;direction:'MORE'|'LESS';
   lineType:string;eventStartTime:string;score:number|null;
   /** The line as saved, so results can grade the leg (outside GKR's tracked record). */
@@ -440,7 +442,8 @@ export class ProductLedger {
    * Saves a Crown that includes the user's own calls (PASS lines, the side GKR does not back, or legs past CrownIQ's
    * advice). Only what PrizePicks itself requires is checked; it is kept privately and never tracked or graded as GKR.
    */
-  async savePersonalCrown(accountId:string,legs:readonly {lineId:string;direction:'MORE'|'LESS'}[],board:BoardResponse){
+  async savePersonalCrown(accountId:string,legs:readonly {lineId:string;direction:'MORE'|'LESS'}[],board:BoardResponse,
+    app?:string){
     return this.exclusive(async()=>{
       const data=await this.read();
       if(!data.accounts.some((account)=>account.id===accountId && account.status!=='SUSPENDED')||
@@ -463,7 +466,7 @@ export class ProductLedger {
         item.personalLegs && JSON.stringify(item.personalLegs.map((leg)=>[leg.lineId,leg.direction]))===key);
       if(existing)return {id:existing.id,alreadySaved:true};
       const crown:PrivateCrown={id:randomUUID(),accountId,trackedPickIds:[],savedAt:this.clock().toISOString(),
-        removedAt:null,personalLegs};
+        removedAt:null,personalLegs,...app?{app}:{}};
       data.privateCrowns.push(crown);await this.write(data);
       return {id:crown.id,alreadySaved:false};
     });}
@@ -471,7 +474,7 @@ export class ProductLedger {
     const data=await this.read(),decisions=new Map(data.decisions.map((item)=>[item.trackedPickId,item]));
     return {crowns:data.privateCrowns.filter((item)=>item.accountId===accountId && !item.removedAt)
       .sort((a,b)=>b.savedAt.localeCompare(a.savedAt)).slice(0,30).map((item)=>item.personalLegs?{id:item.id,
-        savedAt:item.savedAt,personal:true,legs:item.personalLegs.map((leg)=>({playerName:leg.playerName,market:leg.market,
+        savedAt:item.savedAt,personal:true,...item.app?{app:item.app}:{},legs:item.personalLegs.map((leg)=>({playerName:leg.playerName,market:leg.market,
           threshold:leg.threshold,direction:leg.direction,lineType:leg.lineType,score:leg.score,grade:leg.grade??'PENDING',
           actual:leg.actual??null}))}:{id:item.id,
         savedAt:item.savedAt,legs:item.trackedPickIds.flatMap((id)=>{

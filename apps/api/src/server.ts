@@ -23,6 +23,9 @@ import type { BoardCache } from './board-cache.js';
 import { boardFunnel, outcomeCounts } from './board-funnel.js';
 import { liteBoard, windowBoard } from './board-lite.js';
 import { ContextRefreshScheduler } from './context-refresh.js';
+import { appBoard, asBoard, otherApps } from './app-boards.js';
+import type { OtherApp } from './app-boards.js';
+import type { ScrapedLineStore } from './scrapers/line-store.js';
 import type { ScraperPuller } from './scrapers/scraper-puller.js';
 import type { ContextRefreshOptions, DailyLookupBudget } from './context-refresh.js';
 import type { ProviderName } from './provider-identity.js';
@@ -66,6 +69,8 @@ export interface ServerOptions {
   boardCache?: BoardCache | null;
   autoGradingEnabled?: boolean;
   autoGradingStatus?: () => ProductGradingStatus | null;
+  /** Scraped pick'em lines (Underdog, Pick6 boards). */
+  scrapedLines?: ScrapedLineStore | null;
   /** Trusted authentication integration only; never use client-provided public IDs as identity. */
   socialActor?: (request: FastifyRequest) => Promise<string | null> | string | null;
   requireProfiles?: boolean;
@@ -627,10 +632,19 @@ export function buildServer(options: ServerOptions = {}) {
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     // `personal` Crowns hold the user's own calls (one side per line in `directions`) and skip GKR's rules.
     const input=z.object({lineIds:z.array(z.string().min(1).max(300)).min(2).max(6),personal:z.literal(true).optional(),
-      directions:z.record(z.string(),z.enum(['MORE','LESS'])).optional()})
+      directions:z.record(z.string(),z.enum(['MORE','LESS'])).optional(),app:z.enum(['underdog','pick6']).optional()})
       .strict().refine((value)=>!value.personal||value.lineIds.every((id)=>value.directions?.[id]))
       .safeParse(request.body);
     if(!input.success)return reply.code(400).send({code:'INVALID_CROWN'});
+    // An Underdog or Pick6 slip: the user's own picks on that app's lines, graded with Your Picks.
+    if(input.data.app){
+      if(!options.scrapedLines||!input.data.directions)return reply.code(400).send({code:'INVALID_CROWN'});
+      const appLines=await appBoard(options.scrapedLines,input.data.app,null);
+      try{return reply.code(201).send({...await options.product!.savePersonalCrown(user.accountId,
+        input.data.lineIds.map((lineId)=>({lineId,direction:input.data.directions![lineId]!})),
+        asBoard(appLines.lines,appLines.fetchedAt??new Date().toISOString()),input.data.app),personal:true,app:input.data.app});}
+      catch(error){return reply.code(422).send({code:'CROWN_VALIDATION_FAILED',issues:crownIssues(error)});}
+    }
     const board=service.getBoard();if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
     const personal=()=>options.product!.savePersonalCrown(user.accountId,input.data.lineIds.map((lineId)=>({lineId,
       direction:input.data.directions?.[lineId]??board.analyses.find((item)=>item.lineId===lineId)?.direction as 'MORE'|'LESS'})),
@@ -693,6 +707,13 @@ export function buildServer(options: ServerOptions = {}) {
     if(!options.sharpProps)return {fetchedAt:null,lines:{}};
     const {fetchedAt,prices}=await options.sharpProps.current();
     return {fetchedAt,lines:Object.fromEntries(bookViews(board,prices,now()))};
+  });
+  // Underdog and Pick6 lines. GKR does not score them; the same PrizePicks line and its GKR score ride along for reference.
+  app.get('/v1/apps/:app/board',async(request,reply)=>{
+    const parsed=z.object({app:z.enum(otherApps as [OtherApp,...OtherApp[]])}).safeParse(request.params);
+    if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_APP'});
+    if(!options.scrapedLines)return reply.code(503).send({code:'APP_LINES_UNAVAILABLE'});
+    return appBoard(options.scrapedLines,parsed.data.app,service.getBoard());
   });
   app.get('/v1/board', async (_request, reply) => {
     const snapshot = service.getBoard();
@@ -853,6 +874,17 @@ export function buildServer(options: ServerOptions = {}) {
       if (!authorized(request, options.adminToken)) return reply.code(401).send({ code: 'UNAUTHORIZED' });
     });
     admin.get('/status', async () => service.getStatus());
+    admin.get('/grading', async () => ({ worker: options.autoGradingStatus?.() ?? null }));
+    // What the Underdog and Pick6 pulls hold: line counts per app, league and stat label.
+    admin.get('/app-lines', async (_request, reply) => {
+      if(!options.scrapedLines)return reply.code(503).send({code:'APP_LINES_UNAVAILABLE'});
+      const summary:Record<string,Record<string,number>>={};
+      for(const app of ['prizepicks',...otherApps] as const)for(const line of await options.scrapedLines.active(app)){
+        const key=`${app} ${line.league}`;summary[key]??={};
+        summary[key][line.stat]=(summary[key][line.stat]??0)+1;
+      }
+      return summary;
+    });
     admin.get('/evidence', async () => ({ evidence: service.getEvidence(),
       research: service.getStatus().research }));
     admin.get('/research/route/:lineId', async (request, reply) => {
