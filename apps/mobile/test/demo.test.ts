@@ -36,3 +36,12 @@ test('demo requests serve sample reads and refuse every write', async () => {
   assert.equal((await save.json()).code, 'DEMO_READ_ONLY');
   assert.equal((await demoRequest('/v1/owner/board/status')).status, 404);
 });
+
+test('a ?demo web link opens demo mode', async () => {
+  const { startsInDemo } = await import('../src/auth');
+  assert.equal(startsInDemo('?demo'), true);
+  assert.equal(startsInDemo('?demo=1&x=2'), true);
+  assert.equal(startsInDemo('?x=2'), false);
+  assert.equal(startsInDemo(''), false);
+  assert.equal(startsInDemo(undefined), false);
+});

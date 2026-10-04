@@ -5,6 +5,11 @@ import { apiBaseUrl } from './api-base';
 
 const demoProfile:Profile={publicId:'demo',username:'Demo',email:null,plan:'DEMO'};
 
+/** A web link with `?demo` in it (for example `https://<server>/?demo`) opens straight into demo mode. */
+export function startsInDemo(search=typeof window!=='undefined'?window.location?.search:undefined):boolean{
+  return !!search && new URLSearchParams(search).has('demo');
+}
+
 type Profile={publicId:string;username:string;email:string|null;plan:'FREE'|'SUSPENDED'|'DEMO'};
 type Session={token:string;profile:Profile};
 type AuthContext={profile:Profile|null;register:(username:string,email:string,password:string)=>Promise<void>;
@@ -30,7 +35,7 @@ async function parseSession(response:Response):Promise<Session>{
 export function AuthProvider({children}:{children:ReactNode}){
   // Session tokens stay in memory; device-local files hold only non-secret drafts.
   const [session,setSession]=useState<Session|null>(null);
-  const [demo,setDemo]=useState(false);
+  const [demo,setDemo]=useState(()=>startsInDemo());
   const value=useMemo<AuthContext>(()=>({
     profile:session?.profile??(demo?demoProfile:null),demo,
     enterDemo:()=>setDemo(true),
