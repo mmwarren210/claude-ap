@@ -268,6 +268,14 @@ export class StatApiOwnerResearch {
       preGameStarter,sourceUrl:detail.url,retrievedAt:detail.retrievedAt};
   }
 
+  /** Every column one game-log row carries (names and sample values), to map new stats to their fields. */
+  async columns(sport: StatApiSport, table: string, playerId: number) {
+    if (!/^[a-z_]+$/.test(table) || !Number.isSafeInteger(playerId) || playerId < 1)
+      throw new StatApiOwnerError('INVALID_QUERY', 400);
+    const page = await this.page(sport, table, { player_id: String(playerId), limit: '3' }, STATS_TTL, 3);
+    return { table, rows: page.rows.length, columns: page.rows[0] ?? null };
+  }
+
   async inspect(sport: StatApiSport, playerId: number, table: string) {
     if (!Number.isSafeInteger(playerId) || playerId < 1)
       throw new StatApiOwnerError('INVALID_PLAYER_ID', 400);

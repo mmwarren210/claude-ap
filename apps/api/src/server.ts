@@ -908,6 +908,14 @@ export function buildServer(options: ServerOptions = {}) {
       : reply.code(503).send({ code: 'APP_SHADOW_OFF' }));
     admin.post('/app-shadow/run', async (_request, reply) => appShadow
       ? { scored: await appShadow.score(), graded: await appShadow.grade() } : reply.code(503).send({ code: 'APP_SHADOW_OFF' }));
+    admin.get('/stat-columns', async (request, reply) => {
+      const query=z.object({sport:z.enum(['NFL','NBA','MLB','PGA']),table:z.string().regex(/^[a-z_]+$/),
+        player:z.coerce.number().int().positive()}).safeParse(request.query);
+      if(!query.success)return reply.code(400).send({code:'INVALID_QUERY'});
+      if(!options.ownerResearch)return reply.code(503).send({code:'STAT_API_UNCONFIGURED'});
+      try{return await options.ownerResearch.columns(query.data.sport,query.data.table,query.data.player);}
+      catch(error){return reply.code(502).send({code:error instanceof Error?error.message:'STAT_API_FAILED'});}
+    });
     // What the Stat API returns for a player name (ids, names, team ids, and whether the scan was cut short).
     admin.get('/stat-search', async (request, reply) => {
       const query=z.object({sport:z.enum(['NFL','NBA','MLB','PGA']),q:z.string().min(2).max(80),
