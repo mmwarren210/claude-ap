@@ -55,7 +55,11 @@ export class OpenAiPickResearcher implements PickResearcher {
         if (!text) throw new Error('AI_PICK_EMPTY');
         return parsePick(this.provider, JSON.parse(text), question, searchedUrls(result));
       }
-      if ((response.status !== 429 && response.status < 500) || attempt === 2) throw new Error(`AI_PICK_HTTP_${response.status}`);
+      // OpenAI's error code says why (a rate limit retries; insufficient_quota means the account is out of credit).
+      const code = await response.json().then((value: { error?: { code?: unknown } }) =>
+        typeof value?.error?.code === 'string' ? value.error.code.replace(/[^a-z0-9_]/gi, '').slice(0, 40) : '').catch(() => '');
+      if (code === 'insufficient_quota' || (response.status !== 429 && response.status < 500) || attempt === 2)
+        throw new Error(`AI_PICK_HTTP_${response.status}${code ? `_${code}` : ''}`);
       await delay(1000 * (attempt + 1), undefined, { signal });
     }
     throw new Error('AI_PICK_RETRIES_EXHAUSTED');

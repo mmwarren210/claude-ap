@@ -969,6 +969,8 @@ export function buildServer(options: ServerOptions = {}) {
     admin.get('/grading', async () => ({ worker: options.autoGradingStatus?.() ?? null }));
     admin.get('/ai-picks', async (_request, reply) => options.aiPicks ? options.aiPicks.status()
       : reply.code(503).send({ code: 'AI_UNCONFIGURED' }));
+    admin.get('/ai-picks/recent', async (_request, reply) => options.aiPicks ? { reads: await options.aiPicks.recent() }
+      : reply.code(503).send({ code: 'AI_UNCONFIGURED' }));
     admin.post('/ai-picks/run', async (_request, reply) => {
       const board=service.getBoard();
       if(!options.aiPicks||!board)return reply.code(503).send({ code: 'AI_UNCONFIGURED' });

@@ -292,6 +292,16 @@ export class AiPickService {
     return graded;
   }
 
+  /** The most recent reads, newest first, for the owner to check their quality. */
+  async recent(limit = 20) {
+    await this.load();
+    return [...this.reads.values()].sort((a, b) => b.researchedAt.localeCompare(a.researchedAt)).slice(0, limit)
+      .map((read) => ({ player: read.lineSnapshot.playerName, sport: read.lineSnapshot.sport, market: read.lineSnapshot.market,
+        line: read.threshold, pick: read.pick, score: read.score, agreement: read.agreement, grade: read.grade,
+        providers: read.providers.map((item) => ({ provider: item.provider, pick: item.pick, confidence: item.confidence,
+          summary: item.summary, sources: item.reasons.filter((reason) => reason.url).length })) }));
+  }
+
   async status() {
     await this.load();
     const reads = [...this.reads.values()], decided = reads.filter((read) => read.grade === 'WIN' || read.grade === 'LOSS');
