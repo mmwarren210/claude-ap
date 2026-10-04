@@ -48,6 +48,8 @@ const nflPlayer = { criticalKinds: ['status:player_available'], hardCriticalKind
   partialCoverageNormalization: true } as const;
 const nflQb = { criticalKinds: ['status:qb_available'], hardCriticalKinds: ['status:qb_available'],
   partialCoverageNormalization: true } as const;
+const espnPlayer = { criticalKinds: ['status:player_available'], hardCriticalKinds: ['status:player_available'],
+  partialCoverageNormalization: true } as const;
 /** One model under each market key a stat goes by (e.g. Underdog's "Rush + Rec Yards" and PrizePicks' key). */
 const v2 = (sport: Sport, markets: readonly string[], factors: readonly WeightedFactor[],
   options: Partial<Pick<MarketDefinition, 'criticalKinds' | 'hardCriticalKinds' | 'partialCoverageNormalization' |
@@ -91,6 +93,34 @@ const statHistoryV2: readonly MarketDefinition[] = [
   ...v2('NFL', ['player_rush_longest','longest_rush'], [['historical_longest',35],['carry_volume',30],['yards_per_carry',25],['stability',10]], { ...nflPlayer, highVariance: true }),
   ...v2('NFL', ['player_pass_longest_completion'], [['historical_longest',40],['expected_attempts',30],['air_yards_style',25],['stability',5]], { ...nflQb, highVariance: true }),
   ...v2('NFL', ['player_punts'], [['historical_punt_volume',50],['offensive_efficiency',25],['opponent_defense',20],['stability',5]], nflPlayer, '1.1'),
+  // NHL, soccer and college football from ESPN game logs, gated on the roster's active/uninjured status.
+  ...v2('NHL', ['shots_on_goal','sog'], [['shot_volume',35],['ice_time',20],['power_play_role',15],['recent_involvement',10],['opponent_shot_suppression',10],['game_environment',5],['stability',5]], espnPlayer, '1.1'),
+  ...v2('NHL', ['goals'], [['shot_volume',30],['shooting_rate',25],['ice_time',15],['power_play_role',15],['recent_involvement',5],['opponent_goalie',5],['stability',5]], { ...espnPlayer, highVariance: true }),
+  ...v2('NHL', ['assists','player_assists'], [['recent_involvement',30],['ice_time',25],['power_play_role',20],['shot_volume',10],['team_scoring_environment',10],['stability',5]], { ...espnPlayer, highVariance: true }),
+  ...v2('NHL', ['points'], [['recent_involvement',30],['ice_time',20],['power_play_role',20],['shot_volume',15],['team_scoring_environment',10],['stability',5]], { ...espnPlayer, highVariance: true }, '1.1'),
+  ...v2('NHL', ['plus_minus'], [['recent_involvement',25],['ice_time',25],['team_scoring_environment',25],['shot_volume',15],['stability',10]], { ...espnPlayer, highVariance: true }),
+  // A goalie scores only once he is confirmed as the starter (no source for that yet, so saves wait).
+  ...v2('NHL', ['saves'], [['expected_shots_against',40],['save_rate',20],['historical_volume',25],['opponent_shot_rate',10],['stability',5]],
+    { criticalKinds: ['status:starting_goalie', 'status:player_available'], hardCriticalKinds: ['status:starting_goalie', 'status:player_available'],
+      partialCoverageNormalization: true }, '1.1'),
+  ...v2('SOCCER', ['shots'], [['shot_volume',35],['historical_volume',25],['goal_involvement',15],['on_target_rate',10],['opponent',10],['stability',5]], espnPlayer),
+  ...v2('SOCCER', ['sot'], [['shot_volume',30],['on_target_rate',25],['historical_volume',25],['goal_involvement',10],['opponent',5],['stability',5]], espnPlayer),
+  ...v2('SOCCER', ['goals'], [['shot_volume',30],['on_target_rate',20],['historical_volume',25],['goal_involvement',10],['opponent',10],['stability',5]], { ...espnPlayer, highVariance: true }),
+  ...v2('SOCCER', ['assists'], [['goal_involvement',35],['historical_volume',30],['shot_volume',10],['opponent',15],['stability',10]], { ...espnPlayer, highVariance: true }),
+  ...v2('SOCCER', ['goal_plus_assist'], [['goal_involvement',30],['historical_volume',25],['shot_volume',20],['on_target_rate',10],['opponent',10],['stability',5]], { ...espnPlayer, highVariance: true }),
+  ...v2('SOCCER', ['fouls'], [['historical_volume',50],['fouls_drawn',15],['opponent',25],['stability',10]], espnPlayer),
+  // A keeper scores only from the posted lineup.
+  ...v2('SOCCER', ['goalie_saves'], [['expected_shots_against',40],['historical_volume',35],['opponent',20],['stability',5]],
+    { criticalKinds: ['status:starting_lineup', 'status:player_available'], hardCriticalKinds: ['status:starting_lineup', 'status:player_available'],
+      partialCoverageNormalization: true }),
+  ...v2('NCAAFB', ['passing_yards'], [['expected_attempts',30],['efficiency',25],['historical_volume',25],['game_script',10],['opponent',5],['stability',5]], { ...espnPlayer, blowoutMode: 'ROTATION' }, '1.1'),
+  ...v2('NCAAFB', ['player_pass_attempts'], [['expected_attempts',40],['historical_volume',30],['game_script',20],['stability',10]], { ...espnPlayer, blowoutMode: 'ROTATION' }),
+  ...v2('NCAAFB', ['player_pass_completions'], [['expected_attempts',35],['efficiency',20],['historical_volume',30],['game_script',10],['stability',5]], { ...espnPlayer, blowoutMode: 'ROTATION' }),
+  ...v2('NCAAFB', ['player_pass_tds'], [['expected_attempts',25],['efficiency',25],['historical_volume',30],['opponent',15],['stability',5]], { ...espnPlayer, highVariance: true, blowoutMode: 'ROTATION' }),
+  ...v2('NCAAFB', ['player_rush_yds'], [['expected_carries',35],['yards_per_carry',25],['historical_volume',25],['game_script',10],['stability',5]], { ...espnPlayer, blowoutMode: 'ROTATION' }, '1.1'),
+  ...v2('NCAAFB', ['player_rush_attempts'], [['expected_carries',45],['historical_volume',30],['game_script',20],['stability',5]], { ...espnPlayer, blowoutMode: 'ROTATION' }),
+  ...v2('NCAAFB', ['player_reception_yds'], [['target_share',35],['receiving_efficiency',25],['historical_volume',25],['game_script',10],['stability',5]], { ...espnPlayer, blowoutMode: 'ROTATION' }, '1.1'),
+  ...v2('NCAAFB', ['player_receptions'], [['target_share',40],['historical_volume',35],['receiving_efficiency',10],['game_script',10],['stability',5]], { ...espnPlayer, blowoutMode: 'ROTATION' }),
   ...v2('NFL', ['player_completion_percentage'], [['completion_rate',40],['attempts',20],['passing_style',20],['pressure',15],['stability',5]], nflQb, '1.1'),
 ];
 /** The stat-history set 2 versions, approved together by GKR_MODEL_PRESET=stat_history_v2. */
@@ -147,13 +177,7 @@ export const marketDefinitions: readonly MarketDefinition[] = [
   define('DOTA','assists', [['position',20],['team_fight_participation',25],['team_kills',20],['hero',15],['match_duration',10],['opponent',5],['stability',5]], {criticalKinds:['status:roster_confirmed']}),
   define('APEX','kills', [['player_role',20],['team_strength',20],['expected_placement',15],['fight_frequency',15],['tournament_format',10],['map_volume',10],['recent_form',5],['stability',5]], {criticalKinds:['status:roster_confirmed','status:tournament_format']}),
 
-  define('NHL','shots_on_goal', [['shot_volume',30],['expected_ice_time',20],['line_assignment',15],['power_play_role',10],['opponent_shot_suppression',10],['game_environment',10],['stability',5]], {criticalKinds:['status:line_confirmed']}),
-  define('NHL','points', [['line_assignment',20],['power_play_role',20],['ice_time',15],['team_scoring_environment',15],['opponent_goalie',15],['recent_involvement',10],['stability',5]], {criticalKinds:['status:line_confirmed'],highVariance:true}),
-  define('NHL','saves', [['expected_shots_against',35],['opponent_shot_rate',20],['goalie_start_confirmation',15],['team_defense',10],['game_script',10],['opponent_quality',5],['stability',5]], {criticalKinds:['status:starting_goalie']}),
-  define('NCAAFB','passing_yards', [['game_script',20],['expected_attempts',25],['efficiency',15],['talent_mismatch',15],['opponent',10],['blowout_rotation_risk',10],['stability',5]], {criticalKinds:['status:qb_available'],blowoutMode:'ROTATION'}),
-  define('NCAAFB','player_rush_yds', [['expected_carries',25],['game_script',20],['talent_ol_mismatch',20],['opponent_run_defense',15],['committee_risk',10],['blowout_rotation',5],['stability',5]], {criticalKinds:['status:workload_confirmed'],blowoutMode:'ROTATION'}),
   define('NCAAFB','qb_rushing_yards', [['designed_rush_share',25],['scramble_rate',15],['game_script',15],['opponent',15],['expected_snaps',15],['sack_treatment_platform_rules',5],['blowout_rotation',5],['stability',5]], {criticalKinds:['status:qb_available','status:sack_rules_confirmed'],blowoutMode:'ROTATION'}),
-  define('NCAAFB','player_reception_yds', [['target_share',25],['expected_pass_volume',20],['talent_matchup',15],['coverage',15],['route_participation',10],['game_script',10],['stability',5]], {criticalKinds:['status:target_role_confirmed'],blowoutMode:'ROTATION'}),
   define('HANDBALL','goals', [['role',20],['shot_volume',25],['minutes',20],['opponent_defense',15],['penalty_set_piece_role',10],['recent_usage',5],['stability',5]]),
   define('HANDBALL','assists', [['playmaking_role',30],['minutes',20],['team_scoring_environment',15],['opponent',15],['historical_assist_rate',10],['recent_usage',5],['stability',5]]),
 

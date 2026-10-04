@@ -131,7 +131,7 @@ function sameTeam(a: string | null | undefined, names: readonly string[]) {
 const lineTeams = (line: PropLine) => [...new Set([line.homeTeam, line.awayTeam, line.team, line.opponent]
   .filter((value): value is string => !!value))];
 
-interface Game { id: string; start: number; final: boolean; sides: string[][] }
+export interface Game { id: string; start: number; final: boolean; sides: string[][] }
 /** The one game holding both of the line's teams near its start (or one team, when it alone is unique at that time). */
 export function matchGame(line: PropLine, games: readonly Game[]): Game | null {
   const start = Date.parse(line.eventStartTime), teams = lineTeams(line);

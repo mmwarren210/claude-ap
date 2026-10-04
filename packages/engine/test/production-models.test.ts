@@ -32,9 +32,9 @@ function run(lines: PropLine[], evidence: Evidence[]) {
     evidence, createGkrRegistry(marketDefinitions.map((item) => item.version)), now);
 }
 
-test('109 versioned market definitions have auditable weights and never score missing live inputs', () => {
+test('126 versioned market definitions have auditable weights and never score missing live inputs', () => {
   const registry = createGkrRegistry();
-  assert.equal(marketDefinitions.length, 109);
+  assert.equal(marketDefinitions.length, 126);
   for (const definition of marketDefinitions) {
     assert.equal(definition.factors.reduce((sum, [, weight]) => sum + weight, 0), 100);
     assert.equal(registry.resolve({ sport: definition.sport, market: definition.market })?.version,
@@ -71,7 +71,7 @@ test('stat-history preset expands model-ready coverage without removing hard sta
 });
 
 test('stat-history set 2 is opt-in, keeps every hard status gate, and scores only with them', () => {
-  assert.equal(statHistoryV2Versions.length, 46, '36 stats, 10 under a second key');
+  assert.equal(statHistoryV2Versions.length, 69, '56 stats, 13 under a second key');
   assert.ok(statHistoryV2Versions.every((version) => /-SH2-\d+\.\d+$/.test(version)));
   assert.ok(!statHistoryV2Versions.some((version) => statHistoryReadyVersions.includes(version)), 'not in the v1 preset');
   const set2 = marketDefinitions.filter((definition) => statHistoryV2Versions.includes(definition.version));

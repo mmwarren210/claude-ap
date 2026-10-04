@@ -48,6 +48,9 @@ export const factorLabels: Readonly<Record<string, string>> = {
   historical_longest: 'Recent longest play', target_volume: 'Targets', yards_per_reception: 'Yards per catch',
   carry_volume: 'Carries', yards_per_carry: 'Yards per carry', air_yards_style: 'Air yards per completion',
   historical_punt_volume: 'Recent punts',
+  // NHL, soccer and college football from ESPN game logs
+  shooting_rate: 'Goals per shot', save_rate: 'Save rate', goal_involvement: 'Goals + assists',
+  on_target_rate: 'Shots on target rate', fouls_drawn: 'Fouls drawn',
   // MLB
   expected_pa: 'Plate appearances', contact_obp_skill: 'On-base rate', home_run_rate: 'Home run rate',
   historical_hrrbi_volume: 'Recent hits + runs + RBIs', run_creation_rate: 'Run production per PA',

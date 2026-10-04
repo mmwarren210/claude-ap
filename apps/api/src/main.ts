@@ -18,6 +18,7 @@ import { ClaudeWebResearchAdapter } from './claude-web-research.js';
 import { ProductLedger } from './product-ledger.js';
 import { ProductGradingWorker } from './background-grading.js';
 import { BoxScoreResults } from './box-score-results.js';
+import { EspnGkrEvidence } from './espn-gkr-evidence.js';
 import { BoardCache } from './board-cache.js';
 import { ApifyClient } from './scrapers/apify-client.js';
 import { ScrapedLineStore } from './scrapers/line-store.js';
@@ -215,7 +216,9 @@ const primaryEvidenceAdapters=[manualEvidence,internalEvidence,publicNflEvidence
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const gkrResearch=primaryEvidenceAdapters.length===0?null:primaryEvidenceAdapters.length===1
   ? primaryEvidenceAdapters[0]:new CompositeResearchAdapter(primaryEvidenceAdapters);
-const secondLookAdapters=[statEvidence,currentContext]
+// NHL, soccer and college football history from ESPN's public game logs (free), for their approved models.
+const espnEvidence=process.env.GKR_ESPN_EVIDENCE==='false'?null:new EspnGkrEvidence(fetch,{allowedKeys:approvedModelKeys});
+const secondLookAdapters=[statEvidence,currentContext,espnEvidence]
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const secondLookResearch=secondLookAdapters.length===0?null:secondLookAdapters.length===1
   ? secondLookAdapters[0]:new CompositeResearchAdapter(secondLookAdapters);
@@ -241,7 +244,7 @@ const tickContext=currentContextEnabled?new CurrentContextResearch({
     return statSource.currentAvailability(sport,query);
   }}:undefined,
 }):null;
-const contextAdapters=[internalEvidence,playerIdentity,tickContext]
+const contextAdapters=[internalEvidence,playerIdentity,tickContext,espnEvidence]
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const contextRefresh=contextIntervalMinutes>0?{adapter:new CompositeResearchAdapter(contextAdapters),
   intervalMinutes:contextIntervalMinutes,windowHours:contextWindowHours}:null;

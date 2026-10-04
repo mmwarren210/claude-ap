@@ -6,7 +6,8 @@ import type { StatApiOwnerResearch, StatApiPlayer, StatApiSport } from './stat-a
 
 type Source = Pick<StatApiOwnerResearch,'search'|'inspect'>;
 type Detail = Awaited<ReturnType<Source['inspect']>>;
-type Row = Detail['rows'][number];
+/** One game's stats for a player: when it was played and the numbers by column. */
+type Row = { readonly occurredAt: string | null; readonly metrics: Readonly<Record<string, number>> };
 
 type Table = 'game_player_stats'|'game_player_batter_stats'|'game_player_pitching_stats';
 interface MarketSpec {
@@ -417,56 +418,76 @@ export class StatApiGkrEvidence implements ResearchAdapter {
   }
 
   private forTarget(target:ResearchTarget,spec:MarketSpec,detail:Detail,now:Date):Evidence[]{
-    const before=detail.rows.filter((row)=>!row.occurredAt||
-      Date.parse(row.occurredAt)<Date.parse(target.eventStartTime));
-    const dated=before.filter((row)=>row.occurredAt)
-      .sort((a,b)=>Date.parse(b.occurredAt!)-Date.parse(a.occurredAt!));
-    const sample=(dated.length>=this.minSamples?dated:before).slice(0,this.recentSamples);
-    const values=validSeries(sample,spec.value);
-    if(values.length<this.minSamples)return[];
-    const midpoint=mean(values),spread=sd(values);
-    if(!Number.isFinite(midpoint)||!Number.isFinite(spread)||spread<=0)return[];
-    const expiresAt=new Date(Math.min(Date.parse(target.eventStartTime),now.getTime()+6*3600_000))
-      .toISOString();
-    if(Date.parse(expiresAt)<=now.getTime())return[];
-    const result:Evidence[]=[];
-    const add=(kind:string,finding:string,value:number,baseline:number|undefined,unit?:string)=>{
-      result.push(evidenceSchema.parse({id:'stat:'+hash(JSON.stringify([target.eventId,target.playerId,
-        target.market,kind,detail.retrievedAt])),entityType:'PLAYER',entityId:target.playerId,
-        eventId:target.eventId,market:target.market,kind,finding,sourceName:'stat-api.com',
-        sourceUrl:detail.sourceUrl,sourceType:'LICENSED_FEED',retrievedAt:detail.retrievedAt,
-        expiresAt,quality:values.length>=10?'HIGH':'MEDIUM',
-        confidence:Math.min(.95,.6+values.length*.025),
-        numeric:{value,...(baseline===undefined?{}:{baseline}),...(unit?{unit}:{})}}));
-    };
-    add('projection:'+target.market,
-      `Historical rolling projection from ${values.length} attributed stat-api game rows; no PrizePicks threshold used.`,
-      midpoint,spread,spec.unit);
-
-    if(dated.length>=this.minSamples){
-      const recent=dated.slice(0,Math.min(5,this.recentSamples));
-      const baseline=dated.slice(0,this.recentSamples);
-      for(const [factor,pick] of Object.entries(spec.factors)){
-        const recentValues=validSeries(recent,pick),baseValues=validSeries(baseline,pick);
-        if(recentValues.length<Math.min(3,this.minSamples)||baseValues.length<this.minSamples)continue;
-        add('metric:'+factor,
-          `Recent attributed stat-api average versus the larger rolling historical sample for ${factor}.`,
-          mean(recentValues),mean(baseValues));
-      }
-      const recentTarget=validSeries(recent,spec.value),baseTarget=validSeries(baseline,spec.value);
-      if(recentTarget.length>=3&&baseTarget.length>=this.minSamples){
-        const recentCv=sd(recentTarget)/Math.max(Math.abs(mean(recentTarget)),1);
-        const baseCv=sd(baseTarget)/Math.max(Math.abs(mean(baseTarget)),1);
-        add('metric:stability','Inverse coefficient-of-variation stability from attributed game rows.',
-          1/(1+recentCv),1/(1+baseCv));
-      }
-    }
-    if(target.sport==='MLB'&&target.market==='batter_walks'){
-      const walks=sample.map((row)=>n(row,'walks')).filter((v):v is number=>v!==null);
-      if(walks.length>=this.minSamples)add('metric:walk_probability',
-        'Empirical probability of at least one walk in the attributed rolling sample.',
-        walks.filter((value)=>value>=1).length/walks.length,undefined,'probability');
-    }
-    return result;
+    return historyEvidence(target,spec,detail,now,{minSamples:this.minSamples,recentSamples:this.recentSamples,
+      sourceName:'stat-api.com',sourceLabel:'stat-api',sourceType:'LICENSED_FEED',idPrefix:'stat:'});
   }
+}
+
+/** How to attribute history evidence to its source. */
+export interface HistorySource { readonly minSamples:number; readonly recentSamples:number; readonly sourceName:string;
+readonly sourceLabel:string; readonly sourceType:'LICENSED_FEED'|'PUBLIC'|'OFFICIAL'; readonly idPrefix:string }
+/** One market's game-log history for a player, in the shape history evidence reads. */
+export interface HistoryDetail { readonly sourceUrl:string; readonly retrievedAt:string;
+readonly rows:readonly {occurredAt:string|null;metrics:Readonly<Record<string,number>>}[] }
+export interface HistorySpec { readonly value:(row:Row)=>number|null; readonly unit:string;
+readonly factors:Readonly<Record<string,(row:Row)=>number|null>> }
+
+/**
+ * Projection, factor and stability evidence from a player's game rows before the event: the rolling average of the
+ * stat, each factor's recent average against the larger sample, and how steady the stat has been. No line is used.
+ */
+export function historyEvidence(target:ResearchTarget,spec:HistorySpec,detail:HistoryDetail,now:Date,
+source:HistorySource):Evidence[]{
+const {minSamples,recentSamples}=source;
+  const before=detail.rows.filter((row)=>!row.occurredAt||
+    Date.parse(row.occurredAt)<Date.parse(target.eventStartTime));
+  const dated=before.filter((row)=>row.occurredAt)
+    .sort((a,b)=>Date.parse(b.occurredAt!)-Date.parse(a.occurredAt!));
+  const sample=(dated.length>=minSamples?dated:before).slice(0,recentSamples);
+  const values=validSeries(sample,spec.value);
+  if(values.length<minSamples)return[];
+  const midpoint=mean(values),spread=sd(values);
+  if(!Number.isFinite(midpoint)||!Number.isFinite(spread)||spread<=0)return[];
+  const expiresAt=new Date(Math.min(Date.parse(target.eventStartTime),now.getTime()+6*3600_000))
+    .toISOString();
+  if(Date.parse(expiresAt)<=now.getTime())return[];
+  const result:Evidence[]=[];
+  const add=(kind:string,finding:string,value:number,baseline:number|undefined,unit?:string)=>{
+    result.push(evidenceSchema.parse({id:source.idPrefix+hash(JSON.stringify([target.eventId,target.playerId,
+      target.market,kind,detail.retrievedAt])),entityType:'PLAYER',entityId:target.playerId,
+      eventId:target.eventId,market:target.market,kind,finding,sourceName:source.sourceName,
+      sourceUrl:detail.sourceUrl,sourceType:source.sourceType,retrievedAt:detail.retrievedAt,
+      expiresAt,quality:values.length>=10?'HIGH':'MEDIUM',
+      confidence:Math.min(.95,.6+values.length*.025),
+      numeric:{value,...(baseline===undefined?{}:{baseline}),...(unit?{unit}:{})}}));
+  };
+  add('projection:'+target.market,
+    `Historical rolling projection from ${values.length} attributed ${source.sourceLabel} game rows; no PrizePicks threshold used.`,
+    midpoint,spread,spec.unit);
+
+  if(dated.length>=minSamples){
+    const recent=dated.slice(0,Math.min(5,recentSamples));
+    const baseline=dated.slice(0,recentSamples);
+    for(const [factor,pick] of Object.entries(spec.factors)){
+      const recentValues=validSeries(recent,pick),baseValues=validSeries(baseline,pick);
+      if(recentValues.length<Math.min(3,minSamples)||baseValues.length<minSamples)continue;
+      add('metric:'+factor,
+        `Recent attributed ${source.sourceLabel} average versus the larger rolling historical sample for ${factor}.`,
+        mean(recentValues),mean(baseValues));
+    }
+    const recentTarget=validSeries(recent,spec.value),baseTarget=validSeries(baseline,spec.value);
+    if(recentTarget.length>=3&&baseTarget.length>=minSamples){
+      const recentCv=sd(recentTarget)/Math.max(Math.abs(mean(recentTarget)),1);
+      const baseCv=sd(baseTarget)/Math.max(Math.abs(mean(baseTarget)),1);
+      add('metric:stability','Inverse coefficient-of-variation stability from attributed game rows.',
+        1/(1+recentCv),1/(1+baseCv));
+    }
+  }
+  if(target.sport==='MLB'&&target.market==='batter_walks'){
+    const walks=sample.map((row)=>n(row,'walks')).filter((v):v is number=>v!==null);
+    if(walks.length>=minSamples)add('metric:walk_probability',
+      'Empirical probability of at least one walk in the attributed rolling sample.',
+      walks.filter((value)=>value>=1).length/walks.length,undefined,'probability');
+  }
+  return result;
 }

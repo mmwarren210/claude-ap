@@ -1,0 +1,259 @@
+import { createHash } from 'node:crypto';
+import type { Evidence, PropLine } from '@crowniq/contracts';
+import { evidenceSchema } from '@crowniq/contracts';
+import type { ResearchAdapter, ResearchHealth, ResearchTarget } from '@crowniq/engine';
+import { matchGame, normalizedPlayer } from './box-score-results.js';
+import type { Game } from './box-score-results.js';
+import { historyEvidence } from './stat-api-gkr-evidence.js';
+import type { HistorySpec } from './stat-api-gkr-evidence.js';
+
+// GKR history for the sports the Stat API doesn't cover (owner approved 2026-10-04: "GKR should score everything"):
+// NHL, soccer and college football, from ESPN's public game logs. The player is found on the two teams' ESPN rosters,
+// which also say whether he is active and uninjured; that availability is the hard status gate these models need.
+
+const SITE = 'https://site.api.espn.com/apis/site/v2/sports';
+const COMMON = 'https://site.api.espn.com/apis/common/v3/sports';
+const paths: Readonly<Record<string, string>> = { NHL: 'hockey/nhl', NCAAFB: 'football/college-football', SOCCER: 'soccer/all' };
+
+type Row = { occurredAt: string | null; metrics: Readonly<Record<string, number>> };
+const n = (row: Row, key: string) => Number.isFinite(row.metrics[key]) ? row.metrics[key] : null;
+const ratio = (a: number | null, b: number | null) => a !== null && b !== null && b !== 0 ? a / b : null;
+const sum = (...values: (number | null)[]) => values.every((value) => value !== null)
+  ? values.reduce((total, value) => total + (value ?? 0), 0) : null;
+const spec = (value: (r: Row) => number | null, unit: string, factors: HistorySpec['factors']): HistorySpec =>
+  ({ value, unit, factors });
+
+const shots = (r: Row) => n(r, 'shotsTotal'), points = (r: Row) => n(r, 'points');
+const nhlSkater = (value: (r: Row) => number | null, unit: string, extra: HistorySpec['factors'] = {}) => spec(value, unit,
+  { shot_volume: shots, ice_time: (r) => n(r, 'timeOnIcePerGame'), power_play_role: (r) => sum(n(r, 'powerPlayGoals'),
+    n(r, 'powerPlayAssists')), recent_involvement: points, ...extra });
+const soccerSpec = (value: (r: Row) => number | null, unit: string) => spec(value, unit, {
+  shot_volume: (r) => n(r, 'totalShots'), on_target_rate: (r) => ratio(n(r, 'shotsOnTarget'), n(r, 'totalShots')),
+  goal_involvement: (r) => sum(n(r, 'totalGoals'), n(r, 'goalAssists')), historical_volume: value });
+const cfbPass = (value: (r: Row) => number | null, unit: string) => spec(value, unit, {
+  expected_attempts: (r) => n(r, 'passingAttempts'), efficiency: (r) => ratio(n(r, 'passingYards'), n(r, 'passingAttempts')),
+  historical_volume: value });
+const cfbRush = (value: (r: Row) => number | null, unit: string) => spec(value, unit, {
+  expected_carries: (r) => n(r, 'rushingAttempts'), yards_per_carry: (r) => ratio(n(r, 'rushingYards'), n(r, 'rushingAttempts')),
+  historical_volume: value });
+const cfbReceive = (value: (r: Row) => number | null, unit: string) => spec(value, unit, {
+  target_share: (r) => n(r, 'receivingTargets') ?? n(r, 'receptions'),
+  receiving_efficiency: (r) => ratio(n(r, 'receivingYards'), n(r, 'receptions')), historical_volume: value });
+
+/** ESPN game-log columns behind each market. Stats ESPN's logs don't carry (hits, faceoffs, tackles) aren't listed. */
+export const espnSpecs: Readonly<Record<string, Readonly<Record<string, HistorySpec>>>> = {
+  NHL: {
+    shots_on_goal: nhlSkater(shots, 'shots on goal'), sog: nhlSkater(shots, 'shots on goal'),
+    goals: nhlSkater((r) => n(r, 'goals'), 'goals', { shooting_rate: (r) => ratio(n(r, 'goals'), shots(r)) }),
+    assists: nhlSkater((r) => n(r, 'assists'), 'assists'), player_assists: nhlSkater((r) => n(r, 'assists'), 'assists'),
+    points: nhlSkater(points, 'points'), plus_minus: nhlSkater((r) => n(r, 'plusMinus'), 'plus/minus'),
+    saves: spec((r) => n(r, 'saves'), 'saves', { expected_shots_against: (r) => n(r, 'shotsAgainst'),
+      save_rate: (r) => ratio(n(r, 'saves'), n(r, 'shotsAgainst')), historical_volume: (r) => n(r, 'saves') }),
+  },
+  SOCCER: {
+    shots: soccerSpec((r) => n(r, 'totalShots'), 'shots'), sot: soccerSpec((r) => n(r, 'shotsOnTarget'), 'shots on target'),
+    goals: soccerSpec((r) => n(r, 'totalGoals'), 'goals'), assists: soccerSpec((r) => n(r, 'goalAssists'), 'assists'),
+    goal_plus_assist: soccerSpec((r) => sum(n(r, 'totalGoals'), n(r, 'goalAssists')), 'goals+assists'),
+    fouls: spec((r) => n(r, 'foulsCommitted'), 'fouls', { historical_volume: (r) => n(r, 'foulsCommitted'),
+      fouls_drawn: (r) => n(r, 'foulsSuffered') }),
+    goalie_saves: spec((r) => n(r, 'saves'), 'saves', { historical_volume: (r) => n(r, 'saves'),
+      expected_shots_against: (r) => n(r, 'shotsFaced') }),
+  },
+  NCAAFB: {
+    passing_yards: cfbPass((r) => n(r, 'passingYards'), 'yards'),
+    player_pass_attempts: cfbPass((r) => n(r, 'passingAttempts'), 'attempts'),
+    player_pass_completions: cfbPass((r) => n(r, 'completions'), 'completions'),
+    player_pass_tds: cfbPass((r) => n(r, 'passingTouchdowns'), 'touchdowns'),
+    player_rush_yds: cfbRush((r) => n(r, 'rushingYards'), 'yards'),
+    player_rush_attempts: cfbRush((r) => n(r, 'rushingAttempts'), 'attempts'),
+    player_reception_yds: cfbReceive((r) => n(r, 'receivingYards'), 'yards'),
+    player_receptions: cfbReceive((r) => n(r, 'receptions'), 'receptions'),
+  },
+};
+
+type Json = Record<string, unknown>;
+const obj = (value: unknown): Json | null => value && typeof value === 'object' && !Array.isArray(value) ? value as Json : null;
+const arr = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
+const str = (value: unknown) => typeof value === 'string' ? value : typeof value === 'number' ? String(value) : '';
+/** ESPN cells as numbers; "15:51" (minutes:seconds) becomes 15.85 minutes. */
+function cell(raw: unknown): number | null {
+  const value = str(raw).trim();
+  const clock = /^(\d+):(\d{2})$/.exec(value);
+  if (clock) return Number(clock[1]) + Number(clock[2]) / 60;
+  const number = Number(value.replace(/^\+/, ''));
+  return value !== '' && Number.isFinite(number) ? number : null;
+}
+
+/** A player's ESPN game log as rows: one per game (preseason left out), dated from the log's event list. */
+export function gameLogRows(log: unknown): Row[] {
+  const root = obj(log), names = arr(root?.names).map(str), events = obj(root?.events) ?? {};
+  const rows = new Map<string, Row>();
+  for (const type of arr(root?.seasonTypes)) {
+    if (/preseason/i.test(str(obj(type)?.displayName))) continue;
+    for (const category of arr(obj(type)?.categories)) for (const value of arr(obj(category)?.events)) {
+      const entry = obj(value), id = str(entry?.eventId), stats = arr(entry?.stats);
+      if (!id || rows.has(id)) continue;
+      const metrics: Record<string, number> = {};
+      names.forEach((name, index) => { const number = cell(stats[index]); if (name && number !== null) metrics[name] = number; });
+      const date = str(obj(events[id])?.gameDate);
+      rows.set(id, { occurredAt: date && Number.isFinite(Date.parse(date)) ? new Date(date).toISOString() : null, metrics });
+    }
+  }
+  return [...rows.values()];
+}
+
+type Athlete = { id: string; name: string; available: boolean; starter: boolean | null };
+const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 24);
+
+export interface EspnGkrEvidenceOptions {
+  readonly clock?: () => Date;
+  readonly allowedKeys?: readonly string[];
+  readonly maxPlayers?: number;
+  readonly minSamples?: number;
+  readonly recentSamples?: number;
+}
+
+export class EspnGkrEvidence implements ResearchAdapter {
+  readonly id = 'espn-history-v1';
+  private readonly clock: () => Date;
+  private readonly allowedKeys: ReadonlySet<string> | null;
+  private readonly cache = new Map<string, { until: number; value: Promise<unknown> }>();
+  private health: ResearchHealth = { status: 'OK', targets: 0, searches: 0, cacheHits: 0, skipped: 0, failures: 0,
+    lastRunAt: null };
+  constructor(private readonly fetchFn: typeof fetch = fetch, private readonly options: EspnGkrEvidenceOptions = {}) {
+    this.clock = options.clock ?? (() => new Date());
+    this.allowedKeys = options.allowedKeys ? new Set(options.allowedKeys) : null;
+  }
+  getHealth(): ResearchHealth { return this.health; }
+
+  supports(target: ResearchTarget): boolean {
+    return !!espnSpecs[target.sport]?.[target.market] && Date.parse(target.eventStartTime) > this.clock().getTime() &&
+      (!this.allowedKeys || this.allowedKeys.has(`${target.sport}:${target.market}`));
+  }
+
+  private json(url: string, ttlMs: number, counters: { searches: number; cacheHits: number }): Promise<unknown> {
+    const now = this.clock().getTime(), cached = this.cache.get(url);
+    if (cached && cached.until > now) { counters.cacheHits++; return cached.value; }
+    counters.searches++;
+    const value = (async () => {
+      const response = await this.fetchFn(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) throw new Error(`ESPN_HTTP_${response.status}`);
+      return response.json() as Promise<unknown>;
+    })();
+    this.cache.set(url, { until: now + ttlMs, value });
+    value.catch(() => this.cache.delete(url));
+    return value;
+  }
+
+  /** The ESPN game for this event and the two teams' rosters (for soccer, the league comes from the game). */
+  private async rosters(first: ResearchTarget, counters: { searches: number; cacheHits: number }) {
+    const path = paths[first.sport], start = Date.parse(first.eventStartTime);
+    const days = [...new Set([new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(start)),
+      new Date(start).toISOString().slice(0, 10)])];
+    const games: (Game & { teams: string[] })[] = [];
+    for (const day of days) {
+      const params = new URLSearchParams({ dates: day.replaceAll('-', ''), limit: '1000' });
+      if (first.sport === 'NCAAFB') params.set('groups', '80');
+      const body = obj(await this.json(`${SITE}/${path}/scoreboard?${params}`, 30 * 60_000, counters));
+      for (const value of arr(body?.events)) {
+        const event = obj(value), competition = obj(arr(event?.competitions)[0]), eventStart = Date.parse(str(event?.date));
+        const competitors = arr(competition?.competitors).map((item) => obj(obj(item)?.team));
+        if (!event || !Number.isFinite(eventStart) || competitors.length !== 2) continue;
+        games.push({ id: str(event.id), start: eventStart, final: false, teams: competitors.map((team) => str(team?.id)),
+          sides: competitors.map((team) => ['displayName', 'shortDisplayName', 'name', 'location', 'abbreviation']
+            .map((key) => str(team?.[key])).filter(Boolean)) });
+      }
+    }
+    const game = matchGame(first as unknown as PropLine, [...new Map(games.map((item) => [item.id, item])).values()]) as
+      (Game & { teams: string[] }) | null;
+    if (!game) return null;
+    let rosterPath = path;
+    const starters = new Map<string, boolean>();
+    if (first.sport === 'SOCCER') {
+      // The game summary names the league; its rosters hold the lineups once they are posted (about an hour before).
+      const summary = obj(await this.json(`${SITE}/soccer/all/summary?event=${game.id}`, 10 * 60_000, counters));
+      const league = str(obj(obj(summary?.header)?.league)?.slug);
+      if (!league) return null;
+      rosterPath = `soccer/${league}`;
+      for (const side of arr(summary?.rosters)) for (const entry of arr(obj(side)?.roster)) {
+        const id = str(obj(obj(entry)?.athlete)?.id);
+        if (id && typeof obj(entry)?.starter === 'boolean') starters.set(id, obj(entry)!.starter as boolean);
+      }
+    }
+    const athletes: Athlete[] = [];
+    for (const teamId of game.teams) {
+      const roster = obj(await this.json(`${SITE}/${rosterPath}/teams/${teamId}/roster`, 30 * 60_000, counters));
+      // Hockey and soccer rosters are flat; football groups them ({items:[...]}).
+      for (const entry of arr(roster?.athletes).flatMap((item) => Array.isArray(obj(item)?.items) ? arr(obj(item)!.items) : [item])) {
+        const athlete = obj(entry), id = str(athlete?.id), name = str(athlete?.fullName) || str(athlete?.displayName);
+        if (!id || !name) continue;
+        const status = str(obj(athlete?.status)?.type).toLowerCase();
+        athletes.push({ id, name, available: (status === '' || status === 'active') && arr(athlete?.injuries).length === 0,
+          starter: starters.size ? starters.get(id) ?? false : null });
+      }
+    }
+    return { athletes, url: `${SITE}/${rosterPath}/teams/${game.teams.join(',')}/roster` };
+  }
+
+  private async gameLog(sport: string, athleteId: string, counters: { searches: number; cacheHits: number }) {
+    const base = `${COMMON}/${paths[sport]}/athletes/${athleteId}/gamelog`;
+    const current = await this.json(base, 3 * 3600_000, counters);
+    let rows = gameLogRows(current);
+    // Early in a season, add last season so there are enough games to read.
+    if (rows.length < 10) {
+      const seasons = arr(obj(arr(obj(current)?.filters).find((item) => str(obj(item)?.name) === 'season'))?.options)
+        .map((item) => str(obj(item)?.value)).filter(Boolean);
+      const previous = seasons[1];
+      if (previous) rows = [...rows, ...gameLogRows(await this.json(`${base}?season=${previous}`, 12 * 3600_000, counters))];
+    }
+    return { rows, sourceUrl: base, retrievedAt: this.clock().toISOString() };
+  }
+
+  async research(targets: readonly ResearchTarget[]): Promise<readonly Evidence[]> {
+    const now = this.clock(), eligible = targets.filter((target) => this.supports(target));
+    const counters = { searches: 0, cacheHits: 0 };
+    let failures = 0, skipped = targets.length - eligible.length, noSources = 0;
+    const byGame = new Map<string, ResearchTarget[]>();
+    for (const target of eligible) byGame.set(target.eventId, [...byGame.get(target.eventId) ?? [], target]);
+    const evidence: Evidence[] = [];
+    let players = 0;
+    for (const group of byGame.values()) {
+      let rosters;
+      try { rosters = await this.rosters(group[0], counters); } catch { failures++; continue; }
+      if (!rosters) { noSources += group.length; continue; }
+      const byPlayer = new Map<string, ResearchTarget[]>();
+      for (const target of group) byPlayer.set(target.playerId, [...byPlayer.get(target.playerId) ?? [], target]);
+      for (const playerTargets of byPlayer.values()) {
+        if (players >= (this.options.maxPlayers ?? 400)) { skipped += playerTargets.length; continue; }
+        const first = playerTargets[0], wanted = normalizedPlayer(first.playerName);
+        const matches = rosters.athletes.filter((athlete) => normalizedPlayer(athlete.name) === wanted);
+        if (matches.length !== 1) { noSources += playerTargets.length; continue; }
+        players++;
+        const athlete = matches[0];
+        const expiresAt = new Date(Math.min(Date.parse(first.eventStartTime), now.getTime() + 2 * 3600_000)).toISOString();
+        evidence.push(evidenceSchema.parse({ id: 'espn-status:' + hash(JSON.stringify([first.eventId, first.playerId,
+          athlete.available, Math.floor(now.getTime() / 900_000)])), entityType: 'PLAYER', entityId: first.playerId,
+        eventId: first.eventId, market: null, kind: 'status:player_available',
+        finding: athlete.available ? 'ESPN team roster lists this player active with no injury.'
+          : 'ESPN team roster does not list this player as active and uninjured.',
+        sourceName: 'ESPN team rosters', sourceUrl: rosters.url, sourceType: 'PUBLIC', retrievedAt: now.toISOString(),
+        expiresAt, quality: 'MEDIUM', confidence: 0.85, numeric: { value: athlete.available ? 1 : 0 } }));
+        if (athlete.starter !== null) evidence.push(evidenceSchema.parse({ id: 'espn-lineup:' + hash(JSON.stringify([first.eventId,
+          first.playerId, athlete.starter])), entityType: 'PLAYER', entityId: first.playerId, eventId: first.eventId, market: null,
+        kind: 'status:starting_lineup', finding: athlete.starter ? 'ESPN posted lineup has this player starting.'
+          : 'ESPN posted lineup does not have this player starting.', sourceName: 'ESPN game lineups',
+        sourceUrl: `${SITE}/soccer/all/summary?event=${first.eventId}`, sourceType: 'PUBLIC', retrievedAt: now.toISOString(),
+        expiresAt: first.eventStartTime, quality: 'HIGH', confidence: 0.95, numeric: { value: athlete.starter ? 1 : 0 } }));
+        try {
+          const log = await this.gameLog(first.sport, athlete.id, counters);
+          for (const target of playerTargets) evidence.push(...historyEvidence(target, espnSpecs[target.sport][target.market],
+            log, now, { minSamples: this.options.minSamples ?? 5, recentSamples: this.options.recentSamples ?? 10,
+              sourceName: 'ESPN game logs', sourceLabel: 'ESPN', sourceType: 'PUBLIC', idPrefix: 'espn:' }));
+        } catch { failures++; }
+      }
+    }
+    this.health = { status: failures ? evidence.length ? 'PARTIAL' : 'FAILED' : 'OK', targets: targets.length,
+      searches: counters.searches, cacheHits: counters.cacheHits, skipped, failures, noSources, lastRunAt: now.toISOString() };
+    return evidence;
+  }
+}

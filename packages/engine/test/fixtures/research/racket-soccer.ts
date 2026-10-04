@@ -56,5 +56,5 @@ export const racketAndSoccer: readonly WorkedExample[] = [
       game_script:'possession reduces opponent shot opportunity'},
     expectedBehavior:{status:'DOWNGRADED',missingRequired:'status:starting_goalie',
       note:'Range 2–4 straddles 2.5; flag danger and inspect alternates, not an automatic MORE.'},
-    modelVersion:null},
+    modelVersion:'GKR-SOCCER-GOALIE-SAVES-SH2-1.0'},
 ];
