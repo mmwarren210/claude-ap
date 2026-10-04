@@ -21,12 +21,16 @@ const comparisonColor = { SAME: colors.textMuted, BETTER: colors.mint, WORSE: co
  * that app's slip (graded with Your Picks).
  */
 export function PortSheet({ app, legs, onClose }: { app: PickApp | null; legs: readonly CrownLeg[]; onClose: () => void }) {
-  const { request } = useAuth();
+  const { request, demo } = useAuth();
   const [ported, setPorted] = useState<Ported[] | null>(null);
   const [message, setMessage] = useState('');
   useEffect(() => {
     if (!app || app === 'prizepicks') return;
     let active = true;
+    if (demo) {
+      void Promise.resolve().then(() => { if (active) setMessage(`Sign in to match these picks to ${appNames[app]} lines.`); });
+      return () => { active = false; };
+    }
     void (async () => {
       try {
         const response = await request(`/v1/apps/${app}/port`, { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -37,7 +41,7 @@ export function PortSheet({ app, legs, onClose }: { app: PickApp | null; legs: r
       } catch { if (active) setMessage(`Could not check ${appNames[app]} lines right now. Try again in a moment.`); }
     })();
     return () => { active = false; };
-  }, [app, legs, request]);
+  }, [app, legs, request, demo]);
   if (!app) return null;
 
   const close = () => { setPorted(null); setMessage(''); onClose(); };
