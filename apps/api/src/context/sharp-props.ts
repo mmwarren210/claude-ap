@@ -92,6 +92,7 @@ export class SharpPropsFeed {
   private loaded = false;
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<SharpPropsStatus> | null = null;
+  private onRefreshed: ((prices: readonly FairPrice[], at: Date) => unknown) | null = null;
   constructor(private readonly apiKey: string | null, private readonly file: string | null,
     private readonly options: { books?: readonly string[]; leagues?: readonly string[]; maxPagesPerLeague?: number;
       /** Pause between requests; SharpAPI's Hobby plan allows 120 a minute. */
@@ -107,6 +108,9 @@ export class SharpPropsFeed {
       this.prices = saved.prices; this.fetchedAt = saved.fetchedAt;
     } catch { /* first run */ }
   }
+
+  /** Called after each successful refresh (the server keeps a history of the books' view of the board). */
+  whenRefreshed(callback: (prices: readonly FairPrice[], at: Date) => unknown): void { this.onRefreshed = callback; }
 
   async current(): Promise<{ fetchedAt: string | null; prices: FairPrice[] }> {
     await this.load();
@@ -162,6 +166,7 @@ export class SharpPropsFeed {
       await writeFile(`${this.file}.tmp`, JSON.stringify({ fetchedAt: this.fetchedAt, prices }));
       await rename(`${this.file}.tmp`, this.file);
     }
+    try { await this.onRefreshed?.(prices, this.clock()); } catch { /* history is best effort */ }
     return this.status();
   }
 

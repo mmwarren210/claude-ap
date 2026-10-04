@@ -58,8 +58,11 @@ test('the SharpAPI feed pages with the cursor, sends the key, and keeps old pric
       pagination: { has_more: first, next_cursor: first ? 'next' : undefined } }), { status: 200 });
   }) as typeof fetch;
   const feed = new SharpPropsFeed('key', null, { leagues: ['nfl'], requestGapMs: 0 }, fetchFn, () => now);
+  let reported = 0;
+  feed.whenRefreshed((prices) => { reported = prices.length; });
   const status = await feed.refresh();
   assert.deepEqual(calls, ['first', 'next']);
+  assert.equal(reported, 1, 'each successful refresh is reported for the books history');
   assert.deepEqual([status.prices, status.lastError], [1, null]);
   fail = true;
   const failed = await feed.refresh();

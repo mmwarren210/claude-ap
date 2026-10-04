@@ -1,4 +1,6 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { appendFile, mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import Fastify from 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -85,6 +87,8 @@ export interface ServerOptions {
   sharpProps?: SharpPropsFeed | null;
   /** Break-even chance per pick for +EV (default 54.21%, PrizePicks' best Flex). */
   evBreakEven?: number;
+  /** JSON-lines history of the books' view of board lines, one row per line per refresh. */
+  booksHistoryFile?: string | null;
 }
 
 function authorized(request: FastifyRequest, token?: string): boolean {
@@ -147,6 +151,18 @@ export function buildServer(options: ServerOptions = {}) {
     options.scraperPuller?.whenLinesChange(()=>startOwnerBoardRefresh());
     options.scraperPuller?.start();
     options.contextFeeds?.start();
+    // Keep what the books said about each board line over time, so a "books agree" factor can be measured on graded results.
+    options.sharpProps?.whenRefreshed(async(prices,at)=>{
+      const board=service.getBoard();
+      if(!board||!options.booksHistoryFile)return;
+      const lines=new Map(board.board.lines.map((line)=>[line.id,line]));
+      const rows=[...bookViews(board,prices,at)].map(([lineId,view])=>{const line=lines.get(lineId)!;
+        return JSON.stringify({at:at.toISOString(),lineId,sport:line.sport,playerId:line.playerId,playerName:line.playerName,
+          eventId:line.eventId,eventStartTime:line.eventStartTime,market:line.market,threshold:line.threshold,
+          fairMore:view.fairMore,books:view.books.map((book)=>book.book)});});
+      if(rows.length){await mkdir(dirname(options.booksHistoryFile),{recursive:true});
+        await appendFile(options.booksHistoryFile,rows.join('\n')+'\n');}
+    });
     options.sharpProps?.start(60);
     if(options.ownerNotebook && options.ownerPublicId){
       await options.ownerNotebook.load();options.ownerNotebook.start();
