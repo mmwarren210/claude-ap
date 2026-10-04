@@ -9,9 +9,11 @@ export type AiRead = {
 };
 /** An AI read that names a side, so the line is a play. */
 export const aiPlay = (read: AiRead | undefined) => !!read && read.pick !== 'PASS' && read.score !== null && read.score >= 55;
+/** The name the app shows for the ChatGPT + Claude read, so it never reads as plain "AI". */
+export const SCOUT = 'Scout';
 export const providerName = (provider: string) => provider === 'chatgpt' ? 'ChatGPT' : 'Claude';
 export const agreementText = (read: AiRead) => read.agreement === 'BOTH' ? 'ChatGPT and Claude agree'
-  : read.agreement === 'ONE' ? 'One model picked a side, the other passed' : read.agreement === 'SPLIT'
+  : read.agreement === 'ONE' ? 'One scout picked a side, the other passed' : read.agreement === 'SPLIT'
     ? 'ChatGPT and Claude disagree' : `${providerName(read.providers[0]?.provider ?? '')} only`;
 
 // One shared copy for every screen, reread at most every 5 minutes.

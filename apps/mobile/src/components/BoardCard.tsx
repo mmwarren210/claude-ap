@@ -1,6 +1,6 @@
 import { BooksBadge } from './ui/BooksBadge';
 import { useBooks } from '../use-books';
-import { aiPlay } from '../use-ai-picks';
+import { aiPlay, SCOUT } from '../use-ai-picks';
 import type { AiRead } from '../use-ai-picks';
 import type { Analysis, PropLine } from '@crowniq/contracts';
 import { memo } from 'react';
@@ -48,7 +48,7 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, more = 0,
   onPress }: { line: PropLine; analysis: Analysis | undefined; ai?: AiRead; more?: number; photoUrl: string | null | undefined;
   accent: string; window: Window; expired?: boolean; onPress: () => void }) {
   const gkrPass = !analysis || analysis.direction === 'PASS';
-  // Where GKR can't score, the AI read (ChatGPT + Claude) is the pick, labeled as such.
+  // Where GKR can't score, the Scout read (ChatGPT + Claude) is the pick, labeled as such.
   const aiPick = gkrPass && aiPlay(ai) ? ai! : null;
   const direction = aiPick ? aiPick.pick as 'MORE' | 'LESS' : analysis?.direction === 'LESS' ? 'LESS' : 'MORE';
   const { log } = usePlayerGames(line);
@@ -81,7 +81,7 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, more = 0,
         </View>
         <View style={styles.ringBox}><ScoreRing score={aiPick ? aiPick.score : analysis?.score ?? null}
           band={aiPick ? undefined : analysis?.scoreBand} size={64} />
-          {aiPick && <Text style={styles.aiTag}>AI read</Text>}</View>
+          {aiPick && <Text style={styles.aiTag}>{SCOUT.toUpperCase()}</Text>}</View>
         <View style={styles.edgeBox}>
           <Text style={[styles.edge, (stats.edge ?? 0) < 0 && styles.edgeBad]}>
             {stats.edge === null ? '—' : `${signed(stats.edge * 100)}%`}</Text>
@@ -94,8 +94,8 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, more = 0,
       <View style={styles.evidence}><EvidenceBadge quality={analysis?.evidenceQuality ?? 'NONE'}
         detail={evidenceDetail(analysis)} /></View>
       <BooksBadge view={books?.get(line.id)} side={pass ? null : direction} />
-      {aiPick && <Text style={styles.aiNote}>GKR can’t score this stat yet. ChatGPT and Claude researched it; this is their
-        read, not a GKR score.</Text>}
+      {aiPick && <Text style={styles.aiNote}>GKR can’t score this stat yet. {SCOUT} (ChatGPT and Claude) researched it;
+        this is {SCOUT}’s score, not a GKR score.</Text>}
       {more > 0 && <Text style={styles.more}>+{more} more {more === 1 ? 'play' : 'plays'} on {line.playerName.split(' ')[0]}’s page</Text>}
       {expired && <Text style={styles.expired}>Evidence expired, reanalysis needed</Text>}
     </GlowCard>

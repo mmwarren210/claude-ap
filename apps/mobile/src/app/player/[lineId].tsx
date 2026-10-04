@@ -27,15 +27,15 @@ import type { LineStyle } from '../../theme';
 import { useBoard } from '../../use-board';
 import { useDraft } from '../../use-draft';
 import { usePlayerGames } from '../../use-player-games';
-import { agreementText, aiPlay, providerName, useAiPicks } from '../../use-ai-picks';
+import { agreementText, aiPlay, providerName, SCOUT, useAiPicks } from '../../use-ai-picks';
 
 /** GKR couldn't score these (no model for the stat, or its data is missing); ChatGPT and Claude can research them. */
 const AI_ELIGIBLE = new Set(['MODEL_SUPPORT_INCOMPLETE', 'STALE_OR_MISSING_EVIDENCE', 'INSUFFICIENT_MODEL_COVERAGE',
   'MODEL_CALIBRATION_UNAPPROVED']);
 const askErrors: Readonly<Record<string, string>> = {
-  DAILY_LIMIT_REACHED: 'You’ve used today’s Ask AI picks. More tomorrow.',
+  DAILY_LIMIT_REACHED: `You’ve used today’s Ask ${SCOUT} picks. More tomorrow.`,
   GKR_SCORES_THIS_LINE: 'GKR already has a read on this line.', EVENT_STARTED: 'This game has started.',
-  AI_UNCONFIGURED: 'AI research is off on this server.',
+  AI_UNCONFIGURED: `${SCOUT} is off on this server.`,
 };
 
 type TrackedHistory = { label: string; recent: { eventDate: string; actual: number | null; grade: string;
@@ -137,7 +137,7 @@ export default function PlayerResearch() {
     if (gkr) return { text: `GKR ${Math.round(gkr.a!.score!)} ${gkr.a!.direction} ${formatLine(gkr.item.threshold)}`, lineId: gkr.item.id };
     const read = lines.map((item) => ({ item, r: aiReads?.get(item.id) })).filter(({ r }) => aiPlay(r))
       .sort((x, y) => (y.r!.score ?? 0) - (x.r!.score ?? 0))[0];
-    if (read) return { text: `AI ${read.r!.score} ${read.r!.pick} ${formatLine(read.item.threshold)}`, lineId: read.item.id };
+    if (read) return { text: `${SCOUT} ${read.r!.score} ${read.r!.pick} ${formatLine(read.item.threshold)}`, lineId: read.item.id };
     return { text: 'PASS', lineId: null };
   };
   const aiSide = (!analysis || analysis.direction === 'PASS') && aiPlay(ai) ? ai!.pick as 'MORE' | 'LESS' : null;
@@ -329,11 +329,11 @@ export default function PlayerResearch() {
         </View>
       </View>}
       {gkrPass && ai && <View style={styles.section}>
-        <Text style={styles.sectionTitle}>AI read · {ai.pick === 'PASS' ? 'PASS' : `${ai.pick} ${formatLine(line.threshold)}`}
+        <Text style={styles.sectionTitle}>{SCOUT} · {ai.pick === 'PASS' ? 'PASS' : `${ai.pick} ${formatLine(line.threshold)}`}
           {ai.score !== null ? ` · ${ai.score}` : ''}</Text>
         <View style={styles.panel}>
-          <Text style={styles.factorDetail}>{agreementText(ai)}. GKR can’t score this stat yet, so this is ChatGPT and Claude’s
-            research, not a GKR score.</Text>
+          <Text style={styles.factorDetail}>{agreementText(ai)}. GKR can’t score this stat yet, so {SCOUT} (ChatGPT and Claude)
+            researched it. This is {SCOUT}’s score, not a GKR score.</Text>
           {ai.providers.map((item) => <View key={item.provider} style={styles.aiProvider}>
             <Text style={styles.factorName}>{providerName(item.provider)} · {item.pick}{item.pick !== 'PASS' ? ` · ${item.confidence}` : ''}</Text>
             {!!item.summary && <Text style={styles.factorLine}>{item.summary}</Text>}
@@ -343,7 +343,7 @@ export default function PlayerResearch() {
           </View>)}
         </View>
       </View>}
-      {canAsk && <GhostButton label={asking ? 'ChatGPT and Claude are researching…' : 'Ask AI (ChatGPT + Claude)'} icon="robot-outline"
+      {canAsk && <GhostButton label={asking ? `${SCOUT} is researching…` : `Ask ${SCOUT} (ChatGPT + Claude)`} icon="binoculars"
         onPress={() => void askAi()} disabled={asking} />}
       {pass && analysis && <Notice title="PASS" detail={analysis.rationale} />}
       {analysis?.reviewStatus === 'SECOND_LOOK' && <Notice title="2nd Look"
