@@ -5,6 +5,7 @@ import type { OddsProvider } from '@crowniq/engine';
 import { NFL_TEAMS } from '../current-context.js';
 import type { ScrapedLineStore, StoredLine } from './line-store.js';
 import { leagueInfo, lineMarket, sameLineKey } from './markets.js';
+import { prizePicksSides } from './scraped-line.js';
 export { marketKey } from './markets.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 24);
@@ -74,7 +75,7 @@ export class ScrapedPrizePicksProvider implements OddsProvider<PropLine> {
         eventStartTime: line.startTime,
         playerId: league.key + ':' + hash(line.player.trim().toLowerCase()), playerName: line.player,
         team, opponent, homeTeam: sides.length === 2 ? sides[1] : null, awayTeam: sides.length === 2 ? sides[0] : null,
-        market: lineMarket(line), threshold: line.line, availableDirections: line.directions,
+        market: lineMarket(line), threshold: line.line, availableDirections: prizePicksSides(line.tier, line.directions),
         lineType: line.tier, fetchedAt: line.lastSeenAt,
         ...(line.imageUrl ? { playerImageUrl: line.imageUrl } : {}),
       });

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { PlayableDirection } from '@crowniq/contracts';
+import { prizePicksSides } from './scraped-line.js';
 import type { ReadResult, ScrapedTier, ScraperSource, TeamSide } from './scraped-line.js';
 
 const id = z.union([z.string(), z.number()]).transform(String);
@@ -36,8 +37,7 @@ export const zenPrizePicks: ScraperSource = {
     const gameId = row.game_external_id ?? row.game_id;
     if (!gameId) return { skip: 'NO_GAME' };
     const allowed = (row.allowed_wager_types ?? '').toLowerCase();
-    const directions: PlayableDirection[] = allowed === 'over' ? ['MORE'] : allowed === 'under' ? ['LESS']
-      : allowed ? ['MORE', 'LESS'] : tier === 'REGULAR' ? ['MORE', 'LESS'] : ['MORE'];
+    const directions = prizePicksSides(tier, allowed === 'over' ? ['MORE'] : allowed === 'under' ? ['LESS'] : ['MORE', 'LESS']);
     const home = side(row.home_team, row.home_team_name), away = side(row.away_team, row.away_team_name);
     const opponent = row.player_team && home && away
       ? row.player_team === home.abbreviation ? away.abbreviation : row.player_team === away.abbreviation ? home.abbreviation : null

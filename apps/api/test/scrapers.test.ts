@@ -273,3 +273,13 @@ test('runs that come back empty are counted so a broken scraper shows up', async
     assert.equal((await puller.status()).sources[0].blankRunsInARow, 0);
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
+
+test('Goblins and Demons stay MORE-only whatever side label a source sends', () => {
+  for (const odds_tier of ['goblin', 'demon']) {
+    const read = zenPrizePicks.read(zenRow({ odds_tier, allowed_wager_types: 'under_or_over' }), now);
+    assert.ok('line' in read);
+    assert.deepEqual(read.line.directions, ['MORE']);
+  }
+  const regular = zenPrizePicks.read(zenRow(), now);
+  assert.ok('line' in regular && regular.line.directions.length === 2);
+});

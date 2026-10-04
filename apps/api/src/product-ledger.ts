@@ -63,7 +63,9 @@ interface PrivateCrown {id:string;accountId:string;trackedPickIds:string[];saved
   /** A personal Crown's legs, as saved. It holds the user's own calls, so it stays out of GKR's tracked record. */
   personalLegs?:PersonalLeg[]}
 interface PersonalLeg {lineId:string;playerName:string;market:string;threshold:number;direction:'MORE'|'LESS';
-  lineType:string;eventStartTime:string;score:number|null}
+  lineType:string;eventStartTime:string;score:number|null;
+  /** The line as saved, so results can grade the leg (outside GKR's tracked record). */
+  lineSnapshot?:PropLine;grade?:Outcome;actual?:number|null}
 interface LegacyData {version:1;decisions:TrackedDecision[];profiles:PublicProfile[];
   crowns:PublicCrown[];follows:Follow[];publicCredits:{publicId:string;trackedPickId:string}[]}
 interface Data extends Omit<LegacyData,'version'> {version:2;accounts:Account[];sessions:Session[];
@@ -451,7 +453,8 @@ export class ProductLedger {
           Date.parse(line.eventStartTime)<=this.clock().getTime())throw new Error('INVALID_OR_STALE_CROWN');
         const backed=analysis&&analysis.direction===direction&&analysis.score!==null?analysis.score:null;
         return {lineId,playerName:line.playerName,market:line.market,threshold:line.threshold,direction,
-          lineType:line.lineType,eventStartTime:line.eventStartTime,score:backed,playerId:line.playerId};
+          lineType:line.lineType,eventStartTime:line.eventStartTime,score:backed,playerId:line.playerId,
+          lineSnapshot:structuredClone(line),grade:'PENDING' as Outcome};
       });
       if(new Set(saved.map((leg)=>leg.playerId)).size!==saved.length)throw new Error('CROWN_CONSTRAINT_REJECTED:DUPLICATE_PLAYER');
       const personalLegs=saved.map(({playerId:_playerId,...leg})=>leg);
@@ -469,7 +472,8 @@ export class ProductLedger {
     return {crowns:data.privateCrowns.filter((item)=>item.accountId===accountId && !item.removedAt)
       .sort((a,b)=>b.savedAt.localeCompare(a.savedAt)).slice(0,30).map((item)=>item.personalLegs?{id:item.id,
         savedAt:item.savedAt,personal:true,legs:item.personalLegs.map((leg)=>({playerName:leg.playerName,market:leg.market,
-          threshold:leg.threshold,direction:leg.direction,lineType:leg.lineType,score:leg.score,grade:'PENDING'}))}:{id:item.id,
+          threshold:leg.threshold,direction:leg.direction,lineType:leg.lineType,score:leg.score,grade:leg.grade??'PENDING',
+          actual:leg.actual??null}))}:{id:item.id,
         savedAt:item.savedAt,legs:item.trackedPickIds.flatMap((id)=>{
           const decision=decisions.get(id);
           return decision?[{playerName:decision.playerName,market:decision.market,
@@ -511,7 +515,13 @@ export class ProductLedger {
     const data=await this.read();return {total:data.decisions.length,
       decisions:data.decisions.slice().reverse().slice(offset,offset+limit)};
   });}
-  async grade(facts:readonly ResultFact[]):Promise<{graded:number;unmatched:number}>{
+  /** Your-call legs still waiting for a result, with the line each was saved on. */
+  async pendingPersonalLegs(){return this.exclusive(async()=>{
+    const data=await this.read();
+    return data.privateCrowns.filter((crown)=>!crown.removedAt).flatMap((crown)=>(crown.personalLegs??[])
+      .flatMap((leg)=>leg.lineSnapshot&&(leg.grade??'PENDING')==='PENDING'?[{lineSnapshot:leg.lineSnapshot}]:[]));
+  });}
+  async grade(facts:readonly ResultFact[]):Promise<{graded:number;unmatched:number;personal:number}>{
     return this.exclusive(async()=>{
       const parsed=facts.map((fact)=>resultFactSchema.parse(fact));
       const key=(value:{eventId:string;playerId:string;market:string})=>JSON.stringify([value.eventId,value.playerId,value.market]);
@@ -534,10 +544,22 @@ export class ProductLedger {
         decision.gradedAt=this.clock().toISOString();graded++;matched.add(identity);
         gradedDecisions.push(structuredClone(decision));
       }
-      if(graded)await this.write(data);
+      // Your-call legs are graded from the same facts, but never enter the tracked record or history.
+      let personal=0;
+      for(const leg of data.privateCrowns.flatMap((crown)=>crown.personalLegs??[])){
+        if(!leg.lineSnapshot||(leg.grade??'PENDING')!=='PENDING')continue;
+        const identity=key({eventId:leg.lineSnapshot.eventId,playerId:leg.lineSnapshot.playerId,market:leg.market}),
+          fact=lookup.get(identity);
+        if(!fact||Date.parse(fact.completedAt)>this.clock().getTime()||
+          Date.parse(fact.completedAt)<Date.parse(leg.eventStartTime))continue;
+        leg.grade=fact.status==='DNP'?'DNP':fact.status==='VOID'?'VOID':fact.actual===leg.threshold?'PUSH':
+          ((fact.actual!>leg.threshold)===(leg.direction==='MORE'))?'WIN':'LOSS';
+        leg.actual=fact.actual;personal++;matched.add(identity);
+      }
+      if(graded||personal)await this.write(data);
       if(this.historySink&&gradedDecisions.length)
         await Promise.allSettled(gradedDecisions.map((decision)=>this.historySink!.recordGradedDecision(decision)));
-      return {graded,unmatched:parsed.length-matched.size};
+      return {graded,unmatched:parsed.length-matched.size,personal};
     });
   }
   async learningSummary(){return this.exclusive(async()=>{

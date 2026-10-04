@@ -355,7 +355,7 @@ test('re-tracking the same decision keeps one decision and records changed reads
     assert.equal(await ledger.track(build('dedupe','alpha',25.5),[]),1);
     clock=new Date('2030-09-26T00:00:00Z');
     // One result grades each distinct line once: two decisions, never a copy per re-analysis.
-    assert.deepEqual(await ledger.grade([fact(board.board.lines[0],30)]),{graded:2,unmatched:0});
+    assert.deepEqual(await ledger.grade([fact(board.board.lines[0],30)]),{graded:2,unmatched:0,personal:0});
     assert.deepEqual([(await ledger.learningSummary()).tracked,(await ledger.learningSummary()).graded],[2,2]);
   }finally{await rm(folder,{recursive:true,force:true});}
 });

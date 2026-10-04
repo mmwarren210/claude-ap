@@ -55,16 +55,21 @@ export class ProductGradingWorker {
           nflverseTrackedMarkets.includes(item.market)));
         if(offset+500>=page.total)break;
       }
-      if(!pending.length){
+      // Your-call legs in personal Crowns are graded from the same results, outside the tracked record.
+      const personal=(await this.ledger.pendingPersonalLegs()).filter(({lineSnapshot})=>lineSnapshot.sport==='NFL'&&
+        nflverseTrackedMarkets.includes(lineSnapshot.market));
+      if(!pending.length&&!personal.length){
         const result={graded:0,pending:0};this.lastResult=result;this.lastError=null;return result;
       }
+      const targets=[...pending,...personal.map(({lineSnapshot})=>({eventId:lineSnapshot.eventId,
+        playerId:lineSnapshot.playerId,lineSnapshot}))];
       const now=this.clock(),mappings=this.mappingPath?await readNflverseMappings(this.mappingPath):[],
         map=new Map(mappings.map((item)=>[JSON.stringify([item.eventId,item.playerId]),item])),
-        manual=pending.flatMap((decision)=>{
+        manual=targets.flatMap((decision)=>{
           const mapping=map.get(JSON.stringify([decision.eventId,decision.playerId]));
           return mapping&&Date.parse(mapping.completedAt)<=now.getTime()? [{decision,mapping}]:[];
         }),
-        unresolved=pending.filter((decision)=>!map.has(JSON.stringify([decision.eventId,decision.playerId]))&&
+        unresolved=targets.filter((decision)=>!map.has(JSON.stringify([decision.eventId,decision.playerId]))&&
           now.getTime()>=Date.parse(decision.lineSnapshot.eventStartTime)+6*60*60_000);
       const seasons=[...new Set([
         ...manual.map((item)=>item.mapping.season),

@@ -239,7 +239,7 @@ test('the guest route is off without a configured pass and needs a device id',as
 
 test('a personal Crown keeps the user own calls outside the tracked record',async()=>{
   const folder=await mkdtemp(join(tmpdir(),'crowniq-personal-'));
-  try{const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>start,()=>[]);
+  try{let clock=start;const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>clock,()=>[]);
     const user=await ledger.register('person@example.org','long-private-passphrase','Person_1');
     const account=(await ledger.authenticate(user.token))!.accountId;
     const sample=board();
@@ -257,5 +257,14 @@ test('a personal Crown keeps the user own calls outside the tracked record',asyn
     assert.equal((crowns[0] as {personal?:boolean}).personal,true);
     assert.deepEqual(crowns[0].legs.map((leg)=>leg.score),[89,null]);
     assert.equal((await ledger.userPicks(account)).total,0,'personal Crowns do not create tracked picks');
+    assert.equal((await ledger.pendingPersonalLegs()).length,2);
+    const line=pass.board.lines[1];
+    clock=new Date('2030-09-25T06:00:00Z');
+    const result=await ledger.grade([{eventId:line.eventId,playerId:line.playerId,market:line.market,status:'FINAL',
+      actual:30,sourceName:'Fixture',sourceUrl:'https://example.org/result',completedAt:'2030-09-25T04:00:00Z'}]);
+    assert.deepEqual([result.graded,result.personal],[0,1],'graded as a your-call leg, not a tracked decision');
+    const graded=(await ledger.userCrowns(account)).crowns[0].legs;
+    assert.deepEqual(graded.map((leg)=>leg.grade),['PENDING','WIN']);
+    assert.equal((await ledger.pendingPersonalLegs()).length,1);
   }finally{await rm(folder,{recursive:true,force:true});}
 });

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { PlayableDirection } from '@crowniq/contracts';
 import type { DfsApp, ScrapedLine, ScrapedTier, ScraperSource } from './scraped-line.js';
+import { prizePicksSides } from './scraped-line.js';
 
 /** Apify actor `lergassy/dfs-props-scraper` (PrizePicks and Underdog, one row per prop). */
 export const LERGASSY_ACTOR = 'lergassy/dfs-props-scraper';
@@ -40,8 +41,8 @@ export function readLergassyRow(raw: unknown, now: Date): { line: ScrapedLine } 
   if (!row.gameId) return { skip: 'NO_GAME' };
   const allowed = (row.allowedPicks ?? '').toLowerCase();
   // Goblins and Demons are MORE-only on PrizePicks; a Regular line with no stated sides offers both.
-  const directions: PlayableDirection[] = allowed === 'over' ? ['MORE'] : allowed === 'under' ? ['LESS']
-    : allowed ? ['MORE', 'LESS'] : tier === 'REGULAR' ? ['MORE', 'LESS'] : ['MORE'];
+  const stated: PlayableDirection[] = allowed === 'over' ? ['MORE'] : allowed === 'under' ? ['LESS'] : ['MORE', 'LESS'];
+  const directions = app === 'prizepicks' ? prizePicksSides(tier, stated) : tier === 'REGULAR' || allowed ? stated : ['MORE'] as PlayableDirection[];
   // Only real headshots: PrizePicks also serves team logos (/images/teams/) and a placeholder in this field.
   const image = row.image && row.image.startsWith('https://') && !/placeholder|\/images\/teams\//.test(row.image) ? row.image : null;
   // Underdog's opponent field reads "OSU @ IOWA"; keep only the other side.

@@ -32,6 +32,14 @@ export interface ScrapedLine {
   readonly multipliers?: Partial<Record<PlayableDirection, number>> | null;
 }
 
+/**
+ * The sides PrizePicks really offers: Goblins and Demons are MORE-only, whatever a source's side label says (sources
+ * use labels CrownIQ does not recognize, and joining Over/Under outcomes can add a LESS that does not exist).
+ */
+export function prizePicksSides(tier: ScrapedTier, directions: readonly PlayableDirection[]): PlayableDirection[] {
+  return tier === 'REGULAR' ? [...directions] : ['MORE'];
+}
+
 export interface TeamSide { readonly abbreviation: string; readonly name: string | null }
 
 export type ReadResult<Skip extends string = string> = { line: ScrapedLine } | { skip: Skip };
