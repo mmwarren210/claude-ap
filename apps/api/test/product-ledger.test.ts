@@ -429,3 +429,41 @@ test('picks record their snapshot age, and an optional limit refuses old snapsho
     assert.equal((await ledger.share('age-actor',ids,fresh,[])).legs.length,2);
   }finally{await rm(folder,{recursive:true,force:true});}
 });
+
+test('background grading grades other sports from box scores, tracked picks and personal legs alike',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-background-box-'));
+  try{
+    let clock=now;const ledger=new ProductLedger(join(folder,'data.json'),'CROWN_STRONG',()=>clock);
+    const board=build('nhl-event','skater',2.5,'CROWN_STRONG','GKR-NHL-1','shots_on_goal');
+    const line=board.board.lines[0];
+    Object.assign(line,{sport:'NHL',league:'NHL',playerName:'Tyler Bertuzzi',eventStartTime:'2030-09-24T23:00:00Z',
+      homeTeam:'Sabres',awayTeam:'Blackhawks',team:'Blackhawks',opponent:'Sabres',availableDirections:['MORE','LESS']});
+    await ledger.track(board,[]);
+    const account=(await ledger.authenticate((await ledger.register('box@example.org','long-private-passphrase',
+      'Box_1')).token))!.accountId;
+    const second=build('nhl-event','other',0.5,'CROWN_STRONG','GKR-NHL-1','goals').board.lines[0];
+    Object.assign(second,{sport:'NHL',league:'NHL',playerName:'Other Skater',eventStartTime:'2030-09-24T23:00:00Z',
+      homeTeam:'Sabres',awayTeam:'Blackhawks',team:'Sabres',opponent:'Blackhawks',availableDirections:['MORE','LESS']});
+    await ledger.savePersonalCrown(account,[{lineId:line.id,direction:'LESS'},{lineId:second.id,direction:'MORE'}],
+      combine(board,boardResponseSchema.parse({board:{provider:'prizepicks',fetchedAt:now.toISOString(),lines:[second]},
+        analyses:[],rankedLineIds:[],builtAt:now.toISOString()})));
+    const { BoxScoreResults } = await import('../src/box-score-results.js');
+    const espn:typeof fetch=async(input)=>{
+      const url=String(input);
+      if(url.includes('/scoreboard'))return new Response(JSON.stringify({events:[{id:'77',date:'2030-09-24T23:00Z',
+        status:{type:{completed:true,state:'post'}},competitions:[{competitors:[
+          {team:{displayName:'Buffalo Sabres'}},{team:{displayName:'Chicago Blackhawks'}}]}]}]}),{status:200});
+      return new Response(JSON.stringify({boxscore:{players:[{team:{displayName:'Chicago Blackhawks'},statistics:[
+        {name:'forwards',keys:['goals','shotsTotal'],athletes:[{athlete:{displayName:'Tyler Bertuzzi'},stats:['1','4']},
+          {athlete:{displayName:'Other Skater'},stats:['0','1']}]}]}]}}),{status:200});
+    };
+    clock=new Date('2030-09-25T06:00:00Z');
+    const worker=new ProductGradingWorker(ledger,null,new NflverseResultsFeed(async()=>new Response('',{status:200})),
+      ()=>clock,new BoxScoreResults(espn,()=>clock));
+    const result=await worker.runOnce();
+    assert.equal(result.boxScores?.graded,3,'one tracked decision and two personal legs');
+    assert.equal((await ledger.listDecisions()).decisions[0].grade,'WIN');
+    const crown=(await ledger.userCrowns(account)).crowns[0];
+    assert.deepEqual(crown.legs.map((leg)=>[leg.grade,'actual' in leg?leg.actual:null]),[['LOSS',4],['LOSS',0]]);
+  }finally{await rm(folder,{recursive:true,force:true});}
+});

@@ -136,3 +136,30 @@ test('the public demo shows the next three days of real lines without a profile,
     assert.equal((await app.inject({method:'POST',url:'/v1/demo/board'})).statusCode,404);
   }finally{await app.close();await rm(folder,{recursive:true,force:true});}
 });
+
+test('a Crown GKR turns down is still saved, as the user own picks',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-crown-fallback-'));
+  const cache=new BoardCache(join(folder,'board.json'));
+  const clock=()=>new Date('2030-09-24T12:00:00Z');
+  const lines=['a','b'].map((name)=>fixtureLine({id:`line-${name}`,sourceLineId:`source-${name}`,playerId:name,
+    playerName:`Player ${name}`,eventStartTime:'2030-09-25T00:00:00Z',fetchedAt:'2030-09-24T11:00:00Z',
+    availableDirections:['MORE','LESS']}));
+  await cache.save({board:boardSchema.parse({provider:'prizepicks',fetchedAt:'2030-09-24T11:00:00Z',lines}),
+    evidence:[],researchStatus:'UNCONFIGURED',lastSuccessfulRefresh:null,secondLookAudits:{}});
+  const ledger=new ProductLedger(join(folder,'product.json'),'CROWN_STRONG',clock);
+  const app=buildServer({boardCache:cache,clock,product:ledger});
+  try {
+    const session=(await app.inject({method:'POST',url:'/v1/auth/register',
+      payload:{username:'Picker_1',email:'picker@example.org',password:'private-passphrase-1'}})).json() as {token:string};
+    const headers={authorization:`Bearer ${session.token}`};
+    // No model scores these lines, so GKR's Crown rules reject it; it must still be kept.
+    const saved=await app.inject({method:'POST',url:'/v1/me/crowns',headers,
+      payload:{lineIds:['line-a','line-b'],directions:{'line-a':'MORE','line-b':'LESS'}}});
+    assert.equal(saved.statusCode,201);
+    assert.equal(saved.json().personal,true);
+    assert.ok(saved.json().belowGkr.length);
+    const crowns=(await app.inject({url:'/v1/me/crowns',headers})).json().crowns;
+    assert.equal(crowns.length,1);
+    assert.deepEqual(crowns[0].legs.map((leg:{direction:string})=>leg.direction),['MORE','LESS']);
+  } finally {await app.close();await rm(folder,{recursive:true,force:true});}
+});

@@ -1,5 +1,6 @@
 import { autoResolveNflverseMapping, nflverseTrackedMarkets, NflverseResultsFeed,
   readNflverseMappings, trackedResultFromNflverse } from './nflverse-results.js';
+import type { BoxScoreResults } from './box-score-results.js';
 import { ProductLedger } from './product-ledger.js';
 import type { ResultFact } from './product-ledger.js';
 
@@ -10,7 +11,7 @@ export interface ProductGradingStatus {
   lastStartedAt:string|null;
   lastFinishedAt:string|null;
   nextRunAt:string|null;
-  lastResult:{graded:number;pending:number}|null;
+  lastResult:{graded:number;pending:number;boxScores?:{graded:number;unsupported:number;waiting:number}}|null;
   lastError:string|null;
 }
 
@@ -26,11 +27,13 @@ export class ProductGradingWorker {
   private lastStartedAt:string|null=null;
   private lastFinishedAt:string|null=null;
   private nextRunAt:string|null=null;
-  private lastResult:{graded:number;pending:number}|null=null;
+  private lastResult:ProductGradingStatus['lastResult']=null;
   private lastError:string|null=null;
   constructor(private readonly ledger:ProductLedger,private readonly mappingPath:string|null=null,
     private readonly feed:NflverseResultsFeed=new NflverseResultsFeed(),
-    private readonly clock:()=>Date=()=>new Date()){}
+    private readonly clock:()=>Date=()=>new Date(),
+    /** Every other sport (and NFL stats nflverse does not carry) from public box scores; null turns it off. */
+    private readonly boxScores:BoxScoreResults|null=null){}
   status():ProductGradingStatus{return {
     running:this.running,scheduled:this.timer!==null,intervalMs:this.intervalMs,
     lastStartedAt:this.lastStartedAt,lastFinishedAt:this.lastFinishedAt,nextRunAt:this.nextRunAt,
@@ -48,6 +51,40 @@ export class ProductGradingWorker {
     if(this.running)return {graded:0,pending:0};
     this.running=true;this.lastStartedAt=this.clock().toISOString();
     try {
+      // nflverse first (NFL's tracked stats); then box scores grade whatever is still pending, in every sport.
+      let nfl={graded:0,pending:0},nflError:unknown=null;
+      try{nfl=await this.nflverse();}catch(error){nflError=error;}
+      const boxScores=this.boxScores?await this.gradeFromBoxScores():undefined;
+      const result={graded:nfl.graded+(boxScores?.graded??0),pending:nfl.pending,...boxScores?{boxScores}:{}};
+      if(nflError&&!boxScores?.graded)throw nflError;
+      this.lastResult=result;this.lastError=nflError?errorCode(nflError):null;
+      return result;
+    }catch(error){
+      this.lastError=errorCode(error);throw error;
+    }finally{
+      this.lastFinishedAt=this.clock().toISOString();this.running=false;
+      if(this.timer&&this.intervalMs!==null)
+        this.nextRunAt=new Date(this.clock().getTime()+this.intervalMs).toISOString();
+    }
+  }
+  /** Picks from the last week that are still pending, tracked and personal alike, graded from box scores. */
+  private async gradeFromBoxScores(){
+    const since=this.clock().getTime()-7*86_400_000,targets=[];
+    for(let offset=0;;offset+=500){
+      const page=await this.ledger.listDecisions(offset,500);
+      targets.push(...page.decisions.filter((item)=>item.grade==='PENDING'&&
+        Date.parse(item.lineSnapshot.eventStartTime)>=since));
+      if(offset+500>=page.total)break;
+    }
+    for(const {lineSnapshot} of await this.ledger.pendingPersonalLegs())
+      if(Date.parse(lineSnapshot.eventStartTime)>=since)
+        targets.push({eventId:lineSnapshot.eventId,playerId:lineSnapshot.playerId,lineSnapshot});
+    const report=await this.boxScores!.results(targets);
+    const graded=report.facts.length?await this.ledger.grade(report.facts):{graded:0,personal:0};
+    return {graded:graded.graded+graded.personal,unsupported:report.unsupported,waiting:report.waiting};
+  }
+  private async nflverse(){
+    {
       const pending=[];
       for(let offset=0;;offset+=500){
         const page=await this.ledger.listDecisions(offset,500);
@@ -58,9 +95,7 @@ export class ProductGradingWorker {
       // Your-call legs in personal Crowns are graded from the same results, outside the tracked record.
       const personal=(await this.ledger.pendingPersonalLegs()).filter(({lineSnapshot})=>lineSnapshot.sport==='NFL'&&
         nflverseTrackedMarkets.includes(lineSnapshot.market));
-      if(!pending.length&&!personal.length){
-        const result={graded:0,pending:0};this.lastResult=result;this.lastError=null;return result;
-      }
+      if(!pending.length&&!personal.length)return {graded:0,pending:0};
       const targets=[...pending,...personal.map(({lineSnapshot})=>({eventId:lineSnapshot.eventId,
         playerId:lineSnapshot.playerId,lineSnapshot}))];
       const now=this.clock(),mappings=this.mappingPath?await readNflverseMappings(this.mappingPath):[],
@@ -99,14 +134,7 @@ export class ProductGradingWorker {
       const unique=[...new Map(facts.map((fact)=>[JSON.stringify([fact.eventId,
         fact.playerId,fact.market]),fact])).values()];
       const graded=unique.length?await this.ledger.grade(unique):{graded:0};
-      const result={graded:graded.graded,pending:pending.length-graded.graded};
-      this.lastResult=result;this.lastError=null;return result;
-    }catch(error){
-      this.lastError=errorCode(error);throw error;
-    }finally{
-      this.lastFinishedAt=this.clock().toISOString();this.running=false;
-      if(this.timer&&this.intervalMs!==null)
-        this.nextRunAt=new Date(this.clock().getTime()+this.intervalMs).toISOString();
+      return {graded:graded.graded,pending:pending.length-graded.graded};
     }
   }
 }

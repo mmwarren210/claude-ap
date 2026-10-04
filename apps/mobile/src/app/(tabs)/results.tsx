@@ -24,6 +24,8 @@ type Leg = { playerName: string; market: string; threshold: number; direction: s
 /** `personal` Crowns hold the user's own calls; results grade them, but they stay outside GKR's tracked record. */
 type Crown = { id: string; savedAt: string; name?: string; personal?: boolean; legs: Leg[] };
 type Range = 7 | 30 | 0;
+/** GKR Picks: Crowns GKR fully backs (its tracked record). Your Picks: Crowns with your own calls, graded separately. */
+type Book = 'GKR' | 'YOURS';
 const DAY = 86_400_000;
 
 const statusStyle: Readonly<Record<CrownStatus, { color: string; label: string }>> = {
@@ -60,6 +62,7 @@ export default function ResultsScreen() {
   const [range, setRange] = useState<Range>(7);
   const [filter, setFilter] = useState<CrownStatus | 'ALL'>('ALL');
   const [chartRange, setChartRange] = useState<Range>(7);
+  const [book, setBook] = useState<Book>('GKR');
   const refresh = useCallback(async () => {
     setBusy(true);
     try {
@@ -80,17 +83,22 @@ export default function ResultsScreen() {
 
   const inRange = (iso: string, days: Range) => days === 0 || nowMs - Date.parse(iso) <= days * DAY;
   const when = (pick: Pick) => pick.eventStartTime ?? pick.savedAt;
-  const ranged = picks.filter((pick) => inRange(when(pick), range));
+  // Your Picks counts the graded legs of your own Crowns; GKR Picks counts the picks GKR tracks for you.
+  const yourLegs: Pick[] = crowns.filter((crown) => crown.personal).flatMap((crown) => crown.legs.map((leg, index) => ({
+    id: `${crown.id}:${index}`, savedAt: crown.savedAt, playerName: leg.playerName, market: leg.market, sport: '',
+    threshold: leg.threshold, direction: leg.direction, lineType: leg.lineType ?? 'REGULAR', lineScore: leg.score ?? 0,
+    result: leg.grade, actual: leg.actual ?? null })));
+  const ranged = (book === 'GKR' ? picks : yourLegs).filter((pick) => inRange(when(pick), range));
   const graded = ranged.filter((pick) => pick.result === 'WIN' || pick.result === 'LOSS');
   const wins = graded.filter((pick) => pick.result === 'WIN').length;
   const rate = graded.length ? wins / graded.length : null;
-  const yesterday = picks.filter((pick) => { const age = nowMs - Date.parse(when(pick)); return age > 0 && age <= DAY * 1.5; });
+  const yesterday = (book === 'GKR' ? picks : yourLegs).filter((pick) => { const age = nowMs - Date.parse(when(pick)); return age > 0 && age <= DAY * 1.5; });
   const yWins = yesterday.filter((pick) => pick.result === 'WIN').length, yLosses = yesterday.filter((pick) => pick.result === 'LOSS').length;
-  const ordered = [...picks].filter((pick) => pick.result === 'WIN' || pick.result === 'LOSS')
+  const ordered = [...(book === 'GKR' ? picks : yourLegs)].filter((pick) => pick.result === 'WIN' || pick.result === 'LOSS')
     .sort((a, b) => when(b).localeCompare(when(a)));
   let streak = 0; for (const pick of ordered) { if (pick.result !== 'WIN') break; streak++; }
 
-  const outcomes = useMemo(() => crowns.map((crown) => ({ crown, ...crownOutcome(crown.legs.map((leg) => leg.grade)) })), [crowns]);
+  const outcomes = useMemo(() => crowns.filter((crown) => !!crown.personal === (book === 'YOURS')).map((crown) => ({ crown, ...crownOutcome(crown.legs.map((leg) => leg.grade)) })), [crowns, book]);
   const rangedCrowns = outcomes.filter((item) => inRange(item.crown.savedAt, range));
   const settled = rangedCrowns.filter((item) => item.units !== null);
   const units = settled.reduce((sum, item) => sum + (item.units ?? 0), 0);
@@ -124,6 +132,10 @@ export default function ResultsScreen() {
       <Pressable accessibilityRole="button" style={styles.range} onPress={() => setRange(range === 7 ? 30 : range === 30 ? 0 : 7)}>
         <Icon name="calendar-blank-outline" size={18} color={colors.mint} /><Text style={styles.rangeText}>{rangeLabel}</Text>
         <Icon name="chevron-down" size={16} color={colors.text} /></Pressable>
+      <Segmented label="Which picks" value={book} onChange={setBook}
+        options={[{ value: 'GKR' as Book, label: 'GKR Picks' }, { value: 'YOURS' as Book, label: 'Your Picks' }]} />
+      <Text style={styles.footnote}>{book === 'GKR' ? 'Crowns GKR fully backs. This is GKR’s tracked record.'
+        : 'Crowns with your own calls, including picks under GKR’s bar. Graded the same way, kept separate from GKR’s record.'}</Text>
 
       <View style={styles.summary}>
         <View style={styles.cell}><Text style={styles.cellLabel}>Win Rate</Text>
@@ -152,7 +164,8 @@ export default function ResultsScreen() {
       {!!notice && <Text accessibilityRole="alert" style={styles.warning}>{notice}</Text>}
       {busy && !crowns.length && <Notice title="Loading results" detail="Retrieving your saved Crowns and picks." />}
       {!busy && !shown.length && !notice && <Notice title="No Crowns here yet"
-        detail="Save a Crown from the Crown tab and it will be graded here once its games finish." />}
+        detail={book === 'GKR' ? 'Save a Crown GKR backs from the Crown tab and it will be graded here once its games finish.'
+          : 'Crowns with your own calls land here and are graded once their games finish.'} />}
 
       {shown.map(({ crown, status, units: crownUnits }) => {
         const title = crownTitle(crown), state = statusStyle[status];
@@ -165,7 +178,7 @@ export default function ResultsScreen() {
               <Text style={styles.pickSub}>{crown.legs.length} Legs · {new Date(crown.savedAt).toLocaleDateString('en-US',
                 { month: 'short', day: 'numeric', year: 'numeric' })}</Text>
               {average >= 90 && <Text style={styles.confidence}>High confidence</Text>}
-              {crown.personal && <Text style={styles.yourCall}>Your call · outside GKR’s record</Text>}</View>
+              {crown.personal && <Text style={styles.yourCall}>Your picks · outside GKR’s record</Text>}</View>
             <View style={[styles.status, { borderColor: state.color, backgroundColor: alpha(state.color, 0.1) }]}>
               <Text style={[styles.statusText, { color: state.color }]}>{state.label}</Text></View>
             <Text style={[styles.units, { color: crownUnits === null ? colors.textMuted : crownUnits >= 0 ? colors.mint : colors.red }]}>
@@ -183,7 +196,8 @@ export default function ResultsScreen() {
                 <Text style={styles.legLine}>{marketAbbrev(leg.market)} {formatLine(leg.threshold)}{leg.direction === 'MORE' ? '+' : '−'}</Text>
                 {leg.actual !== null && leg.actual !== undefined && <Text style={[styles.legActual,
                   { color: leg.grade === 'WIN' ? colors.mint : colors.red }]}>{leg.actual} {marketAbbrev(leg.market)}</Text>}
-                {leg.opponent ? <Text style={styles.legLine}>vs {leg.opponent}</Text> : null}</View>
+                {leg.opponent ? <Text style={styles.legLine}>vs {leg.opponent}</Text> : null}
+                {crown.personal && leg.score !== null && <Text style={styles.yourCall}>GKR {Math.round(leg.score)}</Text>}</View>
             </View>)}
           </ScrollView>
         </View>;

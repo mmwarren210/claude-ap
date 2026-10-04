@@ -127,10 +127,19 @@ export default function CrownScreen() {
           'share the text instead.'); return;
       }
       // A Crown with your-call legs saves to the profile as personal: kept, but outside GKR's tracked record.
+      // The profile save always sends each leg's side: if GKR's Crown rules turn it down, the server keeps it as
+      // the user's own picks instead of dropping it.
+      const ids = legs.map((leg) => leg.line.id), directions = Object.fromEntries(legs.map((leg) => [leg.line.id, leg.direction]));
       const response = await request(path, { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(backed ? { lineIds: legs.map((leg) => leg.line.id) } : { lineIds: legs.map((leg) => leg.line.id),
-          personal: true, directions: Object.fromEntries(legs.map((leg) => [leg.line.id, leg.direction])) }) });
-      if (response.ok) { setMessage(done); return; }
+        body: JSON.stringify(backed ? path === '/v1/me/crowns' ? { lineIds: ids, directions } : { lineIds: ids }
+          : { lineIds: ids, personal: true, directions }) });
+      if (response.ok) {
+        const body = await response.json().catch(() => ({})) as { personal?: boolean; belowGkr?: string[] };
+        setMessage(path === '/v1/me/crowns' && body.personal ? `Saved to Your Picks in Results. ${backed
+          ? 'A leg is under GKR’s bar for this Crown size, so it’s graded with your picks, not GKR’s record.'
+          : 'It’s graded there, separate from GKR’s record.'}` : done);
+        return;
+      }
       const body = await response.json().catch(() => ({})) as { code?: string; issues?: string[] };
       setMessage(body.code === 'DEMO_READ_ONLY' ? 'Demo mode is read-only. Sign in to save Crowns.'
         : crownIssueMessage(body.issues));
@@ -222,7 +231,7 @@ export default function CrownScreen() {
           <PrimaryButton label={built ? 'Generate New' : 'Generate'} icon="shuffle-variant" onPress={generate}
             style={styles.action} disabled={!candidates.length} />
           <GhostButton label="Save Crown" icon="crown" onPress={() => void save('/v1/me/crowns',
-            'Saved privately to your profile. Track it in Results.')} disabled={legs.length < 2} style={styles.action} />
+            'Saved to GKR Picks in Results. It’s graded once the games finish.')} disabled={legs.length < 2} style={styles.action} />
         </View>
       </GlowCard>
       {!!message && <Text accessibilityRole="alert" style={styles.message}>{message}</Text>}

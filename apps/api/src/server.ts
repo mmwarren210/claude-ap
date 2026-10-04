@@ -632,11 +632,22 @@ export function buildServer(options: ServerOptions = {}) {
       .safeParse(request.body);
     if(!input.success)return reply.code(400).send({code:'INVALID_CROWN'});
     const board=service.getBoard();if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
-    try{return reply.code(201).send(input.data.personal
-      ? await options.product!.savePersonalCrown(user.accountId,
-        input.data.lineIds.map((lineId)=>({lineId,direction:input.data.directions![lineId]!})),board)
-      : await options.product!.savePrivateCrown(user.accountId,input.data.lineIds,board,service.getEvidence()));}
-    catch(error){return reply.code(422).send({code:'CROWN_VALIDATION_FAILED',issues:crownIssues(error)});}
+    const personal=()=>options.product!.savePersonalCrown(user.accountId,input.data.lineIds.map((lineId)=>({lineId,
+      direction:input.data.directions?.[lineId]??board.analyses.find((item)=>item.lineId===lineId)?.direction as 'MORE'|'LESS'})),
+      board);
+    if(input.data.personal){
+      try{return reply.code(201).send({...await personal(),personal:true});}
+      catch(error){return reply.code(422).send({code:'CROWN_VALIDATION_FAILED',issues:crownIssues(error)});}
+    }
+    try{return reply.code(201).send({...await options.product!.savePrivateCrown(user.accountId,input.data.lineIds,board,
+      service.getEvidence()),personal:false});}
+    catch(error){
+      // A Crown that misses GKR's rules (a leg under the Crown minimum, a stale score) is still the user's Crown:
+      // it is kept and graded as their own picks, separate from GKR's record.
+      const belowGkr=crownIssues(error);
+      try{return reply.code(201).send({...await personal(),personal:true,belowGkr});}
+      catch(fallback){return reply.code(422).send({code:'CROWN_VALIDATION_FAILED',issues:crownIssues(fallback)});}
+    }
   });
   app.delete('/v1/me/crowns/:id',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});

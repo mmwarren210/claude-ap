@@ -17,6 +17,7 @@ import { ContextFeeds, injuryReports, kalshiMarkets, pinnacleLines, polymarketMa
 import { ClaudeWebResearchAdapter } from './claude-web-research.js';
 import { ProductLedger } from './product-ledger.js';
 import { ProductGradingWorker } from './background-grading.js';
+import { BoxScoreResults } from './box-score-results.js';
 import { BoardCache } from './board-cache.js';
 import { ApifyClient } from './scrapers/apify-client.js';
 import { ScrapedLineStore } from './scrapers/line-store.js';
@@ -246,8 +247,12 @@ const googleClients=(process.env.CROWNIQ_GOOGLE_CLIENT_IDS??'').split(',').map((
 const appleClients=(process.env.CROWNIQ_APPLE_CLIENT_IDS??'').split(',').map((id)=>id.trim()).filter(Boolean);
 const identityVerifier=googleClients.length||appleClients.length
   ? new ProviderIdentityVerifier({GOOGLE:googleClients,APPLE:appleClients}):null;
-const autoGrade=process.env.CROWNIQ_NFLVERSE_AUTO_GRADE==='true'
-  ? new ProductGradingWorker(product,process.env.NFLVERSE_MAPPING_FILE||null) : null;
+// Saved picks are graded hourly: NFL from nflverse, then every sport box scores carry (MLB's official Stats API,
+// ESPN's public box scores). Grading never changes a GKR score. CROWNIQ_BOX_SCORE_GRADING=false turns box scores off.
+const boxScoreGrading=process.env.CROWNIQ_BOX_SCORE_GRADING!=='false';
+const autoGrade=process.env.CROWNIQ_NFLVERSE_AUTO_GRADE==='true'||boxScoreGrading
+  ? new ProductGradingWorker(product,process.env.NFLVERSE_MAPPING_FILE||null,undefined,undefined,
+    boxScoreGrading?new BoxScoreResults():null) : null;
 // The exported web app (npx expo export -p web), served by this server when present.
 const webAppDir=process.env.CROWNIQ_WEB_DIR ?? fileURLToPath(new URL('../../mobile/dist',import.meta.url));
 // A shared guest link for testers: CROWNIQ_GUEST_PASS_CODE, up to CROWNIQ_GUEST_PASS_MAX devices for
@@ -276,6 +281,8 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provid
   nflverseMappingFile: process.env.NFLVERSE_MAPPING_FILE,
   models });
 autoGrade?.start();
+// A first grading pass shortly after startup, so a deploy doesn't wait an hour for results.
+if(autoGrade)setTimeout(()=>{void autoGrade.runOnce().catch(()=>undefined);},2*60_000).unref();
 app.addHook('onClose',async()=>autoGrade?.stop());
 const host = process.env.API_HOST ?? '127.0.0.1';
 // Hosts such as Railway and Render hand the server its port in PORT.
