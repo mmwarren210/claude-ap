@@ -20,38 +20,58 @@ export interface EvPick {
   readonly gkr: { direction: string; score: number | null } | null;
 }
 
+/** The sportsbooks' no-vig view of one standard line: their average chance of MORE, and each book's. */
+export interface BookView {
+  readonly fairMore: number;
+  readonly books: readonly { book: string; fairMore: number; overAmerican: number | null; underAmerican: number | null }[];
+}
+
+/**
+ * Sportsbook prices for each standard, not-yet-started board line at the same sport, player, stat and exact number.
+ * Goblins and Demons are left out: their numbers are moved on purpose, so a book's price at that number says little.
+ */
+export function bookViews(board: BoardResponse, prices: readonly FairPrice[], now: Date): Map<string, BookView> {
+  const byKey = new Map<string, FairPrice[]>();
+  for (const price of prices) {
+    const key = JSON.stringify([price.sport, normalizedName(price.player), price.market, price.line]);
+    byKey.set(key, [...byKey.get(key) ?? [], price]);
+  }
+  const views = new Map<string, BookView>();
+  for (const line of board.board.lines) {
+    const start = Date.parse(line.eventStartTime);
+    if (line.lineType !== 'REGULAR' || start <= now.getTime()) continue;
+    const matched = (byKey.get(JSON.stringify([line.sport, normalizedName(line.playerName), line.market, line.threshold])) ?? [])
+      .filter((price) => Math.abs(Date.parse(price.startTime) - start) <= 6 * 3600_000);
+    const books = [...new Map(matched.map((price) => [price.book, price])).values()];
+    if (!books.length) continue;
+    views.set(line.id, { fairMore: Math.round(books.reduce((sum, price) => sum + price.fairOver, 0) / books.length * 10_000) / 10_000,
+      books: books.map((price) => ({ book: price.book, fairMore: price.fairOver, overAmerican: price.overAmerican,
+        underAmerican: price.underAmerican })) });
+  }
+  return views;
+}
+
 /**
  * CrownIQ's own +EV: for each standard pick'em line, the sportsbooks' no-vig chance at the same player, stat and number,
  * compared with the break-even chance. Separate from GKR; it never changes a GKR score.
  */
 export function evPicks(board: BoardResponse, prices: readonly FairPrice[], now: Date,
   breakEven = DEFAULT_BREAK_EVEN): EvPick[] {
-  const byKey = new Map<string, FairPrice[]>();
-  for (const price of prices) {
-    const key = JSON.stringify([price.sport, normalizedName(price.player), price.market, price.line]);
-    byKey.set(key, [...byKey.get(key) ?? [], price]);
-  }
+  const lines = new Map(board.board.lines.map((line) => [line.id, line]));
   const analyses = new Map(board.analyses.map((item) => [item.lineId, item]));
   const picks: EvPick[] = [];
-  for (const line of board.board.lines) {
-    const start = Date.parse(line.eventStartTime);
-    // Standard lines only: Goblins and Demons pay differently, so the same break-even does not apply.
-    if (line.lineType !== 'REGULAR' || start <= now.getTime()) continue;
-    const matched = (byKey.get(JSON.stringify([line.sport, normalizedName(line.playerName), line.market, line.threshold])) ?? [])
-      .filter((price) => Math.abs(Date.parse(price.startTime) - start) <= 6 * 3600_000);
-    const books = [...new Map(matched.map((price) => [price.book, price])).values()];
-    if (!books.length) continue;
-    const fairOver = books.reduce((sum, price) => sum + price.fairOver, 0) / books.length;
-    const sides = line.availableDirections.map((side) => ({ side, fair: side === 'MORE' ? fairOver : 1 - fairOver }))
-      .sort((a, b) => b.fair - a.fair);
-    const best = sides[0];
+  for (const [lineId, view] of bookViews(board, prices, now)) {
+    const line = lines.get(lineId)!;
+    const best = line.availableDirections.map((side) => ({ side, fair: side === 'MORE' ? view.fairMore : 1 - view.fairMore }))
+      .sort((a, b) => b.fair - a.fair)[0];
     if (!best) continue;
-    const analysis = analyses.get(line.id);
-    picks.push({ lineId: line.id, playerName: line.playerName, sport: line.sport, market: line.market, threshold: line.threshold,
+    const analysis = analyses.get(lineId);
+    picks.push({ lineId, playerName: line.playerName, sport: line.sport, market: line.market, threshold: line.threshold,
       side: best.side, eventStartTime: line.eventStartTime, fairProbability: Math.round(best.fair * 10_000) / 10_000,
       edge: Math.round((best.fair - breakEven) * 10_000) / 10_000,
-      books: books.map((price) => ({ book: price.book, fair: best.side === 'MORE' ? price.fairOver : Math.round((1 - price.fairOver) * 10_000) / 10_000,
-        overAmerican: price.overAmerican, underAmerican: price.underAmerican })),
+      books: view.books.map((book) => ({ book: book.book,
+        fair: best.side === 'MORE' ? book.fairMore : Math.round((1 - book.fairMore) * 10_000) / 10_000,
+        overAmerican: book.overAmerican, underAmerican: book.underAmerican })),
       gkr: analysis ? { direction: analysis.direction, score: analysis.score } : null });
   }
   return picks.sort((a, b) => b.edge - a.edge);

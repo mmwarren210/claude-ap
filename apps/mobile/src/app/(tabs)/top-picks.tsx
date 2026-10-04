@@ -18,6 +18,8 @@ import { rateTone, StatStrip } from '../../components/ui/StatStrip';
 import { formatLine, gameTime, lineStats, marketLabel, percent } from '../../insights';
 import { colors, radius, rankAccents } from '../../theme';
 import { useAuth } from '../../auth';
+import { BooksBadge } from '../../components/ui/BooksBadge';
+import { useBooks } from '../../use-books';
 import { useBoard } from '../../use-board';
 import { useTipFlow } from '../../components/TipSheet';
 import { usePlayerGames } from '../../use-player-games';
@@ -42,6 +44,7 @@ function PickCard({ card, rank, accent, photoUrl, analysis, onAdd }: { card: Car
   const l10 = lineStats(log, card.threshold, card.direction, 'L10');
   const h2h = lineStats(log, card.threshold, card.direction, 'H2H', card.opponent);
   const note = insight(card, l10, l5, analysis);
+  const books = useBooks();
   return <View style={[styles.card, { borderColor: alpha(accent, 0.6), shadowColor: accent }]}>
     <Pressable accessibilityRole="button" accessibilityLabel={`View ${card.playerName}`} style={styles.tap}
       onPress={() => router.push({ pathname: '/player/[lineId]', params: { lineId: card.lineId } })}>
@@ -76,6 +79,7 @@ function PickCard({ card, rank, accent, photoUrl, analysis, onAdd }: { card: Car
       { label: 'AVG', value: l10.average === null ? '—' : l10.average.toFixed(1) },
       { label: card.opponent ? `vs ${card.opponent}` : 'H2H', value: h2h.average === null ? '—' : h2h.average.toFixed(1) },
     ]} /></View>
+    <BooksBadge view={books?.get(card.lineId)} side={card.direction} />
     </Pressable>
     <PrimaryButton label="Add to Crown" icon="plus" onPress={onAdd} />
   </View>;

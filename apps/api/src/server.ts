@@ -34,7 +34,7 @@ import type { ProductGradingStatus } from './background-grading.js';
 import type { ContextFeeds, GameLine, InjuryNote, MarketOdds } from './context/feeds.js';
 import { gameLinesFor, injuryFor, marketsFor, normalizedName } from './context/match.js';
 import type { SharpPropsFeed } from './context/sharp-props.js';
-import { DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
+import { bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
 import { serveWebApp } from './web-app.js';
 
 /** How far ahead the public demo shows real lines. */
@@ -658,6 +658,14 @@ export function buildServer(options: ServerOptions = {}) {
     const picks=evPicks(board,prices,now(),breakEven);
     return {app:'prizepicks',fetchedAt,breakEven,matched:picks.length,
       picks:picks.filter((pick)=>pick.edge>0).slice(0,150)};
+  });
+  // The sportsbooks' no-vig chance for each standard board line they price (for "Books agree" badges). Never scored.
+  app.get('/v1/books', async (_request, reply) => {
+    const board=service.getBoard();
+    if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    if(!options.sharpProps)return {fetchedAt:null,lines:{}};
+    const {fetchedAt,prices}=await options.sharpProps.current();
+    return {fetchedAt,lines:Object.fromEntries(bookViews(board,prices,now()))};
   });
   app.get('/v1/board', async (_request, reply) => {
     const snapshot = service.getBoard();

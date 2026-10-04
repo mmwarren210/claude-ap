@@ -1,3 +1,5 @@
+import { BooksBadge } from './ui/BooksBadge';
+import { useBooks } from '../use-books';
 import type { Analysis, PropLine } from '@crowniq/contracts';
 import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -48,6 +50,7 @@ export const BoardCard = memo(function BoardCard({ line, analysis, photoUrl, acc
   const stats = lineStats(log, line.threshold, direction, window, line.opponent);
   const l10 = lineStats(log, line.threshold, direction, 'L10');
   const pass = !analysis || analysis.direction === 'PASS';
+  const books = useBooks();
   return <Pressable accessibilityRole="button" onPress={onPress}
     accessibilityLabel={`${line.playerName}, ${marketLabel(line.market)} ${pass ? 'PASS' : direction} ${line.threshold}`}>
     <GlowCard accent={accent}>
@@ -83,6 +86,7 @@ export const BoardCard = memo(function BoardCard({ line, analysis, photoUrl, acc
       <View style={styles.strip}><StatStrip stats={windowStats(stats, l10, window)} /></View>
       <View style={styles.evidence}><EvidenceBadge quality={analysis?.evidenceQuality ?? 'NONE'}
         detail={evidenceDetail(analysis)} /></View>
+      <BooksBadge view={books?.get(line.id)} side={pass ? null : direction} />
       {expired && <Text style={styles.expired}>Evidence expired, reanalysis needed</Text>}
     </GlowCard>
   </Pressable>;

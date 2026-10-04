@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { analysisSchema, boardResponseSchema, propLineSchema } from '@crowniq/contracts';
 import { fixtureLine } from '../../../packages/engine/test/fixtures.js';
-import { DEFAULT_BREAK_EVEN, evPicks } from '../src/context/ev.js';
+import { bookViews, DEFAULT_BREAK_EVEN, evPicks } from '../src/context/ev.js';
 import { fairPrices, SharpPropsFeed } from '../src/context/sharp-props.js';
 
 const now = new Date('2030-10-04T12:00:00Z');
@@ -40,6 +40,9 @@ test('+EV compares the books’ fair chance at the same number with the break-ev
   assert.equal(pick.fairProbability, Math.round(((0.6 / 1.05) + (0.62 / 1.05)) / 2 * 10_000) / 10_000);
   assert.equal(pick.edge, Math.round((pick.fairProbability - DEFAULT_BREAK_EVEN) * 10_000) / 10_000);
   assert.deepEqual(pick.gkr, { direction: 'MORE', score: 86 });
+  const views = bookViews(board, prices, now);
+  assert.deepEqual([...views.keys()], ['pp:1'], 'the books view covers standard lines only');
+  assert.equal(views.get('pp:1')!.fairMore, pick.fairProbability);
   assert.equal(evPicks(board, prices, new Date('2030-10-04T18:00:00Z')).length, 0, 'started games are left out');
 });
 

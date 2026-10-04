@@ -204,3 +204,11 @@ Demons are left out because they pay differently. `GET /v1/ev` serves picks with
 **+EV** tab that also shows what GKR says about the same line. It never changes a GKR score. Tying the two together
 (for example, sportsbook agreement as a GKR factor) is a separate proposal for the owner. Only exact stat names are
 mapped (`marketKeys`); unmapped stats are left out rather than guessed.
+
+### +EV and GKR (owner decision, 2026-10-04)
+
+- **Now:** GKR cards (Board, Top Picks, player screen) show **"Books agree · NN%"** when DraftKings / Hard Rock's no-vig
+  chance backs GKR's side at the same number, or **"Books lean MORE/LESS"** when it does not (`GET /v1/books`,
+  `BooksBadge`). Display only; scores are unchanged.
+- **In about two weeks:** with graded results in hand, measure whether "books agree" picks hit more often; if so, propose
+  a new opt-in GKR model version with a sportsbook-agreement factor, for the owner's approval.
