@@ -45,3 +45,27 @@ test('a ?demo web link opens demo mode', async () => {
   assert.equal(startsInDemo(''), false);
   assert.equal(startsInDemo(undefined), false);
 });
+
+test('demo mode shows the server demo feed when it has lines and the sample board otherwise', async () => {
+  const realFetch = globalThis.fetch;
+  const g = globalThis as { location?: { origin: string } };
+  const { isSampleBoard } = await import('../src/demo/data');
+  const live = { ...demoBoard, builtAt: '2026-10-04T12:00:00.000Z' };
+  const asked: string[] = [];
+  let body: unknown = live;
+  g.location = { origin: 'https://crowniq.example' };
+  globalThis.fetch = (async (url: string) => { asked.push(url);
+    return new Response(JSON.stringify(body), { status: 200 }); }) as typeof fetch;
+  try {
+    const board = await (await demoRequest('/v1/board/lite')).json() as typeof demoBoard;
+    assert.deepEqual(asked, ['https://crowniq.example/v1/demo/board']);
+    assert.equal(isSampleBoard(board), false);
+    body = { ...live, board: { ...live.board, lines: [] } };
+    assert.equal(isSampleBoard(await (await demoRequest('/v1/board')).json() as typeof demoBoard), true);
+    globalThis.fetch = (async () => { throw new Error('offline'); }) as typeof fetch;
+    assert.equal(isSampleBoard(await (await demoRequest('/v1/board')).json() as typeof demoBoard), true);
+  } finally {
+    globalThis.fetch = realFetch;
+    delete g.location;
+  }
+});

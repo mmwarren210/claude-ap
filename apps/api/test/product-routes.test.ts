@@ -112,3 +112,27 @@ test('Social write identity is server trusted and public profiles hide private a
       headers:{'x-test-actor':'owner'}})).statusCode,422); // self-follow
   }finally{await app.close();await rm(folder,{recursive:true,force:true});}
 });
+
+test('the public demo shows the next three days of real lines without a profile, and nothing else',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-demo-routes-'));
+  const cache=new BoardCache(join(folder,'board.json'));
+  const clock=()=>new Date('2030-09-24T12:00:00Z');
+  const line=(id:string,eventStartTime:string)=>fixtureLine({id,sourceLineId:id,playerId:id,eventStartTime,
+    fetchedAt:'2030-09-24T11:00:00Z'});
+  await cache.save({board:boardSchema.parse({provider:'prizepicks',fetchedAt:'2030-09-24T11:00:00Z',
+    lines:[line('started','2030-09-24T11:00:00Z'),line('tomorrow','2030-09-25T00:00:00Z'),
+      line('day-three','2030-09-27T11:00:00Z'),line('next-week','2030-10-01T00:00:00Z')]}),evidence:[],
+    researchStatus:'UNCONFIGURED',lastSuccessfulRefresh:null,secondLookAudits:{}});
+  const app=buildServer({product:new ProductLedger(join(folder,'ledger.json')),requireProfiles:true,
+    boardCache:cache,clock});
+  try{
+    assert.equal((await app.inject('/v1/board')).statusCode,401);
+    const demo=await app.inject('/v1/demo/board');
+    assert.equal(demo.statusCode,200);
+    assert.deepEqual(demo.json().board.lines.map((item:{id:string})=>item.id),['tomorrow','day-three']);
+    const rankings=await app.inject('/v1/demo/rankings');
+    assert.equal(rankings.statusCode,200);
+    assert.ok(Array.isArray(rankings.json().rankings));
+    assert.equal((await app.inject({method:'POST',url:'/v1/demo/board'})).statusCode,404);
+  }finally{await app.close();await rm(folder,{recursive:true,force:true});}
+});

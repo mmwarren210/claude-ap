@@ -18,7 +18,7 @@ import { ResearchBuild } from './research-build.js';
 import { ProductLedger, resultFactSchema } from './product-ledger.js';
 import type { BoardCache } from './board-cache.js';
 import { boardFunnel, outcomeCounts } from './board-funnel.js';
-import { liteBoard } from './board-lite.js';
+import { liteBoard, windowBoard } from './board-lite.js';
 import { ContextRefreshScheduler } from './context-refresh.js';
 import type { ScraperPuller } from './scrapers/scraper-puller.js';
 import type { ContextRefreshOptions, DailyLookupBudget } from './context-refresh.js';
@@ -31,6 +31,9 @@ import { auditPrizePicksLineTypes } from './prizepicks-line-types.js';
 import type { HistoryBackfillService, InternalHistorySport, InternalHistoryStore } from './internal-history.js';
 import type { ProductGradingStatus } from './background-grading.js';
 import { serveWebApp } from './web-app.js';
+
+/** How far ahead the public demo shows real lines. */
+const DEMO_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
 export interface ServerOptions {
   provider?: OddsProvider | null;
@@ -109,7 +112,7 @@ export function buildServer(options: ServerOptions = {}) {
     }
     const path=request.url.split('?')[0];
     if(options.requireProfiles && path.startsWith('/v1/') &&
-      !path.startsWith('/v1/admin/') && !path.startsWith('/v1/auth/') &&
+      !path.startsWith('/v1/admin/') && !path.startsWith('/v1/auth/') && !path.startsWith('/v1/demo/') &&
       !await currentUser(request))return reply.code(401).send({code:'PROFILE_REQUIRED'});
   });
   app.addHook('onReady',async()=>{
@@ -601,9 +604,7 @@ export function buildServer(options: ServerOptions = {}) {
     const snapshot = service.getBoard();
     return snapshot ? liteBoard(snapshot, now()) : reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
   });
-  app.get('/v1/rankings', async (_request, reply) => {
-    const snapshot = service.getBoard();
-    if (!snapshot) return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
+  const rankings=(snapshot:BoardResponse)=>{
     const watchlist=secondLookWatchlist(snapshot);
     return {
       builtAt: snapshot.builtAt,
@@ -613,6 +614,23 @@ export function buildServer(options: ServerOptions = {}) {
       watchlistLineIds: watchlist.lineIds,
       watchlist: watchlist.cards,
     };
+  };
+  app.get('/v1/rankings', async (_request, reply) => {
+    const snapshot = service.getBoard();
+    return snapshot ? rankings(snapshot) : reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
+  });
+  // The public demo (no profile): the saved board's real lines for games in the next three days, read-only.
+  const demoWindow=()=>{
+    const snapshot=service.getBoard(), from=now();
+    return snapshot ? windowBoard(snapshot, from, new Date(from.getTime() + DEMO_WINDOW_MS)) : null;
+  };
+  app.get('/v1/demo/board', async (_request, reply) => {
+    const snapshot = demoWindow();
+    return snapshot ? liteBoard(snapshot, now()) : reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
+  });
+  app.get('/v1/demo/rankings', async (_request, reply) => {
+    const snapshot = demoWindow();
+    return snapshot ? rankings(snapshot) : reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
   });
   app.get('/v1/board/summary', async (_request, reply) => {
     const snapshot=service.getBoard();
@@ -627,7 +645,7 @@ export function buildServer(options: ServerOptions = {}) {
   });
   // Recent logged games for one player and market, from CrownIQ's internal history.
   // Values come from attributed stat rows only; nothing is filled in or inferred.
-  app.get('/v1/players/:sport/:playerId/:market/games', async(request,reply)=>{
+  const gameLog=async(request:FastifyRequest,reply:FastifyReply)=>{
     const parsed=z.object({sport:z.string().min(1).max(20),playerId:z.string().min(1).max(200),
       market:z.string().min(1).max(80)}).safeParse(request.params);
     if(!parsed.success)return reply.code(400).send({code:'INVALID_GAME_LOG_REQUEST'});
@@ -637,7 +655,9 @@ export function buildServer(options: ServerOptions = {}) {
     const log=await options.internalHistory.gameLog(parsed.data.sport,parsed.data.playerId,
       line?.playerName??null,parsed.data.market,now());
     return log&&log.games.length?log:reply.code(404).send({code:'NO_HISTORY'});
-  });
+  };
+  app.get('/v1/players/:sport/:playerId/:market/games', gameLog);
+  app.get('/v1/demo/players/:sport/:playerId/:market/games', gameLog);
   app.get('/v1/history/:sport/:playerId/:market', async(request,reply)=>{
     if(!options.product)return reply.code(503).send({code:'TRACKING_UNCONFIGURED'});
     const parsed=z.object({sport:z.string().min(1),playerId:z.string().min(1),

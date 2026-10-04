@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import type { ReactNode } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../auth';
+import { useOptionalBoard } from '../../use-board';
 import { colors, radius } from '../../theme';
 import { alpha } from './color';
 import { Icon } from './Icon';
@@ -17,6 +18,7 @@ export function CrownLogo({ size = 40 }: { size?: number }) {
 /** Brand header: crown, CrownIQ wordmark, a screen subtitle, and the profile button. */
 export function AppHeader({ subtitle, back = false, right }: { subtitle: string; back?: boolean; right?: ReactNode }) {
   const { profile, demo, logout } = useAuth();
+  const liveDemo = useOptionalBoard()?.freshness === 'DEMO_LIVE';
   const initial = (profile?.username ?? 'C').slice(0, 1).toUpperCase();
   return <View>
   <View style={styles.row}>
@@ -39,7 +41,7 @@ export function AppHeader({ subtitle, back = false, right }: { subtitle: string;
   </View>
   {demo && <View style={styles.demo} accessibilityRole="summary">
     <Icon name="flask-outline" size={16} color={colors.gold} />
-    <Text style={styles.demoText}>Demo · sample data, not real picks</Text>
+    <Text style={styles.demoText}>{liveDemo ? 'Demo · real PrizePicks lines, sample account' : 'Demo · sample data, not real picks'}</Text>
     <Pressable accessibilityRole="button" onPress={() => void logout()} hitSlop={8}>
       <Text style={styles.demoLink}>Sign in</Text></Pressable>
   </View>}

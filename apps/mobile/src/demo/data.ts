@@ -216,6 +216,9 @@ const watchlist: SecondLookCard[] = analyses.filter((item) => item.reviewStatus 
   ...card(byId.get(analysis.lineId)!, analysis, index + 1), scoreBand: analysis.scoreBand as 'LEAN' | 'WEAK',
   reviewStatus: 'SECOND_LOOK' as const, secondLook: analysis.secondLook! }));
 
+/** True for the built-in sample board, false for real lines from the server's demo feed. */
+export const isSampleBoard = (board: { builtAt: string }) => board.builtAt === demoBoard.builtAt;
+
 export const demoRankings: RankingsResponse = { builtAt: demoBoard.builtAt, rankedLineIds,
   analyses: analyses.filter((item) => rankedLineIds.includes(item.lineId)), rankings,
   watchlistLineIds: watchlist.map((item) => item.lineId), watchlist };

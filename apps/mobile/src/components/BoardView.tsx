@@ -30,7 +30,7 @@ function freshnessLine(freshness: string, fetchedAt: string | undefined, nowMs: 
   if (!fetchedAt) return freshness.toLowerCase();
   const minutes = Math.max(0, Math.round((nowMs - Date.parse(fetchedAt)) / 60_000));
   const age = minutes < 1 ? 'just now' : minutes < 90 ? `${minutes} min ago` : `${Math.round(minutes / 60)} h ago`;
-  return `Captured ${age}`;
+  return freshness === 'DEMO_LIVE' ? `Next 3 days · captured ${age}` : `Captured ${age}`;
 }
 
 export default function BoardView() {

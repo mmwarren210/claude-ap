@@ -7,11 +7,11 @@ import { loadBoard, saveBoard } from './local-store';
 import { freshness } from './state';
 import { reportMobileFailure } from './diagnostics';
 import { useAuth } from './auth';
-import { DEMO_NOW } from './demo/data';
+import { DEMO_NOW, isSampleBoard } from './demo/data';
 import { apiBaseUrl } from './api-base';
 
 type BoardState={status:'loading'|'available'|'unavailable';data:BoardResponse|null;message:string;
-  freshness:'LIVE'|'FRESH'|'CACHED'|'SNAPSHOT'|'STALE'|'OFFLINE'|'UNREACHABLE'|'UNAVAILABLE'|'DEMO';
+  freshness:'LIVE'|'FRESH'|'CACHED'|'SNAPSHOT'|'STALE'|'OFFLINE'|'UNREACHABLE'|'UNAVAILABLE'|'DEMO'|'DEMO_LIVE';
   researchStatus:string;gradingStatus:string;refreshing:boolean;nowMs:number;
   /** Free reread of the saved server board. Never spends provider credits. */
   reload:()=>void;
@@ -170,12 +170,19 @@ export function BoardProvider({children}:{children:ReactNode}) {
     })();
   },[request,reload]);
 
+  // Demo mode shows real lines (on the real clock) when the server's demo feed has them, else the sample board.
+  const sample=demo&&(!data||isSampleBoard(data));
   return <Context.Provider value={{status:data?'available':status,data,message,
-    researchStatus,gradingStatus,refreshing,nowMs:demo?DEMO_NOW:clock,
-    freshness:demo?'DEMO':freshness(data,reachable,clock,offline),reload,needsBootstrap,bootstrapPull}}>
+    researchStatus,gradingStatus,refreshing,nowMs:sample?DEMO_NOW:clock,
+    freshness:sample?'DEMO':demo?'DEMO_LIVE':freshness(data,reachable,clock,offline),reload,needsBootstrap,bootstrapPull}}>
     {children}
   </Context.Provider>;
 }
+/** The board state, or null outside a signed-in (or demo) session. */
+export function useOptionalBoard():BoardState|null {
+  return useContext(Context);
+}
+
 export function useBoard():BoardState {
   const state=useContext(Context);
   if(!state)throw new Error('BoardProvider required');

@@ -26,3 +26,19 @@ export function liteBoard(snapshot: BoardResponse, now: Date): BoardResponse {
     rankedLineIds: snapshot.rankedLineIds.filter((id) => kept.has(id)), builtAt: snapshot.builtAt,
     ...(media && Object.keys(media).length ? { playerMedia: media } : {}) };
 }
+
+/**
+ * The board cut to games starting after `now` and no later than `until`, with full analyses. The public demo uses it
+ * so it shows real lines without exposing games outside its window.
+ */
+export function windowBoard(snapshot: BoardResponse, now: Date, until: Date): BoardResponse {
+  const from = now.getTime(), to = until.getTime();
+  const lines = snapshot.board.lines.filter((line) => {
+    const start = Date.parse(line.eventStartTime);
+    return start > from && start <= to;
+  });
+  const kept = new Set(lines.map((line) => line.id));
+  return { ...snapshot, board: { ...snapshot.board, lines },
+    analyses: snapshot.analyses.filter((analysis) => kept.has(analysis.lineId)),
+    rankedLineIds: snapshot.rankedLineIds.filter((id) => kept.has(id)) };
+}
