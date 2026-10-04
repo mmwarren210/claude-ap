@@ -91,8 +91,9 @@ const contextFeeds=process.env.APIFY_TOKEN?.trim()?new ContextFeeds(apify,scrape
   {source:kalshiMarkets,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_KALSHI','11')},
   {source:polymarketMarkets,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_POLYMARKET','11')}],
 process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`,undefined,scraperSlots):null;
-// DraftKings and Hard Rock prop prices from SharpAPI (reference odds and +EV), refreshed hourly. Needs SHARPAPI_KEY.
-const sharpProps=new SharpPropsFeed(process.env.SHARPAPI_KEY?.trim()||null,
+// DraftKings and Hard Rock prop prices from SharpAPI (reference odds and +EV), refreshed hourly.
+// The owner's Railway variable is named `sharp_api`; SHARPAPI_KEY also works.
+const sharpProps=new SharpPropsFeed((process.env.SHARPAPI_KEY ?? process.env.sharp_api)?.trim()||null,
   process.env.CROWNIQ_SHARP_PROPS_FILE ?? `${dataDir}/sharp-props.json`);
 const evBreakEven=process.env.CROWNIQ_EV_BREAK_EVEN?Number(process.env.CROWNIQ_EV_BREAK_EVEN):undefined;
 const provider: OddsProvider | null = scrapedLines ? new ScrapedPrizePicksProvider(scrapedLines)
