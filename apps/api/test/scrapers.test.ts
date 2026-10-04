@@ -302,3 +302,20 @@ test('a restart or an overlapping deployment never repeats a scheduled pull, and
     assert.equal(await b.remaining(), 9.5);
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
+
+test('DraftKings Pick6 rows are stored as Pick6 lines with both sides; live and alternate lines are skipped', async () => {
+  const { zenPick6 } = await import('../src/scrapers/zen-studio.js');
+  const row = (overrides: Record<string, unknown> = {}) => ({ platform: 'draftkings_pick6', player_name: 'Test Passer',
+    player_team: 'DET', player_team_name: 'DET', league: 'NFL', game_id: 6176180, game_start: '2030-10-05T00:20:00.0000000+00:00',
+    home_team: 'CAR', away_team: 'DET', projection_id: 'p6-1-2', line: 257.5, stat: 'Passing Yards', stat_display: 'Passing Yards',
+    status: 'pre_game', is_live: false, market_type: 'standard', is_alternate_line: false, over_multiplier: 1, under_multiplier: 1,
+    ...overrides });
+  const read = zenPick6.read(row(), now);
+  assert.ok('line' in read);
+  assert.deepEqual([read.line.app, read.line.directions, read.line.opponent, read.line.startTime],
+    ['pick6', ['MORE', 'LESS'], 'CAR', '2030-10-05T00:20:00.000Z']);
+  const skip = (value: ReturnType<typeof zenPick6.read>) => 'skip' in value ? value.skip : null;
+  assert.equal(skip(zenPick6.read(row({ status: 'live', is_live: true }), now)), 'LIVE_OR_STARTED');
+  assert.equal(skip(zenPick6.read(row({ is_alternate_line: true }), now)), 'ALTERNATE_LINE');
+  assert.equal(skip(zenPick6.read(row({ over_multiplier: null, under_multiplier: null }), now)), 'NO_SIDES');
+});

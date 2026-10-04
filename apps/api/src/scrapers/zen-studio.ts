@@ -91,3 +91,40 @@ export const zenUnderdog: ScraperSource = {
       home, away, multipliers: { ...(higher ? { MORE: higher } : {}), ...(lower ? { LESS: lower } : {}) } } };
   },
 };
+
+const pick6Row = z.object({
+  projection_id: id, line: z.number().finite(), stat: z.string().min(1), stat_display: text, status: text,
+  is_live: z.boolean().nullish(), player_name: z.string().min(1), player_team: text, player_team_name: text,
+  player_image: text, league: z.string().min(1), game_id: z.union([z.string(), z.number()]).nullish(),
+  game_start: z.string().min(10), home_team: text, away_team: text, home_team_name: text, away_team_name: text,
+  market_type: text, is_alternate_line: z.boolean().nullish(),
+  over_multiplier: z.union([z.string(), z.number()]).nullish(), under_multiplier: z.union([z.string(), z.number()]).nullish(),
+}).passthrough();
+
+/** Apify actor `zen-studio/draftkings-pick6-player-props`: DraftKings Pick6's pregame board, stored for its own board. */
+export const zenPick6: ScraperSource = {
+  id: 'zen-studio-pick6', actor: 'zen-studio/draftkings-pick6-player-props', apps: ['pick6'], rowCap: null,
+  input: () => ({ leagues: ['All'] }),
+  read(raw: unknown, now: Date): ReadResult {
+    const parsed = pick6Row.safeParse(raw);
+    if (!parsed.success) return { skip: 'INVALID_ROW' };
+    const row = parsed.data;
+    // Standard lines only; boosted or alternate projections are not stored yet.
+    if (row.is_alternate_line || (row.market_type && row.market_type !== 'standard')) return { skip: 'ALTERNATE_LINE' };
+    const start = Date.parse(row.game_start);
+    if (!Number.isFinite(start)) return { skip: 'INVALID_ROW' };
+    if (row.is_live || (row.status && row.status !== 'pre_game') || start <= now.getTime()) return { skip: 'LIVE_OR_STARTED' };
+    if (!row.home_team || !row.away_team) return { skip: 'NO_GAME' };
+    const more = payout(row.over_multiplier), less = payout(row.under_multiplier);
+    const directions: PlayableDirection[] = [...(more ? ['MORE' as const] : []), ...(less ? ['LESS' as const] : [])];
+    if (!directions.length) return { skip: 'NO_SIDES' };
+    const home = side(row.home_team, row.home_team_name), away = side(row.away_team, row.away_team_name);
+    const opponent = row.player_team === row.home_team ? row.away_team : row.player_team === row.away_team ? row.home_team : null;
+    return { line: { app: 'pick6', appLineId: row.projection_id, league: row.league.toUpperCase(),
+      gameId: String(row.game_id ?? `${row.away_team}@${row.home_team}@${row.game_start}`), player: row.player_name.trim(),
+      team: row.player_team ?? null, teamName: row.player_team_name ?? null, opponent,
+      stat: (row.stat_display ?? row.stat).trim(), line: row.line, tier: 'REGULAR', directions,
+      startTime: new Date(start).toISOString(), imageUrl: isHeadshot(row.player_image) ? row.player_image! : null,
+      home, away, multipliers: { ...(more ? { MORE: more } : {}), ...(less ? { LESS: less } : {}) } } };
+  },
+};
