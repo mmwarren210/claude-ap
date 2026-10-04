@@ -16,6 +16,9 @@ import { PlayerAvatar } from '../../components/ui/PlayerAvatar';
 import { ScoreRing } from '../../components/ui/ScoreRing';
 import { crownIssueMessage, crownMinimumLineScore, formatLine, fullHitMultiplier, gameTime, lineStats, marketLabel, signed } from '../../insights';
 import { autoCrown, betterSwap, checkLeg, gkrBacked, shareCrown } from '../../state';
+import { PortSheet } from '../../components/PortSheet';
+import { appNames } from '../../port';
+import type { PickApp } from '../../port';
 import type { CrownLeg } from '../../state';
 import { colors, lineStyleOf, radius, rankAccents } from '../../theme';
 import { useBoard } from '../../use-board';
@@ -88,6 +91,7 @@ export default function CrownScreen() {
   const [editing, setEditing] = useState(false);
   const [edges, setEdges] = useState<Record<string, number | null>>({});
   const [message, setMessage] = useState('');
+  const [portApp, setPortApp] = useState<PickApp | null>(null);
   const tips = useTipFlow(setMessage);
   const [keptLeg, setKeptLeg] = useState<string | null>(null);
   const analyses = useMemo(() => new Map(board?.analyses.map((item) => [item.lineId, item])), [board]);
@@ -237,6 +241,12 @@ export default function CrownScreen() {
       {!!message && <Text accessibilityRole="alert" style={styles.message}>{message}</Text>}
       {!backed && legs.length > 0 && <Text style={styles.disclaimer}>This Crown has your-call legs. It saves to your
         profile as a personal Crown, outside GKR’s tracked record and the Social Top 10.</Text>}
+      {legs.length >= 2 && <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Play it on</Text>
+        <Text style={styles.legMeta}>Copy these picks and open the app. Underdog and Pick6 show each player’s line there first.</Text>
+        <View style={styles.actions}>{(['prizepicks', 'underdog', 'pick6'] as const).map((app) => <GhostButton key={app}
+          label={app === 'pick6' ? 'Pick6' : appNames[app]} style={styles.action} onPress={() => setPortApp(app)} />)}</View>
+      </View>}
       {legs.length >= 2 && <View style={styles.actions}>
         <GhostButton label="Share text" icon="share-variant-outline" onPress={() => void Share.share({ message: shareCrown(legs) })}
           style={styles.action} />
@@ -245,6 +255,7 @@ export default function CrownScreen() {
       </View>}
     </ScrollView>
     {tips.sheet}
+    <PortSheet key={portApp ?? 'closed'} app={portApp} legs={legs} onClose={() => setPortApp(null)} />
   </SafeAreaView>;
 }
 

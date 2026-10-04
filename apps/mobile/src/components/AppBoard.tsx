@@ -6,15 +6,16 @@ import { useAuth } from '../auth';
 import { formatLine, gameTime } from '../insights';
 import { colors, radius } from '../theme';
 import { useBoard } from '../use-board';
+import { appNames, copyAndOpen, slipText } from '../port';
+import type { PickApp } from '../port';
 import { Notice } from './Screen';
 import { AppHeader } from './ui/AppHeader';
-import { ChipRow, FilterChip, PrimaryButton, Segmented } from './ui/Controls';
+import { ChipRow, FilterChip, GhostButton, PrimaryButton, Segmented } from './ui/Controls';
 import { PlayerAvatar } from './ui/PlayerAvatar';
 
-export type PickApp = 'prizepicks' | 'underdog' | 'pick6';
+export type { PickApp };
 export const pickApps: readonly { value: PickApp; label: string }[] = [
   { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'Pick6' }];
-const appNames: Readonly<Record<PickApp, string>> = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'DraftKings Pick6' };
 
 type Side = 'MORE' | 'LESS';
 /** One Underdog or Pick6 line, as /v1/apps/:app/board serves it. */
@@ -136,6 +137,10 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
       <Text style={styles.trayText}>{slip.length} {slip.length === 1 ? 'pick' : 'picks'} on your {appNames[app]} slip</Text>
       <PrimaryButton label={slip.length < 2 ? 'Add 1 more to save' : 'Save slip'} icon="content-save-outline"
         disabled={slip.length < 2} onPress={() => void save()} />
+      <GhostButton label={`Copy picks & open ${appNames[app]}`} icon="open-in-new" onPress={() => void copyAndOpen(app,
+        slipText(app, slip.map((item) => ({ player: item.line.playerName, stat: item.line.stat, line: item.line.threshold,
+          side: item.side })))).then((how) => setMessage(how === 'copied' ? `Picks copied. Find each player in ${appNames[app]}.`
+          : `Tap Copy in the share sheet, then find each player in ${appNames[app]}.`)).catch(() => undefined)} />
     </View>}
   </SafeAreaView>;
 }

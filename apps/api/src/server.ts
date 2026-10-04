@@ -23,7 +23,7 @@ import type { BoardCache } from './board-cache.js';
 import { boardFunnel, outcomeCounts } from './board-funnel.js';
 import { liteBoard, windowBoard } from './board-lite.js';
 import { ContextRefreshScheduler } from './context-refresh.js';
-import { appBoard, asBoard, otherApps } from './app-boards.js';
+import { appBoard, appCoverage, asBoard, otherApps, portLegs } from './app-boards.js';
 import type { OtherApp } from './app-boards.js';
 import type { ScrapedLineStore } from './scrapers/line-store.js';
 import type { ScraperPuller } from './scrapers/scraper-puller.js';
@@ -715,6 +715,17 @@ export function buildServer(options: ServerOptions = {}) {
     if(!options.scrapedLines)return reply.code(503).send({code:'APP_LINES_UNAVAILABLE'});
     return appBoard(options.scrapedLines,parsed.data.app,service.getBoard());
   });
+  // Carry PrizePicks picks over to Underdog or Pick6: each pick's line on that app and how its number compares.
+  app.post('/v1/apps/:app/port',async(request,reply)=>{
+    const parsed=z.object({app:z.enum(otherApps as [OtherApp,...OtherApp[]])}).safeParse(request.params);
+    if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_APP'});
+    const body=z.object({legs:z.array(z.object({lineId:z.string().min(1).max(300),direction:z.enum(['MORE','LESS'])}).strict())
+      .min(1).max(6)}).strict().safeParse(request.body);
+    if(!body.success)return reply.code(400).send({code:'INVALID_LEGS'});
+    const board=service.getBoard();
+    if(!options.scrapedLines||!board)return reply.code(503).send({code:'APP_LINES_UNAVAILABLE'});
+    return {app:parsed.data.app,legs:await portLegs(options.scrapedLines,parsed.data.app,board,body.data.legs)};
+  });
   app.get('/v1/board', async (_request, reply) => {
     const snapshot = service.getBoard();
     return snapshot ?? reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
@@ -883,7 +894,9 @@ export function buildServer(options: ServerOptions = {}) {
         const key=`${app} ${line.league}`;summary[key]??={};
         summary[key][line.stat]=(summary[key][line.stat]??0)+1;
       }
-      return summary;
+      const coverage=Object.fromEntries(await Promise.all(otherApps.map(async(app)=>
+        [app,await appCoverage(options.scrapedLines!,app,service.getBoard())] as const)));
+      return {coverage,labels:summary};
     });
     admin.get('/evidence', async () => ({ evidence: service.getEvidence(),
       research: service.getStatus().research }));

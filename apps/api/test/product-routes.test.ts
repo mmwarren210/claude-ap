@@ -189,6 +189,12 @@ test('Underdog lines are served with the PrizePicks reference, and a slip on the
     assert.deepEqual(board.lines.map((line)=>[line.id,line.market,line.prizePicks?.threshold??null]),
       [['ud:u1','player_reception_yds',54.5],['ud:u2','player_rush_yds',null]]);
     assert.equal((await app.inject('/v1/apps/betr/board')).statusCode,404);
+    const ported=(await app.inject({method:'POST',url:'/v1/apps/underdog/port',
+      payload:{legs:[{lineId:'pp:1',direction:'MORE'},{lineId:'pp:1',direction:'LESS'},{lineId:'pp:missing',direction:'MORE'}]}}))
+      .json() as {legs:{match:{id:string}|null;comparison:string|null;sideOffered:boolean}[]};
+    // Underdog has 55.5 where PrizePicks has 54.5: harder for More, easier for Less; an unknown line has no match.
+    assert.deepEqual(ported.legs.map((leg)=>[leg.match?.id??null,leg.comparison,leg.sideOffered]),
+      [['ud:u1','WORSE',true],['ud:u1','BETTER',true],[null,null,false]]);
     const session=(await app.inject({method:'POST',url:'/v1/auth/register',
       payload:{username:'Slip_1',email:'slip@example.org',password:'private-passphrase-1'}})).json() as {token:string};
     const headers={authorization:`Bearer ${session.token}`};

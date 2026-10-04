@@ -96,3 +96,54 @@ export function asBoard(lines: readonly AppLine[], fetchedAt: string): BoardResp
         availableDirections: [...line.availableDirections], ...(playerImageUrl ? { playerImageUrl } : {}) }) as unknown as PropLine) },
   analyses: [], rankedLineIds: [], builtAt: fetchedAt } as unknown as BoardResponse;
 }
+
+/** How an app's number compares with the PrizePicks number for the side picked (MORE: lower is easier). */
+export type LineComparison = 'SAME' | 'BETTER' | 'WORSE';
+export interface PortedLeg {
+  readonly lineId: string; readonly direction: PlayableDirection;
+  /** The app's line for the same player and stat that day, or null when the app does not list one. */
+  readonly match: AppLine | null;
+  /** False when the app lists the line but not the side picked (e.g. Higher only). */
+  readonly sideOffered: boolean;
+  readonly comparison: LineComparison | null;
+}
+
+/**
+ * Carries PrizePicks picks over to Underdog or Pick6: for each pick, the app's line for the same player and stat on the
+ * same day (standard lines first, then the closest number), and how that number compares for the side picked.
+ */
+export async function portLegs(store: ScrapedLineStore, app: OtherApp, board: BoardResponse,
+  legs: readonly { lineId: string; direction: PlayableDirection }[]): Promise<PortedLeg[]> {
+  const { lines } = await appBoard(store, app, null);
+  const byKey = new Map<string, AppLine[]>();
+  for (const line of lines) {
+    const key = JSON.stringify([line.playerId, statKey(line.market), line.eventStartTime.slice(0, 10)]);
+    byKey.set(key, [...byKey.get(key) ?? [], line]);
+  }
+  const source = new Map(board.board.lines.map((line) => [line.id, line]));
+  return legs.map(({ lineId, direction }) => {
+    const line = source.get(lineId);
+    const options = line ? byKey.get(JSON.stringify([line.playerId, statKey(line.market), line.eventStartTime.slice(0, 10)])) ?? [] : [];
+    const match = [...options].sort((a, b) => Number(b.availableDirections.includes(direction)) -
+      Number(a.availableDirections.includes(direction)) || Number(b.lineType === 'REGULAR') - Number(a.lineType === 'REGULAR') ||
+      Math.abs(a.threshold - line!.threshold) - Math.abs(b.threshold - line!.threshold))[0] ?? null;
+    const comparison: LineComparison | null = !match || !line ? null : match.threshold === line.threshold ? 'SAME'
+      : (match.threshold < line.threshold) === (direction === 'MORE') ? 'BETTER' : 'WORSE';
+    return { lineId, direction, match, sideOffered: !!match?.availableDirections.includes(direction), comparison };
+  });
+}
+
+/** How much of an app's board PrizePicks also lists, for the owner's scoring decision. */
+export async function appCoverage(store: ScrapedLineStore, app: OtherApp, board: BoardResponse | null) {
+  const { lines } = await appBoard(store, app, board);
+  const regular = lines.filter((line) => line.lineType === 'REGULAR');
+  return { lines: lines.length, regular: regular.length,
+    onPrizePicks: regular.filter((line) => line.prizePicks).length,
+    sameNumber: regular.filter((line) => line.prizePicks?.threshold === line.threshold).length,
+    gkrRead: regular.filter((line) => line.prizePicks?.gkr).length,
+    byLeague: Object.fromEntries([...new Set(regular.map((line) => line.league))].map((league) => {
+      const group = regular.filter((line) => line.league === league);
+      return [league, { lines: group.length, onPrizePicks: group.filter((line) => line.prizePicks).length,
+        gkrRead: group.filter((line) => line.prizePicks?.gkr).length }];
+    })) };
+}
