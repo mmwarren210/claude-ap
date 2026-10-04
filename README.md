@@ -1,4 +1,4 @@
-# CrownIQ AI
+# CrownIQ
 
 Mobile-first CrownIQ foundation: Expo/React Native app, server API, shared schemas, a PrizePicks-only full-board adapter and a deterministic GKR engine. The [model engine guide](docs/MODEL_ENGINE.md) describes the 69 versioned market definitions, scoring audit, fantasy registry, and required evidence. Model calibration is not yet owner-approved and the odds feed does not supply its required context; live imported lines return PASS without invented rankings.
 

@@ -1,6 +1,6 @@
-# CrownIQ AI architecture — foundation and full-board provider
+# CrownIQ architecture — foundation and full-board provider
 
-The new repository began with only a one-line README. This foundation follows the CrownIQ AI brief and does not copy code from `gkr-cloud-beta`. `FullPrizePicksProvider` discovers the provider's active sports and currently listed PrizePicks player-prop markets, including alternate thresholds. Two live full-board pulls have been validated; the [live pull report](LIVE_ODDS_PULL_2026-09-24.md) records their coverage and limits. The [model engine guide](MODEL_ENGINE.md) describes versioned definitions and audit output. The [NFL passing pilot](NFL_PASSING_PILOT.md) adds a sourced pregame evidence path and exact postgame grader; the calibration inputs remain unapproved.
+The new repository began with only a one-line README. This foundation follows the original CrownIQ brief and does not copy code from `gkr-cloud-beta`. `FullPrizePicksProvider` discovers the provider's active sports and currently listed PrizePicks player-prop markets, including alternate thresholds. Two live full-board pulls have been validated; the [live pull report](LIVE_ODDS_PULL_2026-09-24.md) records their coverage and limits. The [model engine guide](MODEL_ENGINE.md) describes versioned definitions and audit output. The [NFL passing pilot](NFL_PASSING_PILOT.md) adds a sourced pregame evidence path and exact postgame grader; the calibration inputs remain unapproved.
 
 ## Data flow
 
