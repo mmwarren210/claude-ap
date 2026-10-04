@@ -28,6 +28,13 @@ for a long-running server, so it is not used here (it could hold the data later 
 7. For the phone app (Expo Go or a store build): set `EXPO_PUBLIC_API_URL=https://<your-domain>` in `apps/mobile/.env` (and in the app's build
    settings when it is published). A web app hosted somewhere else needs its address in `CROWNIQ_ALLOWED_WEB_ORIGINS`.
 
+### Deploys on push
+
+Railway deploys a push only when the service's **Settings → Source → Branch connected to production** names the branch
+(`claude/crowniq-redesign`). Until 2026-10-04 no branch was connected, so pushes were skipped and each deploy was started
+by hand. Watch paths are empty and Wait for CI is off, so neither blocks a deploy. Claude sessions can also start a deploy
+of a given commit through Railway's API with the project token (`serviceInstanceDeployV2`).
+
 ## Render (alternative)
 
 New **Web Service** from the repo (Docker), a paid instance with a **Disk** mounted at `/data`, the same variables,
