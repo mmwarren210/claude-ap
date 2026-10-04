@@ -132,6 +132,16 @@ export interface AiPickOptions {
   readonly perRun?: number;
 }
 
+const sportOrder = ['NFL', 'NCAAFB', 'MLB', 'NBA', 'NHL', 'WNBA', 'SOCCER', 'TENNIS'];
+/**
+ * Where an AI read is worth the most, lowest first: the major leagues' full-game stats, then other sports. Lines the
+ * research can rarely settle (fantasy scores, single-map or partial-game props, preseason splits) come last.
+ */
+function worth(line: PropLine): number {
+  const sport = sportOrder.indexOf(line.sport), thin = /fantasy|map_[3-9]|1st_|1h_|2h_|1q_|qtrs?_|halves?_|inn/.test(line.market);
+  return (sport < 0 ? sportOrder.length : sport) + (line.league.toUpperCase() !== line.sport ? 10 : 0) + (thin ? 20 : 0);
+}
+
 /** Runs the researchers on eligible lines under daily caps, keeps each read until its game starts, and grades them. */
 export class AiPickService {
   private reads = new Map<string, AiRead>();
@@ -248,7 +258,7 @@ export class AiPickService {
       const start = Date.parse(line.eventStartTime);
       return start > now + 15 * 60_000 && start < now + 12 * 3600_000 && line.lineType === 'REGULAR' &&
         aiEligible(line, analyses.get(line.id)) && !this.reads.has(this.key(line));
-    }).sort((a, b) => Date.parse(a.eventStartTime) - Date.parse(b.eventStartTime) ||
+    }).sort((a, b) => worth(a) - worth(b) || Date.parse(a.eventStartTime) - Date.parse(b.eventStartTime) ||
       (marketCounts.get(b.market) ?? 0) - (marketCounts.get(a.market) ?? 0));
     const players = new Set([...this.reads.values()].filter((read) => Date.parse(read.eventStartTime) > now)
       .map((read) => `${read.lineSnapshot.eventId}|${read.lineSnapshot.playerId}`));
