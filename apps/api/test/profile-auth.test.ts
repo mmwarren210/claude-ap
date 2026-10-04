@@ -174,3 +174,21 @@ test('provider ID tokens require a trusted signature, audience, issuer, expirati
     assert.equal(replay.statusCode,401);assert.equal(replay.json().code,'INVALID_NONCE');
   }finally{await app.close();await rm(folder,{recursive:true,force:true});}
 });
+
+test('the first 20 accounts are lifetime members and later ones are free',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-lifetime-'));
+  try{let clock=start;const path=join(folder,'ledger.json');
+    const ledger=new ProductLedger(path,'CROWN_STRONG',()=>clock,()=>[]);
+    const plans:string[]=[];
+    for(let index=0;index<21;index++){
+      clock=new Date(start.getTime()+index*60_000);
+      plans.push((await ledger.register(`member${index}@example.org`,'long-private-passphrase',`Member_${index}`)).profile.plan);
+    }
+    assert.deepEqual(plans,[...Array(20).fill('LIFETIME'),'FREE']);
+    const first=await ledger.login('Member_0','long-private-passphrase');
+    assert.equal(first.profile.plan,'LIFETIME');
+    assert.equal((await ledger.authenticate(first.token))?.plan,'LIFETIME');
+    const restarted=new ProductLedger(path,'CROWN_STRONG',()=>clock,()=>[]);
+    assert.equal((await restarted.login('member20@example.org','long-private-passphrase')).profile.plan,'FREE');
+  }finally{await rm(folder,{recursive:true,force:true});}
+});

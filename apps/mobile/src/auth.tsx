@@ -10,7 +10,7 @@ export function startsInDemo(search=typeof window!=='undefined'?window.location?
   return !!search && new URLSearchParams(search).has('demo');
 }
 
-type Profile={publicId:string;username:string;email:string|null;plan:'FREE'|'SUSPENDED'|'DEMO'};
+type Profile={publicId:string;username:string;email:string|null;plan:'FREE'|'LIFETIME'|'SUSPENDED'|'DEMO'};
 type Session={token:string;profile:Profile};
 type AuthContext={profile:Profile|null;register:(username:string,email:string,password:string)=>Promise<void>;
   login:(emailOrUsername:string,password:string)=>Promise<void>;logout:()=>Promise<void>;

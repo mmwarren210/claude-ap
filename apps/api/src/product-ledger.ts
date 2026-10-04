@@ -46,6 +46,12 @@ type IdentityProvider='GOOGLE'|'APPLE';
 interface Account {id:string;username:string;email:string|null;passwordSalt:string|null;
   passwordHash:string|null;identities:{provider:IdentityProvider;subject:string}[];
   createdAt:string;status:'FREE'|'SUSPENDED'}
+/** The first accounts ever created (the owner's included) are lifetime members: no code, never charged. */
+export const LIFETIME_MEMBERS=20;
+const lifetimeIds=(accounts:readonly Account[])=>new Set([...accounts]
+  .sort((a,b)=>a.createdAt.localeCompare(b.createdAt)).slice(0,LIFETIME_MEMBERS).map((item)=>item.id));
+const planOf=(account:Account,lifetime:ReadonlySet<string>)=>account.status==='SUSPENDED'?'SUSPENDED' as const
+  :lifetime.has(account.id)?'LIFETIME' as const:'FREE' as const;
 interface Session {hash:string;accountId:string;expiresAt:string;createdAt:string}
 interface SavedPick {accountId:string;trackedPickId:string;savedAt:string;removedAt:string|null}
 interface PrivateCrown {id:string;accountId:string;trackedPickIds:string[];savedAt:string;removedAt:string|null}
@@ -187,7 +193,7 @@ function leaders(data:Data){return data.profiles.filter((item)=>item.socialEnabl
 /** Single-process durable JSON ledger; no separate DB or provider requests. */
 export class ProductLedger {
   private chain:Promise<unknown>=Promise.resolve();
-  private authCache:{accounts:Map<string,Account>;profiles:Map<string,PublicProfile>;
+  private authCache:{accounts:Map<string,Account>;lifetime:Set<string>;profiles:Map<string,PublicProfile>;
     sessions:Map<string,Session>}|null=null;
   private topCache:{expires:number;value:unknown}|null=null;
   private recentCache:{expires:number;value:ReturnType<typeof publicView>[]} |null=null;
@@ -231,7 +237,7 @@ export class ProductLedger {
     this.recentCache=null;
   }
   private indexAuth(data:Data){this.authCache={
-    accounts:new Map(data.accounts.map((item)=>[item.id,item])),
+    accounts:new Map(data.accounts.map((item)=>[item.id,item])),lifetime:lifetimeIds(data.accounts),
     profiles:new Map(data.profiles.map((item)=>[item.actorKey,item])),
     sessions:new Map(data.sessions.map((item)=>[item.hash,item])),
   };}
@@ -248,7 +254,7 @@ export class ProductLedger {
       expiresAt:new Date(this.clock().getTime()+30*24*60*60_000).toISOString()});
     const profile=data.profiles.find((item)=>item.actorKey===account.id)!;
     return {token,profile:{publicId:profile.publicId,username:account.username,
-      email:account.email,plan:account.status}};
+      email:account.email,plan:planOf(account,lifetimeIds(data.accounts))}};
   }
   async register(email:string,password:string,username:string){return this.exclusive(async()=>{
     const data=await this.read(),name=username.trim(),address=normalizedEmail(email);
@@ -315,7 +321,7 @@ export class ProductLedger {
     if(account.status==='SUSPENDED')return null;
     const profile=this.authCache!.profiles.get(account.id);
     return profile?{accountId:account.id,publicId:profile.publicId,username:account.username,
-      email:account.email,plan:account.status}:null;
+      email:account.email,plan:planOf(account,this.authCache!.lifetime)}:null;
   });}
   async logout(token:string){return this.exclusive(async()=>{
     const data=await this.read(),before=data.sessions.length;
