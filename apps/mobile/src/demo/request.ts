@@ -5,16 +5,16 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
   { status, headers: { 'content-type': 'application/json' } });
 
 /**
- * The server's public demo feed (real lines for the next three days), or null when there is no server, no board or no
- * lines, so the demo falls back to its sample data.
+ * The server's public demo feed (real lines for the next three days), or null when there is no server or the board has
+ * no scored picks yet, so the demo falls back to its sample data instead of an empty board.
  */
 async function live(path: string, signal?: AbortSignal | null, base = apiBaseUrl()): Promise<Response | null> {
   if (!base) return null;
   try {
     const response = await fetch(`${base}/v1/demo${path}`, signal ? { signal } : {});
     if (!response.ok) return null;
-    const body = await response.json() as { board?: { lines?: unknown[] }; rankings?: unknown[]; games?: unknown[] };
-    if (body.board && !body.board.lines?.length) return null;
+    const body = await response.json() as { rankedLineIds?: unknown[] };
+    if (Array.isArray(body.rankedLineIds) && !body.rankedLineIds.length) return null;
     return json(200, body);
   } catch (error) {
     if (signal?.aborted) throw error;

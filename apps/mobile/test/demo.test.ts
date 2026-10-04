@@ -46,7 +46,7 @@ test('a ?demo web link opens demo mode', async () => {
   assert.equal(startsInDemo(undefined), false);
 });
 
-test('demo mode shows the server demo feed when it has lines and the sample board otherwise', async () => {
+test('demo mode shows the server demo feed when it has scored picks and the sample board otherwise', async () => {
   const realFetch = globalThis.fetch;
   const g = globalThis as { location?: { origin: string } };
   const { isSampleBoard } = await import('../src/demo/data');
@@ -60,7 +60,7 @@ test('demo mode shows the server demo feed when it has lines and the sample boar
     const board = await (await demoRequest('/v1/board/lite')).json() as typeof demoBoard;
     assert.deepEqual(asked, ['https://crowniq.example/v1/demo/board']);
     assert.equal(isSampleBoard(board), false);
-    body = { ...live, board: { ...live.board, lines: [] } };
+    body = { ...live, rankedLineIds: [] };
     assert.equal(isSampleBoard(await (await demoRequest('/v1/board')).json() as typeof demoBoard), true);
     globalThis.fetch = (async () => { throw new Error('offline'); }) as typeof fetch;
     assert.equal(isSampleBoard(await (await demoRequest('/v1/board')).json() as typeof demoBoard), true);
