@@ -35,3 +35,16 @@ export async function loadBoard():Promise<BoardResponse|null> {
   return result.success ? result.data : null;
 }
 export async function saveBoard(board:BoardResponse):Promise<void> { await write('board',board); }
+
+/**
+ * The signed-in session, kept in this browser so the web app stays signed in until Log Out (owner choice). The server
+ * ends it after 30 days regardless; a stale token is rejected and cleared. Native builds keep it in memory only until
+ * a secure native store is added (see docs/PROFILE_SIGNIN.md).
+ */
+export async function loadSession():Promise<{token:string}|null> {
+  if (Platform.OS !== 'web') return null;
+  const value=await read('session') as {token?:unknown}|null;
+  return typeof value?.token==='string'&&value.token.length>=32?{token:value.token}:null;
+}
+export async function saveSession(token:string):Promise<void> { if (Platform.OS === 'web') await write('session',{token}); }
+export async function clearSession():Promise<void> { if (Platform.OS === 'web') await write('session',null); }

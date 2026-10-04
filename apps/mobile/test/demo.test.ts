@@ -38,7 +38,7 @@ test('demo requests serve sample reads and refuse every write', async () => {
 });
 
 test('a ?demo web link opens demo mode', async () => {
-  const { startsInDemo } = await import('../src/auth');
+  const { startsInDemo } = await import('../src/links');
   assert.equal(startsInDemo('?demo'), true);
   assert.equal(startsInDemo('?demo=1&x=2'), true);
   assert.equal(startsInDemo('?x=2'), false);
@@ -48,12 +48,12 @@ test('a ?demo web link opens demo mode', async () => {
 
 test('demo mode shows the server demo feed when it has scored picks and the sample board otherwise', async () => {
   const realFetch = globalThis.fetch;
-  const g = globalThis as { location?: { origin: string } };
+  const g = globalThis as { location?: { origin: string; search?: string } };
   const { isSampleBoard } = await import('../src/demo/data');
   const live = { ...demoBoard, builtAt: '2026-10-04T12:00:00.000Z' };
   const asked: string[] = [];
   let body: unknown = live;
-  g.location = { origin: 'https://crowniq.example' };
+  g.location = { origin: 'https://crowniq.example', search: '?demo=live' };
   globalThis.fetch = (async (url: string) => { asked.push(url);
     return new Response(JSON.stringify(body), { status: 200 }); }) as typeof fetch;
   try {
@@ -71,9 +71,16 @@ test('demo mode shows the server demo feed when it has scored picks and the samp
 });
 
 test('a ?guest link carries its code and takes priority over ?demo', async () => {
-  const { guestCode, startsInDemo } = await import('../src/auth');
+  const { guestCode, startsInDemo } = await import('../src/links');
   assert.equal(guestCode('?guest=testers-2030'), 'testers-2030');
   assert.equal(guestCode('?demo'), null);
   assert.equal(guestCode(''), null);
   assert.equal(startsInDemo('?guest=testers-2030&demo'), false);
+});
+
+test('the demo uses the sample board unless the link asks for live lines', async () => {
+  const { wantsLiveDemo } = await import('../src/demo/request');
+  assert.equal(wantsLiveDemo('?demo'), false);
+  assert.equal(wantsLiveDemo('?demo=live'), true);
+  assert.equal(wantsLiveDemo(undefined), false);
 });

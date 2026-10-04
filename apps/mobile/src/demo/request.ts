@@ -8,8 +8,13 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
  * The server's public demo feed (real lines for the next three days), or null when there is no server or the board has
  * no scored picks yet, so the demo falls back to its sample data instead of an empty board.
  */
+/** Owner choice: the demo shows the sample board; `?demo=live` opts a link into real lines instead. */
+export function wantsLiveDemo(search=(globalThis as { location?: { search?: string } }).location?.search): boolean {
+  return !!search && new URLSearchParams(search).get('demo') === 'live';
+}
+
 async function live(path: string, signal?: AbortSignal | null, base = apiBaseUrl()): Promise<Response | null> {
-  if (!base) return null;
+  if (!base || !wantsLiveDemo()) return null;
   try {
     const response = await fetch(`${base}/v1/demo${path}`, signal ? { signal } : {});
     if (!response.ok) return null;

@@ -2,18 +2,11 @@ import { createContext, useContext, useEffect, useMemo, useState, useSyncExterna
 import type { ReactNode } from 'react';
 import { demoRequest } from './demo/request';
 import { apiBaseUrl } from './api-base';
+import { guestCode, startsInDemo } from './links';
+import { clearSession, loadSession, saveSession } from './local-store';
+import { reportMobileFailure } from './diagnostics';
 
 const demoProfile:Profile={publicId:'demo',username:'Demo',email:null,plan:'DEMO'};
-
-/** A web link with `?demo` in it (for example `https://<server>/?demo`) opens straight into demo mode. */
-export function startsInDemo(search=typeof window!=='undefined'?window.location?.search:undefined):boolean{
-  return !!search && new URLSearchParams(search).has('demo') && !guestCode(search);
-}
-
-/** The code in a guest link (`https://<server>/?guest=<code>`), or null. */
-export function guestCode(search=typeof window!=='undefined'?window.location?.search:undefined):string|null{
-  return search ? new URLSearchParams(search).get('guest')?.trim() || null : null;
-}
 
 /**
  * A random id for this browser, kept so reopening the guest link signs back in to the same guest account instead of
@@ -57,8 +50,27 @@ async function parseSession(response:Response):Promise<Session>{
 }
 
 export function AuthProvider({children}:{children:ReactNode}){
-  // Session tokens stay in memory; device-local files hold only non-secret drafts.
+  // The session token is kept on this device until Log Out (owner choice); the server ends it after 30 days.
   const [session,setSession]=useState<Session|null>(null);
+  const signIn=(value:Session)=>{
+    setSession(value);setDemo(false);
+    void saveSession(value.token).catch((error:unknown)=>reportMobileFailure('storage',error));
+  };
+  // Sign back in with the saved session, unless a guest link is signing this device in.
+  useEffect(()=>{
+    if(!base||guestCode())return;
+    let active=true;
+    void (async()=>{
+      const saved=await loadSession();
+      if(!saved)return;
+      const response=await fetch(`${base}/v1/auth/me`,{headers:{Authorization:`Bearer ${saved.token}`}}).catch(()=>null);
+      if(!response)return;
+      if(!response.ok){if(response.status===401)await clearSession();return;}
+      const body=await response.json() as {profile?:Profile};
+      if(active&&body.profile?.publicId)setSession((current)=>current??{token:saved.token,profile:body.profile!});
+    })().catch((error:unknown)=>reportMobileFailure('storage',error));
+    return ()=>{active=false;};
+  },[]);
   // The page's link is read as an external value that is empty while hydrating, so the first render matches the
   // prebuilt web page. Choices made in the app (Try the demo, sign in, log out) then take over.
   const demoLink=useSyncExternalStore(noSubscription,()=>startsInDemo(),()=>false);
@@ -78,7 +90,7 @@ export function AuthProvider({children}:{children:ReactNode}){
         if(!response.ok){const payload=await response.json().catch(()=>({})) as {code?:string};
           throw new Error(guestMessages[payload.code??'']??'Could not open the guest link. Try again.');}
         const value=await parseSession(response);
-        if(active){setSession(value);setDemo(false);setGuestResult({done:true,message:''});}
+        if(active){signIn(value);setGuestResult({done:true,message:''});}
       }catch(error){
         if(active)setGuestResult({done:true,message:error instanceof Error?error.message:'Could not open the guest link.'});
       }
@@ -92,17 +104,18 @@ export function AuthProvider({children}:{children:ReactNode}){
       if(!base)throw new Error('Set EXPO_PUBLIC_API_URL to your CrownIQ server first.');
       const response=await fetch(`${base}/v1/auth/register`,{method:'POST',
         headers:{'content-type':'application/json'},body:JSON.stringify({username,email,password})});
-      setSession(await parseSession(response));setDemo(false);
+      signIn(await parseSession(response));
     },
     login:async(emailOrUsername,password)=>{
       if(!base)throw new Error('Set EXPO_PUBLIC_API_URL to your CrownIQ server first.');
       const response=await fetch(`${base}/v1/auth/login`,{method:'POST',
         headers:{'content-type':'application/json'},body:JSON.stringify({login:emailOrUsername,password})});
-      setSession(await parseSession(response));setDemo(false);
+      signIn(await parseSession(response));
     },
     logout:async()=>{
       const token=session?.token;
       setSession(null);setDemo(false);
+      await clearSession().catch((error:unknown)=>reportMobileFailure('storage',error));
       if(base && token)await fetch(`${base}/v1/auth/logout`,{method:'POST',
         headers:{Authorization:`Bearer ${token}`}}).catch(()=>undefined);
     },
@@ -121,3 +134,4 @@ export function AuthProvider({children}:{children:ReactNode}){
 }
 export function useAuth(){const value=useContext(Context);
   if(!value)throw new Error('AuthProvider required');return value;}
+
