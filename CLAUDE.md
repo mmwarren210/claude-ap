@@ -19,6 +19,13 @@
   Scout second opinions also cover the strongest DraftKings, Hard Rock, Kalshi and Polymarket tab picks (same caps).
 - **No AI product names on screen** (owner, 2026-10-05): the two research models show as **Scout A** and **Scout B**
   (`providerName`), and `unbrand` replaces any product name inside their text. Their prompt says never to name one.
+- **Beta** (owner, 2026-10-05): CrownIQ is labeled BETA (header badge, sign-in note, link preview); family members
+  are the testers. **Beta feedback** (More → Beta feedback; `feedback.ts`, `/v1/feedback`, `/v1/updates`): testers report
+  bugs and suggestions; twice a day they're reviewed (`/v1/admin/feedback`, or More → Review feedback for the owner):
+  fix, plan or decline with a reply, then post patch notes (`/v1/admin/updates`) linking the reports they answer.
+  Fixes that change model scores still need the owner's approval.
+- **Logo**: the CrownIQ icon (gold crown, dripping CrownIQ, POWERED BY GKR) is the home-screen icon, favicon, sign-in
+  logo and link preview (`public/og.png`); the header uses its crown (`assets/images/crown.png`).
 - **Scout reads app-only lines** (owner, 2026-10-05): Underdog and Pick6 lines for players PrizePicks doesn't list
   (no GKR research) go to Scout's scheduled run after the PrizePicks lines, under the same caps. The app boards show
   Scout's side and score ("Scout 61 · Less"), and the Picks filter includes them after GKR's.

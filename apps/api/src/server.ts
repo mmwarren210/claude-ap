@@ -1,3 +1,4 @@
+import { FeedbackStore } from './feedback.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -120,6 +121,8 @@ export interface ServerOptions {
   shadowRecord?: ShadowRecord | null;
   /** Kalshi and Polymarket picks, graded from final scores. */
   marketRecord?: MarketRecord | null;
+  /** Beta feedback: testers' bug reports and suggestions, and the patch notes that answer them. */
+  feedback?: FeedbackStore | null;
   /** CrownIQ's own archive of game logs, graded results and lines. */
   historyArchive?: HistoryArchive | null;
   /** Reads The Odds API's credit balance (a free call), for the owner. */
@@ -466,6 +469,49 @@ export function buildServer(options: ServerOptions = {}) {
     catch(error){const code=(error as Error).message;
       return code==='ACCOUNT_NOT_FOUND'?reply.code(404).send({code}):code==='CANNOT_REVOKE_OWNER'||code==='MEMBERS_FULL'
         ?reply.code(409).send({code}):reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
+  });
+  // Beta feedback: any signed-in tester reports a bug or suggestion and sees what happened to it; everyone reads the
+  // patch notes. The owner reviews in the app; admin routes do the same for the twice-daily review.
+  const feedbackInput=z.object({kind:z.enum(['BUG','SUGGESTION']),text:z.string().trim().min(5).max(2000),
+    screen:z.string().trim().max(80).nullable().optional()}).strict();
+  app.post('/v1/feedback',async(request,reply)=>{
+    const user=await currentUser(request);
+    if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!options.feedback)return reply.code(503).send({code:'FEEDBACK_UNAVAILABLE'});
+    const input=feedbackInput.safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'FEEDBACK_INVALID'});
+    try{return reply.code(201).send(await options.feedback.submit({accountId:user.accountId,username:user.username},
+      input.data.kind,input.data.text,input.data.screen??null));}
+    catch(error){return (error as Error).message==='DAILY_LIMIT'?reply.code(429).send({code:'DAILY_LIMIT'})
+      :reply.code(503).send({code:'FEEDBACK_UNAVAILABLE'});}
+  });
+  app.get('/v1/feedback/mine',async(request,reply)=>{
+    const user=await currentUser(request);
+    if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    return {items:options.feedback?await options.feedback.mine(user.accountId):[]};
+  });
+  app.get('/v1/updates',async()=>({updates:options.feedback?await options.feedback.updates():[]}));
+  const reviewInput=z.object({status:z.enum(['NEW','PLANNED','FIXED','DECLINED']),reply:z.string().trim().max(1000).nullable().optional()}).strict();
+  const updateInput=z.object({title:z.string().trim().min(3).max(120),body:z.string().trim().min(3).max(4000),
+    feedbackIds:z.array(z.string().uuid()).max(100).optional()}).strict();
+  const isOwner=async(request:FastifyRequest)=>{const user=await currentUser(request);
+    return !!options.ownerPublicId&&user?.publicId===options.ownerPublicId;};
+  app.get('/v1/owner/feedback',async(request,reply)=>{
+    if(!options.feedback||!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    return {items:await options.feedback.all(),summary:await options.feedback.summary()};
+  });
+  app.post('/v1/owner/feedback/:id',async(request,reply)=>{
+    if(!options.feedback||!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    const id=z.string().uuid().safeParse((request.params as {id?:string}).id),input=reviewInput.safeParse(request.body);
+    if(!id.success||!input.success)return reply.code(400).send({code:'REVIEW_INVALID'});
+    try{return await options.feedback.review(id.data,input.data.status,input.data.reply??null);}
+    catch{return reply.code(404).send({code:'FEEDBACK_NOT_FOUND'});}
+  });
+  app.post('/v1/owner/updates',async(request,reply)=>{
+    if(!options.feedback||!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    const input=updateInput.safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'UPDATE_INVALID'});
+    return reply.code(201).send(await options.feedback.postUpdate(input.data.title,input.data.body,input.data.feedbackIds));
   });
   // Delete account: removes the member's account and personal data (App Store and Google Play require it).
   app.post('/v1/auth/delete',async(request,reply)=>{
@@ -1303,6 +1349,22 @@ export function buildServer(options: ServerOptions = {}) {
       return {fetchedAt:result.fetchedAt,counts,picks:result.picks};
     });
     admin.get('/grading', async () => ({ worker: options.autoGradingStatus?.() ?? null }));
+    admin.get('/feedback', async (_request, reply) => options.feedback
+      ? { items: await options.feedback.all(), summary: await options.feedback.summary() }
+      : reply.code(503).send({ code: 'FEEDBACK_UNAVAILABLE' }));
+    admin.post('/feedback/:id', async (request, reply) => {
+      if (!options.feedback) return reply.code(503).send({ code: 'FEEDBACK_UNAVAILABLE' });
+      const id = z.string().uuid().safeParse((request.params as { id?: string }).id), input = reviewInput.safeParse(request.body);
+      if (!id.success || !input.success) return reply.code(400).send({ code: 'REVIEW_INVALID' });
+      try { return await options.feedback.review(id.data, input.data.status, input.data.reply ?? null); }
+      catch { return reply.code(404).send({ code: 'FEEDBACK_NOT_FOUND' }); }
+    });
+    admin.post('/updates', async (request, reply) => {
+      if (!options.feedback) return reply.code(503).send({ code: 'FEEDBACK_UNAVAILABLE' });
+      const input = updateInput.safeParse(request.body);
+      if (!input.success) return reply.code(400).send({ code: 'UPDATE_INVALID' });
+      return reply.code(201).send(await options.feedback.postUpdate(input.data.title, input.data.body, input.data.feedbackIds));
+    });
     admin.get('/ai-picks', async (_request, reply) => options.aiPicks ? options.aiPicks.status()
       : reply.code(503).send({ code: 'AI_UNCONFIGURED' }));
     admin.get('/ai-picks/recent', async (_request, reply) => options.aiPicks ? { reads: await options.aiPicks.recent() }

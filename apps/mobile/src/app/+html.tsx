@@ -16,6 +16,18 @@ export default function Root({ children }: PropsWithChildren) {
       <meta name="apple-mobile-web-app-status-bar-style" content="black" />
       <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
       <link rel="manifest" href="/manifest.webmanifest" />
+      {/* The preview a text or social app shows for the link. */}
+      <meta name="description" content="CrownIQ · Sports Intelligence, powered by GKR. Beta." />
+      <meta property="og:type" content="website" />
+      <meta property="og:site_name" content="CrownIQ" />
+      <meta property="og:title" content="CrownIQ · Beta" />
+      <meta property="og:description" content="Sports Intelligence · Powered by GKR" />
+      <meta property="og:url" content="https://crowniq.up.railway.app/" />
+      <meta property="og:image" content="https://crowniq.up.railway.app/og.png" />
+      <meta property="og:image:width" content="1200" />
+      <meta property="og:image:height" content="630" />
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:image" content="https://crowniq.up.railway.app/og.png" />
       <ScrollViewStyleReset />
       <style dangerouslySetInnerHTML={{ __html: 'html,body{background-color:#010401;}' }} />
     </head>

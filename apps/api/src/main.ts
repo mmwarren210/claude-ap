@@ -1,3 +1,4 @@
+import { FeedbackStore } from './feedback.js';
 import 'dotenv/config';
 import { mergePayouts } from '@crowniq/contracts';
 import { dirname, join } from 'node:path';
@@ -313,6 +314,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provid
   }:null,
   historyArchive,
   marketRecord:new MarketRecord(`${dataDir}/market-record.json`),
+  feedback:new FeedbackStore(`${dataDir}/feedback.json`),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   liveMarkets:process.env.CROWNIQ_LIVE_MARKETS==='false'?null:new LiveMarkets(`${dataDir}/live-markets.json`),
   scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,payouts,

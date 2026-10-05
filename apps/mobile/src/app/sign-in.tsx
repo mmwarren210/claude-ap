@@ -3,7 +3,7 @@ import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollVie
   View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth';
-import { CrownLogo } from '../components/ui/AppHeader';
+import { AppIcon } from '../components/ui/AppHeader';
 import { GhostButton, PrimaryButton } from '../components/ui/Controls';
 import { colors, radius } from '../theme';
 
@@ -25,9 +25,11 @@ export default function SignIn() {
     <KeyboardAvoidingView style={styles.safe} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.hero}>
-          <CrownLogo size={64} />
+          <AppIcon size={132} />
           <Text style={styles.word}>Crown<Text style={styles.iq}>IQ</Text></Text>
           <Text style={styles.tag}>Sports Intelligence · Powered by GKR</Text>
+          <Text style={styles.betaNote}>BETA · Not fully released yet. Family members are our testers: report bugs and
+            ideas in More → Beta feedback.</Text>
         </View>
 
         {(guest.signingIn || !!guest.message) && <View style={styles.panel}>
@@ -78,6 +80,7 @@ export default function SignIn() {
 }
 
 const styles = StyleSheet.create({
+  betaNote: { color: colors.gold, fontSize: 13, fontWeight: '700', textAlign: 'center', lineHeight: 19, marginTop: 10, maxWidth: 340 },
   safe: { flex: 1, backgroundColor: colors.background },
   content: { padding: 20, paddingBottom: 40, gap: 22 },
   hero: { alignItems: 'center', gap: 4, paddingTop: 18 },

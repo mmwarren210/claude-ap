@@ -16,6 +16,7 @@ import type { PickApp } from '../../components/AppBoard';
 import { entryName, percent1 } from '../../insights';
 import { usePayouts } from '../../use-payouts';
 import { ChangePassword, DeleteAccount, MemberAccess, MemberResetCode } from '../../components/AccountSecurity';
+import { BetaFeedback, FeedbackReview, PatchNotes } from '../../components/Feedback';
 import { colors, radius } from '../../theme';
 import { useDraft } from '../../use-draft';
 
@@ -38,7 +39,7 @@ export default function MoreScreen() {
   const { viewMode, setViewMode, ready, hiddenTips, showAllTips } = useDraft();
   const [owner, setOwner] = useState(false);
   const [stats, setStats] = useState<{ picks: number; crowns: number; rate: number | null } | null>(null);
-  const [sheet, setSheet] = useState<'account' | 'payouts' | null>(null);
+  const [sheet, setSheet] = useState<'account' | 'payouts' | 'feedback' | 'updates' | 'review' | null>(null);
   const [payoutApp, setPayoutApp] = useState<PickApp>('prizepicks');
   const payouts = usePayouts();
   const [name, setName] = useState(profile?.username ?? ''), [message, setMessage] = useState('');
@@ -94,6 +95,13 @@ export default function MoreScreen() {
           {stats?.rate === null || !stats ? '—' : `${Math.round(stats.rate * 100)}%`}</Text><Text style={styles.statLabel}>Hit rate</Text></View>
       </View>
 
+      <Text style={styles.heading}>Beta</Text>
+      <View style={styles.group}>
+        <Row icon="bug-outline" title="Beta feedback" detail="Report a bug or idea" onPress={demo ? undefined : () => setSheet('feedback')} />
+        <Row icon="bullhorn-outline" title="Updates" detail="Patches and fixes" last={!owner} onPress={demo ? undefined : () => setSheet('updates')} />
+        {owner && <Row icon="clipboard-check-outline" title="Review feedback" detail="Owner" last onPress={() => setSheet('review')} />}
+      </View>
+
       <Text style={styles.heading}>App Settings</Text>
       <View style={styles.group}>
         <Row icon="account-outline" title="Account" detail="Display username" onPress={() => setSheet('account')} />
@@ -136,6 +144,9 @@ export default function MoreScreen() {
       {owner && <MemberAccess />}
       {!demo && profile?.plan !== 'GUEST' && <DeleteAccount />}
     </Sheet>
+    <Sheet visible={sheet === 'feedback'} title="Beta feedback" onClose={() => setSheet(null)}><BetaFeedback /></Sheet>
+    <Sheet visible={sheet === 'updates'} title="Updates" onClose={() => setSheet(null)}><PatchNotes /></Sheet>
+    <Sheet visible={sheet === 'review'} title="Review feedback" onClose={() => setSheet(null)}><FeedbackReview /></Sheet>
     <Sheet visible={sheet === 'payouts'} title="Payout estimates" onClose={() => setSheet(null)}>
       <Segmented label="Pick'em app" options={pickApps} value={payoutApp} onChange={setPayoutApp} />
       <Text style={styles.sheetNote}>“Needs” is how often each pick must hit for that entry to break even; lower is easier.
