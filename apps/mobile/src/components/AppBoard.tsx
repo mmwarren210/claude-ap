@@ -1,3 +1,4 @@
+import { useRecordText } from '../use-hit-rates';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -18,41 +19,17 @@ import { Notice } from './Screen';
 import { AppHeader } from './ui/AppHeader';
 import { ChipRow, FilterChip, GhostButton, PrimaryButton, Segmented } from './ui/Controls';
 import { PlayerAvatar } from './ui/PlayerAvatar';
+import { backedSide, backing, historySide, scoutSide, sideLabel } from '../app-lines';
+import type { AppLine, Side } from '../app-lines';
 
 export type { PickApp };
 export { pickApps };
-
-type Side = 'MORE' | 'LESS';
-/** One Underdog or Pick6 line, as /v1/apps/:app/board serves it. */
-type AppLine = { id: string; sport: string; league: string; eventId: string; eventName: string; eventStartTime: string; playerId: string;
-  playerName: string; team: string | null; opponent: string | null; stat: string; threshold: number; lineType: string;
-  availableDirections: Side[]; multipliers: Partial<Record<Side, number>> | null; playerImageUrl: string | null;
-  prizePicks: { threshold: number; lineType: string; gkr: { direction: Side; score: number } | null } | null;
-  /** GKR on this app line itself (its number and sides), or null when GKR passes or can't read it. */
-  gkr?: { direction: Side; score: number } | null;
-  /** Scout's read on this line (players PrizePicks doesn't list, where GKR has no research), or null. */
-  scout?: { pick: Side | 'PASS'; score: number | null; agreement: string } | null;
-  /** The free History Read (recent results against this line), on lines GKR doesn't score. */
-  history?: { direction: Side | 'PASS'; score: number | null; text: string; source: string; lean?: boolean } | null;
-  /** Pick6 promos: a gimme pick, or the number before a promo moved it. */
-  promo?: { gimme: boolean; originalLine: number | null } | null };
 
 /** The side's boosted payout (Pick6 pays some picks above 1x), or null. */
 export const boostOf = (line: { multipliers: Partial<Record<Side, number>> | null }, side: Side) =>
   (line.multipliers?.[side] ?? 0) >= 1.1 ? line.multipliers![side]! : null;
 const boosted = (line: AppLine) => line.availableDirections.some((side) => boostOf(line, side)) || !!line.promo;
 
-const sideLabel = (app: PickApp, side: Side) => app === 'underdog' ? side === 'MORE' ? 'Higher' : 'Lower'
-  : side === 'MORE' ? 'More' : 'Less';
-
-/** Scout's side on a line GKR can't read (55 and up is a play). */
-const scoutSide = (line: AppLine): Side | null => !line.gkr && line.scout && line.scout.pick !== 'PASS' &&
-  (line.scout.score ?? 0) >= 55 ? line.scout.pick : null;
-/** The History Read's side where GKR and Scout have none. */
-const historySide = (line: AppLine): Side | null => !line.gkr && !scoutSide(line) && line.history && line.history.direction !== 'PASS'
-  && line.history.score !== null ? line.history.direction : null;
-/** The side the card backs: GKR's, then Scout's, then the History Read's. */
-const backedSide = (line: AppLine): Side | null => line.gkr?.direction ?? scoutSide(line) ?? historySide(line);
 
 function Reference({ line }: { line: AppLine }) {
   const reference = line.prizePicks;
@@ -68,6 +45,8 @@ function Reference({ line }: { line: AppLine }) {
 
 function LineCard({ app, line, picked, onPick, asking, onAsk }: { app: PickApp; line: AppLine; picked: Side | null;
   onPick: (side: Side) => void; asking: boolean; onAsk?: () => void }) {
+  const source = line.gkr ? null : scoutSide(line) ? 'scout' : historySide(line) ? line.history?.trend ? 'trend' : 'history' : null;
+  const record = useRecordText(source, line.sport, line.market ?? line.stat);
   return <View style={[styles.card, picked && styles.cardPicked]}>
     <View style={styles.cardHead}>
       <PlayerAvatar name={line.playerName} photoUrl={line.playerImageUrl} size={48} ring={picked ? colors.mint : colors.borderStrong} />
@@ -92,11 +71,12 @@ function LineCard({ app, line, picked, onPick, asking, onAsk }: { app: PickApp; 
       <Text style={styles.gkrSide}>{sideLabel(app, line.gkr.direction)} {formatLine(line.threshold)}</Text>
     </View>}
     {historySide(line) && <View style={styles.gkr}>
-      <Text style={[styles.gkrScore, { color: line.history!.lean ? colors.amber : colors.royal }]}>
-        History {line.history!.lean ? 'lean ' : ''}{Math.round(line.history!.score!)}</Text>
+      <Text style={[styles.gkrScore, { color: line.history!.lean || line.history!.trend ? colors.amber : colors.royal }]}>
+        {line.history!.trend ? 'Trend' : 'History'} {line.history!.lean ? 'lean ' : ''}{Math.round(line.history!.score!)}</Text>
       <Text style={styles.gkrSide}>{sideLabel(app, historySide(line)!)} {formatLine(line.threshold)}</Text>
     </View>}
     {historySide(line) && <Text style={styles.reference}>{line.history!.text} · {line.history!.source}</Text>}
+    {!!record && <Text style={[styles.reference, { color: colors.gold }]}>Our record · {record}</Text>}
     {!line.gkr && scoutSide(line) && <View style={styles.gkr}>
       <Text style={[styles.gkrScore, styles.scoutScore]}>{SCOUT} {Math.round(line.scout!.score!)}</Text>
       <Text style={styles.gkrSide}>{sideLabel(app, scoutSide(line)!)} {formatLine(line.threshold)}</Text>
@@ -112,7 +92,7 @@ function LineCard({ app, line, picked, onPick, asking, onAsk }: { app: PickApp; 
         style={[styles.side, backedSide(line) === side && styles.sideBacked, picked === side && styles.sideActive]}>
         <Text style={[styles.sideText, picked === side && styles.sideTextActive]}>{sideLabel(app, side)}
           {line.multipliers?.[side] ? ` · ${line.multipliers[side]}x` : ''}{line.gkr?.direction === side ? ' · GKR'
-            : scoutSide(line) === side ? ` · ${SCOUT}` : historySide(line) === side ? ' · History' : ''}</Text></Pressable>)}
+            : scoutSide(line) === side ? ` · ${SCOUT}` : historySide(line) === side ? line.history?.trend ? ' · Trend' : ' · History' : ''}</Text></Pressable>)}
     </View>
   </View>;
 }
@@ -205,14 +185,14 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   }).sort((a, b) => a.breakEven - b.breakEven)[0] ?? null : null;
   // The slip builder: GKR's strongest lines on this app, at the chosen size; "Build another" rotates past the top ones.
   const build = () => {
-    const next = buildSlip(lines.filter((line) => sport === 'ALL' || line.league === sport), slipSize, nowMs, built * slipSize);
+    const next = buildSlip(lines.filter((line) => sport === 'ALL' || line.league === sport), slipSize, nowMs, built * slipSize, backing);
     setBuilt(built + 1); setSlip(next);
     const entry = (['FLEX', 'POWER'] as const).flatMap((mode) => {
       const outlook = entryOutlook(appPayouts, next.length, mode);
       return outlook ? [{ mode, ...outlook }] : [];
     }).sort((a, b) => a.breakEven - b.breakEven)[0];
-    setMessage(next.length < 2 ? `GKR backs fewer than 2 ${appNames[app]} lines right now.`
-      : `Built ${next.length} picks from GKR’s strongest ${appNames[app]} lines${next.length < slipSize ? ` (only ${next.length} qualify)` : ''}.` +
+    setMessage(next.length < 2 ? `Fewer than 2 ${appNames[app]} lines are backed right now.`
+      : `Built ${next.length} picks from the strongest backed ${appNames[app]} lines${next.length < slipSize ? ` (only ${next.length} qualify)` : ''}.` +
         (entry ? ` Play ${entryName(next.length, entry.mode)}: each pick needs ${percent1(entry.breakEven)}.` : ''));
   };
   // Underdog and Pick6 multiply the entry's payout by each pick's own multiplier (a boost above 1x, a cut below).
@@ -232,7 +212,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
       <Segmented label="Slip size" value={slipSize} onChange={(value) => { setSlipSize(value); setBuilt(0); }}
         options={[2, 3, 4, 5, 6].map((value) => ({ value, label: `${value}` }))} />
       <PrimaryButton label={built ? 'Build another' : `Build a ${slipSize}-pick slip`} icon="auto-fix" onPress={build} />
-      <Text style={styles.note}>GKR’s strongest lines, one per player, at most two per game and at least two teams. Review
+      <Text style={styles.note}>GKR 80 and up first, then {SCOUT}’s plays, then History plays. One per player, at most two per game and at least two teams. Review
         each pick before you play it.</Text>
     </View>}
     {scored && <Segmented label="Which lines" value={gkrOnly ? 'GKR' : 'ALL'} onChange={(value) => setGkrOnly(value === 'GKR')}

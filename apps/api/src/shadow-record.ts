@@ -18,7 +18,7 @@ import { teamIn } from './market-picks.js';
 // - script: a GKR decision with the game's expected script saved beside it (favorite and margin, total), for the
 //   game-script proposal (docs/PROPOSAL_GAME_SCRIPT.md).
 
-export type ShadowKind = 'books' | 'book:draftkings' | 'book:hardrock' | 'script' | 'gkr' | 'beta' | 'beta-pass' | 'history';
+export type ShadowKind = 'books' | 'book:draftkings' | 'book:hardrock' | 'script' | 'gkr' | 'beta' | 'beta-pass' | 'history' | 'trend';
 export type ShadowGrade = 'PENDING' | 'WIN' | 'LOSS' | 'PUSH' | 'DNP' | 'VOID';
 
 /** The game's expected script when the pick was saved. */
@@ -167,6 +167,22 @@ export class ShadowRecord {
     return graded;
   }
 
+  /** Graded record by source and sport, and by source, sport and stat (wins over wins plus losses). */
+  async hitRates(): Promise<Record<string, { graded: number; wins: number; hitRate: number }>> {
+    await this.load();
+    const out: Record<string, { graded: number; wins: number; hitRate: number }> = {};
+    for (const entry of this.entries.values()) {
+      if (entry.grade !== 'WIN' && entry.grade !== 'LOSS') continue;
+      const { sport, market } = entry.lineSnapshot;
+      for (const key of [`${entry.kind}|${sport}`, `${entry.kind}|${sport}|${market}`]) {
+        const row = out[key] ??= { graded: 0, wins: 0, hitRate: 0 };
+        row.graded++; if (entry.grade === 'WIN') row.wins++;
+        row.hitRate = Math.round(row.wins / row.graded * 1000) / 1000;
+      }
+    }
+    return out;
+  }
+
   async status() {
     await this.load();
     const all = [...this.entries.values()];
@@ -175,7 +191,7 @@ export class ShadowRecord {
       const wins = done.filter((entry) => entry.grade === 'WIN').length;
       return { picks: group.length, graded: done.length, wins, hitRate: done.length ? Math.round(wins / done.length * 1000) / 1000 : null };
     };
-    const kinds: ShadowKind[] = ['books', 'book:draftkings', 'book:hardrock', 'script', 'gkr', 'beta', 'beta-pass', 'history'];
+    const kinds: ShadowKind[] = ['books', 'book:draftkings', 'book:hardrock', 'script', 'gkr', 'beta', 'beta-pass', 'history', 'trend'];
     // Game script: how GKR's side did with the script for it or against it. A team favored by 7+ or a high total
     // favors MORE on volume stats; an underdog by 7+ or a low total favors LESS.
     const scripts = all.filter((entry) => entry.kind === 'script' && entry.script);

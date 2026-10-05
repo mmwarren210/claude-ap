@@ -5,7 +5,7 @@ import { ChipRow, FilterChip, Segmented } from './ui/Controls';
 export type Sportsbook = 'draftkings' | 'hardrock';
 export type MarketPlatform = 'kalshi' | 'polymarket';
 /** Every board the Board tab can show: a pick'em app, a sportsbook or a prediction market. */
-export type BoardSource = PickApp | Sportsbook | MarketPlatform;
+export type BoardSource = PickApp | Sportsbook | MarketPlatform | 'shop';
 
 export const pickApps: readonly { value: PickApp; label: string }[] = [
   { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'Pick6' }];
@@ -17,7 +17,8 @@ const others: readonly (Sportsbook | MarketPlatform)[] = ['draftkings', 'hardroc
 export function BoardPicker({ value, onChange }: { value: BoardSource; onChange: (source: BoardSource) => void }) {
   return <View style={{ gap: 8 }}>
     <Segmented label="Pick'em app" options={pickApps} value={value as PickApp} onChange={onChange} />
-    <ChipRow>{others.map((source) => <FilterChip key={source} label={sourceNames[source]} active={value === source} chevron={false}
+    <ChipRow><FilterChip label="Line shop" active={value === 'shop'} chevron={false} icon="tag-multiple-outline"
+      onPress={() => onChange('shop')} />{others.map((source) => <FilterChip key={source} label={sourceNames[source]} active={value === source} chevron={false}
       icon={source === 'kalshi' || source === 'polymarket' ? 'chart-line' : 'bank-outline'}
       onPress={() => onChange(source)} />)}</ChipRow>
   </View>;

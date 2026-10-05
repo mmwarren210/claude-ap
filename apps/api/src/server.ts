@@ -1,3 +1,6 @@
+import type { BaseRates, Trend } from './base-rates.js';
+import { lineShop } from './line-shop.js';
+import type { ShopEntry, ShopPick } from './line-shop.js';
 import { HistoryReads } from './history-read.js';
 import { statApiValueFor } from './stat-api-gkr-evidence.js';
 import type { HistoryRead } from './history-read.js';
@@ -127,6 +130,8 @@ export interface ServerOptions {
   payouts?: Payouts;
   /** Shadow records: Books picks, sportsbook-tab picks and game-script snapshots, graded in their own record. */
   shadowRecord?: ShadowRecord | null;
+  /** Every standard line graded after its game, for Trends (CrownIQ's own hit rates). */
+  baseRates?: BaseRates | null;
   /** Kalshi and Polymarket picks, graded from final scores. */
   marketRecord?: MarketRecord | null;
   /** Beta feedback: testers' bug reports and suggestions, and the patch notes that answer them. */
@@ -291,6 +296,11 @@ export function buildServer(options: ServerOptions = {}) {
       for(const [lineId,read] of Object.entries(await boardHistoryReads(board))){
         const line=lines.get(lineId);
         if(line&&read.direction!=='PASS'&&!read.lean)picks.push({kind:'history',line,side:read.direction,strength:read.score});
+      }
+      // Trends, graded in their own record.
+      for(const [lineId,trend] of Object.entries(historyCache?.trends??{})){
+        const line=lines.get(lineId);
+        if(line&&trend.direction!=='PASS')picks.push({kind:'trend',line,side:trend.direction,strength:trend.score});
       }
       // Kalshi and Polymarket picks go to their own record.
       if(options.marketRecord){
@@ -1130,7 +1140,10 @@ export function buildServer(options: ServerOptions = {}) {
     if(!free||(free.perMap&&twoMaps(line.market)))return null;
     return {values:free.values.map((game)=>game.value),source:free.source};
   },()=>now());
-  let historyCache:{at:number;board:unknown;reads:Record<string,HistoryRead>}|null=null;
+  let historyCache:{at:number;board:unknown;reads:Record<string,HistoryRead>;trends?:Record<string,HistoryRead>}|null=null;
+  /** A Trend in the History Read shape, flagged so the app labels it Trend. */
+  const trendRead=(trend:Trend):HistoryRead=>({direction:trend.side,score:Math.round(trend.rate*100),over:0,under:0,games:trend.graded,
+    average:0,books:null,text:trend.text,source:'CrownIQ’s graded lines',trend:true});
   let historyRefresh:Promise<Record<string,HistoryRead>>|null=null;
   /** The board's History Reads: the last ones at once while a fresh set builds (the first build is waited for). */
   async function boardHistoryReads(board:BoardResponse):Promise<Record<string,HistoryRead>>{
@@ -1146,7 +1159,15 @@ export function buildServer(options: ServerOptions = {}) {
       return !analysis||analysis.direction==='PASS'||analysis.score===null;});
     const fair=await fairMoreFor().catch(()=>new Map<string,number>());
     const reads=Object.fromEntries(await historyReads.readsFor(lines,(id)=>fair.get(id)??null));
-    historyCache={at:time,board,reads};
+    // Trends from CrownIQ's own graded lines, where no read picks a side (shown labeled Trend, graded separately).
+    const trends:Record<string,HistoryRead>={};
+    if(options.baseRates)for(const line of lines){
+      const read=reads[line.id];
+      if(read&&read.direction!=='PASS'||Date.parse(line.eventStartTime)<=time)continue;
+      const trend=await options.baseRates.trendFor(line);
+      if(trend)trends[line.id]=trendRead(trend);
+    }
+    historyCache={at:time,board,reads,trends};
     // Why GKR passes: reason codes, and the score spread of lines it did score, by sport.
     const why:Record<string,number>={},scored:Record<string,number>={};
     const missing:Record<string,number>={},evidenceKinds=new Map(service.getEvidence().map((item)=>[item.id,item.kind]));
@@ -1178,10 +1199,25 @@ export function buildServer(options: ServerOptions = {}) {
   // Which build is running, so the app can show its version (Railway sets the commit at deploy).
   app.get('/v1/version',async()=>({commit:(process.env.RAILWAY_GIT_COMMIT_SHA??process.env.CROWNIQ_COMMIT??'').slice(0,7)||null,
     startedAt:serverStartedAt}));
+  // CrownIQ's own track record: each source's graded hit rate by sport and stat, and the base rates behind Trends.
+  app.get('/v1/hit-rates',async()=>({sources:{...await options.shadowRecord?.hitRates()??{},...await options.aiPicks?.hitRates()??{}},
+    baseRates:await options.baseRates?.status()??null}));
+  if(options.baseRates){
+    const rates=options.baseRates;
+    const recordLines=()=>{const board=service.getBoard();if(board)void rates.record(board.board.lines).catch(()=>undefined);};
+    const first=setTimeout(recordLines,60_000);first.unref();
+    const every=setInterval(recordLines,15*60_000);every.unref();
+    shadowTimers.push(first,every,rates.start());
+  }
   app.get('/v1/history-reads',async(_request,reply)=>{
     const board=service.getBoard();
     if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
-    return {reads:await boardHistoryReads(board)};
+    const reads=await boardHistoryReads(board);
+    const merged={...reads};
+    // A Trend fills a line where the History Read has no side.
+    for(const [lineId,trend] of Object.entries(historyCache?.trends??{}))
+      if(!merged[lineId]||merged[lineId].direction==='PASS')merged[lineId]=trend;
+    return {reads:merged};
   });
   app.get('/v1/books', async (_request, reply) => {
     const board=service.getBoard();
@@ -1204,9 +1240,37 @@ export function buildServer(options: ServerOptions = {}) {
       lines:await Promise.all(board.lines.map(async(line)=>{const read=reads.get(`${line.id}|${line.threshold}`);
         const gkr=scores.get(line.id)??null;
         // A free History Read on lines GKR doesn't score.
-        const history=gkr?null:(await historyReads.readsFor(asBoard([line],board.fetchedAt??now().toISOString()).board.lines)).values().next().value??null;
+        const asLine=asBoard([line],board.fetchedAt??now().toISOString()).board.lines;
+        let history=gkr?null:(await historyReads.readsFor(asLine)).values().next().value??null;
+        if(!gkr&&!read&&(!history||history.direction==='PASS')&&options.baseRates){
+          const trend=await options.baseRates.trendFor(asLine[0]);if(trend)history=trendRead(trend);}
         return {...line,gkr,history,
           scout:read?{pick:read.pick,score:read.score,agreement:read.agreement}:null};}))};
+  });
+  // Line shopping: every app's number for the same player and stat, the easiest number per side, and the books' line.
+  let shopCache:{at:number;board:unknown;entries:ShopEntry[]}|null=null;
+  async function shopEntries():Promise<ShopEntry[]>{
+    const board=service.getBoard();
+    if(!board)return [];
+    const time=now().getTime();
+    if(shopCache&&shopCache.board===board&&time-shopCache.at<2*60_000)return shopCache.entries;
+    const apps=options.scrapedLines?(await Promise.all(otherApps.map(async(app)=>(await appBoard(options.scrapedLines!,app,null)).lines))).flat():[];
+    const prices=options.sharpProps?(await options.sharpProps.current().catch(()=>({prices:[]}))).prices:[];
+    const picks=new Map<string,ShopPick>();
+    for(const analysis of board.analyses)if(analysis.direction!=='PASS'&&analysis.score!==null&&analysis.score>=80)
+      picks.set(analysis.lineId,{side:analysis.direction,by:'GKR',score:Math.round(analysis.score)});
+    for(const [lineId,read] of Object.entries(historyCache?.reads??{}))if(!picks.has(lineId)&&read.direction!=='PASS'&&!read.lean&&read.score!==null)
+      picks.set(lineId,{side:read.direction,by:'HISTORY',score:read.score});
+    const entries=lineShop(board.board.lines,apps,prices,picks,now());
+    shopCache={at:time,board,entries};
+    return entries;
+  }
+  app.get('/v1/line-shop',async(request)=>{
+    const query=z.object({lineId:z.string().max(200).optional(),limit:z.coerce.number().int().min(1).max(2000).default(800)})
+      .parse(request.query);
+    const entries=await shopEntries();
+    if(query.lineId)return {entry:entries.find((entry)=>entry.offers.some((offer)=>offer.lineId===query.lineId))??null};
+    return {count:entries.length,entries:entries.slice(0,query.limit)};
   });
   // App scores are rebuilt at most every 2 minutes, or sooner when the PrizePicks board or its research changes.
   const appScoreCache=new Map<OtherApp,{at:number;key:readonly unknown[];scores:Map<string,AppScore>}>();

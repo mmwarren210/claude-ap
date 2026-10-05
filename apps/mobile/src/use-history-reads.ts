@@ -5,7 +5,9 @@ import { useAuth } from './auth';
 export type HistoryRead = { direction: 'MORE' | 'LESS' | 'PASS'; score: number | null; over: number; under: number;
   games: number; average: number; books: number | null; text: string; source: string;
   /** A weaker side (55-59%): shown as a lean. */
-  lean?: boolean };
+  lean?: boolean;
+  /** A Trend from CrownIQ's own graded lines (how often More or Less hits on this kind of line), not the player's history. */
+  trend?: boolean };
 
 // One shared copy, refreshed at most every 10 minutes.
 let cache: { at: number; value: Map<string, HistoryRead> } | null = null;

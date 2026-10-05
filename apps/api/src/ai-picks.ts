@@ -586,6 +586,22 @@ export class AiPickService {
           summary: item.summary, lateNews: item.lateNews ?? '', sources: item.reasons.filter((reason) => reason.url).length })) }));
   }
 
+  /** Scout's graded record on its own picks, by sport and by sport and stat. */
+  async hitRates(): Promise<Record<string, { graded: number; wins: number; hitRate: number }>> {
+    await this.load();
+    const out: Record<string, { graded: number; wins: number; hitRate: number }> = {};
+    for (const read of this.reads.values()) {
+      if (read.gkr || read.pick === 'PASS' || read.grade !== 'WIN' && read.grade !== 'LOSS') continue;
+      const { sport, market } = read.lineSnapshot;
+      for (const key of [`scout|${sport}`, `scout|${sport}|${market}`]) {
+        const row = out[key] ??= { graded: 0, wins: 0, hitRate: 0 };
+        row.graded++; if (read.grade === 'WIN') row.wins++;
+        row.hitRate = Math.round(row.wins / row.graded * 1000) / 1000;
+      }
+    }
+    return out;
+  }
+
   async status() {
     await this.load();
     const all = [...this.reads.values()], reads = all.filter((read) => !read.gkr);

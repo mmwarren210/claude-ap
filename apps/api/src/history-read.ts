@@ -17,6 +17,8 @@ export interface HistoryRead {
   readonly source: string;
   /** A weaker side (55-59%, Goblins 66-71%): shown as a lean, never recorded as a play. */
   readonly lean?: boolean;
+  /** A Trend from CrownIQ's own graded lines, not the player's history. */
+  readonly trend?: boolean;
 }
 
 export const MIN_GAMES = 5;

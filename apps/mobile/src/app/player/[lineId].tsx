@@ -1,3 +1,4 @@
+import { LineShopFor } from '../../components/LineShop';
 import type { Analysis, PropLine } from '@crowniq/contracts';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
@@ -292,6 +293,7 @@ export default function PlayerResearch() {
       </View>
       <View style={styles.panel}><EvidenceBadge quality={analysis?.evidenceQuality ?? 'NONE'} detail={evidenceDetail(analysis)} /></View>
       <View style={styles.panel}><GameBars games={stats?.games ?? []} threshold={line.threshold} /></View>
+      <LineShopFor lineId={line.id} />
 
       {markets.length > 0 && <View style={styles.section}>
         <Text style={styles.sectionTitle}>Supporting stats</Text>

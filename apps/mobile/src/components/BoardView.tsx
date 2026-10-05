@@ -1,3 +1,4 @@
+import { LineShopBoard } from './LineShop';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -50,6 +51,7 @@ let lastApp: BoardSource = 'prizepicks';
 export default function BoardView() {
   const [app, setAppState] = useState<BoardSource>(lastApp);
   const setApp = useCallback((next: BoardSource) => { lastApp = next; setAppState(next); }, []);
+  if (app === 'shop') return <LineShopBoard onSource={setApp} />;
   if (app === 'draftkings' || app === 'hardrock') return <BookBoard book={app} onSource={setApp} />;
   if (app === 'kalshi' || app === 'polymarket') return <MarketBoard platform={app} onSource={setApp} />;
   return app === 'prizepicks' ? <PrizePicksBoard onApp={setApp} /> : <AppBoard app={app} onApp={setApp} />;

@@ -110,3 +110,11 @@ and confirm it ends with a healthy `/health` (see `docs/DEPLOY.md`).
   `stat-api-usage.json`, so restarts don't reset it. ESPN research goes soonest game first, up to 1500 players
   (`GKR_ESPN_MAX_PLAYERS`). The `[gkr-coverage]` log splits missing-evidence passes into "no projection" and "has
   projection, waiting on status". None of this changes model math; lineup and injury gates stay.
+- **Per-app Crowns, line shop, our own hit rates (2026-10-05).** The Crown tab's "Play on" picker builds Underdog and
+  Pick6 Crowns from that app's own lines (`AppCrown.tsx`, `app-lines.ts` `backing`: GKR 80+, then Scout plays, then
+  History plays; no Goblins/Demons there). Line shop (`line-shop.ts`, `/v1/line-shop`, Board → "Line shop" chip and the
+  player screen): each app's number for the same player and stat, the easiest number per side, the books' line, and
+  where GKR's (or History's) side is easiest. Our own hit rates: `base-rates.ts` grades every standard PrizePicks line
+  after its game; a side that hit 57%+ over 60+ lines at that number (or 150+ across the stat) shows as a **Trend**
+  (amber, never auto-picked, recorded as shadow kind `trend`). `/v1/hit-rates` gives each source's graded record by
+  sport and stat; cards show "Our record" once 10+ picks are graded. All display only; no score changes.

@@ -28,6 +28,7 @@ import { useDraft } from '../../use-draft';
 import { usePlayerGames } from '../../use-player-games';
 import { useRankings } from '../../use-rankings';
 import { ReportNudge } from '../../components/ReportNudge';
+import { AppCrown } from '../../components/AppCrown';
 
 const sizes = [2, 3, 4, 5, 6].map((value) => ({ value, label: `Top ${value}` }));
 
@@ -116,7 +117,7 @@ export default function CrownScreen() {
   const payouts = usePayouts();
   const entryLegs = legs.length || size;
   // PrizePicks pays less on Goblins and more on Demons: adjust the standard payout for this slip's legs.
-  const slip = playApp === 'prizepicks' ? slipAdjustment(legs.map((leg) => leg.line)) : { factor: 1, estimated: 0, unknownDemons: 0, special: 0 };
+  const slip = slipAdjustment(legs.map((leg) => leg.line));
   const adjusted = slip.special > 0 && slip.factor !== 1;
   const power = adjusted ? adjustedOutlook(payouts[playApp], entryLegs, 'POWER', slip.factor) : entryOutlook(payouts[playApp], entryLegs, 'POWER');
   const flex = adjusted ? adjustedOutlook(payouts[playApp], entryLegs, 'FLEX', slip.factor) : entryOutlook(payouts[playApp], entryLegs, 'FLEX');
@@ -163,9 +164,22 @@ export default function CrownScreen() {
     } catch { setMessage('Could not reach CrownIQ. Your draft is still on this device.'); }
   };
 
+  // Underdog and Pick6 Crowns are built from that app's own lines (different numbers, no Goblins or Demons).
+  const appPicker = <Segmented label="Play on" options={pickApps} value={playApp} onChange={setPlayApp} />;
+  if (playApp !== 'prizepicks') return <SafeAreaView style={styles.safe} edges={['top']}>
+    <ScrollView contentContainerStyle={styles.content}>
+      <AppHeader subtitle="Your Crown" />
+      {appPicker}
+      <Segmented label="Crown size" options={sizes} value={size} onChange={setSize} />
+      <AppCrown app={playApp} size={size} />
+      <ReportNudge where="crown" />
+    </ScrollView>
+  </SafeAreaView>;
+
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Your Crown" />
+      {appPicker}
       <Segmented label="Crown size" options={sizes} value={size} onChange={setSize} />
       <GlowCard accent={colors.mint}>
         <View style={styles.summary}>
@@ -233,8 +247,7 @@ export default function CrownScreen() {
       <GlowCard accent={colors.mint}>
         <View style={styles.panelHead}><Icon name="chart-bar" size={26} color={colors.mint} />
           <View style={styles.legBody}><Text style={styles.panelTitle}>Projected Outcome</Text>
-            <Text style={styles.legMeta}>Estimated payout if every leg hits, by app</Text></View></View>
-        <View style={styles.appPicker}><Segmented label="Pick'em app" options={pickApps} value={playApp} onChange={setPlayApp} /></View>
+            <Text style={styles.legMeta}>Estimated PrizePicks payout if every leg hits</Text></View></View>
         <View style={styles.metrics}>
           <View style={styles.metric}><Text style={styles.metricValue}>{power ? `${adjusted ? '≈' : ''}${power.fullHit}x` : '—'}</Text>
             <Text style={styles.metricLabel}>Power</Text></View>
@@ -294,7 +307,6 @@ const styles = StyleSheet.create({
   confidence: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   confidenceText: { color: colors.mint, fontSize: 13, fontWeight: '700' },
   metrics: { flexDirection: 'row', marginTop: 14 },
-  appPicker: { marginTop: 12 },
   breakEven: { color: colors.text, fontSize: 13, lineHeight: 19, marginTop: 12, fontWeight: '600' },
   metric: { flex: 1, alignItems: 'center', gap: 2 },
   metricDivider: { borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.borderStrong },

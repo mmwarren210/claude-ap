@@ -286,3 +286,28 @@ test('auto-update: only a known, different server build counts as newer', async 
   assert.equal(isOutdated(null, 'abc1234'), false);
   assert.equal(isOutdated('abc1234', null), false);
 });
+
+test('app Crowns: GKR 80+ first, then Scout plays, then History plays; never a History lean or a weak GKR score',async()=>{
+  const { backing } = await import('../src/app-lines.js');
+  const now=Date.parse('2030-01-01T12:00:00Z');
+  const base={eventStartTime:'2030-01-01T20:00:00Z',lineType:'REGULAR',availableDirections:['MORE','LESS'] as ('MORE'|'LESS')[],
+    league:'NFL',sport:'NFL',eventName:'g',playerName:'x',opponent:null,stat:'Receptions',threshold:4.5,multipliers:null,
+    playerImageUrl:null,prizePicks:null};
+  const mk=(id:string,team:string,extra:Record<string,unknown>)=>({...base,id,eventId:`g-${id}`,playerId:`p-${id}`,team,...extra});
+  const lines=[mk('hist','A',{history:{direction:'LESS',score:66,text:'',source:''}}),
+    mk('lean','B',{history:{direction:'MORE',score:58,text:'',source:'',lean:true}}),
+    mk('scout','C',{scout:{pick:'MORE',score:60,agreement:'BOTH'}}),
+    mk('gkr','D',{gkr:{direction:'MORE',score:84}}),
+    mk('weak','E',{gkr:{direction:'LESS',score:72}})];
+  assert.deepEqual(buildSlip(lines,5,now,0,backing).map((pick)=>`${pick.line.id}:${pick.side}`),
+    ['gkr:MORE','scout:MORE','hist:LESS']);
+});
+
+test('our record: the sport and stat first, then the sport, only with 10+ graded picks',async()=>{
+  const { recordText } = await import('../src/hit-rates.js');
+  const rates={'history|NFL|player_receptions':{graded:12,wins:7,hitRate:0.583},'history|NFL':{graded:40,wins:22,hitRate:0.55},
+    'scout|MLB|batter_hits':{graded:4,wins:3,hitRate:0.75},'scout|MLB':{graded:9,wins:6,hitRate:0.667}};
+  assert.equal(recordText(rates,'history','NFL','player_receptions'),'History in NFL receptions: 58% of 12 graded');
+  assert.equal(recordText(rates,'history','NFL','player_rush_yds'),'History in NFL: 55% of 40 graded');
+  assert.equal(recordText(rates,'scout','MLB','batter_hits'),null,'too few graded');
+});

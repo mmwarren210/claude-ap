@@ -1,3 +1,4 @@
+import { useRecordText } from '../use-hit-rates';
 import { BooksBadge } from './ui/BooksBadge';
 import { useBooks } from '../use-books';
 import { aiPlay, SCOUT } from '../use-ai-picks';
@@ -65,6 +66,7 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
   const stats = lineStats(log, line.threshold, direction, window, line.opponent);
   const l10 = lineStats(log, line.threshold, direction, 'L10');
   const pass = gkrPass && !aiPick && !historyPick && !booksSide;
+  const record = useRecordText(aiPick ? 'scout' : historyPick ? historyPick.trend ? 'trend' : 'history' : null, line.sport, line.market);
   const books = useBooks();
   return <Pressable accessibilityRole="button" onPress={onPress}
     accessibilityLabel={`${line.playerName}, ${marketLabel(line.market)} ${pass ? 'PASS' : direction} ${line.threshold}`}>
@@ -92,10 +94,11 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
         <View style={styles.ringBox}><ScoreRing score={aiPick ? aiPick.score : historyPick ? historyPick.score
           : booksSide ? Math.round(booksSide.fair * 100) : analysis?.score ?? null}
           band={aiPick || historyPick || booksSide ? undefined : analysis?.scoreBand} size={64}
-          {...aiPick || historyPick || booksSide ? { label: historyPick?.lean && !aiPick ? 'LEAN' : 'PLAY',
-            tint: historyPick?.lean && !aiPick ? colors.amber : colors.mint, who: aiPick ? SCOUT : historyPick ? 'History' : 'Books' } : {}} />
+          {...aiPick || historyPick || booksSide ? { label: historyPick?.trend && !aiPick ? 'TREND' : historyPick?.lean && !aiPick ? 'LEAN' : 'PLAY',
+            tint: (historyPick?.lean || historyPick?.trend) && !aiPick ? colors.amber : colors.mint,
+            who: aiPick ? SCOUT : historyPick ? historyPick.trend ? 'Trend' : 'History' : 'Books' } : {}} />
           {aiPick && <Text style={styles.aiTag}>{SCOUT.toUpperCase()}</Text>}
-          {historyPick && <Text style={[styles.aiTag, { color: colors.royal }]}>HISTORY</Text>}
+          {historyPick && <Text style={[styles.aiTag, { color: historyPick.trend ? colors.amber : colors.royal }]}>{historyPick.trend ? 'TREND' : 'HISTORY'}</Text>}
           {booksSide && <Text style={styles.aiTag}>BOOKS</Text>}
 </View>
         <View style={styles.edgeBox}>
@@ -115,7 +118,9 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
       {aiPick && <ScoutVerdict read={ai} gkrDirection={undefined} />}
       {booksSide && <Text style={styles.aiNote}>GKR can’t score this stat yet. DraftKings and Hard Rock give {booksSide.side}{' '}
         {Math.round(booksSide.fair * 100)}% with their cut removed; this is the books’ number, not a GKR score.</Text>}
-      {historyPick && <Text style={styles.aiNote}>History {historyPick.lean ? 'lean' : 'read'}: {historyPick.text}. From {historyPick.source}; not a GKR score.</Text>}
+      {historyPick && <Text style={styles.aiNote}>{historyPick.trend ? `Trend: ${historyPick.text}. From CrownIQ’s own graded lines, not this player’s history; not a GKR score.`
+        : `History ${historyPick.lean ? 'lean' : 'read'}: ${historyPick.text}. From ${historyPick.source}; not a GKR score.`}</Text>}
+      {!!record && <Text style={[styles.aiNote, { color: colors.gold }]}>Our record · {record}</Text>}
       {aiPick && <Text style={styles.aiNote}>GKR can’t score this stat yet. {SCOUT} researched it;
         this is {SCOUT}’s score, not a GKR score.</Text>}
       {more > 0 && <Text style={styles.more}>+{more} more {more === 1 ? 'play' : 'plays'} on {line.playerName.split(' ')[0]}’s page</Text>}
