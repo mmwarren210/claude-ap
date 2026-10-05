@@ -12,7 +12,7 @@ import { Notice } from './Screen';
 import { AppHeader } from './ui/AppHeader';
 import { ChipRow, FilterChip } from './ui/Controls';
 
-// Line shopping: the same player and stat on PrizePicks, Underdog and Pick6, with the easiest number per side and the
+// Line shopping: the same player and stat on PrizePicks, Underdog and DK Pick’em, with the easiest number per side and the
 // sportsbooks' line. Biggest gaps first. Display only.
 
 type Side = 'MORE' | 'LESS';
@@ -25,7 +25,7 @@ export type ShopEntry = { key: string; league: string; playerName: string; team:
   books: { book: string; line: number; fairOver: number }[];
   pick: { side: Side; by: 'GKR' | 'HISTORY'; score: number; best: Best } | null };
 
-const short: Readonly<Record<Source, string>> = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'Pick6' };
+const short: Readonly<Record<Source, string>> = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'DK Pick’em' };
 const word = (side: Side) => side === 'MORE' ? 'More' : 'Less';
 
 /** One player and stat across the apps. Used on the Line Shop board and the player screen. */

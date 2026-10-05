@@ -10,7 +10,7 @@ import { PrimaryButton } from './ui/Controls';
 type Status = { queued: number; done: number; failed: number; running: boolean; waiting: number; usedToday: number;
   dailyOwner: number };
 type Queue = { total: number; boards: Record<string, { total: number; sports: Record<string, number> }>; status: Status };
-const boardNames: Readonly<Record<string, string>> = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'Pick6' };
+const boardNames: Readonly<Record<string, string>> = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'DK Pick’em' };
 
 export function ScoutQueue() {
   const { request } = useAuth();

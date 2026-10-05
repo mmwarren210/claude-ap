@@ -8,7 +8,7 @@ export type MarketPlatform = 'kalshi' | 'polymarket';
 export type BoardSource = PickApp | Sportsbook | MarketPlatform | 'shop';
 
 export const pickApps: readonly { value: PickApp; label: string }[] = [
-  { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'Pick6' }];
+  { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'DK Pick’em' }];
 export const sourceNames: Readonly<Record<Sportsbook | MarketPlatform, string>> = { draftkings: 'DraftKings',
   hardrock: 'Hard Rock', kalshi: 'Kalshi', polymarket: 'Polymarket' };
 const others: readonly (Sportsbook | MarketPlatform)[] = ['draftkings', 'hardrock', 'kalshi', 'polymarket'];

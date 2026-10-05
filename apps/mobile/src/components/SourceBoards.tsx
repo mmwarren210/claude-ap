@@ -174,11 +174,12 @@ function useRecord(platform: MarketPlatform): MarketRecordStatus | null {
 }
 
 /** The builder panel: a slip size and Build / Build another. */
-function SlipPanel({ size, setSize, built, onBuild, note }: { size: number; setSize: (value: number) => void; built: boolean;
-  onBuild: () => void; note: string }) {
+function SlipPanel({ size, setSize, built, onBuild, note, max = 6 }: { size: number; setSize: (value: number) => void; built: boolean;
+  onBuild: () => void; note: string; max?: number }) {
   return <View style={styles.builder}>
     <Text style={styles.builderTitle}>Slip builder</Text>
-    <Segmented label="Slip size" value={size} onChange={setSize} options={[2, 3, 4, 5, 6].map((value) => ({ value, label: `${value}` }))} />
+    <Segmented label="Slip size" value={size} onChange={setSize}
+      options={Array.from({ length: max - 1 }, (_, index) => index + 2).map((value) => ({ value, label: `${value}` }))} />
     <PrimaryButton label={built ? 'Build another' : `Build a ${size}-pick slip`} icon="auto-fix" onPress={onBuild} />
     <Text style={styles.explain}>{note}</Text>
   </View>;
@@ -229,7 +230,7 @@ export function BookBoard({ book, onSource }: { book: Sportsbook; onSource: (sou
       {' '}· GKR picks only</Text>}
     <Text style={styles.explain}>GKR scores each {sourceNames[book]} prop at {sourceNames[book]}’s own number, using the same
       research as PrizePicks. Only lines GKR picks a side on show. “Price needs” is the win rate the odds require.</Text>
-    {shown.length >= 2 && <SlipPanel size={size} setSize={(value) => { setSize(value); setBuilt(0); }} built={built > 0}
+    {shown.length >= 2 && <SlipPanel size={size} setSize={(value) => { setSize(value); setBuilt(0); }} built={built > 0} max={book === 'draftkings' ? 8 : 6}
       onBuild={build} note="GKR’s strongest picks, fairly priced ones first, one per player. Bet them as singles or a parlay." />}
   </View>;
   return <SafeAreaView style={styles.safe} edges={['top']}>

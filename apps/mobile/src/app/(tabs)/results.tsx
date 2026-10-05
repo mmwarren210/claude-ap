@@ -26,7 +26,7 @@ type Leg = { playerName: string; market: string; threshold: number; direction: s
   grade: string; actual?: number | null; opponent?: string | null; playerId?: string };
 /** `personal` Crowns hold the user's own calls; results grade them, but they stay outside GKR's tracked record. */
 type Crown = { id: string; savedAt: string; name?: string; personal?: boolean; app?: 'underdog' | 'pick6'; legs: Leg[] };
-const appLabels = { underdog: 'Underdog', pick6: 'Pick6' } as const;
+const appLabels = { underdog: 'Underdog', pick6: 'DK Pick’em' } as const;
 type Range = 7 | 30 | 0;
 /** GKR Picks: Crowns GKR fully backs (its tracked record). Your Picks: Crowns with your own calls, graded separately. */
 type Book = 'GKR' | 'YOURS';

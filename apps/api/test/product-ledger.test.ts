@@ -467,3 +467,17 @@ test('background grading grades other sports from box scores, tracked picks and 
     assert.deepEqual(crown.legs.map((leg)=>[leg.grade,'actual' in leg?leg.actual:null]),[['LOSS',4],['LOSS',0]]);
   }finally{await rm(folder,{recursive:true,force:true});}
 });
+
+test('personal slips: Underdog and DK Pick’em take up to 8 picks, PrizePicks up to 6',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-eight-'));
+  try{
+    const ledger=new ProductLedger(join(folder,'data.json'),'CROWN_STRONG',()=>now);
+    const account=(await ledger.authenticate((await ledger.register('eight@example.org','long-private-passphrase',
+      'Eight_1')).token))!.accountId;
+    const board=combine(...Array.from({length:9},(_,index)=>build(`event-${index}`,`player${index}`)));
+    const legs=(count:number)=>board.board.lines.slice(0,count).map((line)=>({lineId:line.id,direction:'MORE' as const}));
+    await assert.rejects(()=>ledger.savePersonalCrown(account,legs(7),board),/INVALID_PRIVATE_CROWN/);
+    assert.equal((await ledger.savePersonalCrown(account,legs(8),board,'underdog')).alreadySaved,false);
+    await assert.rejects(()=>ledger.savePersonalCrown(account,legs(9),board,'pick6'),/INVALID_PRIVATE_CROWN/);
+  }finally{await rm(folder,{recursive:true,force:true});}
+});

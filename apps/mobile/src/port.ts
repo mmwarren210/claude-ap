@@ -5,7 +5,7 @@ import { Linking, Platform, Share } from 'react-native';
 
 export type PickApp = 'prizepicks' | 'underdog' | 'pick6';
 export const appNames: Readonly<Record<PickApp, string>> = { prizepicks: 'PrizePicks', underdog: 'Underdog',
-  pick6: 'DraftKings Pick6' };
+  pick6: 'DK Pick’em' };
 export const appUrls: Readonly<Record<PickApp, string>> = { prizepicks: 'https://app.prizepicks.com/',
   underdog: 'https://underdogfantasy.com/pick-em/higher-lower', pick6: 'https://pick6.draftkings.com/' };
 

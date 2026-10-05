@@ -73,6 +73,8 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
         <View style={styles.grow}><Text style={styles.title}>{appNames[app]} Crown</Text>
           <Text style={styles.meta}>Built from {appNames[app]}’s own lines and numbers · {lines === null ? 'loading…'
             : `${backedCount} backed lines`}</Text></View></View>
+      {legs.length >= 2 && !entry && <Text style={styles.breakEven}>CrownIQ doesn’t have {appNames[app]}’s {legs.length}-pick
+        payout yet. Check it in the app before you play.</Text>}
       {entry && <Text style={styles.breakEven}>Play {entryName(legs.length, entry.mode)}: {entry.fullHit}x
         {boost !== 1 ? `, times ${boost} from the picks’ multipliers` : ''}. Each pick needs to hit {percent1(entry.breakEven)} to
         break even.</Text>}

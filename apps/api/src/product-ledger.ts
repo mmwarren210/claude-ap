@@ -603,7 +603,7 @@ export class ProductLedger {
     return this.exclusive(async()=>{
       const data=await this.read();
       if(!data.accounts.some((account)=>account.id===accountId && account.status!=='SUSPENDED')||
-        legs.length<2||legs.length>6||new Set(legs.map((leg)=>leg.lineId)).size!==legs.length)
+        legs.length<2||legs.length>(app?8:6)||new Set(legs.map((leg)=>leg.lineId)).size!==legs.length)
         throw new Error('INVALID_PRIVATE_CROWN');
       const saved=legs.map(({lineId,direction})=>{
         const line=board.board.lines.find((item)=>item.id===lineId),

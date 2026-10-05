@@ -147,7 +147,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     if (slip.some((item) => item.line.playerId === line.playerId && item.line.id !== line.id)) {
       setMessage(`${line.playerName} is already on this slip.`); return;
     }
-    if (!picks.has(line.id) && slip.length >= 6) { setMessage('A slip holds up to 6 picks.'); return; }
+    if (!picks.has(line.id) && slip.length >= 8) { setMessage(`A ${appNames[app]} slip holds up to 8 picks.`); return; }
     setSlip([...slip.filter((item) => item.line.id !== line.id), { line, side }]);
   };
   // Ask Scout on one line now (same daily allowance as Ask Scout on the PrizePicks board).
@@ -210,7 +210,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     {scored && backed >= 2 && <View style={styles.builder}>
       <Text style={styles.builderTitle}>Slip builder</Text>
       <Segmented label="Slip size" value={slipSize} onChange={(value) => { setSlipSize(value); setBuilt(0); }}
-        options={[2, 3, 4, 5, 6].map((value) => ({ value, label: `${value}` }))} />
+        options={[2, 3, 4, 5, 6, 7, 8].map((value) => ({ value, label: `${value}` }))} />
       <PrimaryButton label={built ? 'Build another' : `Build a ${slipSize}-pick slip`} icon="auto-fix" onPress={build} />
       <Text style={styles.note}>GKR 80 and up first, then {SCOUT}’s plays, then History plays. One per player, at most two per game and at least two teams. Review
         each pick before you play it.</Text>
@@ -224,7 +224,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
       {' '}{appNames[app]} before you play it.</Text>
     {easiest && <Text style={styles.breakEven}>{slipEntry ? `Your ${slip.length} picks: play ${entryName(slip.length,
       slipEntry.mode)} (${slipEntry.fullHit}x${slipBoost !== 1 ? `, and its picks' payouts multiply that by ${slipBoost}` : ''}). Each pick needs to hit ${percent1(slipEntry.breakEven)} to break even. `
-      : ''}Easiest ${appNames[app]} entry: {entryName(easiest.legs, easiest.mode)}, {percent1(easiest.breakEven)} per pick.</Text>}
+      : slip.length >= 2 ? `CrownIQ doesn’t have ${appNames[app]}’s ${slip.length}-pick payout yet; check it in the app. ` : ''}Easiest ${appNames[app]} entry: {entryName(easiest.legs, easiest.mode)}, {percent1(easiest.breakEven)} per pick.</Text>}
     {!!message && <Text accessibilityRole="alert" style={styles.message}>{message}</Text>}
   </View>;
 

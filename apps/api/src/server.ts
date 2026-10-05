@@ -933,9 +933,11 @@ export function buildServer(options: ServerOptions = {}) {
   app.post('/v1/me/crowns',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     // `personal` Crowns hold the user's own calls (one side per line in `directions`) and skip GKR's rules.
-    const input=z.object({lineIds:z.array(z.string().min(1).max(300)).min(2).max(6),personal:z.literal(true).optional(),
+    // Underdog and DK Pick'em take up to 8 picks; PrizePicks up to 6.
+    const input=z.object({lineIds:z.array(z.string().min(1).max(300)).min(2).max(8),personal:z.literal(true).optional(),
       directions:z.record(z.string(),z.enum(['MORE','LESS'])).optional(),app:z.enum(['underdog','pick6']).optional()})
       .strict().refine((value)=>!value.personal||value.lineIds.every((id)=>value.directions?.[id]))
+      .refine((value)=>!!value.app||value.lineIds.length<=6)
       .safeParse(request.body);
     if(!input.success)return reply.code(400).send({code:'INVALID_CROWN'});
     // An Underdog or Pick6 slip: the user's own picks on that app's lines, graded with Your Picks.

@@ -30,7 +30,9 @@ import { useRankings } from '../../use-rankings';
 import { ReportNudge } from '../../components/ReportNudge';
 import { AppCrown } from '../../components/AppCrown';
 
-const sizes = [2, 3, 4, 5, 6].map((value) => ({ value, label: `Top ${value}` }));
+/** PrizePicks takes up to 6 picks; Underdog and DK Pick’em up to 8. */
+const sizesFor = (most: number) => Array.from({ length: most - 1 }, (_, index) => index + 2).map((value) => ({ value,
+  label: most > 6 ? `${value}` : `Top ${value}` }));
 
 function defaultName(legs: readonly CrownLeg[]): string {
   const counts = { KINGS: 0, GOBLIN: 0, DEMON: 0, UNKNOWN: 0 };
@@ -165,12 +167,13 @@ export default function CrownScreen() {
   };
 
   // Underdog and Pick6 Crowns are built from that app's own lines (different numbers, no Goblins or Demons).
-  const appPicker = <Segmented label="Play on" options={pickApps} value={playApp} onChange={setPlayApp} />;
+  const appPicker = <Segmented label="Play on" options={pickApps} value={playApp}
+    onChange={(app) => { setPlayApp(app); if (app === 'prizepicks' && size > 6) setSize(6); }} />;
   if (playApp !== 'prizepicks') return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Your Crown" />
       {appPicker}
-      <Segmented label="Crown size" options={sizes} value={size} onChange={setSize} />
+      <Segmented label="Crown size" options={sizesFor(8)} value={size} onChange={setSize} />
       <AppCrown app={playApp} size={size} />
       <ReportNudge where="crown" />
     </ScrollView>
@@ -180,7 +183,7 @@ export default function CrownScreen() {
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Your Crown" />
       {appPicker}
-      <Segmented label="Crown size" options={sizes} value={size} onChange={setSize} />
+      <Segmented label="Crown size" options={sizesFor(6)} value={size} onChange={setSize} />
       <GlowCard accent={colors.mint}>
         <View style={styles.summary}>
           <Icon name="crown" size={54} color={colors.neon} />
@@ -277,9 +280,9 @@ export default function CrownScreen() {
         profile as a personal Crown, outside GKR’s tracked record and the Social Top 10.</Text>}
       {legs.length >= 2 && <View style={styles.panel}>
         <Text style={styles.panelTitle}>Play it on</Text>
-        <Text style={styles.legMeta}>Copy these picks and open the app. Underdog and Pick6 show each player’s line there first.</Text>
+        <Text style={styles.legMeta}>Copy these picks and open the app. Underdog and DK Pick’em show each player’s line there first.</Text>
         <View style={styles.actions}>{(['prizepicks', 'underdog', 'pick6'] as const).map((app) => <GhostButton key={app}
-          label={app === 'pick6' ? 'Pick6' : appNames[app]} style={styles.action} onPress={() => setPortApp(app)} />)}</View>
+          label={appNames[app]} style={styles.action} onPress={() => setPortApp(app)} />)}</View>
       </View>}
       {legs.length >= 2 && <View style={styles.actions}>
         <GhostButton label="Share text" icon="share-variant-outline" onPress={() => void Share.share({ message: shareCrown(legs) })}
