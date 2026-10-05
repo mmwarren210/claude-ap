@@ -1123,7 +1123,13 @@ export function buildServer(options: ServerOptions = {}) {
     const reads=Object.fromEntries(await historyReads.readsFor(lines,(id)=>fair.get(id)??null));
     historyCache={at:time,board,reads};
     const plays=Object.values(reads).filter((read)=>read.direction!=='PASS').length;
-    console.log(`[history-reads] ${board.board.lines.length} lines, ${lines.length} without a GKR play, ${Object.keys(reads).length} reads, ${plays} plays`);
+    const bySport:Record<string,[number,number,number]>={};
+    for(const line of lines){const entry=bySport[`${line.sport}`]??=[0,0,0];entry[0]++;const read=reads[line.id];
+      if(read){entry[1]++;if(read.direction!=='PASS')entry[2]++;}}
+    const topMarkets:Record<string,number>={};
+    for(const line of lines)if(!reads[line.id])topMarkets[`${line.sport}:${line.market}`]=(topMarkets[`${line.sport}:${line.market}`]??0)+1;
+    console.log(`[history-reads] ${board.board.lines.length} lines, ${lines.length} without a GKR play, ${Object.keys(reads).length} reads, ${plays} plays`+
+      ` | by sport [lines, reads, plays] ${JSON.stringify(bySport)} | most lines without a read ${JSON.stringify(Object.entries(topMarkets).sort((a,b)=>b[1]-a[1]).slice(0,25))}`);
     return reads;
   }
   // Which build is running, so the app can show its version (Railway sets the commit at deploy).
