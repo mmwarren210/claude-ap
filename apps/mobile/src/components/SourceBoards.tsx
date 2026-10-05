@@ -147,8 +147,8 @@ function useLeagueFilter<T extends { league: string }>(picks: T[]) {
   const leagues = useMemo(() => [...new Set(picks.map((pick) => pick.league))].sort(), [picks]);
   const shown = league === 'ALL' ? picks : picks.filter((pick) => pick.league === league);
   const chips = leagues.length > 1 ? <ChipRow>
-    <FilterChip label="All leagues" active={league === 'ALL'} onPress={() => setLeague('ALL')} />
-    {leagues.map((item) => <FilterChip key={item} label={item} active={league === item} onPress={() => setLeague(item)} />)}
+    <FilterChip label="All leagues" active={league === 'ALL'} chevron={false} onPress={() => setLeague('ALL')} />
+    {leagues.map((item) => <FilterChip key={item} label={item} active={league === item} chevron={false} onPress={() => setLeague(item)} />)}
   </ChipRow> : null;
   return { shown, chips };
 }

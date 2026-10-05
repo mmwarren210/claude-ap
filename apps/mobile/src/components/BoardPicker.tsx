@@ -17,7 +17,7 @@ const others: readonly (Sportsbook | MarketPlatform)[] = ['draftkings', 'hardroc
 export function BoardPicker({ value, onChange }: { value: BoardSource; onChange: (source: BoardSource) => void }) {
   return <View style={{ gap: 8 }}>
     <Segmented label="Pick'em app" options={pickApps} value={value as PickApp} onChange={onChange} />
-    <ChipRow>{others.map((source) => <FilterChip key={source} label={sourceNames[source]} active={value === source}
+    <ChipRow>{others.map((source) => <FilterChip key={source} label={sourceNames[source]} active={value === source} chevron={false}
       icon={source === 'kalshi' || source === 'polymarket' ? 'chart-line' : 'bank-outline'}
       onPress={() => onChange(source)} />)}</ChipRow>
   </View>;

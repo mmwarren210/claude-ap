@@ -31,13 +31,13 @@ export function GhostButton({ label, onPress, icon, disabled, style, tone = colo
 }
 
 /** Dropdown-style filter chip: label, current value and a chevron. */
-export function FilterChip({ label, active, onPress, icon }: { label: string; active?: boolean;
-  onPress: () => void; icon?: IconName }) {
+export function FilterChip({ label, active, onPress, icon, chevron = true }: { label: string; active?: boolean;
+  onPress: () => void; icon?: IconName; chevron?: boolean }) {
   return <Pressable accessibilityRole="button" accessibilityState={{ selected: !!active }} onPress={onPress}
     style={[styles.chip, active && styles.chipActive]}>
     {icon && <Icon name={icon} size={16} color={active ? colors.mint : colors.textMuted} />}
     <Text style={[styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>{label}</Text>
-    <Icon name="chevron-down" size={16} color={active ? colors.mint : colors.textMuted} />
+    {chevron && <Icon name="chevron-down" size={16} color={active ? colors.mint : colors.textMuted} />}
   </Pressable>;
 }
 
