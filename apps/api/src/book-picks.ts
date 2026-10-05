@@ -69,6 +69,15 @@ export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardL
     const mine = prices.filter((price) => price.book === book);
     for (const price of mine) counts[`prices:${price.sport}`] = (counts[`prices:${price.sport}`] ?? 0) + 1;
     counts.upcoming = mine.filter((price) => Date.parse(price.startTime) > now.getTime()).length;
+    // Alternate lines: how many player-stat pairs the book prices at more than one number.
+    const numbers = new Map<string, Set<number>>();
+    for (const price of mine) {
+      const key = JSON.stringify([price.sport, normalizedName(price.player), price.market, dayKey(price.startTime)]);
+      numbers.set(key, (numbers.get(key) ?? new Set()).add(price.line));
+    }
+    counts.playerStats = numbers.size;
+    counts.withAltLines = [...numbers.values()].filter((set) => set.size > 1).length;
+    counts.maxLinesPerStat = Math.max(0, ...[...numbers.values()].map((set) => set.size));
     counts.onPrizePicks = pairs.length;
     for (const analysis of scored) {
       const key = analysis.direction === 'PASS' ? `pass:${analysis.reasonCode ?? 'NONE'}` : 'picked';
