@@ -183,7 +183,7 @@ if(!Number.isFinite(socialMaxSnapshotMinutes)||socialMaxSnapshotMinutes<0)
 const product=new ProductLedger(process.env.CROWNIQ_PRODUCT_LEDGER_FILE ??
   `${dataDir}/product-ledger.json`,band,()=>new Date(),
   correlationSetting==='conservative'?conservativeCorrelationPolicy:undefined,internalHistory,
-  socialMaxSnapshotMinutes,Number(process.env.CROWNIQ_MAX_MEMBERS ?? 100));
+  socialMaxSnapshotMinutes,Number(process.env.CROWNIQ_MAX_MEMBERS ?? 100),process.env.CROWNIQ_FAMILY_CODE?.trim()||null);
 const statApiKey=process.env.STAT_API_KEY;
 const ownerPublicId=process.env.CROWNIQ_OWNER_PUBLIC_ID;
 const statDailyLimit=process.env.CROWNIQ_STAT_API_DAILY_RECORD_LIMIT

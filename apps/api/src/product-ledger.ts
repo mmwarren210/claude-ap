@@ -46,15 +46,22 @@ type IdentityProvider='GOOGLE'|'APPLE';
 interface Account {id:string;username:string;email:string|null;passwordSalt:string|null;
   passwordHash:string|null;identities:{provider:IdentityProvider;subject:string}[];
   createdAt:string;status:'FREE'|'SUSPENDED';
+  /** A lifetime family member: signed up with the family code (owner, 2026-10-05). */
+  lifetime?:true;
+  /** Signed up with the shared family code as the password; must set their own before anything else. */
+  mustChangePassword?:true;
   /** A guest-pass account: no username or password, full access until `expiresAt`, kept afterwards for its picks. */
   guest?:{pass:string;deviceHash:string;expiresAt:string}}
 /** A shared guest link: up to `maxGuests` devices each get their own account for `days` days. */
 export interface GuestPass {code:string;maxGuests:number;days:number}
 /**
- * The first accounts ever created (the owner's and family's) are lifetime members: no code, never charged, and not
- * counted toward the member cap (owner, 2026-10-05: 10 lifetime family members plus 100 members, 110 in all).
+ * Lifetime family members: never charged and not counted toward the member cap (owner, 2026-10-05: 10 lifetime family
+ * members plus 100 members, 110 in all). A family member signs up normally with the family code as the first password
+ * (CROWNIQ_FAMILY_CODE, kept in Railway Variables), then sets their own. Accounts made before this rule keep the
+ * lifetime status they had.
  */
 export const LIFETIME_MEMBERS=10;
+const LEGACY_LIFETIME_BEFORE='2026-10-05T03:00:00.000Z';
 /** Members allowed besides the lifetime ones. Guests (guest links) and suspended accounts don't take a seat. */
 export const DEFAULT_MAX_MEMBERS=100;
 /** Seats taken: active, non-guest accounts that are not lifetime members. */
@@ -62,8 +69,12 @@ export function membersUsed(accounts:readonly Account[]):number{
   const lifetime=lifetimeIds(accounts);
   return accounts.filter((item)=>!item.guest&&item.status!=='SUSPENDED'&&!lifetime.has(item.id)).length;
 }
-const lifetimeIds=(accounts:readonly Account[])=>new Set(accounts.filter((item)=>!item.guest)
-  .sort((a,b)=>a.createdAt.localeCompare(b.createdAt)).slice(0,LIFETIME_MEMBERS).map((item)=>item.id));
+const lifetimeIds=(accounts:readonly Account[])=>new Set([
+  ...accounts.filter((item)=>!item.guest&&item.createdAt<LEGACY_LIFETIME_BEFORE)
+    .sort((a,b)=>a.createdAt.localeCompare(b.createdAt)).slice(0,LIFETIME_MEMBERS).map((item)=>item.id),
+  ...accounts.filter((item)=>item.lifetime).map((item)=>item.id)]);
+const sameSecret=(entered:string,expected:string)=>timingSafeEqual(createHash('sha256').update(entered).digest(),
+  createHash('sha256').update(expected).digest());
 const planOf=(account:Account,lifetime:ReadonlySet<string>)=>account.status==='SUSPENDED'?'SUSPENDED' as const
   :account.guest?'GUEST' as const:lifetime.has(account.id)?'LIFETIME' as const:'FREE' as const;
 const guestExpired=(account:Account,now:Date)=>!!account.guest&&Date.parse(account.guest.expiresAt)<=now.getTime();
@@ -228,7 +239,9 @@ export class ProductLedger {
      * by default lines stay usable until their event starts. */
     private readonly maxShareSnapshotMinutes=0,
     /** Members allowed besides the lifetime ones (CROWNIQ_MAX_MEMBERS). */
-    private readonly maxMembers=DEFAULT_MAX_MEMBERS){}
+    private readonly maxMembers=DEFAULT_MAX_MEMBERS,
+    /** The family code (CROWNIQ_FAMILY_CODE): as a first password, it makes a lifetime family account. */
+    private readonly familyCode:string|null=null){}
   /** Stamp a person's pick with the odds snapshot it was made from. */
   private fromUser(decision:TrackedDecision,board:BoardResponse):TrackedDecision{
     const fetched=Date.parse(board.board.fetchedAt);
@@ -281,13 +294,12 @@ export class ProductLedger {
       expiresAt:new Date(expires).toISOString()});
     const profile=data.profiles.find((item)=>item.actorKey===account.id)!;
     return {token,profile:{publicId:profile.publicId,username:account.username,
-      email:account.email,plan:planOf(account,lifetimeIds(data.accounts))},
+      email:account.email,plan:planOf(account,lifetimeIds(data.accounts)),
+      ...(account.mustChangePassword?{mustChangePassword:true}:{})},
       ...(account.guest?{guestExpiresAt:account.guest.expiresAt}:{})};
   }
   /** A new non-guest account needs a seat: lifetime seats fill first, then the member cap applies. */
   private assertSeat(accounts:readonly Account[]){
-    const real=accounts.filter((item)=>!item.guest);
-    if(real.length<LIFETIME_MEMBERS)return;
     if(membersUsed(accounts)>=this.maxMembers)throw new Error('MEMBERS_FULL');
   }
   /** Seat counts for the owner (no names or emails). */
@@ -299,13 +311,17 @@ export class ProductLedger {
   }
   async register(email:string,password:string,username:string){return this.exclusive(async()=>{
     const data=await this.read(),name=username.trim(),address=normalizedEmail(email);
-    this.assertSeat(data.accounts);
+    // The family code as the first password makes a lifetime family account (while the 10 seats last).
+    const family=!!this.familyCode&&sameSecret(password,this.familyCode);
+    if(family&&lifetimeIds(data.accounts).size>=LIFETIME_MEMBERS)throw new Error('LIFETIME_FULL');
+    if(!family)this.assertSeat(data.accounts);
     if(data.accounts.some((item)=>item.email===address))throw new Error('EMAIL_TAKEN');
     if(data.profiles.some((item)=>normalizedName(item.displayName)===normalizedName(name)))
       throw new Error('USERNAME_TAKEN');
     const salt=randomBytes(16).toString('hex'),hash=(await passwordKey(password,salt)).toString('hex');
     const account:Account={id:randomUUID(),username:name,email:address,passwordSalt:salt,
-      passwordHash:hash,identities:[],createdAt:this.clock().toISOString(),status:'FREE'};
+      passwordHash:hash,identities:[],createdAt:this.clock().toISOString(),status:'FREE',
+      ...(family?{lifetime:true as const,mustChangePassword:true as const}:{})};
     data.accounts.push(account);data.profiles.push({publicId:randomUUID(),actorKey:account.id,
       displayName:name,avatarUrl:null,socialEnabled:true,profileVisible:true,
       isSuspended:false,createdAt:account.createdAt});
@@ -389,7 +405,19 @@ export class ProductLedger {
     if(account.status==='SUSPENDED'||guestExpired(account,this.clock()))return null;
     const profile=this.authCache!.profiles.get(account.id);
     return profile?{accountId:account.id,publicId:profile.publicId,username:account.username,
-      email:account.email,plan:planOf(account,this.authCache!.lifetime)}:null;
+      email:account.email,plan:planOf(account,this.authCache!.lifetime),mustChangePassword:!!account.mustChangePassword}:null;
+  });}
+  /** Sets a new password after checking the current one. The family code can't be kept as a password. */
+  async changePassword(accountId:string,current:string,next:string){return this.exclusive(async()=>{
+    const data=await this.read(),account=data.accounts.find((item)=>item.id===accountId);
+    if(!account?.passwordHash||!account.passwordSalt)throw new Error('NO_PASSWORD');
+    const actual=await passwordKey(current,account.passwordSalt);
+    if(!timingSafeEqual(actual,Buffer.from(account.passwordHash,'hex')))throw new Error('INVALID_CREDENTIALS');
+    if(next===current||(this.familyCode&&sameSecret(next,this.familyCode)))throw new Error('PASSWORD_NOT_NEW');
+    const salt=randomBytes(16).toString('hex');
+    account.passwordSalt=salt;account.passwordHash=(await passwordKey(next,salt)).toString('hex');
+    delete account.mustChangePassword;
+    await this.write(data);
   });}
   async logout(token:string){return this.exclusive(async()=>{
     const data=await this.read(),before=data.sessions.length;

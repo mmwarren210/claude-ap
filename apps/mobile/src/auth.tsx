@@ -25,11 +25,17 @@ const guestMessages:Record<string,string>={GUEST_PASS_FULL:'This guest link has 
   GUEST_PASS_EXPIRED:'Your three-day guest pass has ended. Thanks for testing CrownIQ!',
   GUEST_PASS_INVALID:'This guest link is not valid.',TOO_MANY_ATTEMPTS:'Too many attempts. Please wait a minute.'};
 
-type Profile={publicId:string;username:string;email:string|null;plan:'FREE'|'LIFETIME'|'GUEST'|'SUSPENDED'|'DEMO'};
+type Profile={publicId:string;username:string;email:string|null;plan:'FREE'|'LIFETIME'|'GUEST'|'SUSPENDED'|'DEMO';
+  /** Signed in with the shared family code: must set their own password first. */
+  mustChangePassword?:boolean};
 type Session={token:string;profile:Profile};
 type AuthContext={profile:Profile|null;register:(username:string,email:string,password:string)=>Promise<void>;
   login:(emailOrUsername:string,password:string)=>Promise<void>;logout:()=>Promise<void>;
   request:(path:string,init?:RequestInit)=>Promise<Response>;setUsername:(username:string)=>void;
+  /** Replaces the family code with the member's own password (current: the code, when this device didn't just use it). */
+  changePassword:(next:string,current?:string)=>Promise<void>;
+  /** This device just signed in with a password, so the family code needn't be typed again. */
+  passwordKnown:boolean;
   /** True in demo mode: sample data, no account, no server calls. */
   demo:boolean;enterDemo:()=>void;
   /** A guest link is signing in, or why it could not. */
@@ -41,7 +47,8 @@ async function parseSession(response:Response):Promise<Session>{
   if(!response.ok){const payload=await response.json().catch(()=>({})) as {code?:string};
     const messages:Record<string,string>={EMAIL_TAKEN:'Email already has an account. Sign in instead.',
       USERNAME_TAKEN:'That display username is taken.',
-      MEMBERS_FULL:'CrownIQ is full right now (100 members). Ask the owner for a spot or a guest link.',INVALID_CREDENTIALS:'Email, username or password is incorrect.',
+      MEMBERS_FULL:'CrownIQ is full right now (100 members). Ask the owner for a spot or a guest link.',
+      LIFETIME_FULL:'All 10 lifetime family spots are taken. Ask the owner.',INVALID_CREDENTIALS:'Email, username or password is incorrect.',
       TOO_MANY_ATTEMPTS:'Too many attempts. Please wait a minute.',
       INVALID_REGISTRATION:'Use a 3–24 character username with letters, numbers or underscores, and a password of at least 12 characters.'};
     throw new Error(messages[payload.code??'']??'Sign-in failed. Try again.');}
@@ -53,6 +60,8 @@ async function parseSession(response:Response):Promise<Session>{
 export function AuthProvider({children}:{children:ReactNode}){
   // The session token is kept on this device until Log Out (owner choice); the server ends it after 30 days.
   const [session,setSession]=useState<Session|null>(null);
+  // The password used to sign in, kept in memory only, so a family member doesn't type the family code twice.
+  const [familyPassword,setFamilyPassword]=useState('');
   const signIn=(value:Session)=>{
     setSession(value);setDemo(false);
     void saveSession(value.token).catch((error:unknown)=>reportMobileFailure('storage',error));
@@ -105,13 +114,17 @@ export function AuthProvider({children}:{children:ReactNode}){
       if(!base)throw new Error('Set EXPO_PUBLIC_API_URL to your CrownIQ server first.');
       const response=await fetch(`${base}/v1/auth/register`,{method:'POST',
         headers:{'content-type':'application/json'},body:JSON.stringify({username,email,password})});
-      signIn(await parseSession(response));
+      const created=await parseSession(response);
+      setFamilyPassword(created.profile.mustChangePassword?password:'');
+      signIn(created);
     },
     login:async(emailOrUsername,password)=>{
       if(!base)throw new Error('Set EXPO_PUBLIC_API_URL to your CrownIQ server first.');
       const response=await fetch(`${base}/v1/auth/login`,{method:'POST',
         headers:{'content-type':'application/json'},body:JSON.stringify({login:emailOrUsername,password})});
-      signIn(await parseSession(response));
+      const opened=await parseSession(response);
+      setFamilyPassword(opened.profile.mustChangePassword?password:'');
+      signIn(opened);
     },
     logout:async()=>{
       const token=session?.token;
@@ -128,9 +141,23 @@ export function AuthProvider({children}:{children:ReactNode}){
       headers.set('Authorization',`Bearer ${session.token}`);
       return fetch(`${base}${path}`,{...init,headers});
     },
+    passwordKnown:!!familyPassword,
+    changePassword:async(next,entered)=>{
+      if(!base||!session)throw new Error('Sign in to continue.');
+      // The family code is the current password: it was the one used to sign in.
+      const current=entered??familyPassword;
+      const response=await fetch(`${base}/v1/auth/password`,{method:'POST',headers:{'content-type':'application/json',
+        Authorization:`Bearer ${session.token}`},body:JSON.stringify({currentPassword:current,newPassword:next})});
+      if(!response.ok){const payload=await response.json().catch(()=>({})) as {code?:string};
+        throw new Error(payload.code==='PASSWORD_NOT_NEW'?'Choose a password different from the family code.'
+          :payload.code==='INVALID_CREDENTIALS'?'That family code isn’t right.'
+          :payload.code==='INVALID_PASSWORD'?'Use at least 12 characters.':'Could not save your password. Try again.');}
+      setFamilyPassword('');
+      setSession((value)=>value?{...value,profile:{...value.profile,mustChangePassword:false}}:null);
+    },
     setUsername:(username)=>setSession((current)=>current
       ? {...current,profile:{...current.profile,username}}:null),
-  }),[session,demo,guest]);
+  }),[session,demo,guest,familyPassword]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 export function useAuth(){const value=useContext(Context);

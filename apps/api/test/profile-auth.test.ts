@@ -178,36 +178,50 @@ test('provider ID tokens require a trusted signature, audience, issuer, expirati
   }finally{await app.close();await rm(folder,{recursive:true,force:true});}
 });
 
-test('the first 10 accounts are lifetime members and later ones are free',async()=>{
+test('the family code as a first password makes a lifetime account that must set its own password; 10 seats',async()=>{
   const folder=await mkdtemp(join(tmpdir(),'crowniq-lifetime-'));
-  try{let clock=start;const path=join(folder,'ledger.json');
-    const ledger=new ProductLedger(path,'CROWN_STRONG',()=>clock,()=>[]);
+  try{let clock=start;const path=join(folder,'ledger.json');const code='Family-Code-For-Tests!';
+    const ledger=new ProductLedger(path,'CROWN_STRONG',()=>clock,undefined,undefined,0,100,code);
     const plans:string[]=[];
-    for(let index=0;index<11;index++){
+    for(let index=0;index<10;index++){
       clock=new Date(start.getTime()+index*60_000);
-      plans.push((await ledger.register(`member${index}@example.org`,'long-private-passphrase',`Member_${index}`)).profile.plan);
+      const result=await ledger.register(`member${index}@example.org`,code,`Member_${index}`);
+      plans.push(result.profile.plan);
+      assert.equal((result.profile as {mustChangePassword?:boolean}).mustChangePassword,true);
     }
-    assert.deepEqual(plans,[...Array(10).fill('LIFETIME'),'FREE']);
-    const first=await ledger.login('Member_0','long-private-passphrase');
-    assert.equal(first.profile.plan,'LIFETIME');
-    assert.equal((await ledger.authenticate(first.token))?.plan,'LIFETIME');
-    const restarted=new ProductLedger(path,'CROWN_STRONG',()=>clock,()=>[]);
-    assert.equal((await restarted.login('member10@example.org','long-private-passphrase')).profile.plan,'FREE');
+    assert.deepEqual(plans,Array(10).fill('LIFETIME'));
+    await assert.rejects(ledger.register('eleven@example.org',code,'Member_10'),/LIFETIME_FULL/);
+    const normal=await ledger.register('normal@example.org','long-private-passphrase','Normal_one');
+    assert.equal(normal.profile.plan,'FREE','no code: a member seat');
+    // A family member signs in with the code, must change it, and can't keep the code.
+    const first=await ledger.login('Member_0',code);
+    const me=await ledger.authenticate(first.token);
+    assert.equal(me?.mustChangePassword,true);
+    await assert.rejects(ledger.changePassword(me!.accountId,code,code),/PASSWORD_NOT_NEW/);
+    await assert.rejects(ledger.changePassword(me!.accountId,'wrong-password-here',`${code}x`),/INVALID_CREDENTIALS/);
+    await ledger.changePassword(me!.accountId,code,'my-own-long-passphrase');
+    assert.equal((await ledger.authenticate(first.token))?.mustChangePassword,false);
+    await assert.rejects(ledger.login('Member_0',code),/INVALID_CREDENTIALS/,'the code no longer opens the account');
+    const restarted=new ProductLedger(path,'CROWN_STRONG',()=>clock,undefined,undefined,0,100,code);
+    assert.equal((await restarted.login('Member_0','my-own-long-passphrase')).profile.plan,'LIFETIME');
+    assert.equal((await restarted.login('normal@example.org','long-private-passphrase')).profile.plan,'FREE');
   }finally{await rm(folder,{recursive:true,force:true});}
 });
 
-test('10 lifetime seats plus the member cap; guests and suspended accounts take no seat',async()=>{
+test('the member cap applies to sign-ups without the family code',async()=>{
   const folder=await mkdtemp(join(tmpdir(),'crowniq-seats-'));
   try{let clock=start;
     // A cap of 3 members stands in for 100.
-    const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>clock,undefined,undefined,0,3);
-    for(let index=0;index<13;index++){
+    const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>clock,undefined,undefined,0,3,'Family-Code-For-Tests!');
+    for(let index=0;index<3;index++){
       clock=new Date(start.getTime()+index*60_000);
       await ledger.register(`seat${index}@example.org`,'long-private-passphrase',`Seat_${index}`);
     }
     await assert.rejects(ledger.register('late@example.org','long-private-passphrase','Late_one'),/MEMBERS_FULL/);
     await assert.rejects(ledger.loginWithProvider('GOOGLE','sub-1','g@example.org','Google_one'),/MEMBERS_FULL/);
-    assert.deepEqual(await ledger.membership(),{lifetime:{used:10,limit:10},members:{used:3,limit:3},guests:0,suspended:0});
+    await ledger.register('family@example.org','Family-Code-For-Tests!','Family_one');
+    assert.deepEqual(await ledger.membership(),{lifetime:{used:1,limit:10},members:{used:3,limit:3},guests:0,suspended:0},
+      'a family sign-up still works when member seats are full');
   }finally{await rm(folder,{recursive:true,force:true});}
 });
 
@@ -234,8 +248,9 @@ test('a guest link gives up to four devices their own three-day account and keep
     assert.equal(await ledger.authenticate(first.token),null,'the pass ends after three days');
     await assert.rejects(()=>ledger.guestLogin(pass,'testers-2030',device(1)),/GUEST_PASS_EXPIRED/);
     assert.equal((await ledger.userPicks(guest.accountId)).total,1,'the guest picks are kept');
-    assert.equal((await ledger.login('Owner_1','long-private-passphrase')).profile.plan,'LIFETIME');
-    assert.equal((await ledger.authenticate(owner.token))?.plan,'LIFETIME');
+    // Guests never take a seat: a regular sign-up after them is a member, as without them.
+    assert.equal((await ledger.login('Owner_1','long-private-passphrase')).profile.plan,'FREE');
+    assert.deepEqual((await ledger.membership()).members,{used:1,limit:100});
   }finally{await rm(folder,{recursive:true,force:true});}
 });
 

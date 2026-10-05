@@ -17,8 +17,10 @@
   as agrees/disagrees/no edge plus late news, never changing the GKR score (`CROWNIQ_SCOUT_SECOND_DAILY`, default 40).
   `/admin/ai-picks` tracks GKR's hit rate by verdict; blending Scout into GKR would need a new opt-in model version.
   Scout second opinions also cover the strongest DraftKings, Hard Rock, Kalshi and Polymarket tab picks (same caps).
-- **Members** (owner, 2026-10-05): 10 lifetime family seats (the first 10 accounts) plus 100 members, 110 in all
-  (`CROWNIQ_MAX_MEMBERS`). Guests and suspended accounts take no seat; `/admin/members` shows counts.
+- **Members** (owner, 2026-10-05): 10 lifetime family seats plus 100 members, 110 in all (`CROWNIQ_MAX_MEMBERS`).
+  A family member signs up normally with the family code as the first password (`CROWNIQ_FAMILY_CODE`, Railway
+  Variables only, never in the repo), then must set their own. Member keys for the other 100 come later. Guests and
+  suspended accounts take no seat; `/admin/members` shows counts.
 - **Shadow records** (owner, 2026-10-05; `shadow-record.ts`, `/admin/shadow`): Books picks, sportsbook-tab picks and
   game-script snapshots, graded in their own record. Display and tracking only; never GKR's record.
 

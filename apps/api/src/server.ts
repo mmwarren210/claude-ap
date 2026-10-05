@@ -359,7 +359,7 @@ export function buildServer(options: ServerOptions = {}) {
       input.data.password,input.data.username));}
     catch(error){const code=(error as Error).message;
       if(code==='USERNAME_TAKEN'||code==='EMAIL_TAKEN')return reply.code(409).send({code});
-      if(code==='MEMBERS_FULL')return reply.code(403).send({code});
+      if(code==='MEMBERS_FULL'||code==='LIFETIME_FULL')return reply.code(403).send({code});
       return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
   });
   app.post('/v1/auth/login',async(request,reply)=>{
@@ -388,7 +388,19 @@ export function buildServer(options: ServerOptions = {}) {
   app.get('/v1/auth/me',async(request,reply)=>{
     const user=await currentUser(request);
     return user?{profile:{publicId:user.publicId,username:user.username,email:user.email,
-      plan:user.plan}}:reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+      plan:user.plan,...user.mustChangePassword?{mustChangePassword:true}:{}}}:reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+  });
+  app.post('/v1/auth/password',async(request,reply)=>{
+    const user=await currentUser(request);
+    if(!user||!options.product)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(limited(`password:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
+    const input=z.object({currentPassword:z.string().min(1).max(128),newPassword:password}).strict().safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'INVALID_PASSWORD'});
+    try{await options.product.changePassword(user.accountId,input.data.currentPassword,input.data.newPassword);return {ok:true};}
+    catch(error){const code=(error as Error).message;
+      if(code==='INVALID_CREDENTIALS')return reply.code(403).send({code});
+      if(code==='PASSWORD_NOT_NEW'||code==='NO_PASSWORD')return reply.code(409).send({code});
+      return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
   });
   // The signed-in owner can bootstrap the first real PrizePicks board from the app.
   // It is deliberately manual because a provider refresh may consume paid credits.

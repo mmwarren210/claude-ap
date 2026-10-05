@@ -4,6 +4,7 @@ import { BoardProvider } from '../use-board';
 import { DraftProvider } from '../use-draft';
 import { AuthProvider, useAuth } from '../auth';
 import { colors } from '../theme';
+import { SetPassword } from '../components/SetPassword';
 
 const crownTheme = {
   ...DarkTheme,
@@ -25,6 +26,8 @@ function ProfileRouter(){
       </Stack.Protected>
       <Stack.Protected guard={!profile}><Stack.Screen name="sign-in" /></Stack.Protected>
     </Stack>;
+  // A family member who signed in with the shared code sets their own password before anything else.
+  if(profile?.mustChangePassword)return <SetPassword />;
   return profile?<BoardProvider key={profile.publicId}><DraftProvider key={profile.publicId} profileId={profile.publicId}>
     {navigator}
   </DraftProvider></BoardProvider>:navigator;
