@@ -17,6 +17,11 @@
   as agrees/disagrees/no edge plus late news, never changing the GKR score (`CROWNIQ_SCOUT_SECOND_DAILY`, default 40).
   `/admin/ai-picks` tracks GKR's hit rate by verdict; blending Scout into GKR would need a new opt-in model version.
   Scout second opinions also cover the strongest DraftKings, Hard Rock, Kalshi and Polymarket tab picks (same caps).
+- **GKR Beta** (owner, 2026-10-05; `scout-beta.ts`): GKR plus Scout's research as its own model version
+  (`+SCOUT-BETA-0.1`). Late news (out, benched, scratched) passes a line; both models agreeing on matchup, role or
+  injury news moves the score up to 8; form and history alone move nothing; Beta never plays a GKR pass. Lifetime members
+  switch GKR / GKR Beta on the Board and Top Picks (the whole app follows); everyone else gets GKR. Graded as `gkr`,
+  `beta` and `beta-pass` in the shadow record and shown in Results. Scout second opinions: 150 a day, 12 per run.
 - **Members** (owner, 2026-10-05): 20 lifetime family seats plus 100 members, 120 in all (`CROWNIQ_MAX_MEMBERS`).
   A family member signs up normally with the family code as the first password (`CROWNIQ_FAMILY_CODE`, Railway
   Variables only, never in the repo), then must set their own. Member keys for the other 100 come later. Guests and

@@ -25,6 +25,7 @@ import { useTipFlow } from '../../components/TipSheet';
 import { usePlayerGames } from '../../use-player-games';
 import { useRankings } from '../../use-rankings';
 import { ScoutVerdict } from '../../components/ScoutVerdict';
+import { ModelSwitch } from '../../components/ModelSwitch';
 import { useAiPicks } from '../../use-ai-picks';
 import type { AiRead } from '../../use-ai-picks';
 
@@ -163,6 +164,7 @@ export default function TopPicksScreen() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Top Picks" />
+      <ModelSwitch />
       <Segmented label="Pick list" options={[{ value: 'GKR' as const, label: 'GKR picks' }, { value: 'EV' as const, label: '+EV' }]}
         value={mode} onChange={setMode} />
       {mode === 'EV' ? <>

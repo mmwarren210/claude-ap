@@ -12,6 +12,7 @@ import { useTipFlow } from '../../components/TipSheet';
 import { BooksBadge } from '../../components/ui/BooksBadge';
 import { useBooks } from '../../use-books';
 import { BookLadder } from '../../components/BookLadder';
+import { useModel } from '../../use-model';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { alpha } from '../../components/ui/color';
 import { GhostButton, PrimaryButton, Segmented } from '../../components/ui/Controls';
@@ -128,6 +129,8 @@ export default function PlayerResearch() {
     return [...best.values()];
   }, [related]);
   const { reads: aiReads, ask } = useAiPicks();
+  const { model, beta } = useModel(data?.builtAt ?? null);
+  const betaRead = line ? beta?.get(line.id) : undefined;
   const ai = line ? aiReads?.get(line.id) : undefined;
   const [asking, setAsking] = useState(false);
   // Each stat's status: GKR's best play, else the AI read's, else PASS. Choosing a stat opens its best line.
@@ -353,6 +356,9 @@ export default function PlayerResearch() {
       </View>}
       {canAsk && <GhostButton label={asking ? `${SCOUT} is researching…` : `Ask ${SCOUT} (ChatGPT + Claude)`} icon="binoculars"
         onPress={() => void askAi()} disabled={asking} />}
+      {model === 'BETA' && betaRead && betaRead.change !== 'SAME' && <Notice title={betaRead.change === 'LATE_NEWS_PASS'
+        ? `GKR Beta passes (GKR ${Math.round(betaRead.gkr.score)} ${betaRead.gkr.direction})`
+        : `GKR Beta ${Math.round(betaRead.score!)} · GKR ${Math.round(betaRead.gkr.score)}`} detail={betaRead.why} />}
       {pass && analysis && <Notice title="PASS" detail={analysis.rationale} />}
       {analysis?.reviewStatus === 'SECOND_LOOK' && <Notice title="2nd Look"
         detail="CrownIQ gave this line another research pass after an initial PASS. It is a review flag, not a score bonus." />}

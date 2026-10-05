@@ -4,6 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../auth';
+import { BetaRecord } from '../../components/BetaRecord';
 import { Notice } from '../../components/Screen';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { alpha } from '../../components/ui/color';
@@ -132,6 +133,7 @@ export default function ResultsScreen() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Results & Performance" />
+      <BetaRecord />
       <Pressable accessibilityRole="button" style={styles.range} onPress={() => setRange(range === 7 ? 30 : range === 30 ? 0 : 7)}>
         <Icon name="calendar-blank-outline" size={18} color={colors.mint} /><Text style={styles.rangeText}>{rangeLabel}</Text>
         <Icon name="chevron-down" size={16} color={colors.text} /></Pressable>

@@ -1,6 +1,6 @@
 import { boardResponseSchema } from '@crowniq/contracts';
 import type { BoardResponse } from '@crowniq/contracts';
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AppState, Platform } from 'react-native';
 import { loadBoard, saveBoard } from './local-store';
@@ -9,6 +9,8 @@ import { reportMobileFailure } from './diagnostics';
 import { useAuth } from './auth';
 import { DEMO_NOW, isSampleBoard } from './demo/data';
 import { apiBaseUrl } from './api-base';
+import { applyBeta } from './beta';
+import { useModel } from './use-model';
 
 type BoardState={status:'loading'|'available'|'unavailable';data:BoardResponse|null;message:string;
   freshness:'LIVE'|'FRESH'|'CACHED'|'SNAPSHOT'|'STALE'|'OFFLINE'|'UNREACHABLE'|'UNAVAILABLE'|'DEMO'|'DEMO_LIVE';
@@ -172,7 +174,10 @@ export function BoardProvider({children}:{children:ReactNode}) {
 
   // Demo mode shows real lines (on the real clock) when the server's demo feed has them, else the sample board.
   const sample=demo&&(!data||isSampleBoard(data));
-  return <Context.Provider value={{status:data?'available':status,data,message,
+  // A lifetime member using GKR Beta sees Beta's scores on every screen that reads the board.
+  const {model,beta}=useModel(data?.builtAt??null);
+  const shown=useMemo(()=>data&&model==='BETA'&&beta?applyBeta(data,beta):data,[data,model,beta]);
+  return <Context.Provider value={{status:data?'available':status,data:shown,message,
     researchStatus,gradingStatus,refreshing,nowMs:sample?DEMO_NOW:clock,
     freshness:sample?'DEMO':demo?'DEMO_LIVE':freshness(data,reachable,clock,offline),reload,needsBootstrap,bootstrapPull}}>
     {children}

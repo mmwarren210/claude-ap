@@ -48,6 +48,8 @@ import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev
 import { bookLadder, bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
 import { marketLine, marketPicks, marketQuestion } from './market-picks.js';
 import { gameScriptFor, scriptEligible } from './shadow-record.js';
+import { betaFor } from './scout-beta.js';
+import type { BetaRead } from './scout-beta.js';
 import type { LiveMarkets } from './market-live.js';
 import type { ShadowPick, ShadowRecord } from './shadow-record.js';
 import type { MarketPlatform } from './market-picks.js';
@@ -242,6 +244,15 @@ export function buildServer(options: ServerOptions = {}) {
           for(const pick of result?.picks??[]){const line=result!.lines.get(pick.id);
             if(line)picks.push({kind:`book:${book}`,line,side:pick.side,strength:pick.gkr.score});}
         }
+      }
+      // GKR and GKR Beta on the same plays, so their records compare fairly.
+      // Saved once Scout has read the line, so the Beta entry reflects Scout's research.
+      for(const [lineId,beta] of await betaReads(board)){
+        const line=lines.get(lineId)!;
+        if(!beta.scouted)continue;
+        picks.push({kind:'gkr',line,side:beta.gkr.direction,strength:beta.gkr.score});
+        if(beta.direction==='PASS')picks.push({kind:'beta-pass',line,side:beta.gkr.direction,strength:beta.gkr.score});
+        else picks.push({kind:'beta',line,side:beta.direction,strength:beta.score});
       }
       if(options.contextFeeds){
         const games=(await options.contextFeeds.items<GameLine>('pinnacle')).items;
@@ -918,6 +929,36 @@ export function buildServer(options: ServerOptions = {}) {
     return entry;
   }
   // The sportsbooks' other numbers for one board line's player and stat (Hard Rock's alternate ladder), for GKR's side.
+  // GKR Beta for lifetime members: each GKR play with Scout's research folded in (scout-beta.ts). Others keep GKR.
+  async function betaReads(board:BoardResponse){
+    const out=new Map<string,BetaRead>();
+    const lines=new Map(board.board.lines.map((line)=>[line.id,line]));
+    for(const analysis of board.analyses){
+      const line=lines.get(analysis.lineId);
+      if(!line||analysis.direction==='PASS'||analysis.score===null)continue;
+      const read=options.aiPicks?await options.aiPicks.readFor(line):null;
+      const beta=betaFor(analysis,read&&read.kind==='second'?read:null);
+      if(beta)out.set(analysis.lineId,beta);
+    }
+    return out;
+  }
+  app.get('/v1/beta',async(request,reply)=>{
+    const user=await currentUser(request);
+    if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(user.plan!=='LIFETIME')return reply.code(403).send({code:'BETA_LIFETIME_ONLY'});
+    const board=service.getBoard();
+    if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    return {builtAt:board.builtAt,lines:Object.fromEntries(await betaReads(board))};
+  });
+  // GKR Beta's record against GKR on the same graded picks, for lifetime members.
+  app.get('/v1/beta/record',async(request,reply)=>{
+    const user=await currentUser(request);
+    if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(user.plan!=='LIFETIME')return reply.code(403).send({code:'BETA_LIFETIME_ONLY'});
+    if(!options.shadowRecord)return reply.code(503).send({code:'SHADOW_UNCONFIGURED'});
+    const status=await options.shadowRecord.status() as Record<string,unknown>;
+    return {gkr:status.gkr,beta:status.beta,betaPass:status['beta-pass']};
+  });
   app.get('/v1/books/ladder/:lineId',async(request,reply)=>{
     const {lineId}=request.params as {lineId:string};
     const board=service.getBoard();

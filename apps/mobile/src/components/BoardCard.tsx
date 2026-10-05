@@ -46,8 +46,8 @@ export function windowStats(stats: ReturnType<typeof lineStats>, l10: ReturnType
   ];
 }
 
-export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick, more = 0, photoUrl, accent, window, expired = false,
-  onPress }: { line: PropLine; analysis: Analysis | undefined; ai?: AiRead; booksPick?: BooksPick; more?: number; photoUrl: string | null | undefined;
+export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick, betaLine = null, more = 0, photoUrl, accent, window, expired = false,
+  onPress }: { line: PropLine; analysis: Analysis | undefined; ai?: AiRead; booksPick?: BooksPick; betaLine?: string | null; more?: number; photoUrl: string | null | undefined;
   accent: string; window: Window; expired?: boolean; onPress: () => void }) {
   const gkrPass = !analysis || analysis.direction === 'PASS';
   // Where GKR can't score, the Scout read (ChatGPT + Claude) is the pick, labeled as such.
@@ -87,7 +87,9 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
         <View style={styles.ringBox}><ScoreRing score={aiPick ? aiPick.score : booksSide ? Math.round(booksSide.fair * 100) : analysis?.score ?? null}
           band={aiPick || booksSide ? undefined : analysis?.scoreBand} size={64} />
           {aiPick && <Text style={styles.aiTag}>{SCOUT.toUpperCase()}</Text>}
-          {booksSide && <Text style={styles.aiTag}>BOOKS</Text>}</View>
+          {booksSide && <Text style={styles.aiTag}>BOOKS</Text>}
+          {!aiPick && !booksSide && !gkrPass && analysis?.modelVersion?.includes('SCOUT-BETA') &&
+            <Text style={[styles.aiTag, { color: colors.gold }]}>BETA</Text>}</View>
         <View style={styles.edgeBox}>
           <Text style={[styles.edge, (stats.edge ?? 0) < 0 && styles.edgeBad]}>
             {stats.edge === null ? '—' : `${signed(stats.edge * 100)}%`}</Text>
@@ -100,6 +102,7 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
       <View style={styles.evidence}><EvidenceBadge quality={analysis?.evidenceQuality ?? 'NONE'}
         detail={evidenceDetail(analysis)} /></View>
       <BooksBadge view={books?.get(line.id)} side={pass ? null : direction} />
+      {!!betaLine && <Text style={[styles.aiNote, { color: colors.gold }]}>{betaLine}</Text>}
       {!gkrPass && <ScoutVerdict read={ai} gkrDirection={analysis?.direction} />}
       {aiPick && <ScoutVerdict read={ai} gkrDirection={undefined} />}
       {booksSide && <Text style={styles.aiNote}>GKR can’t score this stat yet. DraftKings and Hard Rock give {booksSide.side}{' '}

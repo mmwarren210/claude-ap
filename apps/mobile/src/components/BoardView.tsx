@@ -5,6 +5,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Window } from '../insights';
 import { boardLinesForMode, evidenceExpired, playCounts, withBooksPicks } from '../state';
 import { useBooksPicks } from '../use-books';
+import { useModel } from '../use-model';
+import { betaNote } from '../beta';
+import { ModelSwitch } from './ModelSwitch';
 import { useAiPicks } from '../use-ai-picks';
 import type { Filters } from '../state';
 import { colors, radius, rankAccents } from '../theme';
@@ -64,6 +67,7 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
   const [confirmPull, setConfirmPull] = useState(false);
   const { reads: aiReads } = useAiPicks();
   const booksPicks = useBooksPicks();
+  const { model, beta } = useModel(data?.builtAt ?? null);
   // Where GKR can't score: the Scout read, else the Books pick.
   const plays = useMemo(() => withBooksPicks(aiReads ?? undefined, booksPicks ?? undefined), [aiReads, booksPicks]);
   const lines = useMemo(() => data && ready ? boardLinesForMode(data, filters, viewMode, nowMs, plays) : [],
@@ -90,6 +94,7 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
   const header = <View style={styles.header}>
     <AppHeader subtitle="Sports Intelligence · Powered by GKR" />
     <BoardPicker value="prizepicks" onChange={onApp} />
+    <ModelSwitch />
     {data && <TextInput value={query} onChangeText={setQuery} placeholder="Search any player" placeholderTextColor={colors.textFaint}
       accessibilityLabel="Search players" style={styles.search} autoCorrect={false} />}
     {found && <View style={styles.results}>
@@ -128,7 +133,7 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
     <FlatList data={lines} keyExtractor={(line) => line.id} initialNumToRender={6} maxToRenderPerBatch={8} windowSize={7}
       contentContainerStyle={styles.content} ListHeaderComponent={header}
       renderItem={({ item, index }) => <BoardCard line={item} analysis={analyses.get(item.id)} ai={aiReads?.get(item.id)}
-        booksPick={booksPicks?.get(item.id)}
+        booksPick={booksPicks?.get(item.id)} betaLine={model === 'BETA' ? betaNote(beta?.get(item.id)) : null}
         more={(counts.get(item.eventId + '|' + item.playerId) ?? 1) - 1}
         photoUrl={data?.playerMedia?.[item.playerId]?.photoUrl} accent={rankAccents[index % rankAccents.length]}
         window={window} expired={(() => { const analysis = analyses.get(item.id);
