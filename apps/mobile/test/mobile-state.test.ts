@@ -5,6 +5,7 @@ import { crownOutcome, entryOutlook } from '../src/insights.js';
 import { aiPlay, lateNews, scoutVerdict } from '../src/scout.js';
 import { bandOf, betaNote } from '../src/beta.js';
 import { buildSlip } from '../src/app-slip.js';
+import { buildBookSlip, buildMarketSlip, parlayAmerican } from '../src/slip-builders.js';
 import { addLeg, betterSwap, boardLinesForMode, isPlay, withBooksPicks, CROWN_LEG_FLOOR, emptyFilters, evidenceExpired, freshness, gkrBacked, shareCrown,
   visibleLines } from '../src/state.js';
 import { parseDraft, profileDraftKey } from '../src/draft-codec.js';
@@ -214,4 +215,18 @@ test('the slip builder takes GKR strongest app lines: one per player, two per ga
   const allBuf=[mk('x',95,'g1','BUF'),mk('y',94,'g2','BUF'),mk('z',90,'g3','MIA')];
   assert.deepEqual(buildSlip(allBuf,2,now).map((pick)=>pick.line.id),['x','z'],'the last pick brings a second team');
   assert.deepEqual(buildSlip(lines,2,now,2).map((pick)=>pick.line.id).sort(),['b','c'],'build another starts further down');
+});
+
+test('sportsbook and market slip builders: fair prices first, one per player or game, parlay price',()=>{
+  const now=Date.parse('2030-01-01T12:00:00Z');
+  const book=(id:string,player:string,score:number,american:number,pricey=false)=>({id,eventStartTime:'2030-01-01T20:00:00Z',
+    playerName:player,market:'passing_yards',line:240.5,side:'MORE' as const,gkr:{score},american,pricey});
+  const picks=[book('a','A',95,-180,true),book('b','B',88,-110),book('c','C',80,+105),book('d','B',90,-115)];
+  assert.deepEqual(buildBookSlip(picks,2,now).map((pick)=>pick.id),['d','c'],
+    'fair prices first (B once, its stronger line), then C; pricey A last');
+  assert.equal(parlayAmerican([{american:-110},{american:-110}]),264);
+  assert.equal(parlayAmerican([{american:-110}]),null);
+  const market=(id:string,game:string,edge:number)=>({id,game,startTime:'2030-01-01T20:00:00Z',edge,side:'x',price:0.4});
+  assert.deepEqual(buildMarketSlip([market('1','g1',0.03),market('2','g1',0.05),market('3','g2',0.02)],3,now).map((pick)=>pick.id),
+    ['2','3'],'one per game, biggest edge first');
 });

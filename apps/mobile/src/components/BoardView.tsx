@@ -3,7 +3,8 @@ import { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Window } from '../insights';
-import { boardLinesForMode, evidenceExpired, playCounts, withBooksPicks } from '../state';
+import { autoCrown, boardLinesForMode, evidenceExpired, playCounts, withBooksPicks } from '../state';
+import { crownMinimumLineScore } from '../insights';
 import { useBooksPicks } from '../use-books';
 import { useBeta } from '../use-model';
 import { betaNote } from '../beta';
@@ -54,7 +55,23 @@ export default function BoardView() {
 
 function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
   const { status, data, message, freshness, refreshing, nowMs, reload, needsBootstrap, bootstrapPull } = useBoard();
-  const { filters, setFilters, viewMode, ready } = useDraft();
+  const { filters, setFilters, viewMode, ready, replace } = useDraft();
+  // The PrizePicks slip builder: a Crown from GKR's ranked picks at the chosen size, then on to the Crown tab.
+  const [slipSize, setSlipSize] = useState(4), [slipBuilt, setSlipBuilt] = useState(0), [slipMessage, setSlipMessage] = useState('');
+  const buildPrizePicks = () => {
+    if (!data) return;
+    const lineById = new Map(data.board.lines.map((line) => [line.id, line]));
+    const analysisById = new Map(data.analyses.map((analysis) => [analysis.lineId, analysis]));
+    const candidates = data.rankedLineIds.flatMap((lineId) => {
+      const line = lineById.get(lineId), analysis = analysisById.get(lineId);
+      return line && analysis && Date.parse(line.eventStartTime) > nowMs ? [{ line, analysis }] : [];
+    });
+    const legs = autoCrown(candidates, slipSize, crownMinimumLineScore[slipSize] ?? 80, slipBuilt * slipSize, nowMs);
+    setSlipBuilt(slipBuilt + 1);
+    if (legs.length < 2) { setSlipMessage(`Fewer than 2 picks meet the ${crownMinimumLineScore[slipSize]} minimum right now.`); return; }
+    replace(legs); setSlipMessage('');
+    router.push('/(tabs)/crown');
+  };
   // While the Board is on screen, reread the saved board every 5 minutes (free; picks up context refreshes).
   useFocusEffect(useCallback(() => {
     if (freshness === 'DEMO') return;
@@ -93,6 +110,15 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
   const header = <View style={styles.header}>
     <AppHeader subtitle="Sports Intelligence · Powered by GKR" />
     <BoardPicker value="prizepicks" onChange={onApp} />
+    {data && <View style={styles.builder}>
+      <Text style={styles.builderTitle}>Slip builder</Text>
+      <Segmented label="Slip size" value={slipSize} onChange={(value) => { setSlipSize(value); setSlipBuilt(0); }}
+        options={[2, 3, 4, 5, 6].map((value) => ({ value, label: `${value}` }))} />
+      <PrimaryButton label={slipBuilt ? 'Build another' : `Build a ${slipSize}-pick slip`} icon="auto-fix" onPress={buildPrizePicks} />
+      <Text style={styles.builderNote}>GKR’s ranked picks with PrizePicks’ rules (teams, games, the minimum score for the size),
+        opened in your Crown to save, share or play.</Text>
+      {!!slipMessage && <Text style={styles.builderNote}>{slipMessage}</Text>}
+    </View>}
     {data && <TextInput value={query} onChangeText={setQuery} placeholder="Search any player" placeholderTextColor={colors.textFaint}
       accessibilityLabel="Search players" style={styles.search} autoCorrect={false} />}
     {found && <View style={styles.results}>
@@ -153,6 +179,9 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
 }
 
 const styles = StyleSheet.create({
+  builder: { gap: 8, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.lg, padding: 12 },
+  builderTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  builderNote: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
   safe: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 24, gap: 14 },
   header: { gap: 12, marginBottom: 2 },

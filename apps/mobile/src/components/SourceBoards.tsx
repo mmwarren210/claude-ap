@@ -11,7 +11,9 @@ import { Notice } from './Screen';
 import { ScoutVerdict } from './ScoutVerdict';
 import type { AiRead } from '../scout';
 import { AppHeader } from './ui/AppHeader';
-import { ChipRow, FilterChip, GhostButton } from './ui/Controls';
+import { ChipRow, FilterChip, GhostButton, PrimaryButton, Segmented } from './ui/Controls';
+import { copyAndOpenUrl } from '../port';
+import { buildBookSlip, buildMarketSlip, parlayAmerican } from '../slip-builders';
 import { PlayerAvatar } from './ui/PlayerAvatar';
 import { ScoreRing } from './ui/ScoreRing';
 
@@ -171,6 +173,36 @@ function useRecord(platform: MarketPlatform): MarketRecordStatus | null {
   return value?.platform === platform ? value.record : null;
 }
 
+/** The builder panel: a slip size and Build / Build another. */
+function SlipPanel({ size, setSize, built, onBuild, note }: { size: number; setSize: (value: number) => void; built: boolean;
+  onBuild: () => void; note: string }) {
+  return <View style={styles.builder}>
+    <Text style={styles.builderTitle}>Slip builder</Text>
+    <Segmented label="Slip size" value={size} onChange={setSize} options={[2, 3, 4, 5, 6].map((value) => ({ value, label: `${value}` }))} />
+    <PrimaryButton label={built ? 'Build another' : `Build a ${size}-pick slip`} icon="auto-fix" onPress={onBuild} />
+    <Text style={styles.explain}>{note}</Text>
+  </View>;
+}
+
+/** The built slip: its picks in plain words, a summary line, and Copy & open. */
+function SlipTray({ lines, summary, url, appName, onClear }: { lines: string[]; summary: string; url: string; appName: string;
+  onClear: () => void }) {
+  const [message, setMessage] = useState('');
+  if (!lines.length) return null;
+  const text = [`My ${appName} picks (from CrownIQ):`, ...lines.map((line, index) => `${index + 1}. ${line}`),
+    'Check each line in the app before you play. Play responsibly.'].join('\n');
+  return <View style={styles.tray}>
+    <Text style={styles.trayTitle}>Your {appName} slip</Text>
+    {lines.map((line, index) => <Text key={index} style={styles.trayLine}>{index + 1}. {line}</Text>)}
+    {!!summary && <Text style={styles.traySummary}>{summary}</Text>}
+    <PrimaryButton label={`Copy picks & open ${appName}`} icon="open-in-new" onPress={() => void copyAndOpenUrl(url, text)
+      .then((how) => setMessage(how === 'copied' ? `Picks copied. Find each one in ${appName}.` : 'Tap Copy in the share sheet.'))
+      .catch(() => undefined)} />
+    <GhostButton label="Clear slip" icon="close" onPress={onClear} />
+    {!!message && <Text style={styles.explain}>{message}</Text>}
+  </View>;
+}
+
 function useLeagueFilter<T extends { league: string }>(picks: T[]) {
   const [league, setLeague] = useState('ALL');
   const leagues = useMemo(() => [...new Set(picks.map((pick) => pick.league))].sort(), [picks]);
@@ -186,6 +218,9 @@ function useLeagueFilter<T extends { league: string }>(picks: T[]) {
 export function BookBoard({ book, onSource }: { book: Sportsbook; onSource: (source: BoardSource) => void }) {
   const { picks, fetchedAt, state } = usePicks<BookPick>(`/v1/books/${book}/picks`);
   const { shown, chips } = useLeagueFilter(picks);
+  const [size, setSize] = useState(3), [built, setBuilt] = useState(0), [slip, setSlip] = useState<BookPick[]>([]);
+  const build = () => { setSlip(buildBookSlip(shown, size, Date.now(), built * size)); setBuilt(built + 1); };
+  const parlay = parlayAmerican(slip);
   const header = <View style={styles.header}>
     <AppHeader subtitle={`${sourceNames[book]} picks`} />
     <BoardPicker value={book} onChange={onSource} />
@@ -194,12 +229,20 @@ export function BookBoard({ book, onSource }: { book: Sportsbook; onSource: (sou
       {' '}· GKR picks only</Text>}
     <Text style={styles.explain}>GKR scores each {sourceNames[book]} prop at {sourceNames[book]}’s own number, using the same
       research as PrizePicks. Only lines GKR picks a side on show. “Price needs” is the win rate the odds require.</Text>
+    {shown.length >= 2 && <SlipPanel size={size} setSize={(value) => { setSize(value); setBuilt(0); }} built={built > 0}
+      onBuild={build} note="GKR’s strongest picks, fairly priced ones first, one per player. Bet them as singles or a parlay." />}
   </View>;
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <FlatList data={shown} keyExtractor={(pick) => pick.id} contentContainerStyle={styles.content} ListHeaderComponent={header}
       renderItem={({ item }) => <BookCard book={book} pick={item} />}
-      ListFooterComponent={shown.length ? <GhostButton label={`Open ${sourceNames[book]}`} icon="open-in-new"
-        onPress={() => void Linking.openURL(bookUrls[book])} /> : null}
+      ListFooterComponent={<View style={{ gap: 12 }}>
+        <SlipTray appName={sourceNames[book]} url={bookUrls[book]} onClear={() => { setSlip([]); setBuilt(0); }}
+          lines={slip.map((pick) => `${pick.playerName} · ${marketLabel(pick.market)} ${pick.side === 'MORE' ? 'Over' : 'Under'} ` +
+            `${formatLine(pick.line)} (${odds(pick.american)})`)}
+          summary={slip.length >= 2 && parlay !== null ? `As a ${slip.length}-leg parlay: ${odds(parlay)}. Each leg is GKR’s pick; ` +
+            'a parlay pays only if every leg wins.' : ''} />
+        {shown.length ? <GhostButton label={`Open ${sourceNames[book]}`} icon="open-in-new"
+          onPress={() => void Linking.openURL(bookUrls[book])} /> : null}</View>}
       ListEmptyComponent={<Notice title={state === 'demo' ? 'Sign in to see sportsbook picks' : state === 'loading'
         ? 'Loading picks' : state === 'error' ? 'Picks unavailable' : `No ${sourceNames[book]} picks right now`}
         detail={state === 'demo' ? 'The demo shows PrizePicks only.' : state === 'error'
@@ -213,6 +256,7 @@ export function MarketBoard({ platform, onSource }: { platform: MarketPlatform; 
   const { picks, fetchedAt, state } = usePicks<MarketPick>(`/v1/markets/${platform}/picks`);
   const record = useRecord(platform);
   const { shown, chips } = useLeagueFilter(picks);
+  const [size, setSize] = useState(3), [slip, setSlip] = useState<MarketPick[]>([]);
   const header = <View style={styles.header}>
     <AppHeader subtitle={`${sourceNames[platform]} picks`} />
     <BoardPicker value={platform} onChange={onSource} />
@@ -224,12 +268,20 @@ export function MarketBoard({ platform, onSource }: { platform: MarketPlatform; 
     <Text style={styles.explain}>{sourceNames[platform]} sells game outcomes, not player stats, so GKR doesn’t score these. A
       pick shows when {sourceNames[platform]}’s price{platform === 'kalshi' ? ', with its fee,' : ''} is at least 2 cents per $1
       below Pinnacle’s fair odds for the same game.</Text>
+    {shown.length >= 2 && <SlipPanel size={size} setSize={setSize} built={slip.length > 0}
+      onBuild={() => setSlip(buildMarketSlip(shown, size, Date.now()))}
+      note="The biggest edges, one per game. Each is its own contract, bought separately." />}
   </View>;
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <FlatList data={shown} keyExtractor={(pick) => pick.id} contentContainerStyle={styles.content} ListHeaderComponent={header}
       renderItem={({ item }) => <MarketCard platform={platform} pick={item} />}
-      ListFooterComponent={!shown.length && state === 'ready' ? <GhostButton label={`Open ${sourceNames[platform]}`}
-        icon="open-in-new" onPress={() => void Linking.openURL(marketUrls[platform])} /> : null}
+      ListFooterComponent={<View style={{ gap: 12 }}>
+        <SlipTray appName={sourceNames[platform]} url={marketUrls[platform]} onClear={() => setSlip([])}
+          lines={slip.map((pick) => `${pick.game}: ${pick.side} at ${cents(pick.price)}`)}
+          summary={slip.length ? `Cost about ${cents(slip.reduce((sum, pick) => sum + pick.cost, 0))} for $1 on each; ` +
+            `Pinnacle’s odds put them worth ${cents(slip.reduce((sum, pick) => sum + pick.fair, 0))}.` : ''} />
+        {!shown.length && state === 'ready' ? <GhostButton label={`Open ${sourceNames[platform]}`}
+          icon="open-in-new" onPress={() => void Linking.openURL(marketUrls[platform])} /> : null}</View>}
       ListEmptyComponent={<Notice title={state === 'demo' ? 'Sign in to see market picks' : state === 'loading'
         ? 'Loading picks' : state === 'error' ? 'Picks unavailable' : `No ${sourceNames[platform]} picks right now`}
         detail={state === 'demo' ? 'The demo shows PrizePicks only.' : state === 'error'
@@ -245,6 +297,12 @@ const styles = StyleSheet.create({
   header: { gap: 12, marginBottom: 2 },
   status: { color: colors.textMuted, fontSize: 13 },
   record: { color: colors.mint, fontSize: 13, fontWeight: '700' },
+  builder: { gap: 8, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.lg, padding: 12 },
+  builderTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  tray: { gap: 8, borderWidth: 1.5, borderColor: colors.mint, borderRadius: radius.lg, padding: 14, backgroundColor: colors.surface },
+  trayTitle: { color: colors.mint, fontSize: 15, fontWeight: '800' },
+  trayLine: { color: colors.text, fontSize: 14 },
+  traySummary: { color: colors.textMuted, fontSize: 13, lineHeight: 18 },
   explain: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
   card: { borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radius.lg, backgroundColor: colors.surface,
     padding: 14, gap: 12 },

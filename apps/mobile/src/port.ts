@@ -24,10 +24,15 @@ export function slipText(app: PickApp, picks: readonly { player: string; stat: s
  * Returns how the picks were handed over, for the message on screen.
  */
 export async function copyAndOpen(app: PickApp, text: string): Promise<'copied' | 'shared'> {
+  return copyAndOpenUrl(appUrls[app], text);
+}
+
+/** The same for any app or site (the sportsbooks and prediction markets). */
+export async function copyAndOpenUrl(url: string, text: string): Promise<'copied' | 'shared'> {
   let how: 'copied' | 'shared' = 'shared';
   const clipboard = Platform.OS === 'web' && typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
   if (clipboard) { await clipboard.writeText(text); how = 'copied'; }
   else await Share.share({ message: text });
-  await Linking.openURL(appUrls[app]);
+  await Linking.openURL(url);
   return how;
 }
