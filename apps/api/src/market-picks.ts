@@ -26,6 +26,14 @@ export const platformFee = (platform: MarketPlatform, price: number) =>
 
 const words = (value: string) => normalizedName(value).split(' ');
 const nickname = (team: string) => words(team).at(-1) ?? '';
+/** The team named in a market's text: by nickname ("Raiders") or by city, as Kalshi's own titles do ("Las Vegas"). */
+export function teamIn(textWords: readonly string[], team: string): boolean {
+  if (textWords.includes(nickname(team))) return true;
+  const city = words(team).slice(0, -1);
+  if (!city.length) return false;
+  const joined = ` ${textWords.join(' ')} `;
+  return joined.includes(` ${city.join(' ')} `);
+}
 /** A market's name for a team: its nickname ("Bills"), or how Kalshi names it, the city with a letter ("Los Angeles R"). */
 function names(label: string, team: string): boolean {
   const a = normalizedName(label), b = normalizedName(team);
@@ -56,7 +64,7 @@ export function marketPicks(platform: MarketPlatform, markets: readonly MarketOd
       if (market.platform !== platform) return false;
       const text = words(`${market.eventTitle} ${market.question}`);
       const closes = market.closeTime ? Date.parse(market.closeTime) : start;
-      return text.includes(nickname(home)) && text.includes(nickname(away)) && closes >= start - 6 * 3600_000 &&
+      return teamIn(text, home) && teamIn(text, away) && closes >= start - 6 * 3600_000 &&
         closes <= start + 7 * 86_400_000;
     });
     for (const market of mine) {

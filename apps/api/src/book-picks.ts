@@ -56,7 +56,7 @@ export function mainLines(prices: readonly FairPrice[]): FairPrice[] {
  */
 export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardLines: readonly PropLine[],
   analyses: ReadonlyMap<string, Analysis>, scoreLines: (lines: readonly PropLine[]) => Analysis[], now: Date,
-  counts?: Record<string, number>): BookPick[] {
+  counts?: Record<string, number>, linesOut?: Map<string, PropLine>): BookPick[] {
   const byPlayer = new Map<string, PropLine[]>();
   for (const line of boardLines) {
     const key = JSON.stringify([line.sport, normalizedName(line.playerName), line.market]);
@@ -117,6 +117,7 @@ export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardL
       // PrizePicks' own line can PASS for a reason the book's line doesn't have: a Goblin or Demon offers only More.
       prizePicks: { line: research.threshold, lineType: research.lineType, sides: [...research.availableDirections],
         gkr: reference ? { direction: reference.direction, score: reference.score, reasonCode: reference.reasonCode ?? null } : null } };
+    linesOut?.set(line.id, line);
     const key = `${research.eventId}|${research.playerId}|${price.market}`, current = best.get(key);
     if (!current || pick.gkr.score > current.gkr.score) best.set(key, pick);
   });

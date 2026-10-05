@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { bestBreakEven, DEFAULT_PAYOUTS, entryBreakEvens, nflPassingResultSchema, pickAppSchema } from '@crowniq/contracts';
 import { ModelRegistry, routeResearch, snapshotSelection } from '@crowniq/engine';
 import type { OddsProvider, ResearchAdapter } from '@crowniq/engine';
-import type { BoardResponse, Payouts } from '@crowniq/contracts';
+import type { BoardResponse, Payouts, PropLine } from '@crowniq/contracts';
 import { idlePullJob } from './owner-pull-job.js';
 import type { OwnerPullJob, OwnerPullJobStore } from './owner-pull-job.js';
 import { BoardService } from './board-service.js';
@@ -46,6 +46,9 @@ import type { SharpPropsFeed } from './context/sharp-props.js';
 import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
 import { bookLadder, bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
 import { marketPicks } from './market-picks.js';
+import { gameScriptFor, scriptEligible } from './shadow-record.js';
+import type { LiveMarkets } from './market-live.js';
+import type { ShadowPick, ShadowRecord } from './shadow-record.js';
 import type { MarketPlatform } from './market-picks.js';
 import type { BookPick, Sportsbook } from './book-picks.js';
 import { serveWebApp } from './web-app.js';
@@ -108,6 +111,10 @@ export interface ServerOptions {
   evBreakEven?: number;
   /** Each app's payout tables (defaults, or CROWNIQ_PAYOUTS merged over them). */
   payouts?: Payouts;
+  /** Shadow records: Books picks, sportsbook-tab picks and game-script snapshots, graded in their own record. */
+  shadowRecord?: ShadowRecord | null;
+  /** Live Kalshi and Polymarket prices from their free public APIs. */
+  liveMarkets?: LiveMarkets | null;
   /** JSON-lines history of the books' view of board lines, one row per line per refresh. */
   booksHistoryFile?: string | null;
 }
@@ -212,7 +219,45 @@ export function buildServer(options: ServerOptions = {}) {
       }
       return {graded,wins};
     }:null,options.clock):null;
-  app.addHook('onClose', async () => {appShadow?.stop();options.aiPicks?.stop(); webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
+  // Shadow records: Books picks, the sportsbook tabs' picks and game-script snapshots, saved every 15 minutes and graded
+  // hourly in their own record (never GKR's).
+  const shadowTimers:NodeJS.Timeout[]=[];
+  if(options.shadowRecord){
+    const shadow=options.shadowRecord;
+    const recordShadow=async()=>{
+      const board=service.getBoard();
+      if(!board)return;
+      const picks:ShadowPick[]=[];
+      const lines=new Map(board.board.lines.map((line)=>[line.id,line]));
+      if(options.sharpProps){
+        const {prices}=await options.sharpProps.current();
+        for(const [lineId,pick] of booksPicks(board,bookViews(board,prices,now())))
+          picks.push({kind:'books',line:lines.get(lineId)!,side:pick.side,strength:pick.fair});
+        for(const book of sportsbooks){
+          const result=await picksFor(book);
+          for(const pick of result?.picks??[]){const line=result!.lines.get(pick.id);
+            if(line)picks.push({kind:`book:${book}`,line,side:pick.side,strength:pick.gkr.score});}
+        }
+      }
+      if(options.contextFeeds){
+        const games=(await options.contextFeeds.items<GameLine>('pinnacle')).items;
+        const markets=[...(await marketItems('kalshi')).items,...(await marketItems('polymarket')).items];
+        for(const analysis of board.analyses){
+          const line=lines.get(analysis.lineId);
+          if(!line||analysis.direction==='PASS'||analysis.score===null||!scriptEligible(line))continue;
+          const script=gameScriptFor(line,games,markets);
+          if(script)picks.push({kind:'script',line,side:analysis.direction,strength:analysis.score,script});
+        }
+      }
+      await shadow.record(picks);
+    };
+    const first=setTimeout(()=>{void recordShadow().catch(()=>undefined);},90_000);first.unref();
+    const every=setInterval(()=>{void recordShadow().catch(()=>undefined);},15*60_000);every.unref();
+    const grading=setInterval(()=>{void shadow.grade().catch(()=>undefined);},60*60_000);grading.unref();
+    shadowTimers.push(first,every,grading);
+  }
+  options.liveMarkets?.start();
+  app.addHook('onClose', async () => {for(const timer of shadowTimers)clearTimeout(timer);options.liveMarkets?.stop();appShadow?.stop();options.aiPicks?.stop(); webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
     options.scraperPuller?.stop();options.contextFeeds?.stop();options.sharpProps?.stop(); });
 
   // Every paid provider pull runs through this one job, so two pulls can never overlap or
@@ -810,7 +855,8 @@ export function buildServer(options: ServerOptions = {}) {
   }
   // Sportsbook picks: GKR's side on each DraftKings or Hard Rock prop at the book's number (no PASS lines), rebuilt at
   // most every 2 minutes or when the board, its research or the book prices change.
-  const bookPickCache=new Map<Sportsbook,{at:number;key:readonly unknown[];picks:BookPick[];fetchedAt:string|null}>();
+  const bookPickCache=new Map<Sportsbook,{at:number;key:readonly unknown[];picks:BookPick[];fetchedAt:string|null;
+    lines:Map<string,PropLine>}>();
   async function picksFor(book:Sportsbook){
     const board=service.getBoard();
     if(!options.appGkrScores||!options.sharpProps||!board)return null;
@@ -818,9 +864,10 @@ export function buildServer(options: ServerOptions = {}) {
     const now=(options.clock??(()=>new Date()))(),key=[board,service.getEvidence(),prices];
     const cached=bookPickCache.get(book);
     if(cached&&now.getTime()-cached.at<2*60_000&&key.every((item,index)=>cached.key[index]===item))return cached;
+    const lines=new Map<string,PropLine>();
     const picks=bookPicks(book,prices,board.board.lines,new Map(board.analyses.map((item)=>[item.lineId,item])),
-      (items)=>service.scoreLines(items),now);
-    const entry={at:now.getTime(),key,picks,fetchedAt};
+      (items)=>service.scoreLines(items),now,undefined,lines);
+    const entry={at:now.getTime(),key,picks,fetchedAt,lines};
     bookPickCache.set(book,entry);
     return entry;
   }
@@ -845,10 +892,21 @@ export function buildServer(options: ServerOptions = {}) {
     return {book:parsed.data.book,name:sportsbookNames[parsed.data.book],fetchedAt:result.fetchedAt,picks:result.picks};
   });
   // Prediction-market picks: Kalshi or Polymarket game markets priced below Pinnacle's no-vig chance. Display only.
+  /** A platform's prices: live from its free API when fresh, else the daily Apify feed. */
+  async function marketItems(platform:MarketPlatform):Promise<{fetchedAt:string|null;items:MarketOdds[];live:boolean}>{
+    const live=await options.liveMarkets?.items(platform);
+    if(live)return {...live,live:true};
+    const feed=options.contextFeeds?await options.contextFeeds.items<MarketOdds>(platform):{fetchedAt:null,items:[]};
+    return {...feed,live:false};
+  }
   async function marketPicksFor(platform:MarketPlatform){
     if(!options.contextFeeds)return null;
-    const [markets,games]=await Promise.all([options.contextFeeds.items<MarketOdds>(platform),options.contextFeeds.items<GameLine>('pinnacle')]);
-    return {fetchedAt:markets.fetchedAt,pinnacleAt:games.fetchedAt,picks:marketPicks(platform,markets.items,games.items,now())};
+    const [markets,games]=await Promise.all([marketItems(platform),options.contextFeeds.items<GameLine>('pinnacle')]);
+    // Pinnacle is pulled twice a day; a market compared with Pinnacle prices more than 6 hours old would show edges that
+    // are only Pinnacle being out of date, so no picks then.
+    const pinnacleStale=!games.fetchedAt||now().getTime()-Date.parse(games.fetchedAt)>6*3600_000;
+    return {fetchedAt:markets.fetchedAt,live:markets.live,pinnacleAt:games.fetchedAt,pinnacleStale,
+      picks:pinnacleStale?[]:marketPicks(platform,markets.items,games.items,now())};
   }
   app.get('/v1/markets/:platform/picks',async(request,reply)=>{
     const parsed=z.object({platform:z.enum(['kalshi','polymarket'])}).safeParse(request.params);
@@ -1026,6 +1084,14 @@ export function buildServer(options: ServerOptions = {}) {
       if (!authorized(request, options.adminToken)) return reply.code(401).send({ code: 'UNAUTHORIZED' });
     });
     admin.get('/status', async () => service.getStatus());
+    admin.get('/live-markets', async (_request, reply) => options.liveMarkets ? options.liveMarkets.status()
+      : reply.code(503).send({ code: 'LIVE_MARKETS_UNCONFIGURED' }));
+    admin.post('/live-markets/refresh', async (_request, reply) => options.liveMarkets ? options.liveMarkets.refresh()
+      : reply.code(503).send({ code: 'LIVE_MARKETS_UNCONFIGURED' }));
+    admin.get('/shadow', async (_request, reply) => options.shadowRecord ? options.shadowRecord.status()
+      : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
+    admin.post('/shadow/grade', async (_request, reply) => options.shadowRecord ? { graded: await options.shadowRecord.grade() }
+      : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
     admin.get('/book-picks/:book', async (request, reply) => {
       const parsed=z.object({book:z.enum(sportsbooks)}).safeParse(request.params);
       if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_BOOK'});
