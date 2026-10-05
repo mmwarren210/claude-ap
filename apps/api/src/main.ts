@@ -316,7 +316,7 @@ if(guestCode&&!guestPass)console.warn('CROWNIQ_GUEST_PASS_CODE must be at least 
 process.on('unhandledRejection', (reason) => {
   console.error('Background task failed:', reason instanceof Error ? reason.message : reason);
 });
-const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, playerHistory, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
+const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, playerHistory, espnHistory: espnEvidence, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
   webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,
   autoGradingEnabled:!!autoGrade,autoGradingStatus:()=>autoGrade?.status()??null,
   requireProfiles:true,identityVerifier,

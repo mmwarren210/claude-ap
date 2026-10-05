@@ -43,7 +43,9 @@
 - **History Read** (owner, 2026-10-05; `history-read.ts`): a free More/Less on every line GKR doesn't play, from the
   player's last 15 results for the stat (CrownIQ history, then the free public sources): over rate with one game of
   doubt each way, averaged with the books' no-vig chance when priced; a play needs 60% (Goblin 72%, Demon 55%) and the
-  average on the same side; under 5 games is no read. Labeled "History", never a GKR score; graded as shadow kind
+  average on the same side; 55-59% (Goblin 66-71%) shows as a LEAN (not recorded, Scout may still read it); under 5 games
+  is no read. Lookups: CrownIQ history, stored Stat API rows (MLB/NBA/NFL stats without an internal spec), ESPN game logs
+  (soccer, NHL, college football), then ESPN tennis/Sleeper/OpenDota. The board gets the last set while a new one builds. Labeled "History", never a GKR score; graded as shadow kind
   `history` (shown in Results' Beta box). Board order where GKR can't score: Scout, History, Books. Scout's scheduled
   run, its app-line extras and the owner's Scout queue skip lines a History Read already picks.
 - **Scout queue** (owner, 2026-10-05): More → Scout queue shows lines waiting on Scout by board and sport, with Ask

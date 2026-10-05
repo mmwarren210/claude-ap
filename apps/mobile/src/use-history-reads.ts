@@ -3,7 +3,9 @@ import { useAuth } from './auth';
 
 /** A free History Read: the player's recent results against the line (plus the books where priced). Never a GKR score. */
 export type HistoryRead = { direction: 'MORE' | 'LESS' | 'PASS'; score: number | null; over: number; under: number;
-  games: number; average: number; books: number | null; text: string; source: string };
+  games: number; average: number; books: number | null; text: string; source: string;
+  /** A weaker side (55-59%): shown as a lean. */
+  lean?: boolean };
 
 // One shared copy, refreshed at most every 10 minutes.
 let cache: { at: number; value: Map<string, HistoryRead> } | null = null;

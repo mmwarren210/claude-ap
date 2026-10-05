@@ -15,11 +15,15 @@ export interface HistoryRead {
   readonly books: number | null;
   readonly text: string;
   readonly source: string;
+  /** A weaker side (55-59%, Goblins 66-71%): shown as a lean, never recorded as a play. */
+  readonly lean?: boolean;
 }
 
 export const MIN_GAMES = 5;
 /** The chance a side needs to be a play, by line type: Goblins are moved easier on purpose, so they need more. */
 export const HISTORY_BAR: Readonly<Record<string, number>> = { REGULAR: 0.6, GOBLIN: 0.72, DEMON: 0.55 };
+/** Below the bar but leaning: shown as a lean so every board has more options. */
+export const LEAN_BAR: Readonly<Record<string, number>> = { REGULAR: 0.55, GOBLIN: 0.66, DEMON: 0.52 };
 
 /**
  * The read for one line from the player's recent values (newest first). Null with fewer than five games. The chance of
@@ -38,12 +42,14 @@ export function historyRead(line: Pick<PropLine, 'threshold' | 'lineType' | 'ava
   const more = books === null ? fromHistory : (fromHistory + books) / 2;
   const bar = HISTORY_BAR[line.lineType] ?? 0.6;
   const canMore = line.availableDirections.includes('MORE'), canLess = line.availableDirections.includes('LESS');
-  const direction = canMore && more >= bar && average > line.threshold ? 'MORE'
-    : canLess && 1 - more >= bar && average < line.threshold ? 'LESS' : 'PASS';
+  const side = (need: number) => canMore && more >= need && average > line.threshold ? 'MORE' as const
+    : canLess && 1 - more >= need && average < line.threshold ? 'LESS' as const : null;
+  const play = side(bar), leaning = play ? null : side(LEAN_BAR[line.lineType] ?? 0.55);
+  const direction = play ?? leaning ?? 'PASS';
   const text = `Over in ${over} of last ${values.length} · avg ${average.toFixed(1)} vs ${line.threshold}` +
     (books === null ? '' : ` · books ${Math.round(books * 100)}% over`);
   return { direction, score: direction === 'PASS' ? null : Math.round((direction === 'MORE' ? more : 1 - more) * 100),
-    over, under, games: values.length, average: Math.round(average * 10) / 10, books, text, source };
+    over, under, games: values.length, average: Math.round(average * 10) / 10, books, text, source, ...(leaning ? { lean: true } : {}) };
 }
 
 /** Where a player's recent values for a stat come from (CrownIQ's history, then the free public sources). */
@@ -66,12 +72,16 @@ export class HistoryReads {
   /** Reads for the lines whose games haven't started (lines without enough history are left out). */
   async readsFor(lines: readonly PropLine[], booksMore: (lineId: string) => number | null = () => null) {
     const now = this.clock().getTime(), out = new Map<string, HistoryRead>();
-    for (const line of lines) {
-      if (Date.parse(line.eventStartTime) <= now) continue;
-      const found = await this.values(line);
-      const read = found ? historyRead(line, found.values, booksMore(line.id), found.source) : null;
-      if (read) out.set(line.id, read);
-    }
-    return out;
+    const open = lines.filter((line) => Date.parse(line.eventStartTime) > now);
+    // Eight lookups at a time (most are cached; the rest are public game logs).
+    let cursor = 0;
+    await Promise.all(Array.from({ length: Math.min(8, open.length) }, async () => {
+      for (let index = cursor++; index < open.length; index = cursor++) {
+        const line = open[index], found = await this.values(line);
+        const read = found ? historyRead(line, found.values, booksMore(line.id), found.source) : null;
+        if (read) out.set(line.id, read);
+      }
+    }));
+    return new Map(open.flatMap((line) => out.has(line.id) ? [[line.id, out.get(line.id)!] as const] : []));
   }
 }

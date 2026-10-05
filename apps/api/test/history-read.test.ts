@@ -16,7 +16,11 @@ test('History Read: over rate and average decide; books blend in; Goblins need m
   assert.equal(withBooks.score, 60, 'averaged with the books’ 45%');
   assert.match(withBooks.text, /books 45% over/);
   assert.equal(historyRead(line(5.5, 'GOBLIN', ['MORE']), values, null, 'h')!.direction, 'MORE', '75% clears the Goblin bar of 72%');
-  assert.equal(historyRead(line(5.5, 'GOBLIN', ['MORE']), [7, 6, 8, 4, 7, 9, 6, 3, 5, 8], null, 'h')!.direction, 'PASS', '67% does not');
+  const goblinLean = historyRead(line(5.5, 'GOBLIN', ['MORE']), [7, 6, 8, 4, 7, 9, 6, 3, 5, 8], null, 'h')!;
+  assert.deepEqual([goblinLean.direction, goblinLean.lean], ['MORE', true], '67% misses the Goblin bar but leans');
+  const regularLean = historyRead(line(5.5), [7, 6, 4, 4, 7, 9, 6, 3, 5, 8], null, 'h')!;
+  assert.deepEqual([regularLean.direction, regularLean.lean, regularLean.score], ['MORE', true, 58], '58% leans MORE');
+  assert.equal(historyRead(line(5.5), values, null, 'h')!.lean, undefined, 'a play is not a lean');
   const low = historyRead(line(8.5), values, null, 'h')!;
   assert.deepEqual([low.direction, low.score], ['LESS', 83]);
   assert.equal(historyRead(line(8.5, 'REGULAR', ['MORE']), values, null, 'h')!.direction, 'PASS', 'LESS only where the line offers it');

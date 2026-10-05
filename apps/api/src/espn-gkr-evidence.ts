@@ -212,6 +212,23 @@ export class EspnGkrEvidence implements ResearchAdapter {
     return { rows, sourceUrl: base, retrievedAt: this.clock().toISOString() };
   }
 
+  /** A player's last 15 values for this line's stat before its game, from the ESPN game log (History Read uses it). */
+  async recentValues(target: ResearchTarget): Promise<number[] | null> {
+    const spec = espnSpecs[target.sport]?.[target.market];
+    if (!spec) return null;
+    const counters = { searches: 0, cacheHits: 0 };
+    const rosters = await this.rosters(target, counters);
+    if (!rosters) return null;
+    const matches = sharedName(rosters.athletes.filter((athlete) => normalizedPlayer(athlete.name) === normalizedPlayer(target.playerName)),
+      target.team, (athlete) => athlete.team);
+    if (matches.length !== 1) return null;
+    const log = await this.gameLog(target.sport, matches[0].id, counters);
+    const before = Date.parse(target.eventStartTime);
+    return log.rows.filter((row) => !row.occurredAt || Date.parse(row.occurredAt) < before)
+      .sort((a, b) => (b.occurredAt ?? '').localeCompare(a.occurredAt ?? ''))
+      .map((row) => spec.value(row)).filter((value): value is number => value !== null && Number.isFinite(value)).slice(0, 15);
+  }
+
   async research(targets: readonly ResearchTarget[]): Promise<readonly Evidence[]> {
     const now = this.clock(), eligible = targets.filter((target) => this.supports(target));
     const counters = { searches: 0, cacheHits: 0 };

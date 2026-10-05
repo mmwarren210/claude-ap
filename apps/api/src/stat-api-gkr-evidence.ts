@@ -253,6 +253,12 @@ const specFor=(sport:StatApiSport,market:string):MarketSpec|undefined=>{
   return specs[sport][market]??v2[sport]?.[market]??(alias&&alias[0]===sport?v2[sport]?.[alias[1]]:undefined);
 };
 
+/** The Stat API value of a market from a stored game row, for markets the Stat API covers (History Read uses it). */
+export function statApiValueFor(sport:string,market:string):((row:Row)=>number|null)|null{
+  if(!['NFL','NBA','MLB'].includes(sport))return null;
+  return specFor(sport as StatApiSport,market)?.value??null;
+}
+
 export function statHistoryFactorsFor(sport:string,market:string):readonly string[]{
   const spec=['NFL','NBA','MLB','PGA'].includes(sport)?specFor(sport as StatApiSport,market):undefined;
   return spec?[...Object.keys(spec.factors),'stability']:[];

@@ -33,7 +33,7 @@ type AppLine = { id: string; sport: string; league: string; eventId: string; eve
   /** Scout's read on this line (players PrizePicks doesn't list, where GKR has no research), or null. */
   scout?: { pick: Side | 'PASS'; score: number | null; agreement: string } | null;
   /** The free History Read (recent results against this line), on lines GKR doesn't score. */
-  history?: { direction: Side | 'PASS'; score: number | null; text: string; source: string } | null;
+  history?: { direction: Side | 'PASS'; score: number | null; text: string; source: string; lean?: boolean } | null;
   /** Pick6 promos: a gimme pick, or the number before a promo moved it. */
   promo?: { gimme: boolean; originalLine: number | null } | null };
 
@@ -92,7 +92,8 @@ function LineCard({ app, line, picked, onPick, asking, onAsk }: { app: PickApp; 
       <Text style={styles.gkrSide}>{sideLabel(app, line.gkr.direction)} {formatLine(line.threshold)}</Text>
     </View>}
     {historySide(line) && <View style={styles.gkr}>
-      <Text style={[styles.gkrScore, { color: colors.royal }]}>History {Math.round(line.history!.score!)}</Text>
+      <Text style={[styles.gkrScore, { color: line.history!.lean ? colors.amber : colors.royal }]}>
+        History {line.history!.lean ? 'lean ' : ''}{Math.round(line.history!.score!)}</Text>
       <Text style={styles.gkrSide}>{sideLabel(app, historySide(line)!)} {formatLine(line.threshold)}</Text>
     </View>}
     {historySide(line) && <Text style={styles.reference}>{line.history!.text} · {line.history!.source}</Text>}

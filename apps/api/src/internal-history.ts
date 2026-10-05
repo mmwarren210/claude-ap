@@ -196,6 +196,16 @@ export class InternalHistoryStore {
       return result;
     });
   }
+  /** Up to 15 recent pre-`before` values read with `value` (one per game day), for stats without a spec here. */
+  async valuesWith(sport:string,playerId:string,playerName:string,before:Date,
+    value:(row:{occurredAt:string|null;metrics:Readonly<Record<string,number>>})=>number|null):Promise<number[]>{
+    const rows=await this.rowsFor({sport:sport as InternalHistorySport,playerId,playerName,eventStartTime:before.toISOString(),
+      eventId:'values',eventName:'values',league:sport,team:null,opponent:null,market:'values'},40);
+    const seen=new Set<string>(),out:number[]=[];
+    for(const row of rows){const result=value(row as never),date=row.occurredAt.slice(0,10);
+      if(result===null||!Number.isFinite(result)||seen.has(date))continue;seen.add(date);out.push(result);}
+    return out.slice(0,15);
+  }
   /** Up to 15 most recent pre-`before` values for one player and market, newest first. */
   async gameLog(sport:string,playerId:string,playerName:string|null,market:string,before:Date){
     const spec=internalHistorySpecs[sport as InternalHistorySport]?.[market];

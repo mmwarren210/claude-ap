@@ -1,4 +1,5 @@
 import { HistoryReads } from './history-read.js';
+import { statApiValueFor } from './stat-api-gkr-evidence.js';
 import type { HistoryRead } from './history-read.js';
 import { twoMaps } from './player-history.js';
 import type { PlayerHistory } from './player-history.js';
@@ -132,6 +133,8 @@ export interface ServerOptions {
   feedback?: FeedbackStore | null;
   /** Free public history (ESPN tennis, OpenDota, Leaguepedia) for the cards' game logs. */
   playerHistory?: PlayerHistory | null;
+  /** ESPN game logs (soccer, NHL, college football) for History Reads. */
+  espnHistory?: { recentValues(target: import('@crowniq/engine').ResearchTarget): Promise<number[] | null> } | null;
   /** CrownIQ's own archive of game logs, graded results and lines. */
   historyArchive?: HistoryArchive | null;
   /** Reads The Odds API's credit balance (a free call), for the owner. */
@@ -286,7 +289,7 @@ export function buildServer(options: ServerOptions = {}) {
       // Free History Reads on PrizePicks lines GKR doesn't play, graded in their own record.
       for(const [lineId,read] of Object.entries(await boardHistoryReads(board))){
         const line=lines.get(lineId);
-        if(line&&read.direction!=='PASS')picks.push({kind:'history',line,side:read.direction,strength:read.score});
+        if(line&&read.direction!=='PASS'&&!read.lean)picks.push({kind:'history',line,side:read.direction,strength:read.score});
       }
       // Kalshi and Polymarket picks go to their own record.
       if(options.marketRecord){
@@ -331,7 +334,7 @@ export function buildServer(options: ServerOptions = {}) {
         const only=asBoard(board.lines.filter((line)=>!scores.has(line.id)),board.fetchedAt??now().toISOString()).board.lines;
         // A line the free History Read already picks a side on doesn't need Scout's paid research.
         const read=await historyReads.readsFor(only);
-        lines.push(...only.filter((line)=>read.get(line.id)?.direction!=='MORE'&&read.get(line.id)?.direction!=='LESS'));
+        lines.push(...only.filter((line)=>{const item=read.get(line.id);return !item||item.direction==='PASS'||item.lean;}));
       }
       extraScout=lines;
     }
@@ -341,7 +344,7 @@ export function buildServer(options: ServerOptions = {}) {
     options.aiPicks.setExtraSecondOpinions(()=>extraSeconds);
     options.aiPicks.setExtraScoutLines(()=>extraScout);
     // Scout skips PrizePicks lines a free History Read already picks a side on.
-    options.aiPicks.setSkipLines((line)=>{const read=historyCache?.reads[line.id];return !!read&&read.direction!=='PASS';});
+    options.aiPicks.setSkipLines((line)=>{const read=historyCache?.reads[line.id];return !!read&&read.direction!=='PASS'&&!read.lean;});
     const firstExtra=setTimeout(()=>{void refreshExtraSeconds().catch(()=>undefined);},60_000);firstExtra.unref();
     const everyExtra=setInterval(()=>{void refreshExtraSeconds().catch(()=>undefined);},15*60_000);everyExtra.unref();
     shadowTimers.push(firstExtra,everyExtra);
@@ -1060,13 +1063,13 @@ export function buildServer(options: ServerOptions = {}) {
     if(board){const analyses=new Map(board.analyses.map((item)=>[item.lineId,item]));
       const reads=await boardHistoryReads(board);
       for(const line of board.board.lines)if(line.lineType==='REGULAR'&&open(line)&&aiEligible(line,analyses.get(line.id))&&
-        (!reads[line.id]||reads[line.id].direction==='PASS'))out.push({board:'prizepicks',line});}
+        (!reads[line.id]||reads[line.id].direction==='PASS'||reads[line.id].lean))out.push({board:'prizepicks',line});}
     if(options.scrapedLines)for(const app of otherApps){
       const appLines=await appBoard(options.scrapedLines,app,board),scores=await scoresFor(app);
       const only=appLines.lines.filter((line)=>!scores.has(line.id));
       const appRows=asBoard(only,appLines.fetchedAt??now().toISOString()).board.lines.filter(open);
       const read=await historyReads.readsFor(appRows);
-      for(const line of appRows)if(read.get(line.id)?.direction!=='MORE'&&read.get(line.id)?.direction!=='LESS')out.push({board:app,line});
+      for(const line of appRows){const item=read.get(line.id);if(!item||item.direction==='PASS'||item.lean)out.push({board:app,line});}
     }
     return out;
   }
@@ -1108,27 +1111,49 @@ export function buildServer(options: ServerOptions = {}) {
     const log=options.internalHistory?await options.internalHistory.gameLog(line.sport,line.playerId,line.playerName,line.market,
       new Date(line.eventStartTime)).catch(()=>null):null;
     if(log&&log.games.length>=5)return {values:log.games.map((game)=>game.value),source:'CrownIQ history'};
+    // Stats CrownIQ's history has no spec for, read from the Stat API rows it stored (MLB total bases, RBIs, runs...).
+    const statValue=statApiValueFor(line.sport,line.market);
+    if(statValue&&options.internalHistory){
+      const values=await options.internalHistory.valuesWith(line.sport,line.playerId,line.playerName,new Date(line.eventStartTime),statValue).catch(()=>[]);
+      if(values.length>=5)return {values,source:'Stat API history'};
+    }
+    // Soccer, NHL and college football from ESPN's public game logs.
+    if(options.espnHistory){
+      const values=await options.espnHistory.recentValues({eventId:line.eventId,eventName:line.eventName,eventStartTime:line.eventStartTime,
+        league:line.league,playerId:line.playerId,playerName:line.playerName,team:line.team,opponent:line.opponent,
+        homeTeam:line.homeTeam??null,awayTeam:line.awayTeam??null,market:line.market,sport:line.sport,
+        sourceSportKey:line.sourceSportKey??null}).catch(()=>null);
+      if(values&&values.length>=5)return {values,source:'ESPN game logs'};
+    }
     const free=options.playerHistory?.supports(line.sport)?await options.playerHistory.values(line.sport,line.playerName,line.market).catch(()=>null):null;
     if(!free||(free.perMap&&twoMaps(line.market)))return null;
     return {values:free.values.map((game)=>game.value),source:free.source};
   },()=>now());
   let historyCache:{at:number;board:unknown;reads:Record<string,HistoryRead>}|null=null;
+  let historyRefresh:Promise<Record<string,HistoryRead>>|null=null;
+  /** The board's History Reads: the last ones at once while a fresh set builds (the first build is waited for). */
   async function boardHistoryReads(board:BoardResponse):Promise<Record<string,HistoryRead>>{
     const time=now().getTime();
     if(historyCache&&historyCache.board===board&&time-historyCache.at<10*60_000)return historyCache.reads;
+    historyRefresh??=buildHistoryReads(board).finally(()=>{historyRefresh=null;});
+    return historyCache?historyCache.reads:historyRefresh;
+  }
+  async function buildHistoryReads(board:BoardResponse):Promise<Record<string,HistoryRead>>{
+    const time=now().getTime();
     const analyses=new Map(board.analyses.map((item)=>[item.lineId,item]));
     const lines=board.board.lines.filter((line)=>{const analysis=analyses.get(line.id);
       return !analysis||analysis.direction==='PASS'||analysis.score===null;});
     const fair=await fairMoreFor().catch(()=>new Map<string,number>());
     const reads=Object.fromEntries(await historyReads.readsFor(lines,(id)=>fair.get(id)??null));
     historyCache={at:time,board,reads};
-    const plays=Object.values(reads).filter((read)=>read.direction!=='PASS').length;
+    const plays=Object.values(reads).filter((read)=>read.direction!=='PASS'&&!read.lean).length;
+    const leans=Object.values(reads).filter((read)=>read.lean).length;
     const bySport:Record<string,[number,number,number]>={};
     for(const line of lines){const entry=bySport[`${line.sport}`]??=[0,0,0];entry[0]++;const read=reads[line.id];
       if(read){entry[1]++;if(read.direction!=='PASS')entry[2]++;}}
     const topMarkets:Record<string,number>={};
     for(const line of lines)if(!reads[line.id])topMarkets[`${line.sport}:${line.market}`]=(topMarkets[`${line.sport}:${line.market}`]??0)+1;
-    console.log(`[history-reads] ${board.board.lines.length} lines, ${lines.length} without a GKR play, ${Object.keys(reads).length} reads, ${plays} plays`+
+    console.log(`[history-reads] ${board.board.lines.length} lines, ${lines.length} without a GKR play, ${Object.keys(reads).length} reads, ${plays} plays, ${leans} leans`+
       ` | by sport [lines, reads, plays] ${JSON.stringify(bySport)} | most lines without a read ${JSON.stringify(Object.entries(topMarkets).sort((a,b)=>b[1]-a[1]).slice(0,25))}`);
     return reads;
   }

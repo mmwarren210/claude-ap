@@ -92,7 +92,8 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
         <View style={styles.ringBox}><ScoreRing score={aiPick ? aiPick.score : historyPick ? historyPick.score
           : booksSide ? Math.round(booksSide.fair * 100) : analysis?.score ?? null}
           band={aiPick || historyPick || booksSide ? undefined : analysis?.scoreBand} size={64}
-          {...aiPick || historyPick || booksSide ? { label: 'PLAY', tint: colors.mint, who: aiPick ? SCOUT : historyPick ? 'History' : 'Books' } : {}} />
+          {...aiPick || historyPick || booksSide ? { label: historyPick?.lean && !aiPick ? 'LEAN' : 'PLAY',
+            tint: historyPick?.lean && !aiPick ? colors.amber : colors.mint, who: aiPick ? SCOUT : historyPick ? 'History' : 'Books' } : {}} />
           {aiPick && <Text style={styles.aiTag}>{SCOUT.toUpperCase()}</Text>}
           {historyPick && <Text style={[styles.aiTag, { color: colors.royal }]}>HISTORY</Text>}
           {booksSide && <Text style={styles.aiTag}>BOOKS</Text>}
@@ -114,7 +115,7 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
       {aiPick && <ScoutVerdict read={ai} gkrDirection={undefined} />}
       {booksSide && <Text style={styles.aiNote}>GKR can’t score this stat yet. DraftKings and Hard Rock give {booksSide.side}{' '}
         {Math.round(booksSide.fair * 100)}% with their cut removed; this is the books’ number, not a GKR score.</Text>}
-      {historyPick && <Text style={styles.aiNote}>History read: {historyPick.text}. From {historyPick.source}; not a GKR score.</Text>}
+      {historyPick && <Text style={styles.aiNote}>History {historyPick.lean ? 'lean' : 'read'}: {historyPick.text}. From {historyPick.source}; not a GKR score.</Text>}
       {aiPick && <Text style={styles.aiNote}>GKR can’t score this stat yet. {SCOUT} researched it;
         this is {SCOUT}’s score, not a GKR score.</Text>}
       {more > 0 && <Text style={styles.more}>+{more} more {more === 1 ? 'play' : 'plays'} on {line.playerName.split(' ')[0]}’s page</Text>}
