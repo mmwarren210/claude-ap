@@ -3,7 +3,8 @@ import { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Window } from '../insights';
-import { boardLinesForMode, evidenceExpired, playCounts } from '../state';
+import { boardLinesForMode, evidenceExpired, playCounts, withBooksPicks } from '../state';
+import { useBooksPicks } from '../use-books';
 import { useAiPicks } from '../use-ai-picks';
 import type { Filters } from '../state';
 import { colors, radius, rankAccents } from '../theme';
@@ -58,10 +59,13 @@ function PrizePicksBoard({ onApp }: { onApp: (app: PickApp) => void }) {
   const [window, setWindow] = useState<Window>('L5');
   const [confirmPull, setConfirmPull] = useState(false);
   const { reads: aiReads } = useAiPicks();
-  const lines = useMemo(() => data && ready ? boardLinesForMode(data, filters, viewMode, nowMs, aiReads ?? undefined) : [],
-    [data, filters, viewMode, ready, nowMs, aiReads]);
-  const counts = useMemo(() => data ? playCounts(data, aiReads ?? undefined, nowMs) : new Map<string, number>(),
-    [data, aiReads, nowMs]);
+  const booksPicks = useBooksPicks();
+  // Where GKR can't score: the Scout read, else the Books pick.
+  const plays = useMemo(() => withBooksPicks(aiReads ?? undefined, booksPicks ?? undefined), [aiReads, booksPicks]);
+  const lines = useMemo(() => data && ready ? boardLinesForMode(data, filters, viewMode, nowMs, plays) : [],
+    [data, filters, viewMode, ready, nowMs, plays]);
+  const counts = useMemo(() => data ? playCounts(data, plays, nowMs) : new Map<string, number>(),
+    [data, plays, nowMs]);
   // Player search reaches every player on the board, including those with no play (their page shows every stat).
   const [query, setQuery] = useState('');
   const found = useMemo(() => {
@@ -120,6 +124,7 @@ function PrizePicksBoard({ onApp }: { onApp: (app: PickApp) => void }) {
     <FlatList data={lines} keyExtractor={(line) => line.id} initialNumToRender={6} maxToRenderPerBatch={8} windowSize={7}
       contentContainerStyle={styles.content} ListHeaderComponent={header}
       renderItem={({ item, index }) => <BoardCard line={item} analysis={analyses.get(item.id)} ai={aiReads?.get(item.id)}
+        booksPick={booksPicks?.get(item.id)}
         more={(counts.get(item.eventId + '|' + item.playerId) ?? 1) - 1}
         photoUrl={data?.playerMedia?.[item.playerId]?.photoUrl} accent={rankAccents[index % rankAccents.length]}
         window={window} expired={(() => { const analysis = analyses.get(item.id);

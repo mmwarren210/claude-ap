@@ -76,3 +76,30 @@ export function evPicks(board: BoardResponse, prices: readonly FairPrice[], now:
   }
   return picks.sort((a, b) => b.edge - a.edge);
 }
+
+/** A side the books back where GKR couldn't score: their no-vig chance must reach this (above PrizePicks' 54.2%). */
+export const BOOKS_PICK_MIN = 0.56;
+/** GKR could not score these lines (no model for the stat, or missing or stale data); a PASS on the merits is not one. */
+const UNSCORED = new Set(['MODEL_SUPPORT_INCOMPLETE', 'STALE_OR_MISSING_EVIDENCE', 'INSUFFICIENT_MODEL_COVERAGE',
+  'MODEL_CALIBRATION_UNAPPROVED']);
+
+export interface BooksPick { readonly side: PlayableDirection; readonly fair: number; readonly books: number }
+
+/**
+ * Books picks (owner approved 2026-10-05): on a standard line GKR couldn't score, the side DraftKings and Hard Rock
+ * back, when their average no-vig chance for it is at least BOOKS_PICK_MIN and the app offers that side. Shown with its
+ * own Books label; never a GKR score and never changes one.
+ */
+export function booksPicks(board: BoardResponse, views: ReadonlyMap<string, BookView>, min = BOOKS_PICK_MIN): Map<string, BooksPick> {
+  const lines = new Map(board.board.lines.map((line) => [line.id, line]));
+  const analyses = new Map(board.analyses.map((item) => [item.lineId, item]));
+  const picks = new Map<string, BooksPick>();
+  for (const [lineId, view] of views) {
+    const line = lines.get(lineId), analysis = analyses.get(lineId);
+    if (!line || (analysis && (analysis.score !== null || !analysis.reasonCode || !UNSCORED.has(analysis.reasonCode)))) continue;
+    const side: PlayableDirection = view.fairMore >= 0.5 ? 'MORE' : 'LESS';
+    const fair = side === 'MORE' ? view.fairMore : Math.round((1 - view.fairMore) * 10_000) / 10_000;
+    if (fair >= min && line.availableDirections.includes(side)) picks.set(lineId, { side, fair, books: view.books.length });
+  }
+  return picks;
+}

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { analysisSchema, boardResponseSchema, propLineSchema } from '@crowniq/contracts';
 import { fixtureLine } from '../../../packages/engine/test/fixtures.js';
-import { bookViews, DEFAULT_BREAK_EVEN, evPicks } from '../src/context/ev.js';
+import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from '../src/context/ev.js';
 import { fairPrices, SharpPropsFeed } from '../src/context/sharp-props.js';
 
 const now = new Date('2030-10-04T12:00:00Z');
@@ -68,4 +68,21 @@ test('the SharpAPI feed pages with the cursor, sends the key, and keeps old pric
   const failed = await feed.refresh();
   assert.deepEqual([failed.prices, failed.lastError], [1, 'SHARPAPI_HTTP_500']);
   assert.equal((await new SharpPropsFeed(null, null).refresh()).lastError, 'SHARPAPI_KEY_MISSING');
+});
+
+test('Books picks: the books side on lines GKR could not score, at 56% or more, only on an offered side', () => {
+  const base = propLineSchema.parse({ ...fixtureLine(), sport: 'NFL', league: 'NFL', market: 'passing_yards', threshold: 249.5,
+    lineType: 'REGULAR', availableDirections: ['MORE', 'LESS'], eventStartTime: '2030-10-04T17:00:00.000Z' });
+  const lines = ['a', 'b', 'c', 'd', 'e'].map((id) => propLineSchema.parse({ ...base, id, sourceLineId: id, playerId: id }));
+  const pass = (lineId: string, reasonCode: string, score: number | null = null) => analysisSchema.parse({ lineId,
+    direction: score === null ? 'PASS' : 'MORE', score, scoreBreakdown: [], assessments: [], evidenceIds: [],
+    evidenceQuality: 'NONE', dangerZone: false, ruleChecks: [], supportingFactors: [], opposingFactors: [], rationale: 'x',
+    reasonCode, modelVersion: null, scoreBand: score === null ? 'PASS' : 'CROWN_STRONG' });
+  const board = boardResponseSchema.parse({ board: { provider: 'prizepicks', fetchedAt: now.toISOString(), lines },
+    analyses: [pass('a', 'STALE_OR_MISSING_EVIDENCE'), pass('b', 'INSUFFICIENT_EDGE'), pass('c', 'MODEL_SUPPORT_INCOMPLETE'),
+      pass('d', 'STALE_OR_MISSING_EVIDENCE')], rankedLineIds: [], builtAt: now.toISOString() });
+  const view = (fairMore: number) => ({ fairMore, books: [{ book: 'draftkings', fairMore, overAmerican: null, underAmerican: null }] });
+  const picks = booksPicks(board, new Map([['a', view(0.42)], ['b', view(0.7)], ['c', view(0.55)], ['d', view(0.6)], ['e', view(0.6)]]));
+  assert.deepEqual([...picks.entries()], [['a', { side: 'LESS', fair: 0.58, books: 1 }], ['d', { side: 'MORE', fair: 0.6, books: 1 }],
+    ['e', { side: 'MORE', fair: 0.6, books: 1 }]], 'b: GKR passed on the merits; c: under 56%; e: no analysis yet');
 });

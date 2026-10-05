@@ -43,7 +43,7 @@ import type { ProductGradingStatus } from './background-grading.js';
 import type { ContextFeeds, GameLine, InjuryNote, MarketOdds } from './context/feeds.js';
 import { gameLinesFor, injuryFor, marketsFor, normalizedName } from './context/match.js';
 import type { SharpPropsFeed } from './context/sharp-props.js';
-import { bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
+import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
 import { bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
 import { marketPicks } from './market-picks.js';
 import type { MarketPlatform } from './market-picks.js';
@@ -782,7 +782,8 @@ export function buildServer(options: ServerOptions = {}) {
     if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
     if(!options.sharpProps)return {fetchedAt:null,lines:{}};
     const {fetchedAt,prices}=await options.sharpProps.current();
-    return {fetchedAt,lines:Object.fromEntries(bookViews(board,prices,now()))};
+    const views=bookViews(board,prices,now());
+    return {fetchedAt,lines:Object.fromEntries(views),picks:Object.fromEntries(booksPicks(board,views))};
   });
   // Underdog and Pick6 lines. GKR does not score them; the same PrizePicks line and its GKR score ride along for reference.
   app.get('/v1/apps/:app/board',async(request,reply)=>{

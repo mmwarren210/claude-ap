@@ -17,6 +17,8 @@ export interface BookPick {
   readonly side: PlayableDirection; readonly gkr: { readonly score: number; readonly modelVersion: string };
   /** The book's price on GKR's side, and the chance that price implies (vig included). */
   readonly american: number | null; readonly impliedChance: number | null;
+  /** The price needs 60% or more to break even (-150 or steeper): labeled, never hidden (owner, 2026-10-05). */
+  readonly pricey: boolean;
   /** The book's no-vig chance of GKR's side. */
   readonly fairChance: number;
   /** The other book's price on the same side and number, for line shopping. */
@@ -26,6 +28,8 @@ export interface BookPick {
     readonly gkr: { readonly direction: string; readonly score: number | null; readonly reasonCode: string | null } | null } | null;
 }
 
+/** A price that needs this win rate or more to break even is labeled pricey. */
+export const PRICEY = 0.6;
 export const impliedChance = (american: number | null) => american === null ? null
   : Math.round((american < 0 ? -american / (-american + 100) : 100 / (american + 100)) * 10_000) / 10_000;
 
@@ -82,6 +86,7 @@ export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardL
       team: research.team ?? null, opponent: research.opponent ?? null, eventName: research.eventName,
       eventStartTime: research.eventStartTime, market: price.market, line: price.line, side,
       gkr: { score: analysis.score, modelVersion: analysis.modelVersion }, american, impliedChance: impliedChance(american),
+      pricey: (impliedChance(american) ?? 0) >= PRICEY,
       fairChance: Math.round((side === 'MORE' ? price.fairOver : 1 - price.fairOver) * 10_000) / 10_000,
       otherBook: other ? { book: other.book as Sportsbook, american: side === 'MORE' ? other.overAmerican : other.underAmerican } : null,
       // PrizePicks' own line can PASS for a reason the book's line doesn't have: a Goblin or Demon offers only More.

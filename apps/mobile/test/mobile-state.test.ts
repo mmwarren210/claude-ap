@@ -3,7 +3,7 @@ import test from 'node:test';
 import { analysisSchema, boardResponseSchema, DEFAULT_PAYOUTS, propLineSchema } from '@crowniq/contracts';
 import { crownOutcome, entryOutlook } from '../src/insights.js';
 import { aiPlay, lateNews, scoutVerdict } from '../src/scout.js';
-import { addLeg, betterSwap, boardLinesForMode, isPlay, CROWN_LEG_FLOOR, emptyFilters, evidenceExpired, freshness, gkrBacked, shareCrown,
+import { addLeg, betterSwap, boardLinesForMode, isPlay, withBooksPicks, CROWN_LEG_FLOOR, emptyFilters, evidenceExpired, freshness, gkrBacked, shareCrown,
   visibleLines } from '../src/state.js';
 import { parseDraft, profileDraftKey } from '../src/draft-codec.js';
 
@@ -178,4 +178,14 @@ test('a Scout second opinion is a verdict on the GKR pick, never a play by itsel
   assert.equal(aiPlay(second),false);
   assert.equal(isPlay(undefined,second),false);
   assert.equal(isPlay(undefined,{...second,kind:'scout'}),true);
+});
+
+test('Books picks fill in only where Scout has no read, and count as plays at their no-vig chance',()=>{
+  const scout={pick:'PASS',score:null,kind:'scout'};
+  const merged=withBooksPicks(new Map([['a',scout],['b',{pick:'LESS',score:66,kind:'second'}]]),
+    new Map([['a',{side:'MORE' as const,fair:0.6}],['b',{side:'MORE' as const,fair:0.58}],['c',{side:'LESS' as const,fair:0.57}]]));
+  assert.equal(merged.get('a'),scout,'Scout looked closer: its PASS stands');
+  assert.deepEqual(merged.get('b'),{pick:'MORE',score:58,kind:'books'},'a second opinion is not a pick');
+  assert.deepEqual(merged.get('c'),{pick:'LESS',score:57,kind:'books'});
+  assert.equal(isPlay(undefined,merged.get('c')),true);
 });
