@@ -22,6 +22,11 @@ import { rankingCards, secondLookWatchlist } from './ranking-cards.js';
 import { auditPrizePicksLineTypes } from './prizepicks-line-types.js';
 import type { HistoryBackfillService, InternalHistorySport, InternalHistoryStore } from './internal-history.js';
 import type { ProductGradingStatus } from './background-grading.js';
+import { backtestHistory, customSlip, EdgeService, pickForLine, viewPicks } from './edge-service.js';
+import type { EdgeResultsWorker } from './edge-service.js';
+import type { EdgeLedger } from './edge-ledger.js';
+import type { EntryDefinition } from '@crowniq/edge';
+import { buildSlips } from '@crowniq/edge';
 
 export interface ServerOptions {
   provider?: OddsProvider | null;
@@ -50,6 +55,9 @@ export interface ServerOptions {
   startupResearch?: ResearchAdapter | null;
   identityVerifier?: ProviderIdentityVerifier | null;
   allowedWebOrigins?: readonly string[];
+  /** CrownIQ Edge: probability engine that runs beside GKR and never changes GKR output. */
+  edge?: { enabled?: boolean; ledger?: EdgeLedger | null; worker?: EdgeResultsWorker | null;
+    entries?: readonly EntryDefinition[]; alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>> };
 }
 
 function authorized(request: FastifyRequest, token?: string): boolean {
@@ -67,6 +75,9 @@ export function buildServer(options: ServerOptions = {}) {
     options.models ?? new ModelRegistry(), options.clock, options.boardCache,
     options.secondLookResearch ?? null,options.startupResearch ?? null);
   const now=()=>options.clock?.()??new Date();
+  const edge=options.edge?.enabled===false?null:new EdgeService({board:()=>service.getBoard(),
+    history:options.internalHistory??null,ledger:options.edge?.ledger??null,entries:options.edge?.entries,
+    alternateFactors:options.edge?.alternateFactors,clock:options.clock});
   const bearer=(request:FastifyRequest)=>request.headers.authorization?.startsWith('Bearer ')
     ? request.headers.authorization.slice(7):'';
   const currentUser=(request:FastifyRequest)=>options.product?.authenticate(bearer(request))??null;
@@ -97,6 +108,7 @@ export function buildServer(options: ServerOptions = {}) {
     await service.restore();
     // History reconstruction runs after restore without blocking Fastify startup.
     void service.recoverStartupEvidence();
+    void edge?.snapshot();
     if(options.ownerNotebook && options.ownerPublicId){
       await options.ownerNotebook.load();options.ownerNotebook.start();
     }
@@ -124,6 +136,7 @@ export function buildServer(options: ServerOptions = {}) {
     void (async()=>{
       try{
         const snapshot=await service.refresh();
+        void edge?.snapshot();
         let trackingStatus:OwnerBoardRefreshJob['trackingStatus']=options.product?'OK':'UNCONFIGURED';
         if(options.product){try{await options.product.track(snapshot,service.getEvidence());}
           catch{trackingStatus='FAILED';}}
@@ -487,7 +500,11 @@ export function buildServer(options: ServerOptions = {}) {
   });
   app.get('/v1/board', async (_request, reply) => {
     const snapshot = service.getBoard();
-    return snapshot ?? reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
+    if (!snapshot) return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
+    // Sportsbook quotes are Edge-engine inputs; keep them out of the mobile board payload.
+    if (!snapshot.board.marketQuotes) return snapshot;
+    const { marketQuotes: _quotes, ...board } = snapshot.board;
+    return { ...snapshot, board };
   });
   app.get('/v1/rankings', async (_request, reply) => {
     const snapshot = service.getBoard();
@@ -502,6 +519,76 @@ export function buildServer(options: ServerOptions = {}) {
       watchlist: watchlist.cards,
     };
   });
+  const edgeQuery=z.object({view:z.enum(['edges','alternates','all']).default('edges'),
+    sport:z.string().trim().min(1).max(20).optional(),market:z.string().trim().min(1).max(80).optional(),
+    limit:z.coerce.number().int().min(1).max(500).default(150),
+    minProbability:z.coerce.number().min(0).max(1).optional()}).strict();
+  app.get('/v1/edge',async(request,reply)=>{
+    if(!edge)return reply.code(404).send({code:'EDGE_DISABLED'});
+    const query=edgeQuery.safeParse(request.query);
+    if(!query.success)return reply.code(400).send({code:'INVALID_EDGE_QUERY'});
+    const snapshot=await edge.snapshot();
+    if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    const nowMs=now().getTime();
+    const picks=viewPicks(snapshot,query.data.view,{...query.data,nowMs});
+    const live=(slip:{legs:{lineId:string}[]})=>slip.legs.every((leg)=>{
+      const pick=snapshot.byLine.get(leg.lineId);return !!pick&&Date.parse(pick.eventStartTime)>nowMs;});
+    const slips=query.data.sport||query.data.market
+      ? buildSlips(viewPicks(snapshot,'edges',{...query.data,limit:500,nowMs}),snapshot.response.entries)
+      : snapshot.response.slips.filter(live);
+    return {...snapshot.response,picks,slips};
+  });
+  app.get('/v1/edge/line/:lineId',async(request,reply)=>{
+    if(!edge)return reply.code(404).send({code:'EDGE_DISABLED'});
+    const params=z.object({lineId:z.string().min(1).max(200)}).safeParse(request.params);
+    if(!params.success)return reply.code(400).send({code:'INVALID_LINE_ID'});
+    const snapshot=await edge.snapshot();
+    if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    const pick=pickForLine(snapshot,params.data.lineId);
+    return pick?{pick,referenceEntry:snapshot.response.referenceEntry}:reply.code(404).send({code:'EDGE_LINE_UNPRICED'});
+  });
+  app.get('/v1/edge/player/:playerId',async(request,reply)=>{
+    if(!edge)return reply.code(404).send({code:'EDGE_DISABLED'});
+    const params=z.object({playerId:z.string().min(1).max(200)}).safeParse(request.params);
+    if(!params.success)return reply.code(400).send({code:'INVALID_PLAYER_ID'});
+    const snapshot=await edge.snapshot();
+    if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    return {picks:snapshot.response.picks.filter((pick)=>pick.playerId===params.data.playerId)
+      .sort((a,b)=>a.market.localeCompare(b.market)||a.threshold-b.threshold)};
+  });
+  app.post('/v1/edge/slip',async(request,reply)=>{
+    if(!edge)return reply.code(404).send({code:'EDGE_DISABLED'});
+    const body=z.object({type:z.enum(['POWER','FLEX']),lineIds:z.array(z.string().min(1).max(200)).min(2).max(6)})
+      .strict().safeParse(request.body);
+    if(!body.success)return reply.code(400).send({code:'INVALID_SLIP'});
+    const snapshot=await edge.snapshot();
+    if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    const entry=snapshot.response.entries.find((item)=>item.type===body.data.type&&item.size===body.data.lineIds.length);
+    if(!entry)return reply.code(422).send({code:'ENTRY_UNSUPPORTED'});
+    const slip=customSlip(snapshot,entry,body.data.lineIds);
+    return slip?{slip}:reply.code(422).send({code:'EDGE_LINE_UNPRICED'});
+  });
+  app.get('/v1/edge/performance',async(_request,reply)=>{
+    if(!edge)return reply.code(404).send({code:'EDGE_DISABLED'});
+    if(!options.edge?.ledger)return reply.code(503).send({code:'EDGE_TRACKING_UNCONFIGURED'});
+    return {status:edge.status(),grading:options.edge.worker?.status()??null,...await options.edge.ledger.report()};
+  });
+  app.register(async(ownerEdge)=>{
+    ownerEdge.addHook('preHandler',async(request,reply)=>{
+      reply.header('Cache-Control','private, no-store');
+      const user=await currentUser(request);
+      if(!options.ownerPublicId || user?.publicId!==options.ownerPublicId)
+        return reply.code(404).send({code:'NOT_FOUND'});
+    });
+    ownerEdge.get('/status',async()=>({enabled:!!edge,status:edge?.status()??null,
+      grading:options.edge?.worker?.status()??null}));
+    ownerEdge.post('/grade',async(_request,reply)=>options.edge?.worker
+      ? options.edge.worker.runOnce():reply.code(503).send({code:'EDGE_GRADING_UNCONFIGURED'}));
+    ownerEdge.get('/backtest',async(_request,reply)=>{
+      if(!options.internalHistory)return reply.code(503).send({code:'HISTORY_UNCONFIGURED'});
+      return backtestHistory(await options.internalHistory.allRows());
+    });
+  },{prefix:'/v1/owner/edge'});
   app.get('/v1/board/summary', async (_request, reply) => {
     const snapshot=service.getBoard();
     if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
@@ -695,8 +782,15 @@ export function buildServer(options: ServerOptions = {}) {
       if(!options.product)return reply.code(503).send({code:'TRACKING_UNCONFIGURED'});
       const parsed=z.object({results:z.array(resultFactSchema).min(1).max(1000)}).strict().safeParse(request.body);
       if(!parsed.success)return reply.code(400).send({code:'INVALID_RESULTS'});
+      await options.edge?.ledger?.grade(parsed.data.results).catch(()=>undefined);
       try{return await options.product.grade(parsed.data.results);}
       catch{return reply.code(422).send({code:'RESULT_GRADE_REJECTED'});}
+    });
+    admin.post('/edge/results',async(request,reply)=>{
+      if(!options.edge?.ledger)return reply.code(503).send({code:'EDGE_TRACKING_UNCONFIGURED'});
+      const parsed=z.object({results:z.array(resultFactSchema).min(1).max(1000)}).strict().safeParse(request.body);
+      if(!parsed.success)return reply.code(400).send({code:'INVALID_RESULTS'});
+      return options.edge.ledger.grade(parsed.data.results);
     });
     admin.get('/selections', async (_request, reply) => options.selections
       ? options.selections.list() : reply.code(503).send({ code: 'SELECTION_STORAGE_UNCONFIGURED' }));

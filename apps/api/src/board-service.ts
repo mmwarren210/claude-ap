@@ -264,7 +264,9 @@ export class BoardService {
         (item) => propLineSchema.parse(this.provider!.normalize(item, fetchedAt))));
       normalizedCount = lines.length;
       this.lastRefreshCounts = { ...this.lastRefreshCounts, normalized: normalizedCount };
-      const board = boardSchema.parse({ provider: 'prizepicks', fetchedAt, lines });
+      const marketQuotes = this.provider.marketQuotes?.(fetchedAt) ?? [];
+      const board = boardSchema.parse({ provider: 'prizepicks', fetchedAt, lines,
+        ...(marketQuotes.length ? { marketQuotes } : {}) });
 
       this.lastRefreshStage = 'research';
       const researched = await collectResearch(board, this.research);

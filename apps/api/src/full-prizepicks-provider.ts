@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { propLineSchema } from '@crowniq/contracts';
-import type { PropLine, Sport } from '@crowniq/contracts';
+import { marketQuoteSchema, propLineSchema } from '@crowniq/contracts';
+import type { MarketQuote, PropLine, Sport } from '@crowniq/contracts';
 import type { OddsProvider } from '@crowniq/engine';
 import { normalizePrizePicksMarketKey } from './prizepicks-line-types.js';
 import { z } from 'zod';
@@ -24,6 +24,7 @@ const outcomeSchema = z.object({
   point: z.number().finite().nullish(),
   sid: z.union([z.string().min(1), z.number()]).nullish(),
   multiplier: z.number().positive().finite().nullish(),
+  price: z.number().finite().nullish(),
 });
 const oddsSchema = eventSchema.extend({
   bookmakers: z.array(z.object({
@@ -65,6 +66,16 @@ export interface FullPrizePicksOptions {
   readonly baseUrl?: string;
   readonly maxEvents?: number;
   readonly maxCreditsPerRefresh?: number;
+  /** Sportsbooks requested alongside PrizePicks in the same odds call. The Odds API bills
+   * each group of up to 10 bookmakers as one region, so up to nine extra books do not
+   * change the per-market credit cost. Their prices feed the Edge engine only. */
+  readonly consensusBookmakers?: readonly string[];
+}
+
+interface RawQuote {
+  readonly sport: ProviderSport; readonly event: Event; readonly bookmaker: string;
+  readonly marketKey: string; readonly player: string; readonly point: number;
+  over: number | null; under: number | null;
 }
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 24);
@@ -103,6 +114,8 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
   private lastRequestCost: number | null = null;
   private lastHttpStatus: number | null = null;
   private coverage: FullPullCoverage | null = null;
+  private readonly consensusBooks: readonly string[];
+  private quotes: RawQuote[] = [];
 
   constructor(private readonly options: FullPrizePicksOptions) {
     if (!options.apiKey.trim()) throw new Error('THE_ODDS_API_KEY_REQUIRED');
@@ -110,6 +123,11 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
     this.baseUrl = options.baseUrl ?? 'https://api.the-odds-api.com';
     this.maxEvents = options.maxEvents ?? 5000;
     this.maxCredits = options.maxCreditsPerRefresh ?? 10000;
+    this.consensusBooks = [...new Set((options.consensusBookmakers ?? [])
+      .map((book) => book.trim().toLowerCase()).filter((book) => book && book !== 'prizepicks'))];
+    if (this.consensusBooks.length > 9 || this.consensusBooks.some((book) => !/^[a-z0-9_]+$/.test(book))) {
+      throw new Error('INVALID_CONSENSUS_BOOKMAKERS');
+    }
     if (!Number.isSafeInteger(this.maxEvents) || this.maxEvents < 1 ||
       !Number.isSafeInteger(this.maxCredits) || this.maxCredits < 1) {
       throw new Error('INVALID_ODDS_API_REFRESH_BUDGET');
@@ -171,6 +189,8 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
     this.requireBudget(coverage.marketsDiscovered, coverage);
 
     const selections: RawSelection[] = [];
+    const quotes = new Map<string, RawQuote>();
+    const bookmakers = ['prizepicks', ...this.consensusBooks].join(',');
     const sportKeys = new Set<string>();
     const marketKeys = new Set<string>();
     for (const { sport, event, markets } of targets) {
@@ -181,8 +201,9 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
       for (let index = 0; index < markets.length; index += 20) {
         const batch = markets.slice(index, index + 20);
         const odds = oddsSchema.parse(await this.getJson(path, batch.length, coverage, {
-          bookmakers: 'prizepicks', markets: batch.join(','),
+          bookmakers, markets: batch.join(','),
           includeMultipliers: 'true', includeSids: 'true',
+          ...(this.consensusBooks.length ? { oddsFormat: 'decimal' } : {}),
         }));
         coverage.oddsRequests++;
         if (odds.id !== event.id || odds.sport_key !== sport.key) {
@@ -202,8 +223,23 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
             }
           }
         }
+        for (const book of odds.bookmakers.filter((item) => this.consensusBooks.includes(item.key))) {
+          for (const market of book.markets.filter((item) => batch.includes(item.key))) {
+            for (const outcome of market.outcomes) {
+              const player = outcome.description?.trim();
+              if ((outcome.name !== 'Over' && outcome.name !== 'Under') || !player ||
+                outcome.point == null || outcome.price == null || !(outcome.price > 1)) continue;
+              const key = [event.id, book.key, market.key, player.toLowerCase(), outcome.point].join('|');
+              const quote = quotes.get(key) ?? { sport, event, bookmaker: book.key, marketKey: market.key,
+                player, point: outcome.point, over: null, under: null };
+              if (outcome.name === 'Over') quote.over = outcome.price; else quote.under = outcome.price;
+              quotes.set(key, quote);
+            }
+          }
+        }
       }
     }
+    this.quotes = [...quotes.values()];
     coverage.selections = selections.length;
     coverage.marketKeys = [...marketKeys].sort();
     coverage.sportKeysWithLines = [...sportKeys].sort();
@@ -241,6 +277,18 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
       market: normalizePrizePicksMarketKey(normalizedSport,marketKey),
       threshold: outcome.point, availableDirections: [direction], lineType, fetchedAt,
       ...(multiplier == null ? {} : { payoutMultiplier: multiplier }),
+    });
+  }
+
+  /** Sportsbook quotes from the most recent complete pull, for the Edge engine. */
+  marketQuotes(fetchedAt: string): MarketQuote[] {
+    return this.quotes.flatMap((quote) => {
+      const sport = crownSport(quote.sport.key);
+      const parsed = marketQuoteSchema.safeParse({ bookmaker: quote.bookmaker, sport,
+        sourceSportKey: quote.sport.key, eventId: quote.event.id, sourceMarketKey: quote.marketKey,
+        market: normalizePrizePicksMarketKey(sport, quote.marketKey), playerName: quote.player,
+        point: quote.point, overPrice: quote.over, underPrice: quote.under, fetchedAt });
+      return parsed.success ? [parsed.data] : [];
     });
   }
 

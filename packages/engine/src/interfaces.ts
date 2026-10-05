@@ -1,10 +1,12 @@
-import type { Analysis, Assessment, Board, Evidence, PropLine, SavedSelection, Sport } from '@crowniq/contracts';
+import type { Analysis, Assessment, Board, Evidence, MarketQuote, PropLine, SavedSelection, Sport } from '@crowniq/contracts';
 
 /** Each adapter owns its raw format; only normalized lines cross into the engine. */
 export interface OddsProvider<TRaw = unknown> {
   readonly id: string;
   fetchPrizePicksLines(): Promise<readonly TRaw[]>;
   normalize(raw: TRaw, fetchedAt: string): PropLine;
+  /** Optional sportsbook quotes captured in the same pull (consumed by the Edge engine, never by GKR). */
+  marketQuotes?(fetchedAt: string): readonly MarketQuote[];
   getHealth?(): {
     readonly creditsRemaining: number | null;
     readonly lastRequestCost: number | null;

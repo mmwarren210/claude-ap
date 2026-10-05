@@ -16,6 +16,9 @@ import { PublicNflGkrEvidence } from './public-nfl-gkr-evidence.js';
 import { OwnerResearchNotebook } from './owner-research-notebook.js';
 import { HistoryBackfillService, InternalHistoryResearch, InternalHistoryStore } from './internal-history.js';
 import { CurrentContextResearch } from './current-context.js';
+import { defaultConsensusBooks, parseEntries } from '@crowniq/edge';
+import { EdgeLedger } from './edge-ledger.js';
+import { EdgeResultsWorker } from './edge-service.js';
 
 const apiKey = process.env.THE_ODDS_API_KEY;
 const providerMode = process.env.ODDS_PROVIDER ?? 'auto';
@@ -31,12 +34,18 @@ const maxEvents = process.env.THE_ODDS_API_MAX_EVENTS
   ? Number(process.env.THE_ODDS_API_MAX_EVENTS) : undefined;
 const maxCreditsPerRefresh = process.env.THE_ODDS_API_MAX_CREDITS_PER_REFRESH
   ? Number(process.env.THE_ODDS_API_MAX_CREDITS_PER_REFRESH) : undefined;
+const edgeEnabled = process.env.EDGE_ENGINE !== 'false';
+// Sportsbooks requested in the same Odds API call as PrizePicks (up to nine; no extra credits).
+const consensusSetting = process.env.EDGE_CONSENSUS_BOOKS?.trim();
+const consensusBookmakers = !edgeEnabled || consensusSetting === 'none' ? []
+  : consensusSetting ? consensusSetting.split(',').map((book) => book.trim()).filter(Boolean)
+    : [...defaultConsensusBooks];
 const provider = providerName !== 'the_odds_api' || !apiKey ? null
   : scope === 'nfl_passing_yards'
     ? new TheOddsApiProvider({ apiKey,
       marketKeys: process.env.THE_ODDS_API_MARKETS?.split(',').map((item) => item.trim()),
       maxEvents, maxCreditsPerRefresh })
-    : new FullPrizePicksProvider({ apiKey, maxEvents, maxCreditsPerRefresh });
+    : new FullPrizePicksProvider({ apiKey, maxEvents, maxCreditsPerRefresh, consensusBookmakers });
 if (providerName === 'the_odds_api' && !provider) {
   console.warn('The Odds API is selected but THE_ODDS_API_KEY is not set in this server runtime.');
 }
@@ -117,6 +126,18 @@ const secondLookAdapters=[statEvidence,currentContext]
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const secondLookResearch=secondLookAdapters.length===0?null:secondLookAdapters.length===1
   ? secondLookAdapters[0]:new CompositeResearchAdapter(secondLookAdapters);
+const edgeFactor=(name:string)=>{
+  const value=process.env[name];if(!value)return undefined;
+  const parsed=Number(value);if(!Number.isFinite(parsed)||parsed<=0||parsed>5)throw new Error('Invalid '+name);
+  return parsed;
+};
+const edgeLedger=edgeEnabled?new EdgeLedger(process.env.CROWNIQ_EDGE_LEDGER_FILE??'tmp/edge-ledger.json'):null;
+const edgeWorker=edgeLedger && process.env.EDGE_AUTO_GRADE!=='false'
+  ? new EdgeResultsWorker(edgeLedger,internalHistory,statSource,{maxPlayers:
+    process.env.EDGE_AUTO_GRADE_MAX_PLAYERS?Number(process.env.EDGE_AUTO_GRADE_MAX_PLAYERS):undefined}):null;
+const edgeOptions={enabled:edgeEnabled,ledger:edgeLedger,worker:edgeWorker,
+  entries:parseEntries(process.env.EDGE_PAYOUTS),
+  alternateFactors:{GOBLIN:edgeFactor('EDGE_GOBLIN_FACTOR'),DEMON:edgeFactor('EDGE_DEMON_FACTOR')}};
 const googleClients=(process.env.CROWNIQ_GOOGLE_CLIENT_IDS??'').split(',').map((id)=>id.trim()).filter(Boolean);
 const appleClients=(process.env.CROWNIQ_APPLE_CLIENT_IDS??'').split(',').map((id)=>id.trim()).filter(Boolean);
 const identityVerifier=googleClients.length||appleClients.length
@@ -135,9 +156,11 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, provider,
   selections: process.env.CROWNIQ_SELECTIONS_FILE
     ? new JsonSelectionLedger(process.env.CROWNIQ_SELECTIONS_FILE) : null,
   nflverseMappingFile: process.env.NFLVERSE_MAPPING_FILE,
+  edge: edgeOptions,
   models });
 autoGrade?.start();
-app.addHook('onClose',async()=>autoGrade?.stop());
+edgeWorker?.start();
+app.addHook('onClose',async()=>{autoGrade?.stop();edgeWorker?.stop();});
 const host = process.env.API_HOST ?? '127.0.0.1';
 const port = Number(process.env.API_PORT ?? 3000);
 

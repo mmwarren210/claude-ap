@@ -43,10 +43,28 @@ export const propLineSchema = z.object({
   payoutMultiplier: z.number().positive().finite().optional(),
 });
 
+// A sportsbook quote captured in the same provider request as the PrizePicks board.
+// Prices are decimal odds exactly as returned; nothing is de-vigged or inferred here.
+export const marketQuoteSchema = z.object({
+  bookmaker: identifier,
+  sport: sportSchema,
+  sourceSportKey: identifier.optional(),
+  eventId: identifier,
+  sourceMarketKey: identifier,
+  market: identifier,
+  playerName: identifier,
+  point: z.number().finite(),
+  overPrice: z.number().gt(1).finite().nullable(),
+  underPrice: z.number().gt(1).finite().nullable(),
+  fetchedAt: timestamp,
+}).refine((quote) => quote.overPrice !== null || quote.underPrice !== null,
+  'A quote needs at least one priced side');
+
 export const boardSchema = z.object({
   provider: z.literal('prizepicks'),
   fetchedAt: timestamp,
   lines: z.array(propLineSchema),
+  marketQuotes: z.array(marketQuoteSchema).optional(),
 });
 
 export const evidenceSchema = z.object({
@@ -256,7 +274,92 @@ export const nflPassingResultSchema = z.object({
   }
 });
 
+// ---- CrownIQ Edge engine output (runs alongside GKR; never alters GKR analyses) ----
+const probability = z.number().min(0).max(1);
+export const edgeTierSchema = z.enum(['SHARP', 'MARKET', 'MODEL', 'LADDER']);
+export const edgeRatingSchema = z.enum(['ELITE', 'STRONG', 'VALUE', 'THIN', 'NONE']);
+export const edgeBookQuoteSchema = z.object({
+  bookmaker: identifier, point: z.number().finite(),
+  overPrice: z.number().gt(1).nullable(), underPrice: z.number().gt(1).nullable(),
+  fairOver: probability, twoSided: z.boolean(),
+});
+export const edgePickSchema = z.object({
+  key: identifier,
+  lineId: identifier,
+  oppositeLineId: identifier.nullable(),
+  sport: sportSchema, league: identifier,
+  eventId: identifier, eventName: identifier, eventStartTime: timestamp,
+  playerId: identifier, playerName: identifier,
+  market: identifier, threshold: z.number().finite(),
+  lineType: lineTypeSchema,
+  side: playableDirectionSchema,
+  probability, pushProbability: probability, oppositeProbability: probability,
+  breakEven: probability,
+  // p − break-even for standard-payout lines; null when the payout factor is unknown.
+  edge: z.number().finite().nullable(),
+  // Minimum PrizePicks payout factor for this leg to beat the reference break-even.
+  requiredPayoutFactor: z.number().positive().finite(),
+  edgeScore: z.number().min(0).max(100),
+  rating: edgeRatingSchema,
+  tier: edgeTierSchema,
+  projection: z.object({ mean: z.number().finite(), median: z.number().finite(),
+    sd: z.number().nonnegative().finite(), family: z.enum(['POISSON', 'NEGBIN', 'NORMAL']) }),
+  lineGap: z.number().finite().nullable(),
+  sources: z.object({
+    market: z.object({ mean: z.number().finite(), weight: probability,
+      books: z.array(edgeBookQuoteSchema) }).nullable(),
+    stats: z.object({ mean: z.number().finite(), weight: probability, samples: z.number().int(),
+      recentMean: z.number().finite(), seasonMean: z.number().finite(),
+      hitRateAtLine: probability.nullable() }).nullable(),
+    ladder: z.object({ mean: z.number().finite(), weight: probability,
+      regularThreshold: z.number().finite() }).nullable(),
+  }),
+  reasons: z.array(z.string()),
+  warnings: z.array(z.string()),
+  calibrated: z.boolean(),
+  modelVersion: identifier,
+});
+export const edgeEntrySchema = z.object({
+  type: z.enum(['POWER', 'FLEX']), size: z.number().int().min(2).max(6),
+  // payouts[k] is the multiple of the entry returned when exactly k legs hit.
+  payouts: z.record(z.string(), z.number().nonnegative()),
+  breakEven: probability,
+});
+export const edgeSlipSchema = z.object({
+  entry: edgeEntrySchema,
+  legs: z.array(z.object({ lineId: identifier, playerName: identifier, market: identifier,
+    threshold: z.number().finite(), side: playableDirectionSchema, probability,
+    eventId: identifier, sport: sportSchema })),
+  allHitProbability: probability,
+  expectedReturn: z.number().nonnegative().finite(),
+  expectedProfit: z.number().finite(),
+  hitDistribution: z.array(probability),
+  sameGameLegs: z.number().int().nonnegative(),
+  warnings: z.array(z.string()),
+});
+export const edgeBoardResponseSchema = z.object({
+  modelVersion: identifier,
+  builtAt: timestamp,
+  boardFetchedAt: timestamp,
+  referenceEntry: edgeEntrySchema,
+  entries: z.array(edgeEntrySchema),
+  counts: z.object({ linesPriced: z.number().int(), linesUnpriced: z.number().int(),
+    sharp: z.number().int(), market: z.number().int(), model: z.number().int(), ladder: z.number().int(),
+    positiveEdge: z.number().int(), quotes: z.number().int() }),
+  calibration: z.object({ status: z.enum(['UNCALIBRATED', 'CALIBRATED']), graded: z.number().int(),
+    brier: z.number().nullable(), hitRate: z.number().nullable() }),
+  picks: z.array(edgePickSchema),
+  slips: z.array(edgeSlipSchema),
+});
+
 export type PropLine = z.infer<typeof propLineSchema>;
+export type MarketQuote = z.infer<typeof marketQuoteSchema>;
+export type EdgePick = z.infer<typeof edgePickSchema>;
+export type EdgeEntry = z.infer<typeof edgeEntrySchema>;
+export type EdgeSlip = z.infer<typeof edgeSlipSchema>;
+export type EdgeBoardResponse = z.infer<typeof edgeBoardResponseSchema>;
+export type EdgeTier = z.infer<typeof edgeTierSchema>;
+export type EdgeRating = z.infer<typeof edgeRatingSchema>;
 export type Board = z.infer<typeof boardSchema>;
 export type Evidence = z.infer<typeof evidenceSchema>;
 export type Analysis = z.infer<typeof analysisSchema>;

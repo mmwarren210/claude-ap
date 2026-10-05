@@ -196,6 +196,25 @@ export class InternalHistoryStore {
       return result;
     });
   }
+  /** One file read for many players: newest rows first, any date (callers filter by time).
+   * The result is keyed by each caller-supplied key. */
+  async rowsForPlayers(players:readonly {key:string;sport:string;playerId:string;playerName:string}[],limit=60):
+    Promise<Map<string,InternalHistoryRow[]>>{
+    return this.exclusive(async()=>{
+      const byName=new Map(players.map((player)=>[player.sport+'|'+norm(player.playerName),player.key]));
+      const byId=new Map(players.map((player)=>[player.sport+'|'+player.playerId,player.key]));
+      const result=new Map<string,InternalHistoryRow[]>();
+      const rows=(await this.read()).rows.sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt));
+      for(const row of rows){
+        const key=byId.get(row.sport+'|'+row.playerId)??byName.get(row.sport+'|'+norm(row.playerName));
+        if(!key)continue;
+        const list=result.get(key)??[];
+        if(list.length<limit){list.push(row);result.set(key,list);}
+      }
+      return result;
+    });
+  }
+  async allRows():Promise<InternalHistoryRow[]>{return this.exclusive(async()=>[...(await this.read()).rows]);}
   async hasMinimumSamples(target:ResearchTarget,minSamples=5,recentSamples=10):Promise<boolean>{
     const spec=internalHistorySpecs[target.sport as InternalHistorySport]?.[target.market];
     if(!spec)return false;
