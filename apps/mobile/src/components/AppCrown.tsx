@@ -1,9 +1,9 @@
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../auth';
 import { backing, sideLabel } from '../app-lines';
-import type { AppLine, Side } from '../app-lines';
+import type { AppLine, Backing, Side } from '../app-lines';
 import { buildSlip } from '../app-slip';
 import { entryName, entryOutlook, formatLine, gameTime, percent1 } from '../insights';
 import { appNames, copyAndOpen, slipText } from '../port';
@@ -16,20 +16,50 @@ import { GhostButton, PrimaryButton } from './ui/Controls';
 import { GlowCard } from './ui/GlowCard';
 import { Icon } from './ui/Icon';
 import { PlayerAvatar } from './ui/PlayerAvatar';
+import { ScoreRing } from './ui/ScoreRing';
 
-// The Crown generator on Underdog and Pick6 (owner, 2026-10-05): built from that app's own lines and numbers, which
-// differ from PrizePicks'. These apps have no Goblins or Demons; a pick's payout multiplier (when the app sets one)
-// shows instead. Legs: GKR at 80+, then Scout's plays, then History plays.
+// The Crown generator on Underdog and DK Pick'em (owner, 2026-10-05): built from that app's own lines and numbers, laid
+// out like the PrizePicks Crown (summary, scored legs, projected payout). These apps have no Goblins or Demons; a pick's
+// own payout multiplier shows instead. Legs: GKR at 80+, then Scout's plays, then History plays. It builds one as soon as
+// the lines load.
 
 type Leg = { line: AppLine; side: Side };
-const byLabel = { GKR: 'GKR', SCOUT, HISTORY: 'History' } as const;
+const byLabel: Readonly<Record<Backing['by'], string>> = { GKR: 'GKR', SCOUT, HISTORY: 'History' };
+const ringTint: Readonly<Record<Backing['by'], string | undefined>> = { GKR: undefined, SCOUT: colors.electric, HISTORY: colors.royal };
+const band = (score: number) => score >= 92 ? 'CROWN_ELITE' as const : score >= 86 ? 'CROWN_STRONG' as const
+  : score >= 80 ? 'PLAYABLE' as const : score >= 74 ? 'LEAN' as const : 'WEAK' as const;
+
+function LegCard({ app, leg, accent, onRemove }: { app: 'underdog' | 'pick6'; leg: Leg; accent: string; onRemove: () => void }) {
+  const back = backing(leg.line), multiplier = leg.line.multipliers?.[leg.side];
+  return <View style={[styles.leg, { borderColor: alpha(accent, 0.55) }]}>
+    <PlayerAvatar name={leg.line.playerName} photoUrl={leg.line.playerImageUrl} ring={accent} size={58} />
+    <View style={styles.grow}>
+      <Text style={styles.legName} numberOfLines={1}>{leg.line.playerName}</Text>
+      <Text style={styles.meta} numberOfLines={1}>{leg.line.team ?? leg.line.league}{leg.line.opponent ? ` · vs ${leg.line.opponent}` : ''} ·{' '}
+        {gameTime(leg.line.eventStartTime)}</Text>
+      <View style={styles.legPick}><Text style={styles.legMarket} numberOfLines={1}>{leg.line.stat}</Text>
+        <Text style={styles.legLine}>{sideLabel(app, leg.side).toUpperCase()} {formatLine(leg.line.threshold)}</Text></View>
+      {back?.by === 'HISTORY' && !!leg.line.history?.text && <Text style={styles.why} numberOfLines={2}>{leg.line.history.text}</Text>}
+    </View>
+    <View style={styles.side}>
+      {!!multiplier && multiplier !== 1 && <Text style={[styles.tag, multiplier > 1 ? styles.boost : styles.cut]}>
+        {multiplier > 1 ? 'BOOST' : 'PAYS'} {multiplier}x</Text>}
+      {back && <ScoreRing score={back.score} size={56} band={back.by === 'GKR' ? band(back.score) : undefined} who={byLabel[back.by]}
+        {...(back.by === 'GKR' ? {} : { label: byLabel[back.by].toUpperCase(), tint: ringTint[back.by] })} />}
+    </View>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${leg.line.playerName}`} hitSlop={8} onPress={onRemove}
+      style={styles.remove}><Icon name="close" size={18} color={colors.textMuted} /></Pressable>
+  </View>;
+}
 
 export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: number }) {
   const { request, demo } = useAuth();
   const { nowMs } = useBoard();
   const [lines, setLines] = useState<AppLine[] | null>(null);
-  const [legs, setLegs] = useState<Leg[]>([]);
+  // The first Crown is built straight from the lines; Generate New and removing a leg replace it.
+  const [chosen, setChosen] = useState<Leg[] | null>(null);
   const [built, setBuilt] = useState(0);
+  const [name, setName] = useState<string | null>(null), [editing, setEditing] = useState(false);
   const [message, setMessage] = useState('');
   const load = useCallback(async () => {
     if (demo) { setLines([]); return; }
@@ -37,23 +67,33 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
     const body = response?.ok ? await response.json() as { lines: AppLine[] } : null;
     setLines(body?.lines ?? []);
   }, [app, request, demo]);
-  useFocusEffect(useCallback(() => { setLegs([]); setBuilt(0); setMessage(''); void load(); }, [load]));
+  useFocusEffect(useCallback(() => { setChosen(null); setBuilt(0); setMessage(''); setLines(null); void load(); }, [load]));
 
   const payouts = usePayouts()[app];
   const backedCount = (lines ?? []).filter((line) => backing(line) && Date.parse(line.eventStartTime) > nowMs).length;
-  const entry = legs.length >= 2 ? (['FLEX', 'POWER'] as const).flatMap((mode) => {
-    const outlook = entryOutlook(payouts, legs.length, mode);
-    return outlook ? [{ mode, ...outlook }] : [];
-  }).sort((a, b) => a.breakEven - b.breakEven)[0] ?? null : null;
-  // Underdog and Pick6 multiply the entry's payout by each pick's own multiplier (a boost above 1x, a cut below).
-  const boost = Math.round(legs.reduce((product, leg) => product * (leg.line.multipliers?.[leg.side] ?? 1), 1) * 100) / 100;
-
-  const generate = () => {
-    const next = buildSlip(lines ?? [], size, nowMs, built * size, backing);
-    setBuilt(built + 1); setLegs(next);
+  const first = useMemo(() => buildSlip(lines ?? [], size, nowMs, 0, backing), [lines, size, nowMs]);
+  const legs = chosen ?? first;
+  const setLegs = (next: Leg[]) => setChosen(next);
+  const generate = (round: number) => {
+    const next = buildSlip(lines ?? [], size, nowMs, round * size, backing);
+    setBuilt(round + 1); setLegs(next); setName(null);
     setMessage(next.length < 2 ? `Fewer than 2 ${appNames[app]} lines are backed right now.`
       : next.length < size ? `Only ${next.length} ${appNames[app]} lines qualify right now.` : '');
   };
+
+  const backs = legs.map((leg) => backing(leg.line)).filter((item): item is Backing => !!item);
+  const average = backs.length ? backs.reduce((sum, item) => sum + item.score, 0) / backs.length : null;
+  const gkrLegs = backs.filter((item) => item.by === 'GKR').length;
+  const confidence = average === null ? '—' : average >= 90 ? 'High' : average >= 85 ? 'Strong' : average >= 75 ? 'Solid' : 'Low';
+  const crownName = name ?? `${appNames[app]} Crown`;
+  // Underdog and DK Pick'em multiply the entry's payout by each pick's own multiplier (a boost above 1x, a cut below).
+  const boost = Math.round(legs.reduce((product, leg) => product * (leg.line.multipliers?.[leg.side] ?? 1), 1) * 100) / 100;
+  const outlook = (mode: 'POWER' | 'FLEX') => legs.length >= 2 ? entryOutlook(payouts, legs.length, mode) : null;
+  const power = outlook('POWER'), flex = outlook('FLEX');
+  const easier = flex && (!power || flex.breakEven <= power.breakEven) ? { mode: 'FLEX' as const, ...flex }
+    : power ? { mode: 'POWER' as const, ...power } : null;
+  const times = (value: number) => `${Math.round(value * boost * 100) / 100}x`;
+
   const save = async () => {
     const response = await request('/v1/me/crowns', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ app, personal: true, lineIds: legs.map((leg) => leg.line.id),
@@ -69,55 +109,79 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
 
   return <View style={styles.wrap}>
     <GlowCard accent={colors.mint}>
-      <View style={styles.head}><Icon name="crown" size={40} color={colors.neon} />
-        <View style={styles.grow}><Text style={styles.title}>{appNames[app]} Crown</Text>
-          <Text style={styles.meta}>Built from {appNames[app]}’s own lines and numbers · {lines === null ? 'loading…'
-            : `${backedCount} backed lines`}</Text></View></View>
-      {legs.length >= 2 && !entry && <Text style={styles.breakEven}>CrownIQ doesn’t have {appNames[app]}’s {legs.length}-pick
-        payout yet. Check it in the app before you play.</Text>}
-      {entry && <Text style={styles.breakEven}>Play {entryName(legs.length, entry.mode)}: {entry.fullHit}x
-        {boost !== 1 ? `, times ${boost} from the picks’ multipliers` : ''}. Each pick needs to hit {percent1(entry.breakEven)} to
-        break even.</Text>}
+      <View style={styles.head}>
+        <Icon name="crown" size={54} color={colors.neon} />
+        <View style={styles.grow}>
+          {editing ? <TextInput value={crownName} onChangeText={setName} onBlur={() => setEditing(false)} autoFocus maxLength={30}
+            style={styles.nameInput} accessibilityLabel="Crown name" />
+            : <Pressable accessibilityRole="button" onPress={() => setEditing(true)} style={styles.nameRow}>
+              <Text style={styles.title} numberOfLines={1}>{crownName}</Text>
+              <Icon name="pencil-outline" size={18} color={colors.textMuted} /></Pressable>}
+          <Text style={styles.meta}>{legs.length} {legs.length === 1 ? 'Leg' : 'Legs'} · Auto-built from {appNames[app]}’s own lines ·
+            {' '}{lines === null ? 'loading…' : `${backedCount} backed`}</Text>
+          <View style={styles.confidence}><Icon name="creation" size={15} color={colors.mint} />
+            <Text style={styles.confidenceText}>{confidence} confidence</Text></View>
+        </View>
+      </View>
+      <View style={styles.metrics}>
+        <View style={styles.metric}><Text style={styles.metricValue}>{average === null ? '—' : average.toFixed(1)}</Text>
+          <Text style={styles.metricLabel}>Avg Score</Text></View>
+        <View style={[styles.metric, styles.divider]}><Text style={styles.metricValue}>{gkrLegs}/{legs.length}</Text>
+          <Text style={styles.metricLabel}>GKR legs</Text></View>
+        <View style={[styles.metric, styles.divider]}><Text style={styles.metricValue}>{boost === 1 ? '—' : `${boost}x`}</Text>
+          <Text style={styles.metricLabel}>Pick payouts</Text></View>
+      </View>
+    </GlowCard>
+
+    {!!message && <Text accessibilityRole="alert" style={styles.message}>{message}</Text>}
+    {legs.map((leg, index) => <LegCard key={leg.line.id} app={app} leg={leg} accent={rankAccents[index % rankAccents.length]}
+      onRemove={() => setLegs(legs.filter((item) => item !== leg))} />)}
+
+    <GlowCard accent={colors.mint}>
+      <View style={styles.head}><Icon name="chart-bar" size={26} color={colors.mint} />
+        <View style={styles.grow}><Text style={styles.panelTitle}>Projected Outcome</Text>
+          <Text style={styles.meta}>Estimated {appNames[app]} payout if every leg hits</Text></View></View>
+      <View style={styles.metrics}>
+        <View style={styles.metric}><Text style={styles.metricValue}>{power ? times(power.fullHit) : '—'}</Text>
+          <Text style={styles.metricLabel}>{app === 'underdog' ? 'Standard' : 'Power'}</Text></View>
+        <View style={[styles.metric, styles.divider]}><Text style={styles.metricValue}>{flex ? times(flex.fullHit) : '—'}</Text>
+          <Text style={styles.metricLabel}>Flex</Text></View>
+        <View style={[styles.metric, styles.divider]}><Text style={styles.metricValue}>{confidence}</Text>
+          <Text style={styles.metricLabel}>Confidence</Text></View>
+      </View>
+      <Text style={styles.breakEven}>{easier ? `Best play: ${entryName(legs.length, easier.mode)}. Each pick needs to hit ` +
+        `${percent1(easier.breakEven)} of the time to break even.` : legs.length >= 2
+        ? `CrownIQ doesn’t have ${appNames[app]}’s ${legs.length}-pick payout yet. Check it in the app before you play.` : ''}
+        {boost !== 1 ? ` Payouts include the picks’ own multipliers (${boost}x).` : ''}</Text>
       <View style={styles.actions}>
         <PrimaryButton label={built ? 'Generate New' : 'Generate'} icon="shuffle-variant" style={styles.action}
-          disabled={!backedCount} onPress={generate} />
-        <GhostButton label="Save" icon="content-save-outline" style={styles.action} disabled={legs.length < 2}
-          onPress={() => void save()} />
+          disabled={!backedCount} onPress={() => generate(built || 1)} />
+        <GhostButton label="Save Crown" icon="crown" style={styles.action} disabled={legs.length < 2} onPress={() => void save()} />
       </View>
-      <Text style={styles.note}>Legs: GKR 80 and up first, then {SCOUT}’s plays, then History plays. One per player, at most
-        two per game, at least two teams. {appNames[app]} has no Goblins or Demons; a pick’s own payout shows when the app
-        sets one.</Text>
+      <Text style={styles.note}>Legs: GKR 80 and up first, then {SCOUT}’s plays, then History plays. One per player, at most two
+        per game, at least two teams. {appNames[app]} has no Goblins or Demons. Payouts are estimates; {appNames[app]} shows the
+        real one before you submit.</Text>
     </GlowCard>
-    {!!message && <Text accessibilityRole="alert" style={styles.message}>{message}</Text>}
-    {legs.map((leg, index) => {
-      const back = backing(leg.line), accent = rankAccents[index % rankAccents.length];
-      const multiplier = leg.line.multipliers?.[leg.side];
-      return <View key={leg.line.id} style={[styles.leg, { borderColor: alpha(accent, 0.55) }]}>
-        <PlayerAvatar name={leg.line.playerName} photoUrl={leg.line.playerImageUrl} ring={accent} size={52} />
-        <View style={styles.grow}>
-          <Text style={styles.name} numberOfLines={1}>{leg.line.playerName}</Text>
-          <Text style={styles.meta} numberOfLines={1}>{leg.line.league} · {leg.line.team ?? leg.line.eventName} ·{' '}
-            {gameTime(leg.line.eventStartTime)}</Text>
-          <Text style={styles.pick}>{sideLabel(app, leg.side)} {formatLine(leg.line.threshold)} {leg.line.stat}
-            {multiplier && multiplier !== 1 ? ` · ${multiplier}x` : ''}</Text>
-        </View>
-        {back && <View style={styles.badge}><Text style={styles.badgeBy}>{byLabel[back.by]}</Text>
-          <Text style={styles.badgeScore}>{Math.round(back.score)}</Text></View>}
-        <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${leg.line.playerName}`} hitSlop={8}
-          onPress={() => setLegs(legs.filter((item) => item !== leg))} style={styles.remove}>
-          <Icon name="close" size={18} color={colors.textMuted} /></Pressable>
-      </View>;
-    })}
     {legs.length >= 2 && <GhostButton label={`Copy picks & open ${appNames[app]}`} icon="open-in-new" onPress={copy} />}
   </View>;
 }
 
 const styles = StyleSheet.create({
-  wrap: { gap: 12 },
+  wrap: { gap: 14 },
   head: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  grow: { flex: 1, minWidth: 0, gap: 2 },
-  title: { color: colors.text, fontSize: 21, fontWeight: '900' },
-  meta: { color: colors.textMuted, fontSize: 12.5 },
+  grow: { flex: 1, minWidth: 0, gap: 3 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  title: { color: colors.text, fontSize: 23, fontWeight: '900', flexShrink: 1 },
+  nameInput: { color: colors.text, fontSize: 21, fontWeight: '800', borderBottomWidth: 1, borderColor: colors.mint, paddingVertical: 2 },
+  meta: { color: colors.textMuted, fontSize: 13 },
+  confidence: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  confidenceText: { color: colors.mint, fontSize: 13, fontWeight: '700' },
+  metrics: { flexDirection: 'row', marginTop: 14 },
+  metric: { flex: 1, alignItems: 'center', gap: 2 },
+  divider: { borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.borderStrong },
+  metricValue: { color: colors.text, fontSize: 20, fontWeight: '900' },
+  metricLabel: { color: colors.textMuted, fontSize: 12 },
+  panelTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
   breakEven: { color: colors.text, fontSize: 13, lineHeight: 19, marginTop: 12, fontWeight: '600' },
   actions: { flexDirection: 'row', gap: 10, marginTop: 12 },
   action: { flex: 1 },
@@ -125,10 +189,15 @@ const styles = StyleSheet.create({
   message: { color: colors.mint, fontSize: 13, fontWeight: '700' },
   leg: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: colors.surface, borderWidth: 1.5,
     borderRadius: radius.lg, padding: 12 },
-  name: { color: colors.text, fontSize: 16, fontWeight: '800' },
-  pick: { color: colors.mint, fontSize: 15, fontWeight: '900', marginTop: 3 },
-  badge: { alignItems: 'center', minWidth: 52, marginRight: 16 },
-  badgeBy: { color: colors.textMuted, fontSize: 11, fontWeight: '800' },
-  badgeScore: { color: colors.text, fontSize: 20, fontWeight: '900' },
-  remove: { position: 'absolute', top: 8, right: 8 },
+  legName: { color: colors.text, fontSize: 17, fontWeight: '800' },
+  legPick: { marginTop: 4, alignSelf: 'flex-start', borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
+    paddingHorizontal: 8, paddingVertical: 4, backgroundColor: colors.surfaceSunken },
+  legMarket: { color: colors.text, fontSize: 12.5, fontWeight: '700' },
+  legLine: { color: colors.mint, fontSize: 19, fontWeight: '900' },
+  why: { color: colors.textMuted, fontSize: 11.5, marginTop: 2 },
+  side: { alignItems: 'center', gap: 6, marginRight: 18 },
+  tag: { fontSize: 10.5, fontWeight: '900', borderWidth: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  boost: { color: colors.mint, borderColor: colors.mint },
+  cut: { color: colors.amber, borderColor: colors.amber },
+  remove: { position: 'absolute', top: 10, right: 8 },
 });

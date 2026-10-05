@@ -174,7 +174,7 @@ export default function CrownScreen() {
       <AppHeader subtitle="Your Crown" />
       {appPicker}
       <Segmented label="Crown size" options={sizesFor(8)} value={size} onChange={setSize} />
-      <AppCrown app={playApp} size={size} />
+      <AppCrown key={`${playApp}-${size}`} app={playApp} size={size} />
       <ReportNudge where="crown" />
     </ScrollView>
   </SafeAreaView>;
