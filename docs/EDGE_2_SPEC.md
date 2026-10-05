@@ -40,6 +40,21 @@ Without price history there is no CLV, no steam detection and no backtest. Store
   - Retention: 120 days at full resolution, then thin to one row per hour per key.
 - **Closing snapshot:** for each event, materialize the last observation before `startTime` per (platform, player, market, number, side).
 
+### 1.1b Data sources: official APIs first, scrapers only for real gaps
+
+Do the cheap checks before building; record the results in the P1 report.
+
+| Data | Primary source | Scraper role |
+| --- | --- | --- |
+| PrizePicks lines | The Odds API `prizepicks` (in use) | None |
+| Sportsbook player props | SharpAPI (in use) **plus** The Odds API books in the PrizePicks request (`consensusBookmakers`) | None |
+| **Underdog, DraftKings Pick6 lines and multipliers** | **Test first:** one `/events/{id}/odds?bookmakers=underdog,pick6&markets=<one player market>&includeMultipliers=true` call (~1–2 credits). If lines and multipliers come back, request them in the same odds call as PrizePicks (`bookmakers=prizepicks,underdog,pick6,…`, still one region for ≤ 10 books) and make that the primary source. | The existing Apify scrapers become a cross-check under the owner's two-source rule (show lines where sources agree, mark disagreements unconfirmed), or are disabled to save budget. Keep them primary only if the test returns no lines or no multipliers. |
+| **Kalshi** | **Official public API, no key needed for market data:** `GET https://api.elections.kalshi.com/trade-api/v2/markets` (filter by sports series/event) and `/markets/{ticker}/orderbook` for depth. | Replace the `lergassy/kalshi-scraper` Apify actor. |
+| **Polymarket** | **Official public APIs:** Gamma `https://gamma-api.polymarket.com/markets` / `/events` for sports markets, and CLOB `https://clob.polymarket.com/book?token_id=…` for the order book. | Replace the `lergassy/polymarket-scraper` Apify actor. |
+| PrizePicks Goblin/Demon payout factors | Not in The Odds API (`multiplier: null` in the 2026-09-24 pull). | **Only gap a scraper fills.** Search the Apify store for a PrizePicks actor whose output includes per-projection payout or odds-type multipliers. Add an adapter (≤ $2/day, fail-closed) only if one does. Until then use owner-set `EDGE_GOBLIN_FACTOR`/`EDGE_DEMON_FACTOR`, read from the app, and keep `edge = null` when unset. |
+
+Before switching Kalshi or Polymarket, verify the host is reachable from Railway, check the endpoints' current docs and confirm the response fields. Run old and new side by side for 24h and compare match counts before removing the scraper.
+
 ### 1.2 One identity for player, event and market across every source
 
 There are already three ID schemes (Odds API hash, scraper `ud:`/`p6:` ids, SharpAPI names). Build `canonicalKey(sport, league, playerName, eventStart±6h, home/away)`:
