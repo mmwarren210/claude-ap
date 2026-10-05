@@ -68,8 +68,6 @@ export function BookCrown({ book }: { book: Sportsbook }) {
       lines={legs.map((pick) => `${pick.playerName} · ${marketLabel(pick.market)} ${pick.side === 'MORE' ? 'Over' : 'Under'} ${formatLine(pick.line)} (${odds(pick.american)})`)}
       summary={legs.length >= 2 && parlay !== null ? `As a ${legs.length}-leg parlay: ${odds(parlay)}. A parlay pays only if every leg wins; ` +
         'each leg also works as a single bet.' : ''} />
-    <Text style={styles.note}>Picks: GKR first, then History (the player’s recent games against {name}’s number), then Value
-      (a price better than the other books’ fair price). Fairly priced picks go first, one per player.</Text>
   </View>;
 }
 
@@ -106,8 +104,6 @@ export function MarketCrown({ platform }: { platform: MarketPlatform }) {
     <SlipTray appName={name} url={marketUrls[platform]} onClear={() => { setStored([]); setBuilt(0); }}
       lines={legs.map((pick) => `${pick.game}: ${pick.side} at ${cents(pick.price)}`)}
       summary={legs.length ? `Each is its own contract: about ${cents(cost)} for $1 on each, worth ${cents(fair)} at fair odds.` : ''} />
-    <Text style={styles.note}>The biggest edges first, one per game. {name} sells each contract on its own, so there’s no slip
-      limit; CrownIQ builds up to 20.</Text>
   </View>;
 }
 

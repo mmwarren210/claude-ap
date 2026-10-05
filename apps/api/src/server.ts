@@ -1258,11 +1258,29 @@ export function buildServer(options: ServerOptions = {}) {
     return {fetchedAt,lines:Object.fromEntries(views),picks:Object.fromEntries(booksPicks(board,views))};
   });
   // Underdog and Pick6 lines. GKR does not score them; the same PrizePicks line and its GKR score ride along for reference.
+  // App boards read History and Trends for every line: built in the background and served from memory (the last one at
+  // once while a fresh one builds), so the boards, Crowns and Top Picks never wait on them.
+  const appBoardCache=new Map<OtherApp,{at:number;value:Awaited<ReturnType<typeof buildAppBoard>>}>();
+  const appBoardRefresh=new Map<OtherApp,Promise<Awaited<ReturnType<typeof buildAppBoard>>>>();
+  async function cachedAppBoard(appName:OtherApp){
+    const cached=appBoardCache.get(appName);
+    if(cached&&now().getTime()-cached.at<2*60_000)return cached.value;
+    let run=appBoardRefresh.get(appName);
+    if(!run){run=buildAppBoard(appName).then((value)=>{appBoardCache.set(appName,{at:now().getTime(),value});return value;})
+      .finally(()=>appBoardRefresh.delete(appName));appBoardRefresh.set(appName,run);}
+    return cached?cached.value:run;
+  }
+  const warmApps=setInterval(()=>{for(const appName of otherApps)void cachedAppBoard(appName).catch(()=>undefined);},3*60_000);
+  warmApps.unref();shadowTimers.push(warmApps);
   app.get('/v1/apps/:app/board',async(request,reply)=>{
     const parsed=z.object({app:z.enum(otherApps as [OtherApp,...OtherApp[]])}).safeParse(request.params);
     if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_APP'});
     if(!options.scrapedLines)return reply.code(503).send({code:'APP_LINES_UNAVAILABLE'});
-    const board=await appBoard(options.scrapedLines,parsed.data.app,service.getBoard());
+    return cachedAppBoard(parsed.data.app);
+  });
+  async function buildAppBoard(appName:OtherApp){
+    const parsed={data:{app:appName}};
+    const board=await appBoard(options.scrapedLines!,parsed.data.app,service.getBoard());
     const scores=await scoresFor(parsed.data.app);
     // Scout's read on the line, at this number, when it has one (lines GKR can't score).
     const reads=new Map((await options.aiPicks?.upcoming()??[]).map((read)=>[`${read.lineId}|${read.threshold}`,read]));
@@ -1276,7 +1294,7 @@ export function buildServer(options: ServerOptions = {}) {
           const trend=await options.baseRates.trendFor(asLine[0]);if(trend)history=trendRead(trend);}
         return {...line,gkr,history,
           scout:read?{pick:read.pick,score:read.score,agreement:read.agreement}:null};}))};
-  });
+  }
   // Line shopping: every app's number for the same player and stat, the easiest number per side, and the books' line.
   let shopCache:{at:number;board:unknown;entries:ShopEntry[]}|null=null;
   async function shopEntries():Promise<ShopEntry[]>{
@@ -1444,7 +1462,11 @@ export function buildServer(options: ServerOptions = {}) {
     const fresh=extras?.fetchedAt&&now().getTime()-Date.parse(extras.fetchedAt)<3*3600_000?extras:null;
     const consensus=fresh?consensusGameLines(fresh.games):[];
     const pinnacle=pinnacleStale?[]:games.items;
-    const fairLines=[...pinnacle,...consensus.filter((line)=>!pinnacle.some((item)=>item.market===line.market&&sameGame(item,line)))];
+    // Pinnacle's games by market and day, so each books' line only checks games that day.
+    const pinnacleBy=new Map<string,GameLine[]>();
+    for(const item of pinnacle){const key=`${item.market}|${item.startTime.slice(0,10)}`;pinnacleBy.set(key,[...pinnacleBy.get(key)??[],item]);}
+    const fairLines=[...pinnacle,...consensus.filter((line)=>!(pinnacleBy.get(`${line.market}|${line.startTime.slice(0,10)}`)??[])
+      .some((item)=>sameGame(item,line)))];
     const picks=[...marketPicks(platform,markets.items,fairLines,now())];
     if(fresh){
       // The exchange's own markets from SharpAPI (every league, totals too), and Kalshi's player props with History.

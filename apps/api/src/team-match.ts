@@ -3,7 +3,13 @@ import { normalizedName } from './context/match.js';
 // Team names differ by source: "Chicago White Sox", "Chicago WS", "CHW White Sox", "White Sox". Two names are the same
 // team when they match whole, by nickname, by one starting the other, or by city plus the nickname's initials.
 
-const words = (name: string) => normalizedName(name).split(' ').filter(Boolean);
+// Names repeat thousands of times per refresh, so each is normalized once.
+const wordCache = new Map<string, string[]>();
+const words = (name: string) => {
+  let found = wordCache.get(name);
+  if (!found) { found = normalizedName(name).split(' ').filter(Boolean); if (wordCache.size > 20_000) wordCache.clear(); wordCache.set(name, found); }
+  return found;
+};
 
 export function sameTeam(a: string, b: string): boolean {
   const x = words(a), y = words(b);

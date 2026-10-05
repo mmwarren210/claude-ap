@@ -18,14 +18,39 @@ import { sameGame } from './team-match.js';
 export const BOOK_EDGE = 0.03;
 /** The edge a prop needs when only the player's history backs it. */
 export const HISTORY_EDGE = 0.06;
+/** A bigger edge than this on a game market is almost always a stale price, so it's left out. */
+export const MAX_GAME_EDGE = 0.12;
 
 const exchanges = new Set(['kalshi', 'polymarket']);
 const round = (value: number) => Math.round(value * 10_000) / 10_000;
 const opposite = { home: 'away', away: 'home', over: 'under', under: 'over' } as const;
 
+/**
+ * The books' game lines grouped by market and start hour, so a lookup only compares games starting within three hours
+ * (comparing every line with every other froze the server for seconds). Built once per list of games.
+ */
+const indexes = new WeakMap<readonly GamePrice[], Map<string, GamePrice[]>>();
+function bookIndex(games: readonly GamePrice[]) {
+  let index = indexes.get(games);
+  if (!index) {
+    index = new Map();
+    for (const game of games) {
+      if (exchanges.has(game.book)) continue;
+      const key = `${game.market}|${Math.floor(Date.parse(game.startTime) / 3_600_000)}`;
+      index.set(key, [...index.get(key) ?? [], game]);
+    }
+    indexes.set(games, index);
+  }
+  return index;
+}
+function nearbyBooks(games: readonly GamePrice[], target: Pick<GamePrice, 'market' | 'startTime'>) {
+  const index = bookIndex(games), hour = Math.floor(Date.parse(target.startTime) / 3_600_000);
+  return [-3, -2, -1, 0, 1, 2, 3].flatMap((offset) => index.get(`${target.market}|${hour + offset}`) ?? []);
+}
+
 /** The books' average no-vig chance of one side of a game line, at the same number; null when no book prices both sides. */
 export function bookFair(games: readonly GamePrice[], target: Pick<GamePrice, 'home' | 'away' | 'startTime' | 'market' | 'line' | 'side'>): number | null {
-  const books = games.filter((game) => !exchanges.has(game.book) && game.market === target.market && sameGame(game, target));
+  const books = nearbyBooks(games, target).filter((game) => sameGame(game, target));
   const chances: number[] = [];
   for (const book of new Set(books.map((game) => game.book))) {
     const mine = books.filter((game) => game.book === book);
@@ -46,7 +71,7 @@ export function exchangeGamePicks(platform: 'kalshi' | 'polymarket', games: read
     const fair = bookFair(games, game);
     if (fair === null) continue;
     const cost = round(game.probability + platformFee(platform, game.probability)), edge = round(fair - cost);
-    if (edge < BOOK_EDGE) continue;
+    if (edge < BOOK_EDGE || edge > MAX_GAME_EDGE) continue;
     const team = game.side === 'home' || game.side === 'away' ? game.side : 'home';
     const name = game.side === 'home' ? game.home : game.away;
     const kind: MarketPick['kind'] = game.market === 'moneyline' ? 'WINNER' : game.market === 'spread' ? 'SPREAD' : 'TOTAL';
@@ -162,14 +187,17 @@ export function exchangePropPicks(offers: readonly OverOnlyPrice[], prices: read
  */
 export function consensusGameLines(games: readonly GamePrice[]): GameLine[] {
   const out: GameLine[] = [];
+  const seen = new Map<string, GameLine[]>();
   for (const game of games) {
     if (exchanges.has(game.book) || game.market === 'total' || game.side !== 'home') continue;
     // Books can file the same game under different ids: one line per game (by teams and start) and number.
-    if (out.some((line) => line.market === game.market && line.line === game.line && sameGame(line, game))) continue;
+    const key = `${game.market}|${game.line}|${Math.floor(Date.parse(game.startTime) / 86_400_000)}`;
+    if ((seen.get(key) ?? []).some((line) => sameGame(line, game))) continue;
     const homeFair = bookFair(games, game);
     if (homeFair === null) continue;
-    out.push({ league: game.league.toUpperCase(), home: game.home, away: game.away, startTime: game.startTime, market: game.market,
-      line: game.line, homePrice: null, awayPrice: null, homeFair, awayFair: round(1 - homeFair), sourceUrl: null } as GameLine);
+    const line = { league: game.league.toUpperCase(), home: game.home, away: game.away, startTime: game.startTime, market: game.market,
+      line: game.line, homePrice: null, awayPrice: null, homeFair, awayFair: round(1 - homeFair), sourceUrl: null } as GameLine;
+    out.push(line); seen.set(key, [...seen.get(key) ?? [], line]);
   }
   return out;
 }

@@ -171,9 +171,6 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
           disabled={!backedCount} onPress={() => generate(built || 1)} />
         <GhostButton label="Save Crown" icon="crown" style={styles.action} disabled={legs.length < 2} onPress={() => void save()} />
       </View>
-      <Text style={styles.note}>Legs: GKR 80 and up first, then {SCOUT}’s plays, then History plays. One per player, at most two
-        per game, at least two teams. {appNames[app]} has no Goblins or Demons. Payouts are estimates; {appNames[app]} shows the
-        real one before you submit.</Text>
     </GlowCard>
     {legs.length >= 2 && <GhostButton label={`Copy picks & open ${appNames[app]}`} icon="open-in-new" onPress={copy} />}
     {stored.length > 0 && <GhostButton label="Clear Crown" icon="close" onPress={() => { setStored([]); setBuilt(0); }} />}

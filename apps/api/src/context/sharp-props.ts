@@ -136,6 +136,7 @@ export function gamePrices(rows: readonly unknown[]): GamePrice[] {
     const row = value as Row & { sport?: unknown; selection_type?: unknown };
     const market = gameMarkets[String(row.market_type)], side = String(row.selection_type), probability = Number(row.odds_probability);
     if (!market || row.is_live === true || row.is_active === false || !(probability > 0 && probability < 1) ||
+      (row as { is_stale_pregame_price?: unknown }).is_stale_pregame_price === true ||
       typeof row.home_team !== 'string' || typeof row.away_team !== 'string') continue;
     if (market === 'total' ? side !== 'over' && side !== 'under' : side !== 'home' && side !== 'away') continue;
     if (market !== 'moneyline' && typeof row.line !== 'number') continue;

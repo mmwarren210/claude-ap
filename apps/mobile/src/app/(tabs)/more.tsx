@@ -70,9 +70,16 @@ export default function MoreScreen() {
   useEffect(() => {
     let active = true;
     if (demo) return;
-    void request('/v1/owner/research/status').then((response) => { if (active) setOwner(response.ok); })
-      .catch(() => { if (active) setOwner(false); });
-    return () => { active = false; };
+    // Only a clear "not the owner" (404) hides the admin tools; a slow or failed check tries again instead.
+    let tries = 0, timer: ReturnType<typeof setTimeout> | null = null;
+    const check = () => void request('/v1/owner/research/status').then((response) => {
+      if (!active) return;
+      if (response.ok) setOwner(true);
+      else if (response.status === 404 || response.status === 401) setOwner(false);
+      else if (++tries < 4) timer = setTimeout(check, 3000);
+    }).catch(() => { if (active && ++tries < 4) timer = setTimeout(check, 3000); });
+    check();
+    return () => { active = false; if (timer) clearTimeout(timer); };
   }, [profile?.publicId, request, demo]);
   useFocusEffect(useCallback(() => {
     let active = true;
