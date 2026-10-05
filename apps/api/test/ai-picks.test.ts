@@ -256,3 +256,34 @@ test('the owner queue reads waiting lines soonest first, skips held reads and st
   assert.deepEqual([status.done, status.failed, status.usedToday, status.waiting], [2, 0, 2, 0]);
   assert.equal(await service.enqueueOwner(lines, () => [], () => null), 0, 'today’s allowance is used; held reads are skipped');
 });
+
+test('every Scout read, its grade and a looked-up result are kept in the archive for good', async () => {
+  const { mkdtemp, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { HistoryArchive } = await import('../src/history-archive.js');
+  const folder = await mkdtemp(join(tmpdir(), 'crowniq-scout-archive-'));
+  try {
+    let clock = now;
+    const archive = new HistoryArchive(folder, () => clock);
+    const line = fixtureLine({ id: 'ud:s1', playerId: 'TENNIS:munar', playerName: 'Jaume Munar', sport: 'TENNIS', league: 'TENNIS',
+      eventId: 'ud-game:t1', market: 'total_games_won', threshold: 7.5, eventStartTime: '2030-09-24T16:00:00Z',
+      availableDirections: ['MORE', 'LESS'] });
+    const researcher: PickResearcher = { provider: 'claude', read: async () => read('claude', 'LESS', 61),
+      result: async () => ({ provider: 'claude', status: 'FINAL', actual: 6, url: 'https://atp.example/m1' }) };
+    const service = new AiPickService([researcher], null, { dailyAuto: 0, dailyPerUser: 5, archive }, null, () => clock);
+    await service.ask('user-1', line, undefined, [], null);
+    clock = new Date('2030-09-25T12:00:00Z');
+    assert.equal(await service.grade(), 1);
+    await archive.append('scout', []);
+    const month = (stream: string) => readFile(join(folder, `${stream}-2030-09.jsonl`), 'utf8')
+      .then((text) => text.trim().split('\n').map((row) => JSON.parse(row) as Record<string, unknown>));
+    const scout = await month('scout');
+    assert.deepEqual(scout.map((row) => row.type), ['read', 'grade']);
+    assert.equal((scout[0].providers as unknown[]).length, 1, 'both models’ full answers are kept');
+    assert.deepEqual([scout[1].grade, scout[1].actual], ['WIN', 6]);
+    const [result] = await month('results');
+    assert.deepEqual([result.playerName, result.market, result.actual, (result.sourceUrls as string[])[0]],
+      ['Jaume Munar', 'total_games_won', 6, 'https://atp.example/m1']);
+  } finally { await rm(folder, { recursive: true, force: true }); }
+});

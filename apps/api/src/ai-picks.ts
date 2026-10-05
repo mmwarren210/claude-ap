@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import type { Analysis, BoardResponse, Evidence, PlayableDirection, PropLine } from '@crowniq/contracts';
 import { boxScoreReader } from './box-score-results.js';
 import type { BoxScoreResults } from './box-score-results.js';
+import type { HistoryArchive } from './history-archive.js';
 import { rankingCards } from './ranking-cards.js';
 
 // AI reads (owner approved 2026-10-04): when GKR can't score a line (no model for the stat, or its data is missing),
@@ -222,6 +223,8 @@ export interface AiPickOptions {
   readonly dailyResults?: number;
   /** Lines the owner may send to Scout by hand (Ask all / by sport) per Eastern day. */
   readonly dailyOwner?: number;
+  /** Every read, its grade and any result Scout looked up go to CrownIQ's own archive (kept for good). */
+  readonly archive?: HistoryArchive | null;
   readonly resultsPerRun?: number;
   /** Second opinions on GKR Top Picks per Eastern day (0 turns them off). */
   readonly dailySecond?: number;
@@ -285,6 +288,8 @@ export class AiPickService {
       const saved = JSON.parse(await readFile(this.file, 'utf8')) as Saved;
       for (const read of saved.reads) this.reads.set(`${read.lineId}|${read.threshold}`, read);
       this.usage = saved.usage ?? {};
+      // Reads saved before the archive existed join it now (the archive skips any it already holds).
+      for (const read of saved.reads) { this.archiveRead(read); if (read.grade !== 'PENDING') this.archiveGrade(read); }
     } catch { /* first run */ }
   }
 
@@ -341,6 +346,7 @@ export class AiPickService {
         source, kind: gkr ? 'second' : 'scout', ...asked ? { subject: 'market' as const } : {}, ...gkr ? { gkr, gkrGrade: 'PENDING' as const } : {}, grade: 'PENDING', actual: null };
       this.reads.set(key, read);
       await this.save();
+      this.archiveRead(read);
       return read;
     })();
     this.inFlight.set(key, task);
@@ -494,7 +500,9 @@ export class AiPickService {
       read.grade = on(read.pick);
       if (read.gkr) read.gkrGrade = on(read.gkr.direction);
       read.actual = fact.actual; graded++;
+      settled.push(read);
     };
+    const settled: AiRead[] = [];
     const boxed = pending().filter((read) => boxScoreReader(read.lineSnapshot));
     if (this.boxScores && boxed.length) {
       const report = await this.boxScores.results(boxed.map((read) => ({ eventId: read.lineSnapshot.eventId,
@@ -525,7 +533,37 @@ export class AiPickService {
     }
     for (const read of pending()) if (now - Date.parse(read.eventStartTime) > 4 * 86_400_000) settle(read, { status: 'VOID', actual: null });
     if (graded || looked) await this.save();
+    for (const read of settled) this.archiveGrade(read);
     return graded;
+  }
+
+  /** The line as Scout saw it, for the archive. */
+  private static archivedLine(read: AiRead) {
+    const line = read.lineSnapshot;
+    return { lineId: read.lineId, sport: line.sport, league: line.league, eventId: line.eventId, eventName: line.eventName,
+      eventStartTime: line.eventStartTime, playerId: line.playerId, playerName: line.playerName, team: line.team,
+      opponent: line.opponent, market: line.market, threshold: read.threshold, lineType: line.lineType,
+      sides: line.availableDirections };
+  }
+  /** Keeps a read for good: the line, both models' picks, confidence, summaries, reasons with their evidence kind and
+   * source, and late news. */
+  private archiveRead(read: AiRead) {
+    void this.options.archive?.append('scout', [{ key: `read:${read.lineId}|${read.threshold}|${read.researchedAt}`, record: {
+      type: 'read', ...AiPickService.archivedLine(read), researchedAt: read.researchedAt, source: read.source,
+      kind: read.kind ?? 'scout', subject: read.subject ?? 'player', pick: read.pick, score: read.score,
+      agreement: read.agreement, gkr: read.gkr ?? null, providers: read.providers } }]);
+  }
+  /** Keeps a read's grade for good; a result Scout looked up (tennis, esports) also joins the results history. */
+  private archiveGrade(read: AiRead) {
+    const line = AiPickService.archivedLine(read);
+    void this.options.archive?.append('scout', [{ key: `grade:${read.lineId}|${read.threshold}`, record: {
+      type: 'grade', ...line, pick: read.pick, score: read.score, grade: read.grade, actual: read.actual,
+      gkrGrade: read.gkrGrade ?? null, resultSources: read.resultSources ?? [] } }]);
+    if (read.resultSources?.length && read.actual !== null) void this.options.archive?.append('results', [{
+      key: `scout:${line.sport}:${line.playerId}:${line.market}:${line.eventStartTime}`, record: {
+        source: 'Scout result lookup (both models agreed)', sourceUrls: read.resultSources, sport: line.sport,
+        league: line.league, playerId: line.playerId, playerName: line.playerName, team: line.team, opponent: line.opponent,
+        eventName: line.eventName, occurredAt: line.eventStartTime, market: line.market, actual: read.actual } }]);
   }
 
   /** The most recent reads, newest first, for the owner to check their quality. */

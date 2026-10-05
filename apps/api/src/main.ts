@@ -307,7 +307,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, signupContact: pr
     perRun:Number(process.env.CROWNIQ_AI_PICKS_PER_RUN ?? 15),
     dailySecond:Number(process.env.CROWNIQ_SCOUT_SECOND_DAILY ?? 40),secondPerRun:Number(process.env.CROWNIQ_SCOUT_SECOND_PER_RUN ?? 8),
     dailyResults:Number(process.env.CROWNIQ_SCOUT_RESULTS_DAILY ?? 60),resultsPerRun:Number(process.env.CROWNIQ_SCOUT_RESULTS_PER_RUN ?? 10),
-    dailyOwner:Number(process.env.CROWNIQ_SCOUT_OWNER_DAILY ?? 300)},new BoxScoreResults(fetch,undefined,historyArchive)):null,
+    dailyOwner:Number(process.env.CROWNIQ_SCOUT_OWNER_DAILY ?? 300),archive:historyArchive},new BoxScoreResults(fetch,undefined,historyArchive)):null,
   // The sports list costs no credits and returns the balance headers.
   oddsApiQuota:apiKey?async()=>{
     const response=await fetch(`https://api.the-odds-api.com/v4/sports?apiKey=${encodeURIComponent(apiKey)}`,

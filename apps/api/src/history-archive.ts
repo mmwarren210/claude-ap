@@ -5,7 +5,9 @@ import { join } from 'node:path';
 // result it graded and every line it saw (with each move), across all sports and apps. Append-only JSON lines, one file
 // per stream per month. Nothing reads it for scoring: it changes no GKR score.
 
-export type ArchiveStream = 'games' | 'results' | 'lines';
+/** games: player game logs · results: graded final stats · lines: every line and move · scout: every Scout read and its
+ * grade, with reasons and sources (evidence for the stats GKR can't score yet). */
+export type ArchiveStream = 'games' | 'results' | 'lines' | 'scout';
 
 export class HistoryArchive {
   /** Keys already written this run, so repeated fetches of the same game log or result aren't stored twice. */

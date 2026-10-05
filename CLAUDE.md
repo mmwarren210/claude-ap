@@ -26,6 +26,9 @@
   Fixes that change model scores still need the owner's approval.
 - **Logo**: the CrownIQ icon (gold crown, dripping CrownIQ, POWERED BY GKR) is the home-screen icon, favicon, sign-in
   logo and link preview (`public/og.png`); the header uses its crown (`assets/images/crown.png`).
+- **Scout's info pool** (owner, 2026-10-05): every Scout read (both models' picks, confidence, summaries, reasons with
+  evidence kind and source, late news) and its grade go to the archive's `scout` stream for good; a result Scout looked
+  up (tennis, esports) also joins the `results` stream as a player stat. Saved reads are backfilled at startup.
 - **Scout queue** (owner, 2026-10-05): More → Scout queue shows lines waiting on Scout by board and sport, with Ask
   all / by board / by sport (`/v1/owner/scout-queue`; 300 a day, `CROWNIQ_SCOUT_OWNER_DAILY`; two at a time). Answers
   show on the boards at once. Open apps poll `/v1/data-version` each minute and show "New picks and Scout reads are in ·
