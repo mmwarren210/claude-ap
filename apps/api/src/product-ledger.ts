@@ -50,6 +50,8 @@ interface Account {id:string;username:string;email:string|null;passwordSalt:stri
   lifetime?:true;
   /** Signed up with the shared family code as the password; must set their own before anything else. */
   mustChangePassword?:true;
+  /** A one-time password-reset code the owner issued (stored hashed), until it is used or expires. */
+  reset?:{hash:string;expiresAt:string};
   /** A guest-pass account: no username or password, full access until `expiresAt`, kept afterwards for its picks. */
   guest?:{pass:string;deviceHash:string;expiresAt:string}}
 /** A shared guest link: up to `maxGuests` devices each get their own account for `days` days. */
@@ -406,6 +408,40 @@ export class ProductLedger {
     const profile=this.authCache!.profiles.get(account.id);
     return profile?{accountId:account.id,publicId:profile.publicId,username:account.username,
       email:account.email,plan:planOf(account,this.authCache!.lifetime),mustChangePassword:!!account.mustChangePassword}:null;
+  });}
+  private accountByLogin(data:Data,login:string){
+    const entered=login.trim();
+    if(entered.includes('@'))return data.accounts.find((item)=>item.email===normalizedEmail(entered)&&!item.guest);
+    const profile=data.profiles.find((item)=>normalizedName(item.displayName)===normalizedName(entered));
+    return profile?data.accounts.find((item)=>item.id===profile.actorKey&&!item.guest):undefined;
+  }
+  /**
+   * A one-time reset code for a member who forgot their password (the owner passes it on; there is no email yet). It
+   * lasts 24 hours and replaces any earlier code.
+   */
+  async createResetCode(login:string){return this.exclusive(async()=>{
+    const data=await this.read(),account=this.accountByLogin(data,login);
+    if(!account)throw new Error('ACCOUNT_NOT_FOUND');
+    const letters='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',bytes=randomBytes(8);
+    const raw=[...bytes].map((byte)=>letters[byte%letters.length]).join('');
+    const code=`${raw.slice(0,4)}-${raw.slice(4)}`,expiresAt=new Date(this.clock().getTime()+24*3600_000).toISOString();
+    account.reset={hash:tokenHash(raw),expiresAt};
+    await this.write(data);
+    return {code,username:account.username,expiresAt};
+  });}
+  /** Sets a new password with a reset code, ends every other session, and signs the member in. */
+  async resetPassword(login:string,code:string,next:string){return this.exclusive(async()=>{
+    const data=await this.read(),account=this.accountByLogin(data,login);
+    const raw=code.toUpperCase().replace(/[^A-Z0-9]/g,'');
+    const valid=!!account?.reset&&Date.parse(account.reset.expiresAt)>this.clock().getTime()&&
+      timingSafeEqual(Buffer.from(tokenHash(raw),'hex'),Buffer.from(account.reset.hash,'hex'));
+    if(!account||!valid||account.status==='SUSPENDED')throw new Error('RESET_INVALID');
+    if(this.familyCode&&sameSecret(next,this.familyCode))throw new Error('PASSWORD_NOT_NEW');
+    const salt=randomBytes(16).toString('hex');
+    account.passwordSalt=salt;account.passwordHash=(await passwordKey(next,salt)).toString('hex');
+    delete account.reset;delete account.mustChangePassword;
+    data.sessions=data.sessions.filter((item)=>item.accountId!==account.id);
+    const result=this.session(data,account);await this.write(data);return result;
   });}
   /** Sets a new password after checking the current one. The family code can't be kept as a password. */
   async changePassword(accountId:string,current:string,next:string){return this.exclusive(async()=>{

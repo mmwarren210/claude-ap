@@ -15,6 +15,7 @@ import { pickApps } from '../../components/AppBoard';
 import type { PickApp } from '../../components/AppBoard';
 import { entryName, percent1 } from '../../insights';
 import { usePayouts } from '../../use-payouts';
+import { ChangePassword, MemberResetCode } from '../../components/AccountSecurity';
 import { colors, radius } from '../../theme';
 import { useDraft } from '../../use-draft';
 
@@ -130,6 +131,8 @@ export default function MoreScreen() {
       <PrimaryButton label="Update username" onPress={() => void rename()} />
       {!!message && <Text style={styles.sheetNote}>{message}</Text>}
       {!!profile?.publicId && !demo && <Text selectable style={styles.sheetNote}>Profile ID: {profile.publicId}</Text>}
+      {!demo && profile?.plan !== 'GUEST' && <ChangePassword />}
+      {owner && <MemberResetCode />}
     </Sheet>
     <Sheet visible={sheet === 'payouts'} title="Payout estimates" onClose={() => setSheet(null)}>
       <Segmented label="Pick'em app" options={pickApps} value={payoutApp} onChange={setPayoutApp} />

@@ -36,6 +36,8 @@ type AuthContext={profile:Profile|null;register:(username:string,email:string,pa
   changePassword:(next:string,current?:string)=>Promise<void>;
   /** This device just signed in with a password, so the family code needn't be typed again. */
   passwordKnown:boolean;
+  /** Forgot password: the one-time code the owner gave, and a new password. Signs in. */
+  resetPassword:(login:string,code:string,next:string)=>Promise<void>;
   /** True in demo mode: sample data, no account, no server calls. */
   demo:boolean;enterDemo:()=>void;
   /** A guest link is signing in, or why it could not. */
@@ -48,7 +50,10 @@ async function parseSession(response:Response):Promise<Session>{
     const messages:Record<string,string>={EMAIL_TAKEN:'Email already has an account. Sign in instead.',
       USERNAME_TAKEN:'That display username is taken.',
       MEMBERS_FULL:'CrownIQ is full right now (100 members). Ask the owner for a spot or a guest link.',
-      LIFETIME_FULL:'All 20 lifetime family spots are taken. Ask the owner.',INVALID_CREDENTIALS:'Email, username or password is incorrect.',
+      LIFETIME_FULL:'All 20 lifetime family spots are taken. Ask the owner.',
+      RESET_INVALID:'That reset code isn’t right or has expired. Ask the owner for a new one.',
+      PASSWORD_NOT_NEW:'Choose a password different from the family code.',
+      INVALID_RESET:'Enter your email or username, the 8-character code and a password of at least 12 characters.',INVALID_CREDENTIALS:'Email, username or password is incorrect.',
       TOO_MANY_ATTEMPTS:'Too many attempts. Please wait a minute.',
       INVALID_REGISTRATION:'Use a 3–24 character username with letters, numbers or underscores, and a password of at least 12 characters.'};
     throw new Error(messages[payload.code??'']??'Sign-in failed. Try again.');}
@@ -142,6 +147,13 @@ export function AuthProvider({children}:{children:ReactNode}){
       return fetch(`${base}${path}`,{...init,headers});
     },
     passwordKnown:!!familyPassword,
+    resetPassword:async(login,code,next)=>{
+      if(!base)throw new Error('Set EXPO_PUBLIC_API_URL to your CrownIQ server first.');
+      const response=await fetch(`${base}/v1/auth/reset`,{method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({login,code,newPassword:next})});
+      setFamilyPassword('');
+      signIn(await parseSession(response));
+    },
     changePassword:async(next,entered)=>{
       if(!base||!session)throw new Error('Sign in to continue.');
       // The family code is the current password: it was the one used to sign in.

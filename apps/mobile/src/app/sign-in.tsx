@@ -8,13 +8,15 @@ import { GhostButton, PrimaryButton } from '../components/ui/Controls';
 import { colors, radius } from '../theme';
 
 export default function SignIn() {
-  const { login, register, enterDemo, guest } = useAuth();
+  const { login, register, enterDemo, guest, resetPassword } = useAuth();
+  const [resetting, setResetting] = useState(false), [code, setCode] = useState('');
   const [creating, setCreating] = useState(true), [username, setUsername] = useState(''),
     [email, setEmail] = useState(''), [password, setPassword] = useState(''),
     [busy, setBusy] = useState(false), [error, setError] = useState('');
   const submit = async () => {
     setBusy(true); setError('');
-    try { if (creating) await register(username.trim(), email.trim(), password);
+    try { if (resetting) await resetPassword(email.trim(), code.trim(), password);
+      else if (creating) await register(username.trim(), email.trim(), password);
       else await login(email.trim(), password); }
     catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not sign in.'); }
     finally { setBusy(false); }
@@ -35,9 +37,10 @@ export default function SignIn() {
             : <Text accessibilityRole="alert" style={styles.error}>{guest.message}</Text>}
         </View>}
         <View style={styles.panel}>
-          <Text style={styles.title}>{creating ? 'Create your profile' : 'Welcome back'}</Text>
-          <Text style={styles.detail}>Your saved picks and private Crowns belong to your profile.</Text>
-          {creating && <View style={styles.field}><Text style={styles.label}>Display username</Text>
+          <Text style={styles.title}>{resetting ? 'Reset your password' : creating ? 'Create your profile' : 'Welcome back'}</Text>
+          <Text style={styles.detail}>{resetting ? 'Ask the owner for a reset code, then enter it here with a new password.'
+            : 'Your saved picks and private Crowns belong to your profile.'}</Text>
+          {creating && !resetting && <View style={styles.field}><Text style={styles.label}>Display username</Text>
             <TextInput accessibilityLabel="Display username" autoCapitalize="none" autoCorrect={false}
               autoComplete="username-new" value={username} onChangeText={setUsername}
               placeholder="Choose a username" placeholderTextColor={colors.textFaint} style={styles.input} /></View>}
@@ -46,17 +49,22 @@ export default function SignIn() {
               autoComplete={creating ? 'email' : 'username'} keyboardType={creating ? 'email-address' : 'default'}
               value={email} onChangeText={setEmail} placeholder={creating ? 'you@example.com' : 'Email or username'}
               placeholderTextColor={colors.textFaint} style={styles.input} /></View>
-          <View style={styles.field}><Text style={styles.label}>Password</Text>
-            <TextInput accessibilityLabel="Password" secureTextEntry
-              autoComplete={creating ? 'new-password' : 'current-password'} value={password} onChangeText={setPassword}
-              placeholder={creating ? 'At least 12 characters' : 'Your password'}
+          {resetting && <View style={styles.field}><Text style={styles.label}>Reset code</Text>
+            <TextInput accessibilityLabel="Reset code" autoCapitalize="characters" autoCorrect={false} value={code}
+              onChangeText={setCode} placeholder="ABCD-2345" placeholderTextColor={colors.textFaint} style={styles.input} /></View>}
+          <View style={styles.field}><Text style={styles.label}>{resetting ? 'New password' : 'Password'}</Text>
+            <TextInput accessibilityLabel={resetting ? 'New password' : 'Password'} secureTextEntry
+              autoComplete={creating || resetting ? 'new-password' : 'current-password'} value={password} onChangeText={setPassword}
+              placeholder={creating || resetting ? 'At least 12 characters' : 'Your password'}
               placeholderTextColor={colors.textFaint} style={styles.input} /></View>
           {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
           {busy ? <ActivityIndicator color={colors.mint} style={styles.busy} />
-            : <PrimaryButton label={creating ? 'Create profile' : 'Sign in'} onPress={() => void submit()} />}
-          <Pressable accessibilityRole="button" onPress={() => { setCreating(!creating); setError(''); }}
-            style={styles.switch}><Text style={styles.switchText}>
-              {creating ? 'Already have a profile? Sign in' : 'New to CrownIQ? Create a profile'}</Text></Pressable>
+            : <PrimaryButton label={resetting ? 'Reset password' : creating ? 'Create profile' : 'Sign in'} onPress={() => void submit()} />}
+          {!creating && !resetting && <Pressable accessibilityRole="button" onPress={() => { setResetting(true); setError(''); }}
+            style={styles.switch}><Text style={styles.switchText}>Forgot password?</Text></Pressable>}
+          <Pressable accessibilityRole="button" onPress={() => { if (resetting) setResetting(false); else setCreating(!creating);
+            setError(''); }} style={styles.switch}><Text style={styles.switchText}>
+              {resetting ? 'Back to sign in' : creating ? 'Already have a profile? Sign in' : 'New to CrownIQ? Create a profile'}</Text></Pressable>
         </View>
 
         <View style={styles.demo}>

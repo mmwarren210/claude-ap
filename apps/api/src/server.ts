@@ -404,6 +404,29 @@ export function buildServer(options: ServerOptions = {}) {
     return user?{profile:{publicId:user.publicId,username:user.username,email:user.email,
       plan:user.plan,...user.mustChangePassword?{mustChangePassword:true}:{}}}:reply.code(401).send({code:'SIGN_IN_REQUIRED'});
   });
+  // Forgot password: the member enters the one-time code the owner gave them and a new password.
+  app.post('/v1/auth/reset',async(request,reply)=>{
+    if(!options.product)return reply.code(503).send({code:'PROFILES_UNCONFIGURED'});
+    if(limited(`reset:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
+    const input=z.object({login:z.string().trim().min(1).max(254),code:z.string().trim().min(8).max(20),newPassword:password})
+      .strict().safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'INVALID_RESET'});
+    try{return await options.product.resetPassword(input.data.login,input.data.code,input.data.newPassword);}
+    catch(error){const code=(error as Error).message;
+      if(code==='RESET_INVALID')return reply.code(403).send({code});
+      if(code==='PASSWORD_NOT_NEW')return reply.code(409).send({code});
+      return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
+  });
+  // The owner makes a one-time reset code for a member who forgot their password (no email service yet).
+  app.post('/v1/owner/members/reset-code',async(request,reply)=>{
+    const user=await currentUser(request);
+    if(!options.product||!options.ownerPublicId||user?.publicId!==options.ownerPublicId)return reply.code(404).send({code:'NOT_FOUND'});
+    const input=z.object({login:z.string().trim().min(1).max(254)}).strict().safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'LOGIN_REQUIRED'});
+    try{return await options.product.createResetCode(input.data.login);}
+    catch(error){return (error as Error).message==='ACCOUNT_NOT_FOUND'?reply.code(404).send({code:'ACCOUNT_NOT_FOUND'})
+      :reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
+  });
   app.post('/v1/auth/password',async(request,reply)=>{
     const user=await currentUser(request);
     if(!user||!options.product)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});

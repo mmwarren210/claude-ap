@@ -301,3 +301,25 @@ test('a personal Crown keeps the user own calls outside the tracked record',asyn
     assert.equal((await ledger.pendingPersonalLegs()).length,1);
   }finally{await rm(folder,{recursive:true,force:true});}
 });
+
+test('a forgotten password resets with a one-time owner code that expires, signs the member in and ends old sessions',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-reset-'));
+  try{let clock=start;
+    const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>clock,undefined,undefined,0,100,'Family-Code-For-Tests!');
+    const first=await ledger.register('forgot@example.org','long-private-passphrase','Forgot_one');
+    await assert.rejects(ledger.createResetCode('Nobody_here'),/ACCOUNT_NOT_FOUND/);
+    const { code, username } = await ledger.createResetCode('forgot@example.org');
+    assert.equal(username,'Forgot_one');
+    assert.match(code,/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    await assert.rejects(ledger.resetPassword('Forgot_one','AAAA-AAAA','a-brand-new-passphrase'),/RESET_INVALID/);
+    await assert.rejects(ledger.resetPassword('Forgot_one',code,'Family-Code-For-Tests!'),/PASSWORD_NOT_NEW/);
+    const reset=await ledger.resetPassword('forgot_one',code.toLowerCase().replace('-',' '),'a-brand-new-passphrase');
+    assert.ok(reset.token,'signed in');
+    assert.equal(await ledger.authenticate(first.token),null,'the old session ends');
+    await assert.rejects(ledger.resetPassword('Forgot_one',code,'another-new-passphrase'),/RESET_INVALID/,'a code works once');
+    assert.ok((await ledger.login('Forgot_one','a-brand-new-passphrase')).token);
+    const late=await ledger.createResetCode('Forgot_one');
+    clock=new Date(start.getTime()+25*3600_000);
+    await assert.rejects(ledger.resetPassword('Forgot_one',late.code,'another-new-passphrase'),/RESET_INVALID/,'expires in 24 hours');
+  }finally{await rm(folder,{recursive:true,force:true});}
+});
