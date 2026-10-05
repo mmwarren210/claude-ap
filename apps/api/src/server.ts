@@ -1,5 +1,9 @@
 import type { BaseRates, Trend } from './base-rates.js';
 import { lineShop } from './line-shop.js';
+import { consensusGameLines, exchangeGamePicks, exchangePropPicks, playerStarts, propLines } from './exchange-picks.js';
+import { sameGame } from './team-match.js';
+import { bookLines } from './book-picks.js';
+import type { BookFallback } from './book-picks.js';
 import type { ShopEntry, ShopPick } from './line-shop.js';
 import { HistoryReads } from './history-read.js';
 import { statApiValueFor } from './stat-api-gkr-evidence.js';
@@ -269,8 +273,9 @@ export function buildServer(options: ServerOptions = {}) {
           picks.push({kind:'books',line:lines.get(lineId)!,side:pick.side,strength:pick.fair});
         for(const book of sportsbooks){
           const result=await picksFor(book);
+          // GKR's book picks keep their own record; History and Value book picks are graded as kind book-history/book-value.
           for(const pick of result?.picks??[]){const line=result!.lines.get(pick.id);
-            if(line)picks.push({kind:`book:${book}`,line,side:pick.side,strength:pick.gkr.score});}
+            if(line)picks.push({kind:pick.by==='GKR'?`book:${book}`:pick.by==='HISTORY'?'book-history':'book-value',line,side:pick.side,strength:pick.score});}
         }
       }
       // GKR and GKR Beta on the same plays, so their records compare fairly.
@@ -323,12 +328,12 @@ export function buildServer(options: ServerOptions = {}) {
   const refreshExtraSeconds=async()=>{
     const next:typeof extraSeconds=[];const seen=new Set<string>();
     const bookPicksAll=(await Promise.all(sportsbooks.map(async(book)=>{const result=await picksFor(book);
-      return (result?.picks??[]).map((pick)=>({pick,line:result!.lines.get(pick.id)}));}))).flat()
-      .sort((a,b)=>b.pick.gkr.score-a.pick.gkr.score);
+      return (result?.picks??[]).filter((pick)=>pick.gkr).map((pick)=>({pick,line:result!.lines.get(pick.id)}));}))).flat()
+      .sort((a,b)=>b.pick.score-a.pick.score);
     for(const {pick,line} of bookPicksAll){
       const key=`${line?.eventId}|${line?.playerId}|${pick.market}`;
       if(!line||seen.has(key)||next.length>=6)continue;
-      seen.add(key);next.push({line,gkr:{direction:pick.side,score:pick.gkr.score,modelVersion:pick.gkr.modelVersion}});
+      seen.add(key);next.push({line,gkr:{direction:pick.side,score:pick.gkr!.score,modelVersion:pick.gkr!.modelVersion}});
     }
     for(const platform of ['kalshi','polymarket'] as const){
       const result=await marketPicksFor(platform);
@@ -1299,8 +1304,15 @@ export function buildServer(options: ServerOptions = {}) {
     const cached=bookPickCache.get(book);
     if(cached&&now.getTime()-cached.at<2*60_000&&key.every((item,index)=>cached.key[index]===item))return cached;
     const lines=new Map<string,PropLine>();
+    // The same History Reads every tab uses, at the book's own number (blended with the book's no-vig chance).
+    const candidates=bookLines(book,prices,board.board.lines,now);
+    const fairOver=new Map(candidates.map((item)=>[item.line.id,item.price.fairOver]));
+    const reads=await historyReads.readsFor(candidates.map((item)=>item.line),(id)=>fairOver.get(id)??null).catch(()=>new Map<string,HistoryRead>());
+    const history=new Map<string,BookFallback>();
+    for(const [lineId,read] of reads)if(read.direction!=='PASS'&&!read.lean&&read.score!==null)
+      history.set(lineId,{side:read.direction,score:read.score,note:`History: ${read.text} (${read.source})`});
     const picks=bookPicks(book,prices,board.board.lines,new Map(board.analyses.map((item)=>[item.lineId,item])),
-      (items)=>service.scoreLines(items),now,undefined,lines);
+      (items)=>service.scoreLines(items),now,undefined,lines,history);
     const entry={at:now.getTime(),key,picks,fetchedAt,lines};
     bookPickCache.set(book,entry);
     return entry;
@@ -1367,13 +1379,37 @@ export function buildServer(options: ServerOptions = {}) {
     return {...feed,live:false};
   }
   async function marketPicksFor(platform:MarketPlatform){
-    if(!options.contextFeeds)return null;
-    const [markets,games]=await Promise.all([marketItems(platform),options.contextFeeds.items<GameLine>('pinnacle')]);
-    // Pinnacle is pulled twice a day; a market compared with Pinnacle prices more than 6 hours old would show edges that
-    // are only Pinnacle being out of date, so no picks then.
+    if(!options.contextFeeds&&!options.sharpProps)return null;
+    const [markets,games]=await Promise.all([marketItems(platform),
+      options.contextFeeds?options.contextFeeds.items<GameLine>('pinnacle'):Promise.resolve({fetchedAt:null,items:[] as GameLine[]})]);
+    // Pinnacle is pulled a few times a day; a market compared with Pinnacle prices more than 6 hours old would show edges
+    // that are only Pinnacle being out of date. The sportsbooks' hourly no-vig lines (SharpAPI) fill in then, and for games
+    // Pinnacle doesn't carry.
     const pinnacleStale=!games.fetchedAt||now().getTime()-Date.parse(games.fetchedAt)>6*3600_000;
-    return {fetchedAt:markets.fetchedAt,live:markets.live,pinnacleAt:games.fetchedAt,pinnacleStale,
-      picks:pinnacleStale?[]:marketPicks(platform,markets.items,games.items,now())};
+    const extras=options.sharpProps?await options.sharpProps.extras().catch(()=>null):null;
+    const fresh=extras?.fetchedAt&&now().getTime()-Date.parse(extras.fetchedAt)<3*3600_000?extras:null;
+    const consensus=fresh?consensusGameLines(fresh.games):[];
+    const pinnacle=pinnacleStale?[]:games.items;
+    const fairLines=[...pinnacle,...consensus.filter((line)=>!pinnacle.some((item)=>item.market===line.market&&sameGame(item,line)))];
+    const picks=[...marketPicks(platform,markets.items,fairLines,now())];
+    if(fresh){
+      // The exchange's own markets from SharpAPI (every league, totals too), and Kalshi's player props with History.
+      const more=[...exchangeGamePicks(platform,fresh.games,now())];
+      if(platform==='kalshi'){
+        const board=service.getBoard();
+        const prices=(await options.sharpProps!.current()).prices;
+        const lines=propLines(fresh.overOnly,board?.board.lines??[],now(),playerStarts(prices,board?.board.lines??[]));
+        const reads=await historyReads.readsFor([...lines.values()]).catch(()=>new Map<string,HistoryRead>());
+        more.push(...exchangePropPicks(fresh.overOnly,prices,lines,reads,now()));
+      }
+      for(const pick of more){
+        const same=picks.findIndex((item)=>item.kind===pick.kind&&pick.kind!=='PROP'&&sameGame(item,pick));
+        if(same<0)picks.push(pick);
+        else if(pick.edge>picks[same]!.edge)picks[same]=pick;
+      }
+    }
+    return {fetchedAt:markets.fetchedAt??fresh?.fetchedAt??null,live:markets.live,pinnacleAt:games.fetchedAt,pinnacleStale,
+      picks:picks.sort((a,b)=>b.edge-a.edge)};
   }
   app.get('/v1/markets/:platform/record',async(request,reply)=>{
     const parsed=z.object({platform:z.enum(['kalshi','polymarket'])}).safeParse(request.params);

@@ -20,7 +20,8 @@ import { ScoreRing } from './ui/ScoreRing';
 type Side = 'MORE' | 'LESS';
 /** One DraftKings or Hard Rock pick, as /v1/books/:book/picks serves it: GKR's side at the book's number. */
 type BookPick = { id: string; league: string; playerName: string; team: string | null; opponent: string | null;
-  eventStartTime: string; market: string; line: number; side: Side; gkr: { score: number }; american: number | null;
+  eventStartTime: string; market: string; line: number; side: Side; by?: 'GKR' | 'HISTORY' | 'VALUE'; score?: number;
+  note?: string | null; gkr: { score: number } | null; american: number | null;
   impliedChance: number | null; pricey: boolean; fairChance: number;
   otherBook: { book: Sportsbook; american: number | null } | null;
   altLine: { book: Sportsbook; line: number; american: number | null } | null;
@@ -28,7 +29,8 @@ type BookPick = { id: string; league: string; playerName: string; team: string |
   prizePicks: { line: number; lineType: string; sides: Side[];
     gkr: { direction: string; score: number | null; reasonCode: string | null } | null } | null };
 /** One Kalshi or Polymarket pick: a game market priced below Pinnacle's no-vig chance. */
-type MarketPick = { id: string; league: string; game: string; startTime: string; kind: 'WINNER' | 'SPREAD'; side: string;
+type MarketPick = { id: string; league: string; game: string; startTime: string; kind: 'WINNER' | 'SPREAD' | 'TOTAL' | 'PROP';
+  by?: 'MARKET' | 'HISTORY'; note?: string; side: string;
   price: number; cost: number; fair: number; edge: number; url: string | null; scout?: AiRead | null };
 
 const bookUrls: Readonly<Record<Sportsbook, string>> = { draftkings: 'https://sportsbook.draftkings.com/',
@@ -101,8 +103,10 @@ function BookCard({ book, pick }: { book: Sportsbook; pick: BookPick }) {
           {pick.side === 'MORE' ? 'OVER' : 'UNDER'} {formatLine(pick.line)}
           <Text style={styles.price}>  {odds(pick.american)}</Text></Text>
       </View>
-      <ScoreRing score={pick.gkr.score} size={60} band={pick.gkr.score >= 92 ? 'CROWN_ELITE' : pick.gkr.score >= 86
+      {pick.gkr ? <ScoreRing score={pick.gkr.score} size={60} band={pick.gkr.score >= 92 ? 'CROWN_ELITE' : pick.gkr.score >= 86
         ? 'CROWN_STRONG' : pick.gkr.score >= 80 ? 'PLAYABLE' : 'LEAN'} />
+        : <ScoreRing score={pick.score ?? null} band={undefined} size={60} label="PLAY" tint={pick.by === 'VALUE' ? colors.gold : colors.royal}
+          who={pick.by === 'VALUE' ? 'Value' : 'History'} />}
     </View>
     <View style={styles.facts}>
       <View style={styles.fact}><Text style={[styles.factValue, pick.pricey && { color: colors.gold }]}>
@@ -113,14 +117,15 @@ function BookCard({ book, pick }: { book: Sportsbook; pick: BookPick }) {
         {other ? odds(other.american) : '—'}</Text>
         <Text style={styles.factLabel}>{other ? sourceNames[other.book] : 'Other book'}</Text></View>
     </View>
+    {!pick.gkr && !!pick.note && <Text style={[styles.note, { color: pick.by === 'VALUE' ? colors.gold : colors.royal }]}>
+      {pick.by === 'VALUE' ? 'Value' : 'History'} pick, not a GKR score · {pick.note}</Text>}
     <Text style={styles.note}>{prizePicksNote(pick)}{better ? ' · Best price' : ''}</Text>
     {pick.altLine && <Text style={styles.altNote}>{sourceNames[pick.altLine.book]} has {pick.side === 'MORE' ? 'Over' : 'Under'}
       {' '}{formatLine(pick.altLine.line)} at {odds(pick.altLine.american)}, an easier number at a fair price.
       {book === 'draftkings' ? ' DraftKings usually offers alternate lines too: check its app for a ' +
         `${pick.side === 'MORE' ? 'lower' : 'higher'} number.` : ''}</Text>}
     <ScoutVerdict read={pick.scout ?? undefined} gkrDirection={pick.side} />
-    {pick.pricey && <Text style={styles.pricyNote}>This price needs {pct(pick.impliedChance)} to break even. GKR’s score is a
-      strength rating, not a win chance, so weigh the price before betting.</Text>}
+    {pick.pricey && <Text style={styles.pricyNote}>This price needs {pct(pick.impliedChance)} to break even.{pick.gkr ? ' GKR’s score is a strength rating, not a win chance, so weigh the price before betting.' : ''}</Text>}
   </View>;
 }
 
@@ -135,7 +140,8 @@ function MarketCard({ platform, pick }: { platform: MarketPlatform; pick: Market
     </View>
     <View style={styles.middle}>
       <View style={styles.grow}>
-        <Text style={styles.stat}>{pick.kind === 'WINNER' ? 'Game winner' : 'Spread'}</Text>
+        <Text style={styles.stat}>{pick.kind === 'WINNER' ? 'Game winner' : pick.kind === 'SPREAD' ? 'Spread'
+          : pick.kind === 'TOTAL' ? 'Game total' : 'Player prop · Yes'}</Text>
         <Text style={styles.pick} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.7}>{pick.side.toUpperCase()}
           <Text style={styles.price}>  {cents(pick.price)}</Text></Text>
       </View>
@@ -146,11 +152,11 @@ function MarketCard({ platform, pick }: { platform: MarketPlatform; pick: Market
       <View style={styles.fact}><Text style={styles.factValue}>{cents(pick.cost)}</Text>
         <Text style={styles.factLabel}>{platform === 'kalshi' ? 'Cost with fee' : 'Cost'}</Text></View>
       <View style={[styles.fact, styles.divider]}><Text style={styles.factValue}>{pct(pick.fair)}</Text>
-        <Text style={styles.factLabel}>Pinnacle’s chance</Text></View>
+        <Text style={styles.factLabel}>{pick.by === 'HISTORY' ? 'History’s chance' : pick.note ? 'Books’ chance' : 'Pinnacle’s chance'}</Text></View>
       <View style={[styles.fact, styles.divider]}><Text style={[styles.factValue, { color: colors.mint }]}>+{cents(pick.edge)}</Text>
         <Text style={styles.factLabel}>Per $1</Text></View>
     </View>
-    <Text style={styles.note}>Not a GKR score · market price against Pinnacle’s fair odds</Text>
+    <Text style={styles.note}>Not a GKR score · {pick.note ?? 'market price against Pinnacle’s fair odds'}</Text>
     <ScoutVerdict read={pick.scout ?? undefined} gkrDirection="MORE" />
     {!!pick.url && <GhostButton label={`Open in ${sourceNames[platform]}`} icon="open-in-new"
       onPress={() => void Linking.openURL(pick.url!)} />}
@@ -227,11 +233,13 @@ export function BookBoard({ book, onSource }: { book: Sportsbook; onSource: (sou
     <BoardPicker value={book} onChange={onSource} />
     {chips}
     {state === 'ready' && <Text style={styles.status}>{shown.length} {shown.length === 1 ? 'pick' : 'picks'}{ago(fetchedAt)}
-      {' '}· GKR picks only</Text>}
-    <Text style={styles.explain}>GKR scores each {sourceNames[book]} prop at {sourceNames[book]}’s own number, using the same
-      research as PrizePicks. Only lines GKR picks a side on show. “Price needs” is the win rate the odds require.</Text>
+      </Text>}
+    <Text style={styles.explain}>Every {sourceNames[book]} prop at {sourceNames[book]}’s own number, with the same research as
+      PrizePicks: GKR’s pick first; where GKR has none, the History Read (the player’s recent games against this number,
+      blended with the book’s fair price); then Value, where this price beats the other book’s fair price. “Price needs” is
+      the win rate the odds require, and “Check lower/higher line” points to an easier number at a fair price.</Text>
     {shown.length >= 2 && <SlipPanel size={size} setSize={(value) => { setSize(value); setBuilt(0); }} built={built > 0} max={book === 'draftkings' ? 8 : 6}
-      onBuild={build} note="GKR’s strongest picks, fairly priced ones first, one per player. Bet them as singles or a parlay." />}
+      onBuild={build} note="GKR’s picks first, then History and Value; fairly priced ones first, one per player. Bet them as singles or a parlay." />}
   </View>;
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <FlatList data={shown} keyExtractor={(pick) => pick.id} contentContainerStyle={styles.content} ListHeaderComponent={header}
@@ -248,7 +256,7 @@ export function BookBoard({ book, onSource }: { book: Sportsbook; onSource: (sou
         ? 'Loading picks' : state === 'error' ? 'Picks unavailable' : `No ${sourceNames[book]} picks right now`}
         detail={state === 'demo' ? 'The demo shows PrizePicks only.' : state === 'error'
           ? 'Could not reach CrownIQ. Try again in a moment.'
-          : 'Picks show once the day’s research loads (8 and 11 AM ET) and GKR backs a side at the book’s number.'} />} />
+          : 'Picks show once the book’s prices load (every hour) and GKR, History or Value backs a side.'} />} />
   </SafeAreaView>;
 }
 

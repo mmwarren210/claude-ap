@@ -8,8 +8,14 @@ import { normalizedName } from './match.js';
 // Reference only: nothing here feeds GKR scoring.
 
 const API = 'https://api.sharpapi.io/api/v1';
+const soccerLeagues = ['england_-_premier_league', 'spain_-_la_liga', 'uefa_-_champions_league', 'germany_-_bundesliga',
+  'italy_-_serie_a', 'france_-_ligue_1', 'usa_-_major_league_soccer', 'uefa_-_europa_league'];
 const leagueSports: Readonly<Record<string, Sport>> = { nfl: 'NFL', ncaaf: 'NCAAFB', mlb: 'MLB', nba: 'NBA', wnba: 'WNBA',
-  nhl: 'NHL' };
+  nhl: 'NHL', atp: 'TENNIS', wta: 'TENNIS', ...Object.fromEntries(soccerLeagues.map((league) => [league, 'SOCCER' as Sport])) };
+/** Every league pulled by default: player props for the ones CrownIQ covers, game lines for all of them. */
+export const sharpLeagues: readonly string[] = ['nfl', 'ncaaf', 'mlb', 'nba', 'wnba', 'nhl', 'atp', 'wta', ...soccerLeagues];
+/** Leagues with game lines only (Kalshi and the books price the games; CrownIQ has no player boards for them). */
+export const gameOnlyLeagues: readonly string[] = ['ncaab', 'ufc'];
 
 const basketball: Readonly<Record<string, string>> = { player_points: 'player_points', player_rebounds: 'player_rebounds',
   player_assists: 'player_assists', player_made_threes: 'player_threes',
@@ -28,9 +34,16 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
     player_receiving_yards: 'player_reception_yds' },
   MLB: { player_hits: 'batter_hits', 'player_hits_+_runs_+_rbis': 'batter_hits_runs_rbis', player_home_runs: 'batter_home_runs',
     player_total_bases: 'batter_total_bases', player_walks: 'batter_walks', player_rbis: 'rbis', player_runs: 'runs',
-    player_strikeouts: 'pitcher_strikeouts' },
+    player_strikeouts: 'pitcher_strikeouts', player_singles: 'singles', player_doubles: 'doubles',
+    player_stolen_bases: 'stolen_bases', player_hits_allowed: 'hits_allowed', player_earned_runs: 'earned_runs',
+    player_walks_allowed: 'walks_allowed', player_pitching_outs: 'pitching_outs' },
   NBA: basketball, WNBA: basketball,
-  NHL: { player_shots_on_goal: 'shots_on_goal', player_points: 'points', player_saves: 'saves' },
+  NHL: { player_shots_on_goal: 'shots_on_goal', player_points: 'points', player_saves: 'saves', player_assists: 'assists',
+    player_goals: 'goals', player_blocked_shots: 'blocked_shots', player_power_play_points: 'power_play_points' },
+  TENNIS: { player_total_games: 'total_games', player_games_won: 'games_won', player_aces: 'aces',
+    player_double_faults: 'double_faults' },
+  SOCCER: { player_shots: 'shots', player_shots_on_target: 'sot', player_assists: 'assists', player_goals: 'goals',
+    player_fouls: 'fouls', player_saves: 'goalie_saves' },
 };
 
 /** One book's de-vigged price for one player, stat and number. */
@@ -76,9 +89,64 @@ export function fairPrices(rows: readonly unknown[]): FairPrice[] {
   return prices;
 }
 
+/** A one-sided price (Kalshi's player props sell "Yes" on the over only): the price is the chance it implies. */
+export interface OverOnlyPrice {
+  readonly book: string; readonly sport: Sport; readonly player: string; readonly market: string; readonly line: number;
+  readonly price: number; readonly american: number | null; readonly startTime: string;
+  readonly home: string | null; readonly away: string | null;
+}
+/** One side of a full-game line (winner, spread or total) from a book or exchange. */
+export interface GamePrice {
+  readonly book: string; readonly league: string; readonly sport: string; readonly eventId: string;
+  readonly home: string; readonly away: string; readonly startTime: string;
+  readonly market: 'moneyline' | 'spread' | 'total'; readonly line: number | null;
+  readonly side: 'home' | 'away' | 'over' | 'under'; readonly probability: number; readonly american: number | null;
+}
+
+const gameMarkets: Readonly<Record<string, GamePrice['market']>> = { moneyline: 'moneyline', point_spread: 'spread',
+  total_points: 'total', total_runs: 'total', total_goals: 'total', total_games: 'total' };
+export const gameMarketTypes = Object.keys(gameMarkets);
+
+/** Over-only player props (no under to remove the cut from), from the books that sell them that way. */
+export function overOnlyPrices(rows: readonly unknown[], books: readonly string[] = ['kalshi']): OverOnlyPrice[] {
+  const out: OverOnlyPrice[] = [];
+  for (const value of rows) {
+    const row = value as Row;
+    const sport = leagueSports[String(row.league)], market = sport ? marketKeys[sport]?.[String(row.market_type)] : undefined;
+    const price = Number(row.odds_probability);
+    if (!sport || !market || !books.includes(String(row.sportsbook)) || row.selection_type !== 'over' || row.is_live === true ||
+      row.is_active === false || typeof row.line !== 'number' || typeof row.player_name !== 'string' || !(price > 0 && price < 1)) continue;
+    out.push({ book: String(row.sportsbook), sport, player: row.player_name, market, line: row.line, price,
+      american: typeof row.odds_american === 'number' ? row.odds_american : null, startTime: String(row.event_start_time),
+      home: typeof row.home_team === 'string' ? row.home_team : null, away: typeof row.away_team === 'string' ? row.away_team : null });
+  }
+  return out;
+}
+
+/** Full-game winner, spread and total sides (no halves, quarters or 3-way lines). */
+export function gamePrices(rows: readonly unknown[]): GamePrice[] {
+  const out: GamePrice[] = [];
+  for (const value of rows) {
+    const row = value as Row & { sport?: unknown; selection_type?: unknown };
+    const market = gameMarkets[String(row.market_type)], side = String(row.selection_type), probability = Number(row.odds_probability);
+    if (!market || row.is_live === true || row.is_active === false || !(probability > 0 && probability < 1) ||
+      typeof row.home_team !== 'string' || typeof row.away_team !== 'string') continue;
+    if (market === 'total' ? side !== 'over' && side !== 'under' : side !== 'home' && side !== 'away') continue;
+    if (market !== 'moneyline' && typeof row.line !== 'number') continue;
+    // Soccer winners have a draw: a two-way fair price would be wrong, so they're left out (spreads and totals stay).
+    if (market === 'moneyline' && String(row.sport) === 'soccer') continue;
+    out.push({ book: String(row.sportsbook), league: String(row.league), sport: String(row.sport ?? ''), eventId: String(row.event_id),
+      home: row.home_team, away: row.away_team, startTime: String(row.event_start_time), market,
+      line: market === 'moneyline' ? null : row.line as number, side: side as GamePrice['side'], probability,
+      american: typeof row.odds_american === 'number' ? row.odds_american : null });
+  }
+  return out;
+}
+
 export interface SharpPropsStatus {
   readonly configured: boolean; readonly fetchedAt: string | null; readonly prices: number;
   readonly lastError: string | null; readonly requests: number;
+  readonly overOnly?: number; readonly games?: number;
 }
 
 /**
@@ -87,6 +155,8 @@ export interface SharpPropsStatus {
  */
 export class SharpPropsFeed {
   private prices: FairPrice[] = [];
+  private overOnly: OverOnlyPrice[] = [];
+  private games: GamePrice[] = [];
   private fetchedAt: string | null = null;
   private lastError: string | null = null;
   private requests = 0;
@@ -105,8 +175,9 @@ export class SharpPropsFeed {
     this.loaded = true;
     if (!this.file) return;
     try {
-      const saved = JSON.parse(await readFile(this.file, 'utf8')) as { fetchedAt: string; prices: FairPrice[] };
-      this.prices = saved.prices; this.fetchedAt = saved.fetchedAt;
+      const saved = JSON.parse(await readFile(this.file, 'utf8')) as { fetchedAt: string; prices: FairPrice[];
+        overOnly?: OverOnlyPrice[]; games?: GamePrice[] };
+      this.prices = saved.prices; this.fetchedAt = saved.fetchedAt; this.overOnly = saved.overOnly ?? []; this.games = saved.games ?? [];
     } catch { /* first run */ }
   }
 
@@ -118,10 +189,16 @@ export class SharpPropsFeed {
     return { fetchedAt: this.fetchedAt, prices: this.prices };
   }
 
+  /** Kalshi's over-only player props and every book's full-game lines, from the same refresh. */
+  async extras(): Promise<{ fetchedAt: string | null; overOnly: OverOnlyPrice[]; games: GamePrice[] }> {
+    await this.load();
+    return { fetchedAt: this.fetchedAt, overOnly: this.overOnly, games: this.games };
+  }
+
   async status(): Promise<SharpPropsStatus> {
     await this.load();
     return { configured: !!this.apiKey, fetchedAt: this.fetchedAt, prices: this.prices.length, lastError: this.lastError,
-      requests: this.requests };
+      requests: this.requests, overOnly: this.overOnly.length, games: this.games.length };
   }
 
   /** One refresh at a time: a second call waits for the running one instead of doubling the requests. */
@@ -133,15 +210,20 @@ export class SharpPropsFeed {
   private async refreshNow(): Promise<SharpPropsStatus> {
     await this.load();
     if (!this.apiKey) { this.lastError = 'SHARPAPI_KEY_MISSING'; return this.status(); }
-    const rows: unknown[] = [];
+    const rows: unknown[] = [], gameRows: unknown[] = [];
+    const books = this.options.books ?? ['draftkings', 'hardrock', 'kalshi'];
+    // Player props for the leagues CrownIQ covers, then full-game lines (winner, spread, total) for every league.
+    const jobs = [...(this.options.leagues ?? sharpLeagues).map((league) => ({ league, props: true })),
+      ...[...(this.options.leagues ?? sharpLeagues), ...(this.options.leagues ? [] : gameOnlyLeagues)].map((league) => ({ league, props: false }))];
     try {
-      for (const league of this.options.leagues ?? ['nfl', 'ncaaf', 'mlb', 'nba', 'wnba', 'nhl']) {
+      for (const { league, props } of jobs) {
         let cursor: string | null = null;
-        for (let page = 0; page < (this.options.maxPagesPerLeague ?? 40); page++) {
+        for (let page = 0; page < (props ? this.options.maxPagesPerLeague ?? 60 : 10); page++) {
           const url = new URL(`${API}/odds`);
-          url.searchParams.set('sportsbooks', (this.options.books ?? ['draftkings', 'hardrock']).join(','));
+          url.searchParams.set('sportsbooks', books.slice(0, 5).join(','));
           url.searchParams.set('league', league);
-          url.searchParams.set('is_player_prop', 'true');
+          if (props) url.searchParams.set('is_player_prop', 'true');
+          else url.searchParams.set('market_type', gameMarketTypes.join(','));
           url.searchParams.set('is_live', 'false');
           url.searchParams.set('limit', '200');
           if (cursor) url.searchParams.set('cursor', cursor);
@@ -150,7 +232,7 @@ export class SharpPropsFeed {
           if (response.status === 404 || response.status === 400) break; // league not offered
           if (!response.ok) throw new Error(`SHARPAPI_HTTP_${response.status}`);
           const body = await response.json() as { data?: unknown[]; pagination?: { has_more?: boolean; next_cursor?: string } };
-          rows.push(...(body.data ?? []));
+          (props ? rows : gameRows).push(...(body.data ?? []));
           if (!body.pagination?.has_more || !body.pagination.next_cursor) break;
           cursor = body.pagination.next_cursor;
         }
@@ -161,11 +243,12 @@ export class SharpPropsFeed {
     }
     const prices = fairPrices(rows);
     if (!prices.length) { this.lastError = 'NO_PRICES'; return this.status(); }
-    this.prices = prices; this.fetchedAt = this.clock().toISOString(); this.lastError = null;
+    this.prices = prices; this.overOnly = overOnlyPrices(rows); this.games = gamePrices(gameRows);
+    this.fetchedAt = this.clock().toISOString(); this.lastError = null;
     if (this.file) {
       await mkdir(dirname(this.file), { recursive: true });
       const temporary = `${this.file}.${randomUUID()}.tmp`;
-      await writeFile(temporary, JSON.stringify({ fetchedAt: this.fetchedAt, prices }));
+      await writeFile(temporary, JSON.stringify({ fetchedAt: this.fetchedAt, prices, overOnly: this.overOnly, games: this.games }));
       await rename(temporary, this.file);
     }
     try { await this.onRefreshed?.(prices, this.clock()); } catch { /* history is best effort */ }

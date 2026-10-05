@@ -12,7 +12,13 @@ export const marketPlatforms: readonly MarketPlatform[] = ['kalshi', 'polymarket
 
 export interface MarketPick {
   readonly id: string; readonly platform: MarketPlatform; readonly league: string; readonly game: string;
-  readonly startTime: string; readonly kind: 'WINNER' | 'SPREAD'; readonly side: string; readonly question: string;
+  readonly startTime: string; readonly kind: 'WINNER' | 'SPREAD' | 'TOTAL' | 'PROP'; readonly side: string; readonly question: string;
+  /** A total pick's side and number (graded on the combined score). */
+  readonly total?: { readonly side: 'over' | 'under'; readonly line: number };
+  /** What backs the price: the market's fair chance (default) or, for props, the player's history alone. */
+  readonly by?: 'MARKET' | 'HISTORY';
+  /** Why, in plain words. */
+  readonly note?: string;
   /** Pinnacle's names for the two teams, which team the side is, and its spread (null for a winner pick), for grading. */
   readonly home: string; readonly away: string; readonly team: 'home' | 'away'; readonly handicap: number | null;
   /** The market's price for this side, 0-1 (cents on the dollar), and the cost per $1 contract with the platform fee. */

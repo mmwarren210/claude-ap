@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Analysis, PropLine } from '@crowniq/contracts';
 import { fixtureAnalysis, fixtureLine } from '../../../packages/engine/test/fixtures.js';
-import { bookLadder, bookPicks, impliedChance, mainLines } from '../src/book-picks.js';
+import { bookLadder, bookLines, bookPicks, impliedChance, mainLines } from '../src/book-picks.js';
 import type { FairPrice } from '../src/context/sharp-props.js';
 
 const now = new Date('2030-09-24T12:00:00Z');
@@ -26,7 +26,7 @@ test('book picks: GKR side at the book number, no PASS, one per player and stat,
   assert.ok(asked.every((line) => line.availableDirections.length === 2 && line.lineType === 'REGULAR'));
   assert.equal(picks.length, 1, 'PASS left out; one pick per player and stat');
   const [pick] = picks;
-  assert.deepEqual([pick!.line, pick!.side, pick!.gkr.score, pick!.american, pick!.fairChance], [245.5, 'MORE', 82, 100, 0.48]);
+  assert.deepEqual([pick!.line, pick!.side, pick!.gkr!.score, pick!.american, pick!.fairChance], [245.5, 'MORE', 82, 100, 0.48]);
   assert.equal(pick!.otherBook, null, 'Hard Rock has no 245.5');
   assert.deepEqual(pick!.prizePicks, { line: 240.5, lineType: 'REGULAR', sides: ['MORE', 'LESS'],
     gkr: { direction: 'MORE', score: 85, reasonCode: null } });
@@ -68,4 +68,23 @@ test('DraftKings picks point to an easier Hard Rock number: lower for Over, the 
   const less = (lines: readonly PropLine[]) => lines.map((item) => fixtureAnalysis(item, 'LESS', 85));
   assert.deepEqual(bookPicks('draftkings', prices, board, new Map(), less, now)[0]!.altLine,
     { book: 'hardrock', line: 255.5, american: -135 }, 'Under: a higher number');
+});
+
+test('book picks without GKR: the History Read at the book number, then Value against the other book, even off PrizePicks', () => {
+  const board = [fixtureLine({ id: 'pp-b', playerId: 'b', playerName: 'Bo Pass', threshold: 200.5 })];
+  const prices = [price('draftkings', 'Bo Pass', 199.5, 0.5, -110, -110),
+    price('draftkings', 'Val Edge', 50.5, 0.47, 120, -145), price('hardrock', 'Val Edge', 50.5, 0.52, -108, -112),
+    price('draftkings', 'Even Steven', 30.5, 0.5, -110, -110), price('hardrock', 'Even Steven', 30.5, 0.5, -110, -110)];
+  const pass = (lines: readonly PropLine[]): Analysis[] => lines.map((line) => ({ ...fixtureAnalysis(line), direction: 'PASS', score: null }));
+  const boLine = bookLines('draftkings', prices, board, now).find((item) => item.price.player === 'Bo Pass')!.line;
+  const history = new Map([[boLine.id, { side: 'LESS' as const, score: 64, note: 'History: Over in 3 of last 10' }]]);
+  const lineIds = new Map<string, PropLine>();
+  const picks = bookPicks('draftkings', prices, board, new Map(), pass, now, undefined, lineIds, history);
+  const bo = picks.find((pick) => pick.playerName === 'Bo Pass'), val = picks.find((pick) => pick.playerName === 'Val Edge');
+  assert.ok(bo, `history pick keyed by the line id; ids: ${[...lineIds.keys()].join(', ')}`);
+  assert.deepEqual([bo!.by, bo!.side, bo!.score, bo!.gkr], ['HISTORY', 'LESS', 64, null]);
+  assert.deepEqual([val!.by, val!.side, val!.score, val!.prizePicks], ['VALUE', 'MORE', 52, null],
+    'DraftKings +120 needs 45%; Hard Rock’s fair Over is 52%; Val Edge isn’t on PrizePicks');
+  assert.ok(!picks.some((pick) => pick.playerName === 'Even Steven'), 'no edge, no history: no pick');
+  assert.deepEqual(picks.map((pick) => pick.by), ['HISTORY', 'VALUE'], 'History before Value');
 });

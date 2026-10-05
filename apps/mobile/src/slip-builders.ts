@@ -1,7 +1,7 @@
 // Slip builders for the sportsbook and prediction-market tabs. Pure, so tests can load them.
 
 export type BookSlipPick = { id: string; eventStartTime: string; playerName: string; market: string; line: number;
-  side: 'MORE' | 'LESS'; gkr: { score: number }; american: number | null; pricey: boolean };
+  side: 'MORE' | 'LESS'; gkr: { score: number } | null; score?: number; american: number | null; pricey: boolean };
 export type MarketSlipPick = { id: string; game: string; startTime: string; edge: number; side: string; price: number };
 
 /** Decimal odds for an American price. */
@@ -13,7 +13,8 @@ export const decimalOdds = (american: number) => american > 0 ? 1 + american / 1
  */
 export function buildBookSlip<T extends BookSlipPick>(picks: readonly T[], size: number, nowMs: number, offset = 0): T[] {
   const ordered = picks.filter((pick) => Date.parse(pick.eventStartTime) > nowMs + 10 * 60_000 && pick.american !== null)
-    .sort((a, b) => Number(a.pricey) - Number(b.pricey) || b.gkr.score - a.gkr.score);
+    .sort((a, b) => Number(a.pricey) - Number(b.pricey) || Number(!!b.gkr) - Number(!!a.gkr) ||
+      (b.gkr?.score ?? b.score ?? 0) - (a.gkr?.score ?? a.score ?? 0));
   const rotated = [...ordered.slice(offset), ...ordered.slice(0, offset)];
   const chosen: T[] = [], players = new Set<string>();
   for (const pick of rotated) {

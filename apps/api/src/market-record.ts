@@ -10,11 +10,14 @@ import { easternDay } from './scrapers/spend-budget.js';
 
 const ESPN = 'https://site.api.espn.com/apis/site/v2/sports';
 const leaguePaths: Readonly<Record<string, string>> = { NFL: 'football/nfl', NCAAF: 'football/college-football',
-  NCAAFB: 'football/college-football', MLB: 'baseball/mlb', NBA: 'basketball/nba', WNBA: 'basketball/wnba', NHL: 'hockey/nhl' };
+  NCAAFB: 'football/college-football', MLB: 'baseball/mlb', NBA: 'basketball/nba', WNBA: 'basketball/wnba', NHL: 'hockey/nhl',
+  NCAAB: 'basketball/mens-college-basketball', 'ENGLAND_-_PREMIER_LEAGUE': 'soccer/eng.1', 'SPAIN_-_LA_LIGA': 'soccer/esp.1',
+  'UEFA_-_CHAMPIONS_LEAGUE': 'soccer/uefa.champions', 'GERMANY_-_BUNDESLIGA': 'soccer/ger.1', 'ITALY_-_SERIE_A': 'soccer/ita.1',
+  'FRANCE_-_LIGUE_1': 'soccer/fra.1', 'USA_-_MAJOR_LEAGUE_SOCCER': 'soccer/usa.1', 'UEFA_-_EUROPA_LEAGUE': 'soccer/uefa.europa' };
 
 export type MarketGrade = 'PENDING' | 'WIN' | 'LOSS' | 'PUSH' | 'VOID';
 export interface MarketEntry extends Pick<MarketPick, 'id' | 'platform' | 'league' | 'game' | 'home' | 'away' | 'startTime' |
-  'kind' | 'side' | 'team' | 'handicap' | 'price' | 'cost' | 'fair' | 'edge'> {
+  'kind' | 'side' | 'team' | 'handicap' | 'price' | 'cost' | 'fair' | 'edge' | 'total'> {
   readonly recordedAt: string;
   grade: MarketGrade; final: { home: number; away: number } | null;
 }
@@ -29,7 +32,11 @@ const names = (team: string, candidates: readonly string[]) => candidates.some((
 });
 
 /** The grade of a pick from its game's final score. */
-export function gradeMarket(entry: Pick<MarketEntry, 'kind' | 'team' | 'handicap'>, score: { home: number; away: number }): MarketGrade {
+export function gradeMarket(entry: Pick<MarketEntry, 'kind' | 'team' | 'handicap' | 'total'>, score: { home: number; away: number }): MarketGrade {
+  if (entry.kind === 'TOTAL' && entry.total) {
+    const points = score.home + score.away;
+    return points === entry.total.line ? 'PUSH' : (points > entry.total.line) === (entry.total.side === 'over') ? 'WIN' : 'LOSS';
+  }
   const mine = entry.team === 'home' ? score.home : score.away, theirs = entry.team === 'home' ? score.away : score.home;
   const margin = mine + (entry.kind === 'SPREAD' ? entry.handicap ?? 0 : 0) - theirs;
   return margin > 0 ? 'WIN' : margin < 0 ? 'LOSS' : 'PUSH';
@@ -81,10 +88,11 @@ export class MarketRecord {
     const now = this.clock();
     let added = 0;
     for (const pick of picks) {
-      if (this.entries.has(pick.id) || Date.parse(pick.startTime) <= now.getTime()) continue;
-      const { id, platform, league, game, home, away, startTime, kind, side, team, handicap, price, cost, fair, edge } = pick;
+      // Player props aren't graded from game scores; they stay out of this record.
+      if (pick.kind === 'PROP' || this.entries.has(pick.id) || Date.parse(pick.startTime) <= now.getTime()) continue;
+      const { id, platform, league, game, home, away, startTime, kind, side, team, handicap, price, cost, fair, edge, total } = pick;
       this.entries.set(id, { id, platform, league, game, home, away, startTime, kind, side, team, handicap, price, cost, fair,
-        edge, recordedAt: now.toISOString(), grade: 'PENDING', final: null });
+        edge, ...total ? { total } : {}, recordedAt: now.toISOString(), grade: 'PENDING', final: null });
       added++;
     }
     if (added) await this.save();

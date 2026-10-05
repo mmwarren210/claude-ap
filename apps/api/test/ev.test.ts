@@ -50,7 +50,8 @@ test('the SharpAPI feed pages with the cursor, sends the key, and keeps old pric
   const calls: string[] = [];
   let fail = false;
   const fetchFn = (async (input: URL | string, init?: RequestInit) => {
-    const url = new URL(String(input)); calls.push(url.searchParams.get('cursor') ?? 'first');
+    const url = new URL(String(input));
+    calls.push(`${url.searchParams.get('market_type') ? 'games:' : ''}${url.searchParams.get('cursor') ?? 'first'}`);
     assert.equal((init?.headers as Record<string, string>)['X-API-Key'], 'key');
     if (fail) return new Response('{}', { status: 500 });
     const first = !url.searchParams.get('cursor');
@@ -61,7 +62,7 @@ test('the SharpAPI feed pages with the cursor, sends the key, and keeps old pric
   let reported = 0;
   feed.whenRefreshed((prices) => { reported = prices.length; });
   const status = await feed.refresh();
-  assert.deepEqual(calls, ['first', 'next']);
+  assert.deepEqual(calls, ['first', 'next', 'games:first', 'games:next'], 'player props, then full-game lines, each paged');
   assert.equal(reported, 1, 'each successful refresh is reported for the books history');
   assert.deepEqual([status.prices, status.lastError], [1, null]);
   fail = true;

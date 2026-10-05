@@ -118,3 +118,15 @@ and confirm it ends with a healthy `/health` (see `docs/DEPLOY.md`).
   after its game; a side that hit 57%+ over 60+ lines at that number (or 150+ across the stat) shows as a **Trend**
   (amber, never auto-picked, recorded as shadow kind `trend`). `/v1/hit-rates` gives each source's graded record by
   sport and stat; cards show "Our record" once 10+ picks are graded. All display only; no score changes.
+- **Sportsbook and prediction-market expansion (2026-10-05).** SharpAPI (`context/sharp-props.ts`, hourly) now pulls
+  tennis (ATP/WTA) and eight soccer leagues besides the US leagues, more MLB/NHL stats, Kalshi's over-only player props
+  (`overOnly`) and every book's full-game winner/spread/total lines (`games`; NCAAB and UFC game lines too). Books default
+  to DraftKings, Hard Rock, Kalshi, FanDuel, Polymarket (`CROWNIQ_SHARP_BOOKS`; ones the plan hasn't selected are
+  skipped). DK/HR tabs (`book-picks.ts`): GKR first, then the **History Read at the book's number** (same lookups as
+  every tab, blended with that book's no-vig), then **Value** (price needs 3%+ less than the other book's fair chance);
+  players off PrizePicks get synthetic lines so History still reads them; graded as shadow kinds `book-history` /
+  `book-value`. Kalshi/Polymarket (`exchange-picks.ts`): exchange game lines vs the books' no-vig (3%+ edge, 15–85¢),
+  Kalshi props vs the books (3%+) or History alone (6%+, dropped when History says Less; matched to the player's real
+  next game because Kalshi stamps props with the close date; 20–85¢), and the books' consensus fills in for Pinnacle when
+  it's stale or lacks the game. Totals are graded from final scores; props stay out of the market record. Soccer winners
+  are skipped (draws). Team names match via `team-match.ts`. Display only; no GKR score changes.
