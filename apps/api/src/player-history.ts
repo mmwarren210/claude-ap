@@ -119,13 +119,16 @@ abstract class CachedSource implements HistorySource {
   abstract readonly name: string;
   abstract readonly sports: readonly string[];
   private cache = new Map<string, { until: number; value: Promise<HistoryResult | null> }>();
+  /** The last failure (a code, never a payload), for the server log. */
+  lastError: string | null = null;
   constructor(protected readonly fetchFn: typeof fetch = fetch, protected readonly clock: () => Date = () => new Date()) {}
   async refresh() { return 0; }
   protected abstract load(playerName: string): Promise<HistoryResult | null>;
   games(playerName: string) {
     const key = normalizedName(playerName), now = this.clock().getTime(), cached = this.cache.get(key);
     if (cached && cached.until > now) return cached.value;
-    const value = this.load(playerName).catch(() => null);
+    const value = this.load(playerName).catch((error: unknown) => {
+      this.lastError = String(error instanceof Error ? error.message : error).slice(0, 160); return null; });
     this.cache.set(key, { until: now + 6 * 3600_000, value });
     if (this.cache.size > 5000) this.cache.clear();
     return value;
@@ -153,8 +156,8 @@ export class OpenDotaHistory extends CachedSource {
     return this.pros;
   }
   protected async load(playerName: string): Promise<HistoryResult | null> {
-    const id = (await this.proList()).get(normalizedName(playerName));
-    if (!id) return null;
+    const pros = await this.proList(), id = pros.get(normalizedName(playerName));
+    if (!id) { this.lastError = pros.size ? 'NOT_A_LISTED_PRO' : 'PRO_LIST_EMPTY'; return null; }
     const url = `https://api.opendota.com/api/players/${id}/matches?limit=${KEEP}&lobby_type=1` +
       ['kills', 'deaths', 'assists', 'last_hits', 'start_time', 'leagueid'].map((field) => `&project=${field}`).join('');
     const games = arr(await this.json(url)).flatMap((value) => {
@@ -163,6 +166,7 @@ export class OpenDotaHistory extends CachedSource {
       return [{ date: new Date(start * 1000).toISOString(), opponent: null, stats: { kills: num(row?.kills) ?? NaN,
         deaths: num(row?.deaths) ?? NaN, assists: num(row?.assists) ?? NaN, cs: num(row?.last_hits) ?? NaN } }];
     });
+    if (!games.length) this.lastError = 'NO_TOURNAMENT_MAPS';
     return games.length ? { games, source: this.name, url: `https://www.opendota.com/players/${id}`, perMap: true } : null;
   }
 }
@@ -178,7 +182,9 @@ export class LeaguepediaHistory extends CachedSource {
         'ScoreboardPlayers.CS=CS,ScoreboardPlayers.DateTime_UTC=Date,ScoreboardPlayers.Team=Team',
       where: `ScoreboardPlayers.Link="${name}" OR ScoreboardPlayers.Name="${name}"`,
       order_by: 'ScoreboardPlayers.DateTime_UTC DESC', limit: String(KEEP) });
-    const games = arr(obj(await this.json(`https://lol.fandom.com/api.php?${params}`))?.cargoquery).flatMap((value) => {
+    const body = obj(await this.json(`https://lol.fandom.com/api.php?${params}`));
+    if (body?.error) this.lastError = `CARGO_${String(obj(body.error)?.code ?? 'ERROR').slice(0, 40)}`;
+    const games = arr(body?.cargoquery).flatMap((value) => {
       const row = obj(obj(value)?.title), date = String(row?.Date ?? '');
       if (!Number.isFinite(Date.parse(date.replace(' ', 'T') + 'Z'))) return [];
       return [{ date: new Date(date.replace(' ', 'T') + 'Z').toISOString(), opponent: null, stats: { kills: num(row?.Kills) ?? NaN,
@@ -210,7 +216,8 @@ export class PlayerHistory {
     void this.refresh().then(async () => {
       // One known player per per-player source, so the server log shows each source answering.
       const probes = await Promise.all([['DOTA', 'Yatoro'], ['LOL', 'Faker']].filter(([sport]) => this.supports(sport))
-        .map(async ([sport, name]) => [`${sport} ${name}`, (await this.values(sport, name, 'kills').catch(() => null))?.values.length ?? 0]));
+        .map(async ([sport, name]) => [`${sport} ${name}`, `${(await this.values(sport, name, 'kills').catch(() => null))?.values.length ?? 0}` +
+          `${(this.sourceFor(sport) as { lastError?: string | null } | null)?.lastError ? ` (${(this.sourceFor(sport) as { lastError?: string | null }).lastError})` : ''}`]));
       console.log(`[history] ${JSON.stringify({ ...this.lastRefresh, probes: Object.fromEntries(probes) })}`);
     }).catch(() => undefined);
     this.timer = setInterval(() => { void this.refresh().catch(() => undefined); }, hours * 3600_000);
