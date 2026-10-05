@@ -2,7 +2,7 @@ import type { Analysis, PlayableDirection, PropLine } from '@crowniq/contracts';
 import { createHash } from 'node:crypto';
 import { normalizedName } from './context/match.js';
 import { leagueInfo, leagueLabel } from './scrapers/markets.js';
-import type { FairPrice } from './context/sharp-props.js';
+import type { FairPrice, OverOnlyPrice } from './context/sharp-props.js';
 
 // Sportsbook picks (DraftKings, Hard Rock): GKR on each book's player-prop line, at the book's own number, on the
 // research of the same player and stat on the PrizePicks board (the same way GKR scores Underdog and Pick6 lines).
@@ -28,8 +28,8 @@ export interface BookPick {
   readonly american: number | null; readonly impliedChance: number | null;
   /** The price needs 60% or more to break even (-150 or steeper): labeled, never hidden (owner, 2026-10-05). */
   readonly pricey: boolean;
-  /** The book's no-vig chance of GKR's side. */
-  readonly fairChance: number;
+  /** The book's no-vig chance of the pick's side (null on an over-only prop, which has no under to remove the cut from). */
+  readonly fairChance: number | null;
   /** The other book's price on the same side and number, for line shopping. */
   readonly otherBook: { readonly book: Sportsbook; readonly american: number | null } | null;
   /**
@@ -92,13 +92,34 @@ export function syntheticLine(id: string, price: Pick<FairPrice, 'sport' | 'play
 
 /** Each book main line as a board line: on the PrizePicks player's game when PrizePicks lists them, else synthetic. */
 export interface BookLine { readonly price: FairPrice; readonly research: PropLine | null; readonly line: PropLine }
-export function bookLines(book: Sportsbook, prices: readonly FairPrice[], boardLines: readonly PropLine[], now: Date): BookLine[] {
+/**
+ * A book's over-only props (no under, so no fair chance) as prices with no fair chance: one per player and stat (the number
+ * priced closest to even), and only where the book has no two-sided price for that player and stat.
+ */
+export function overOnlyMains(book: Sportsbook, offers: readonly OverOnlyPrice[], prices: readonly FairPrice[]): FairPrice[] {
+  const statKey = (item: { sport: string; player: string; market: string; startTime: string }) =>
+    JSON.stringify([item.sport, normalizedName(item.player), item.market, dayKey(item.startTime)]);
+  const twoSided = new Set(prices.filter((price) => price.book === book).map(statKey));
+  const best = new Map<string, OverOnlyPrice>();
+  for (const offer of offers) {
+    if (offer.book !== book || twoSided.has(statKey(offer))) continue;
+    const key = statKey(offer), current = best.get(key);
+    if (!current || Math.abs(offer.price - 0.5) < Math.abs(current.price - 0.5)) best.set(key, offer);
+  }
+  return [...best.values()].map((offer) => ({ book, sport: offer.sport, player: offer.player, market: offer.market, line: offer.line,
+    fairOver: Number.NaN, overAmerican: offer.american, underAmerican: null, startTime: offer.startTime, home: offer.home, away: offer.away }));
+}
+
+export function bookLines(book: Sportsbook, prices: readonly FairPrice[], boardLines: readonly PropLine[], now: Date,
+  overOnly: readonly OverOnlyPrice[] = []): BookLine[] {
   const byPlayer = new Map<string, PropLine[]>();
   for (const line of boardLines) {
     const key = JSON.stringify([line.sport, normalizedName(line.playerName), line.market]);
     byPlayer.set(key, [...byPlayer.get(key) ?? [], line]);
   }
-  return mainLines(prices.filter((price) => price.book === book)).flatMap((price): BookLine[] => {
+  return [...mainLines(prices.filter((price) => price.book === book)), ...overOnlyMains(book, overOnly, prices)].flatMap((price): BookLine[] => {
+    // An over-only prop offers only More.
+    const sides: PropLine['availableDirections'] = Number.isNaN(price.fairOver) ? ['MORE'] : ['MORE', 'LESS'];
     const start = Date.parse(price.startTime);
     if (start <= now.getTime()) return [];
     // The PrizePicks line for the same player and stat in the same game (within 6 hours): standard first, then closest.
@@ -108,11 +129,11 @@ export function bookLines(book: Sportsbook, prices: readonly FairPrice[], boardL
         Math.abs(a.threshold - price.line) - Math.abs(b.threshold - price.line))[0] ?? null;
     if (!research) {
       const id = `${book}:x:${hashName(JSON.stringify([price.sport, normalizedName(price.player), price.market, price.line, dayKey(price.startTime)]))}`;
-      return [{ price, research: null, line: syntheticLine(id, price, now) }];
+      return [{ price, research: null, line: { ...syntheticLine(id, price, now), availableDirections: sides } }];
     }
     const id = `${book}:${research.eventId}:${research.playerId}:${price.market}:${price.line}`;
     const { payoutMultiplier: _payout, ...base } = research;
-    const line: PropLine = { ...base, id, sourceLineId: id, threshold: price.line, availableDirections: ['MORE', 'LESS'],
+    const line: PropLine = { ...base, id, sourceLineId: id, threshold: price.line, availableDirections: sides,
       lineType: 'REGULAR' };
     return [{ price, research, line }];
   });
@@ -126,7 +147,8 @@ export function bookLines(book: Sportsbook, prices: readonly FairPrice[], boardL
  */
 export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardLines: readonly PropLine[],
   analyses: ReadonlyMap<string, Analysis>, scoreLines: (lines: readonly PropLine[]) => Analysis[], now: Date,
-  counts?: Record<string, number>, linesOut?: Map<string, PropLine>, history: ReadonlyMap<string, BookFallback> = new Map()): BookPick[] {
+  counts?: Record<string, number>, linesOut?: Map<string, PropLine>, history: ReadonlyMap<string, BookFallback> = new Map(),
+  overOnly: readonly OverOnlyPrice[] = []): BookPick[] {
   const others = new Map(prices.filter((price) => price.book !== book).map((price) =>
     [JSON.stringify([price.sport, normalizedName(price.player), price.market, price.line, dayKey(price.startTime)]), price]));
   // Every number either book prices per player and stat (Hard Rock's ladders), for the easier-line hint.
@@ -136,7 +158,7 @@ export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardL
     const key = JSON.stringify([price.sport, normalizedName(price.player), price.market, dayKey(price.startTime)]);
     ladders.set(key, [...ladders.get(key) ?? [], price]);
   }
-  const all = bookLines(book, prices, boardLines, now);
+  const all = bookLines(book, prices, boardLines, now, overOnly);
   // GKR scores only lines on a PrizePicks player's game (its research); the rest get History and Value.
   const pairs = all.filter((pair): pair is BookLine & { research: PropLine } => pair.research !== null);
   const scored = scoreLines(pairs.map((pair) => pair.line));
@@ -166,12 +188,13 @@ export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardL
     const other = others.get(JSON.stringify([price.sport, normalizedName(price.player), price.market, price.line, dayKey(price.startTime)]));
     const fallback = history.get(line.id);
     // Value: this book's price on a side needs less than the other book's no-vig chance of it.
-    const value = other ? (['MORE', 'LESS'] as const).map((side) => {
+    const value = other ? line.availableDirections.map((side) => {
       const needs = impliedChance(side === 'MORE' ? price.overAmerican : price.underAmerican);
       const fair = side === 'MORE' ? other.fairOver : 1 - other.fairOver;
       return needs === null ? null : { side, edge: fair - needs, fair, needs };
     }).filter((item): item is NonNullable<typeof item> => !!item && item.edge >= VALUE_EDGE).sort((a, b) => b.edge - a.edge)[0] : undefined;
-    const backing = analysis && analysis.direction !== 'PASS' && analysis.score !== null && analysis.modelVersion
+    const backing = analysis && analysis.direction !== 'PASS' && analysis.score !== null && analysis.modelVersion &&
+      line.availableDirections.includes(analysis.direction)
       ? { by: 'GKR' as const, side: analysis.direction, score: analysis.score, note: null,
         gkr: { score: analysis.score, modelVersion: analysis.modelVersion } }
       : fallback ? { by: 'HISTORY' as const, side: fallback.side, score: fallback.score, note: fallback.note, gkr: null }
@@ -199,7 +222,7 @@ export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardL
       by: backing.by, score: Math.round(backing.score), note: backing.note, gkr: backing.gkr,
       american, impliedChance: impliedChance(american),
       pricey,
-      fairChance: Math.round((side === 'MORE' ? price.fairOver : 1 - price.fairOver) * 10_000) / 10_000,
+      fairChance: Number.isNaN(price.fairOver) ? null : Math.round((side === 'MORE' ? price.fairOver : 1 - price.fairOver) * 10_000) / 10_000,
       fairerLine: fairer ? { book: fairer.book as Sportsbook, line: fairer.line,
         american: side === 'MORE' ? fairer.overAmerican : fairer.underAmerican } : null,
       altLine: alt ? { book: alt.book as Sportsbook, line: alt.line, american: side === 'MORE' ? alt.overAmerican : alt.underAmerican } : null,

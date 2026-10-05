@@ -1328,14 +1328,16 @@ export function buildServer(options: ServerOptions = {}) {
     if(cached&&now.getTime()-cached.at<2*60_000&&key.every((item,index)=>cached.key[index]===item))return cached;
     const lines=new Map<string,PropLine>();
     // The same History Reads every tab uses, at the book's own number (blended with the book's no-vig chance).
-    const candidates=bookLines(book,prices,board.board.lines,now);
-    const fairOver=new Map(candidates.map((item)=>[item.line.id,item.price.fairOver]));
+    // Over-only props (DraftKings' soccer shots, no under) join too: History can read them though no fair chance exists.
+    const overOnly=(await options.sharpProps.extras().catch(()=>({overOnly:[]}))).overOnly.filter((offer)=>offer.book===book);
+    const candidates=bookLines(book,prices,board.board.lines,now,overOnly);
+    const fairOver=new Map(candidates.flatMap((item)=>Number.isNaN(item.price.fairOver)?[]:[[item.line.id,item.price.fairOver] as const]));
     const reads=await historyReads.readsFor(candidates.map((item)=>item.line),(id)=>fairOver.get(id)??null).catch(()=>new Map<string,HistoryRead>());
     const history=new Map<string,BookFallback>();
     for(const [lineId,read] of reads)if(read.direction!=='PASS'&&!read.lean&&read.score!==null)
       history.set(lineId,{side:read.direction,score:read.score,note:`History: ${read.text} (${read.source})`});
     const picks=bookPicks(book,prices,board.board.lines,new Map(board.analyses.map((item)=>[item.lineId,item])),
-      (items)=>service.scoreLines(items),now,undefined,lines,history);
+      (items)=>service.scoreLines(items),now,undefined,lines,history,overOnly);
     const entry={at:now.getTime(),key,picks,fetchedAt,lines};
     bookPickCache.set(book,entry);
     return entry;
@@ -1421,9 +1423,10 @@ export function buildServer(options: ServerOptions = {}) {
       if(platform==='kalshi'){
         const board=service.getBoard();
         const prices=(await options.sharpProps!.current()).prices;
-        const lines=propLines(fresh.overOnly,board?.board.lines??[],now(),playerStarts(prices,board?.board.lines??[]));
+        const kalshiProps=fresh.overOnly.filter((offer)=>offer.book==='kalshi');
+        const lines=propLines(kalshiProps,board?.board.lines??[],now(),playerStarts(prices,board?.board.lines??[]));
         const reads=await historyReads.readsFor([...lines.values()]).catch(()=>new Map<string,HistoryRead>());
-        more.push(...exchangePropPicks(fresh.overOnly,prices,lines,reads,now()));
+        more.push(...exchangePropPicks(kalshiProps,prices,lines,reads,now()));
       }
       for(const pick of more){
         const same=picks.findIndex((item)=>item.kind===pick.kind&&pick.kind!=='PROP'&&sameGame(item,pick));

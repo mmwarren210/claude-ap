@@ -9,7 +9,8 @@ import { normalizedName } from './match.js';
 
 const API = 'https://api.sharpapi.io/api/v1';
 const soccerLeagues = ['england_-_premier_league', 'spain_-_la_liga', 'uefa_-_champions_league', 'germany_-_bundesliga',
-  'italy_-_serie_a', 'france_-_ligue_1', 'usa_-_major_league_soccer', 'uefa_-_europa_league'];
+  'italy_-_serie_a', 'france_-_ligue_1', 'usa_-_major_league_soccer', 'uefa_-_europa_league', 'uefa_-_nations_league',
+  'brazil_-_serie_a', 'netherlands_-_eredivisie', 'portugal_-_primeira_liga', 'mexico_-_liga_mx', 'england_-_championship'];
 const leagueSports: Readonly<Record<string, Sport>> = { nfl: 'NFL', ncaaf: 'NCAAFB', mlb: 'MLB', nba: 'NBA', wnba: 'WNBA',
   nhl: 'NHL', atp: 'TENNIS', wta: 'TENNIS', ...Object.fromEntries(soccerLeagues.map((league) => [league, 'SOCCER' as Sport])) };
 /** Every league pulled by default: player props for the ones CrownIQ covers, game lines for all of them. */
@@ -107,14 +108,19 @@ const gameMarkets: Readonly<Record<string, GamePrice['market']>> = { moneyline: 
   total_points: 'total', total_runs: 'total', total_goals: 'total', total_games: 'total' };
 export const gameMarketTypes = Object.keys(gameMarkets);
 
-/** Over-only player props (no under to remove the cut from), from the books that sell them that way. */
-export function overOnlyPrices(rows: readonly unknown[], books: readonly string[] = ['kalshi']): OverOnlyPrice[] {
+/**
+ * Over-only player props: Kalshi's (Yes on the over) and any book's over with no under at the same number (DraftKings'
+ * soccer shots), so there's no cut to remove. History can still read them.
+ */
+export function overOnlyPrices(rows: readonly unknown[]): OverOnlyPrice[] {
   const out: OverOnlyPrice[] = [];
+  const key = (row: Row) => JSON.stringify([row.sportsbook, row.event_id, String(row.player_name ?? ''), row.market_type, row.line]);
+  const unders = new Set(rows.filter((value) => (value as Row).selection_type === 'under').map((value) => key(value as Row)));
   for (const value of rows) {
     const row = value as Row;
     const sport = leagueSports[String(row.league)], market = sport ? marketKeys[sport]?.[String(row.market_type)] : undefined;
     const price = Number(row.odds_probability);
-    if (!sport || !market || !books.includes(String(row.sportsbook)) || row.selection_type !== 'over' || row.is_live === true ||
+    if (!sport || !market || unders.has(key(row)) || row.selection_type !== 'over' || row.is_live === true ||
       row.is_active === false || typeof row.line !== 'number' || typeof row.player_name !== 'string' || !(price > 0 && price < 1)) continue;
     out.push({ book: String(row.sportsbook), sport, player: row.player_name, market, line: row.line, price,
       american: typeof row.odds_american === 'number' ? row.odds_american : null, startTime: String(row.event_start_time),

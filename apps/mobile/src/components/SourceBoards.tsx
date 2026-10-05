@@ -22,7 +22,7 @@ type Side = 'MORE' | 'LESS';
 type BookPick = { id: string; league: string; playerName: string; team: string | null; opponent: string | null;
   eventStartTime: string; market: string; line: number; side: Side; by?: 'GKR' | 'HISTORY' | 'VALUE'; score?: number;
   note?: string | null; gkr: { score: number } | null; american: number | null;
-  impliedChance: number | null; pricey: boolean; fairChance: number;
+  impliedChance: number | null; pricey: boolean; fairChance: number | null;
   otherBook: { book: Sportsbook; american: number | null } | null;
   altLine: { book: Sportsbook; line: number; american: number | null } | null;
   fairerLine?: { book: Sportsbook; line: number; american: number | null } | null;

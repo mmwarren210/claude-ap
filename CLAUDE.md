@@ -133,6 +133,9 @@ and confirm it ends with a healthy `/health` (see `docs/DEPLOY.md`).
   next game because Kalshi stamps props with the close date; 20–85¢), and the books' consensus fills in for Pinnacle when
   it's stale or lacks the game. Totals are graded from final scores; props stay out of the market record. Soccer winners
   are skipped (draws). Team names match via `team-match.ts`. Display only; no GKR score changes.
+  Leagues also include UEFA Nations League, Brazil Serie A, Eredivisie, Primeira Liga, Liga MX and the Championship.
+  Over-only book props (no under, e.g. DraftKings soccer shots) become More-only book lines: History can pick them,
+  there is no fair chance (`fairChance: null`) and no Value pick.
 - **+EV everywhere and Top Picks "Every app" (2026-10-05).** `/v1/ev` covers PrizePicks, Underdog and DK Pick'em at each
   app's own easiest break-even (a boosted pick's own payout lowers its bar; cut picks under 0.95x are left out). Books'
   chance: the same number, else estimated between two numbers a book prices (≤3 apart), else a one-sided floor from a

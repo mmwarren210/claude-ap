@@ -100,3 +100,16 @@ test('a pricey pick points to a harder number at a fairer price: higher for Over
   const cheap = bookPicks('draftkings', [price('draftkings', 'Jose Allen', 240.5, 0.5, -110, -110)], board, new Map(), more, now);
   assert.equal(cheap[0]!.fairerLine, null, 'not pricey: nothing to point to');
 });
+
+test('over-only book props (no under) become History picks on More only; no fair chance is made up', () => {
+  const offer = (line: number, priceValue: number) => ({ book: 'draftkings', sport: 'NFL' as const, player: 'Shot Taker', market: 'passing_yards',
+    line, price: priceValue, american: priceValue > 0.5 ? -150 : 110, startTime: '2030-09-25T00:00:00Z', home: null, away: null });
+  const offers = [offer(1.5, 0.48), offer(2.5, 0.3)];
+  const pass = (lines: readonly PropLine[]): Analysis[] => lines.map((line) => ({ ...fixtureAnalysis(line), direction: 'PASS', score: null }));
+  const lines = bookLines('draftkings', [], [], now, offers);
+  assert.equal(lines.length, 1, 'one per player and stat: the number priced closest to even');
+  assert.deepEqual([lines[0]!.line.threshold, lines[0]!.line.availableDirections], [1.5, ['MORE']]);
+  const history = new Map([[lines[0]!.line.id, { side: 'MORE' as const, score: 63, note: 'History: Over in 7 of last 10' }]]);
+  const [pick] = bookPicks('draftkings', [], [], new Map(), pass, now, undefined, undefined, history, offers);
+  assert.deepEqual([pick!.by, pick!.side, pick!.line, pick!.american, pick!.fairChance], ['HISTORY', 'MORE', 1.5, 110, null]);
+});
