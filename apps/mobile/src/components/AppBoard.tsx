@@ -6,6 +6,7 @@ import { useAuth } from '../auth';
 import { bestBreakEven } from '@crowniq/contracts';
 import { entryName, entryOutlook, formatLine, gameTime, percent1 } from '../insights';
 import { usePayouts } from '../use-payouts';
+import { buildSlip } from '../app-slip';
 import { colors, radius } from '../theme';
 import { useBoard } from '../use-board';
 import { appNames, copyAndOpen, slipText } from '../port';
@@ -22,7 +23,7 @@ export { pickApps };
 
 type Side = 'MORE' | 'LESS';
 /** One Underdog or Pick6 line, as /v1/apps/:app/board serves it. */
-type AppLine = { id: string; sport: string; league: string; eventName: string; eventStartTime: string; playerId: string;
+type AppLine = { id: string; sport: string; league: string; eventId: string; eventName: string; eventStartTime: string; playerId: string;
   playerName: string; team: string | null; opponent: string | null; stat: string; threshold: number; lineType: string;
   availableDirections: Side[]; multipliers: Partial<Record<Side, number>> | null; playerImageUrl: string | null;
   prizePicks: { threshold: number; lineType: string; gkr: { direction: Side; score: number } | null } | null;
@@ -85,6 +86,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   const [scored, setScored] = useState(false);
   const [slip, setSlip] = useState<{ line: AppLine; side: Side }[]>([]);
   const [message, setMessage] = useState('');
+  const [slipSize, setSlipSize] = useState(4), [built, setBuilt] = useState(0);
   const load = useCallback(async () => {
     if (demo) { setState('ready'); return; }
     try {
@@ -133,6 +135,18 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     const outlook = entryOutlook(appPayouts, slip.length, mode);
     return outlook ? [{ mode, ...outlook }] : [];
   }).sort((a, b) => a.breakEven - b.breakEven)[0] ?? null : null;
+  // The slip builder: GKR's strongest lines on this app, at the chosen size; "Build another" rotates past the top ones.
+  const build = () => {
+    const next = buildSlip(lines.filter((line) => sport === 'ALL' || line.league === sport), slipSize, nowMs, built * slipSize);
+    setBuilt(built + 1); setSlip(next);
+    const entry = (['FLEX', 'POWER'] as const).flatMap((mode) => {
+      const outlook = entryOutlook(appPayouts, next.length, mode);
+      return outlook ? [{ mode, ...outlook }] : [];
+    }).sort((a, b) => a.breakEven - b.breakEven)[0];
+    setMessage(next.length < 2 ? `GKR backs fewer than 2 ${appNames[app]} lines right now.`
+      : `Built ${next.length} picks from GKR’s strongest ${appNames[app]} lines${next.length < slipSize ? ` (only ${next.length} qualify)` : ''}.` +
+        (entry ? ` Play ${entryName(next.length, entry.mode)}: each pick needs ${percent1(entry.breakEven)}.` : ''));
+  };
   const age = fetchedAt ? Math.max(0, Math.round((nowMs - Date.parse(fetchedAt)) / 60_000)) : null;
   const header = <View style={styles.header}>
     <AppHeader subtitle={`${appNames[app]} board`} />
@@ -141,6 +155,14 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
       <FilterChip label="All leagues" active={sport === 'ALL'} onPress={() => setSport('ALL')} />
       {sports.map((league) => <FilterChip key={league} label={league} active={sport === league} onPress={() => setSport(league)} />)}
     </ChipRow>}
+    {scored && backed >= 2 && <View style={styles.builder}>
+      <Text style={styles.builderTitle}>Slip builder</Text>
+      <Segmented label="Slip size" value={slipSize} onChange={(value) => { setSlipSize(value); setBuilt(0); }}
+        options={[2, 3, 4, 5, 6].map((value) => ({ value, label: `${value}` }))} />
+      <PrimaryButton label={built ? 'Build another' : `Build a ${slipSize}-pick slip`} icon="auto-fix" onPress={build} />
+      <Text style={styles.note}>GKR’s strongest lines, one per player, at most two per game and at least two teams. Review
+        each pick before you play it.</Text>
+    </View>}
     {scored && <Segmented label="Which lines" value={gkrOnly ? 'GKR' : 'ALL'} onChange={(value) => setGkrOnly(value === 'GKR')}
       options={[{ value: 'ALL', label: 'All lines' }, { value: 'GKR', label: `GKR picks (${backed})` }]} />}
     <Text style={styles.status}>{shown.length} lines{age === null ? '' : ` · captured ${age < 90 ? `${age} min` : `${Math.round(age / 60)} h`} ago`}</Text>
@@ -182,6 +204,8 @@ const styles = StyleSheet.create({
   header: { gap: 12, marginBottom: 2 },
   status: { color: colors.textMuted, fontSize: 13 },
   breakEven: { color: colors.text, fontSize: 13, lineHeight: 19, fontWeight: '600' },
+  builder: { gap: 8, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.lg, padding: 12 },
+  builderTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
   note: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
   message: { color: colors.gold, fontSize: 13, fontWeight: '600' },
   card: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, padding: 12, gap: 10 },

@@ -4,6 +4,7 @@ import { analysisSchema, boardResponseSchema, DEFAULT_PAYOUTS, propLineSchema } 
 import { crownOutcome, entryOutlook } from '../src/insights.js';
 import { aiPlay, lateNews, scoutVerdict } from '../src/scout.js';
 import { bandOf, betaNote } from '../src/beta.js';
+import { buildSlip } from '../src/app-slip.js';
 import { addLeg, betterSwap, boardLinesForMode, isPlay, withBooksPicks, CROWN_LEG_FLOOR, emptyFilters, evidenceExpired, freshness, gkrBacked, shareCrown,
   visibleLines } from '../src/state.js';
 import { parseDraft, profileDraftKey } from '../src/draft-codec.js';
@@ -198,4 +199,19 @@ test('GKR Beta shows beside GKR only where they differ, and says why it passes',
   assert.equal(betaNote(read('PASS',null,90,'LATE_NEWS_PASS')),'Beta passes: benched.');
   assert.equal(betaNote(read('MORE',86,86,'SAME')),null,'same score: only GKR shows');
   assert.equal(bandOf(90),'CROWN_STRONG');
+});
+
+test('the slip builder takes GKR strongest app lines: one per player, two per game, two teams, rotates on rebuild',()=>{
+  const now=Date.parse('2030-01-01T12:00:00Z');
+  const mk=(id:string,score:number,eventId:string,team:string,overrides:Record<string,unknown>={})=>({id,eventId,
+    eventStartTime:'2030-01-01T20:00:00Z',playerId:`p-${id}`,team,lineType:'REGULAR',availableDirections:['MORE','LESS'] as ('MORE'|'LESS')[],
+    gkr:{direction:'MORE' as const,score},...overrides});
+  const lines=[mk('a',95,'g1','BUF'),mk('b',93,'g1','BUF'),mk('c',91,'g1','MIA'),mk('d',90,'g2','BUF'),mk('e',88,'g3','NYJ'),
+    mk('dup',99,'g4','KC',{playerId:'p-a'}),mk('none',97,'g5','LV',{gkr:null}),mk('soon',96,'g6','SF',{eventStartTime:'2030-01-01T12:05:00Z'}),
+    mk('less-only',94,'g7','DAL',{availableDirections:['LESS']})];
+  assert.deepEqual(buildSlip(lines,4,now).map((pick)=>pick.line.id),['dup','b','c','d'],
+    'a is the same player as dup; c joins b from g1, then g1 is full');
+  const allBuf=[mk('x',95,'g1','BUF'),mk('y',94,'g2','BUF'),mk('z',90,'g3','MIA')];
+  assert.deepEqual(buildSlip(allBuf,2,now).map((pick)=>pick.line.id),['x','z'],'the last pick brings a second team');
+  assert.deepEqual(buildSlip(lines,2,now,2).map((pick)=>pick.line.id).sort(),['b','c'],'build another starts further down');
 });
