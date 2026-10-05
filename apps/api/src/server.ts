@@ -114,6 +114,8 @@ export interface ServerOptions {
   payouts?: Payouts;
   /** Shadow records: Books picks, sportsbook-tab picks and game-script snapshots, graded in their own record. */
   shadowRecord?: ShadowRecord | null;
+  /** Reads The Odds API's credit balance (a free call), for the owner. */
+  oddsApiQuota?: (() => Promise<{ status: number; remaining: number | null; used: number | null }>) | null;
   /** Live Kalshi and Polymarket prices from their free public APIs. */
   liveMarkets?: LiveMarkets | null;
   /** JSON-lines history of the books' view of board lines, one row per line per refresh. */
@@ -1135,6 +1137,8 @@ export function buildServer(options: ServerOptions = {}) {
       if (!authorized(request, options.adminToken)) return reply.code(401).send({ code: 'UNAUTHORIZED' });
     });
     admin.get('/status', async () => service.getStatus());
+    admin.get('/odds-api', async (_request, reply) => options.oddsApiQuota ? options.oddsApiQuota()
+      : reply.code(503).send({ code: 'ODDS_API_KEY_MISSING' }));
     admin.get('/members', async (_request, reply) => options.product ? options.product.membership()
       : reply.code(503).send({ code: 'PRODUCT_UNCONFIGURED' }));
     admin.get('/live-markets', async (_request, reply) => options.liveMarkets ? options.liveMarkets.status()

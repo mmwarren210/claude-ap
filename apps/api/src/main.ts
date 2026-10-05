@@ -297,6 +297,13 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provid
     dailyAuto:Number(process.env.CROWNIQ_AI_PICKS_DAILY ?? 120),dailyPerUser:Number(process.env.CROWNIQ_AI_PICKS_USER_DAILY ?? 15),
     perRun:Number(process.env.CROWNIQ_AI_PICKS_PER_RUN ?? 15),
     dailySecond:Number(process.env.CROWNIQ_SCOUT_SECOND_DAILY ?? 40),secondPerRun:Number(process.env.CROWNIQ_SCOUT_SECOND_PER_RUN ?? 8)},new BoxScoreResults()):null,
+  // The sports list costs no credits and returns the balance headers.
+  oddsApiQuota:apiKey?async()=>{
+    const response=await fetch(`https://api.the-odds-api.com/v4/sports?apiKey=${encodeURIComponent(apiKey)}`,
+      {signal:AbortSignal.timeout(15_000)});
+    const header=(name:string)=>{const value=response.headers.get(name);return value===null?null:Number(value);};
+    return {status:response.status,remaining:header('x-requests-remaining'),used:header('x-requests-used')};
+  }:null,
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults()),
   liveMarkets:process.env.CROWNIQ_LIVE_MARKETS==='false'?null:new LiveMarkets(`${dataDir}/live-markets.json`),
   scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults()}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,payouts,
