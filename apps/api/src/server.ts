@@ -359,6 +359,7 @@ export function buildServer(options: ServerOptions = {}) {
       input.data.password,input.data.username));}
     catch(error){const code=(error as Error).message;
       if(code==='USERNAME_TAKEN'||code==='EMAIL_TAKEN')return reply.code(409).send({code});
+      if(code==='MEMBERS_FULL')return reply.code(403).send({code});
       return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
   });
   app.post('/v1/auth/login',async(request,reply)=>{
@@ -692,6 +693,7 @@ export function buildServer(options: ServerOptions = {}) {
     }catch(error){const code=(error as Error).message;
       if(['USERNAME_REQUIRED','USERNAME_TAKEN','ACCOUNT_LINK_REQUIRED'].includes(code))
         return reply.code(409).send({code});
+      if(code==='MEMBERS_FULL')return reply.code(403).send({code});
       return reply.code(401).send({code:'PROVIDER_LOGIN_REJECTED'});}
   });
   app.post('/v1/auth/link',async(request,reply)=>{
@@ -1120,6 +1122,8 @@ export function buildServer(options: ServerOptions = {}) {
       if (!authorized(request, options.adminToken)) return reply.code(401).send({ code: 'UNAUTHORIZED' });
     });
     admin.get('/status', async () => service.getStatus());
+    admin.get('/members', async (_request, reply) => options.product ? options.product.membership()
+      : reply.code(503).send({ code: 'PRODUCT_UNCONFIGURED' }));
     admin.get('/live-markets', async (_request, reply) => options.liveMarkets ? options.liveMarkets.status()
       : reply.code(503).send({ code: 'LIVE_MARKETS_UNCONFIGURED' }));
     admin.post('/live-markets/refresh', async (_request, reply) => options.liveMarkets ? options.liveMarkets.refresh()

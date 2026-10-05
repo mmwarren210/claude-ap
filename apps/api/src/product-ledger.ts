@@ -50,8 +50,18 @@ interface Account {id:string;username:string;email:string|null;passwordSalt:stri
   guest?:{pass:string;deviceHash:string;expiresAt:string}}
 /** A shared guest link: up to `maxGuests` devices each get their own account for `days` days. */
 export interface GuestPass {code:string;maxGuests:number;days:number}
-/** The first accounts ever created (the owner's included) are lifetime members: no code, never charged. */
-export const LIFETIME_MEMBERS=20;
+/**
+ * The first accounts ever created (the owner's and family's) are lifetime members: no code, never charged, and not
+ * counted toward the member cap (owner, 2026-10-05: 10 lifetime family members plus 100 members, 110 in all).
+ */
+export const LIFETIME_MEMBERS=10;
+/** Members allowed besides the lifetime ones. Guests (guest links) and suspended accounts don't take a seat. */
+export const DEFAULT_MAX_MEMBERS=100;
+/** Seats taken: active, non-guest accounts that are not lifetime members. */
+export function membersUsed(accounts:readonly Account[]):number{
+  const lifetime=lifetimeIds(accounts);
+  return accounts.filter((item)=>!item.guest&&item.status!=='SUSPENDED'&&!lifetime.has(item.id)).length;
+}
 const lifetimeIds=(accounts:readonly Account[])=>new Set(accounts.filter((item)=>!item.guest)
   .sort((a,b)=>a.createdAt.localeCompare(b.createdAt)).slice(0,LIFETIME_MEMBERS).map((item)=>item.id));
 const planOf=(account:Account,lifetime:ReadonlySet<string>)=>account.status==='SUSPENDED'?'SUSPENDED' as const
@@ -216,7 +226,9 @@ export class ProductLedger {
     private readonly historySink?:DecisionHistorySink,
     /** Optional: public Crowns may only use lines from an odds snapshot at most this old. 0 = no limit;
      * by default lines stay usable until their event starts. */
-    private readonly maxShareSnapshotMinutes=0){}
+    private readonly maxShareSnapshotMinutes=0,
+    /** Members allowed besides the lifetime ones (CROWNIQ_MAX_MEMBERS). */
+    private readonly maxMembers=DEFAULT_MAX_MEMBERS){}
   /** Stamp a person's pick with the odds snapshot it was made from. */
   private fromUser(decision:TrackedDecision,board:BoardResponse):TrackedDecision{
     const fetched=Date.parse(board.board.fetchedAt);
@@ -272,8 +284,22 @@ export class ProductLedger {
       email:account.email,plan:planOf(account,lifetimeIds(data.accounts))},
       ...(account.guest?{guestExpiresAt:account.guest.expiresAt}:{})};
   }
+  /** A new non-guest account needs a seat: lifetime seats fill first, then the member cap applies. */
+  private assertSeat(accounts:readonly Account[]){
+    const real=accounts.filter((item)=>!item.guest);
+    if(real.length<LIFETIME_MEMBERS)return;
+    if(membersUsed(accounts)>=this.maxMembers)throw new Error('MEMBERS_FULL');
+  }
+  /** Seat counts for the owner (no names or emails). */
+  async membership(){
+    const data=await this.read(),lifetime=lifetimeIds(data.accounts);
+    return {lifetime:{used:lifetime.size,limit:LIFETIME_MEMBERS},members:{used:membersUsed(data.accounts),limit:this.maxMembers},
+      guests:data.accounts.filter((item)=>item.guest).length,
+      suspended:data.accounts.filter((item)=>!item.guest&&item.status==='SUSPENDED').length};
+  }
   async register(email:string,password:string,username:string){return this.exclusive(async()=>{
     const data=await this.read(),name=username.trim(),address=normalizedEmail(email);
+    this.assertSeat(data.accounts);
     if(data.accounts.some((item)=>item.email===address))throw new Error('EMAIL_TAKEN');
     if(data.profiles.some((item)=>normalizedName(item.displayName)===normalizedName(name)))
       throw new Error('USERNAME_TAKEN');
@@ -329,6 +355,7 @@ export class ProductLedger {
         identity.provider===provider && identity.subject===subject));
       if(!account){
         if(!username)throw new Error('USERNAME_REQUIRED');
+        this.assertSeat(data.accounts);
         if(email && data.accounts.some((item)=>item.email===normalizedEmail(email)))
           throw new Error('ACCOUNT_LINK_REQUIRED');
         if(data.profiles.some((item)=>normalizedName(item.displayName)===normalizedName(username)))

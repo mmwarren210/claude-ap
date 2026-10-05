@@ -178,21 +178,36 @@ test('provider ID tokens require a trusted signature, audience, issuer, expirati
   }finally{await app.close();await rm(folder,{recursive:true,force:true});}
 });
 
-test('the first 20 accounts are lifetime members and later ones are free',async()=>{
+test('the first 10 accounts are lifetime members and later ones are free',async()=>{
   const folder=await mkdtemp(join(tmpdir(),'crowniq-lifetime-'));
   try{let clock=start;const path=join(folder,'ledger.json');
     const ledger=new ProductLedger(path,'CROWN_STRONG',()=>clock,()=>[]);
     const plans:string[]=[];
-    for(let index=0;index<21;index++){
+    for(let index=0;index<11;index++){
       clock=new Date(start.getTime()+index*60_000);
       plans.push((await ledger.register(`member${index}@example.org`,'long-private-passphrase',`Member_${index}`)).profile.plan);
     }
-    assert.deepEqual(plans,[...Array(20).fill('LIFETIME'),'FREE']);
+    assert.deepEqual(plans,[...Array(10).fill('LIFETIME'),'FREE']);
     const first=await ledger.login('Member_0','long-private-passphrase');
     assert.equal(first.profile.plan,'LIFETIME');
     assert.equal((await ledger.authenticate(first.token))?.plan,'LIFETIME');
     const restarted=new ProductLedger(path,'CROWN_STRONG',()=>clock,()=>[]);
-    assert.equal((await restarted.login('member20@example.org','long-private-passphrase')).profile.plan,'FREE');
+    assert.equal((await restarted.login('member10@example.org','long-private-passphrase')).profile.plan,'FREE');
+  }finally{await rm(folder,{recursive:true,force:true});}
+});
+
+test('10 lifetime seats plus the member cap; guests and suspended accounts take no seat',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-seats-'));
+  try{let clock=start;
+    // A cap of 3 members stands in for 100.
+    const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>clock,undefined,undefined,0,3);
+    for(let index=0;index<13;index++){
+      clock=new Date(start.getTime()+index*60_000);
+      await ledger.register(`seat${index}@example.org`,'long-private-passphrase',`Seat_${index}`);
+    }
+    await assert.rejects(ledger.register('late@example.org','long-private-passphrase','Late_one'),/MEMBERS_FULL/);
+    await assert.rejects(ledger.loginWithProvider('GOOGLE','sub-1','g@example.org','Google_one'),/MEMBERS_FULL/);
+    assert.deepEqual(await ledger.membership(),{lifetime:{used:10,limit:10},members:{used:3,limit:3},guests:0,suspended:0});
   }finally{await rm(folder,{recursive:true,force:true});}
 });
 

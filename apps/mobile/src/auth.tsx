@@ -40,7 +40,8 @@ const base=apiBaseUrl();
 async function parseSession(response:Response):Promise<Session>{
   if(!response.ok){const payload=await response.json().catch(()=>({})) as {code?:string};
     const messages:Record<string,string>={EMAIL_TAKEN:'Email already has an account. Sign in instead.',
-      USERNAME_TAKEN:'That display username is taken.',INVALID_CREDENTIALS:'Email, username or password is incorrect.',
+      USERNAME_TAKEN:'That display username is taken.',
+      MEMBERS_FULL:'CrownIQ is full right now (100 members). Ask the owner for a spot or a guest link.',INVALID_CREDENTIALS:'Email, username or password is incorrect.',
       TOO_MANY_ATTEMPTS:'Too many attempts. Please wait a minute.',
       INVALID_REGISTRATION:'Use a 3–24 character username with letters, numbers or underscores, and a password of at least 12 characters.'};
     throw new Error(messages[payload.code??'']??'Sign-in failed. Try again.');}
