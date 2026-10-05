@@ -15,6 +15,8 @@ import { alpha } from './ui/color';
 import { GhostButton, PrimaryButton, Segmented } from './ui/Controls';
 import { useCrownLegs } from '../crown-legs';
 import { inSports, SportPicker } from './ui/SportPicker';
+import { DayPicker } from './ui/DayPicker';
+import { chosenDay, gameDays, onDay } from '../game-days';
 import { GlowCard } from './ui/GlowCard';
 import { Icon } from './ui/Icon';
 import { PlayerAvatar } from './ui/PlayerAvatar';
@@ -61,7 +63,7 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
   // Picks added on the board, or the last generated Crown (shared with the board); until then, one built from the lines.
   const [stored, setStored] = useCrownLegs<Leg>(app);
   const [kind, setKind] = useState<'ANY' | 'STANDARD' | 'BOOSTED' | 'GKR'>('ANY');
-  const [sports, setSports] = useState<string[]>([]);
+  const [sports, setSports] = useState<string[]>([]), [picked, setPicked] = useState<string | null>(null);
   const [built, setBuilt] = useState(0);
   const [name, setName] = useState<string | null>(null), [editing, setEditing] = useState(false);
   const [message, setMessage] = useState('');
@@ -74,17 +76,19 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
   useFocusEffect(useCallback(() => { setBuilt(0); setMessage(''); setLines(null); void load(); }, [load]));
 
   const payouts = usePayouts()[app];
+  const days = useMemo(() => gameDays((lines ?? []).map((line) => line.eventStartTime), nowMs), [lines, nowMs]);
+  const day = chosenDay(picked, days, nowMs);
   // The line type to build from: any backed line, standard payouts only, boosted picks only, or GKR's picks only.
   const pickOf = useCallback((line: AppLine) => {
     const back = backing(line);
-    if (!back || !inSports(sports, line.league)) return null;
+    if (!back || !inSports(sports, line.league) || !onDay(day, line.eventStartTime)) return null;
     const multiplier = line.multipliers?.[back.side] ?? 1;
     if (kind === 'STANDARD' && multiplier !== 1 || kind === 'BOOSTED' && multiplier <= 1.01 || kind === 'GKR' && back.by !== 'GKR') return null;
     return back;
-  }, [kind, sports]);
+  }, [kind, sports, day]);
   const first = useMemo(() => buildSlip(lines ?? [], size, nowMs, 0, pickOf), [lines, size, nowMs, pickOf]);
   const legs: readonly Leg[] = stored.length ? stored : first;
-  const backedCount = (lines ?? []).filter((line) => backing(line) && Date.parse(line.eventStartTime) > nowMs).length;
+  const backedCount = (lines ?? []).filter((line) => pickOf(line) && Date.parse(line.eventStartTime) > nowMs).length;
   const setLegs = (next: readonly Leg[]) => setStored(next);
   const generate = (round: number) => {
     const next = buildSlip(lines ?? [], size, nowMs, round * size, pickOf);
@@ -120,6 +124,7 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
     .catch(() => undefined);
 
   return <View style={styles.wrap}>
+    <DayPicker days={days} day={day} nowMs={nowMs} onChange={(next) => { setPicked(next); setStored([]); setBuilt(0); }} />
     <SportPicker options={[...new Set((lines ?? []).map((line) => line.league))].sort()} selected={sports}
       onChange={(next) => { setSports(next); setStored([]); setBuilt(0); }} />
     <Segmented label="Line type" value={kind} onChange={(value) => { setKind(value); setStored([]); setBuilt(0); }}

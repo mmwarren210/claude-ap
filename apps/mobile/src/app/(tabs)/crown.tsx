@@ -31,6 +31,8 @@ import { AppCrown } from '../../components/AppCrown';
 import { BookCrown, MarketCrown } from '../../components/ProviderCrowns';
 import { crownOpening, openCrownOn } from '../../crown-legs';
 import { inSports, SportPicker } from '../../components/ui/SportPicker';
+import { DayPicker } from '../../components/ui/DayPicker';
+import { chosenDay, gameDays, onDay } from '../../game-days';
 import type { CrownProvider } from '../../crown-legs';
 
 const crownProviders: readonly { value: CrownProvider | 'prizepicks'; label: string }[] = [
@@ -112,7 +114,7 @@ export default function CrownScreen() {
   useFocusEffect(useCallback(() => { setProvider(crownOpening()); }, []));
   const playApp: PickApp = provider === 'underdog' || provider === 'pick6' ? provider : 'prizepicks';
   const [lineKind, setLineKind] = useState<'ANY' | 'REGULAR' | 'GOBLIN' | 'DEMON'>('ANY');
-  const [sports, setSports] = useState<string[]>([]);
+  const [sports, setSports] = useState<string[]>([]), [picked, setPicked] = useState<string | null>(null);
   const tips = useTipFlow(setMessage);
   const [keptLeg, setKeptLeg] = useState<string | null>(null);
   const analyses = useMemo(() => new Map(board?.analyses.map((item) => [item.lineId, item])), [board]);
@@ -121,6 +123,8 @@ export default function CrownScreen() {
     const line = lines.get(card.lineId), analysis = analyses.get(card.lineId);
     return line && analysis && Date.parse(line.eventStartTime) > nowMs ? [{ line, analysis }] : [];
   }), [ranked, lines, analyses, nowMs]);
+  const days = useMemo(() => gameDays(candidates.map(({ line }) => line.eventStartTime), nowMs), [candidates, nowMs]);
+  const day = chosenDay(picked, days, nowMs);
   const minimum = crownMinimumLineScore[Math.max(2, Math.min(6, legs.length || size))] ?? 80;
   const crownName = name ?? defaultName(legs);
   const scores = legs.flatMap((leg) => leg.score === null ? [] : [leg.score]);
@@ -150,7 +154,8 @@ export default function CrownScreen() {
 
   const generate = () => {
     // The line type chosen above: standard lines, Goblins or Demons only (or any).
-    const pool = candidates.filter(({ line }) => (lineKind === 'ANY' || line.lineType === lineKind) && inSports(sports, line.league));
+    const pool = candidates.filter(({ line }) => (lineKind === 'ANY' || line.lineType === lineKind) && inSports(sports, line.league) &&
+      onDay(day, line.eventStartTime));
     const next = autoCrown(pool, size, crownMinimumLineScore[size], built ? offset + 1 : 0, nowMs);
     setOffset(built ? offset + 1 : 0); setBuilt(true); setName(null); replace(next);
     setMessage(next.length < size ? `Only ${next.length} picks meet the ${crownMinimumLineScore[size]} minimum for a ` +
@@ -205,6 +210,7 @@ export default function CrownScreen() {
       <AppHeader subtitle="Your Crown" />
       {appPicker}
       <Segmented label="Crown size" options={sizesFor(6)} value={size} onChange={setSize} />
+      <DayPicker days={days} day={day} nowMs={nowMs} onChange={(next) => { setPicked(next); setBuilt(false); setOffset(0); }} />
       <SportPicker options={[...new Set(candidates.map(({ line }) => line.league))].sort()} selected={sports}
         onChange={(next) => { setSports(next); setBuilt(false); setOffset(0); }} />
       <Segmented label="Line type" value={lineKind} onChange={(value) => { setLineKind(value); setBuilt(false); setOffset(0); }}

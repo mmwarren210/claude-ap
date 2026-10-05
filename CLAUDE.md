@@ -150,7 +150,7 @@ and confirm it ends with a healthy `/health` (see `docs/DEPLOY.md`).
   (Any/Standard/Boosted/GKR only, 2–8), DraftKings (2–8) and Hard Rock (2–20) with pick type Any/GKR/History/Value/Fair
   price (`ProviderCrowns.tsx` `BookCrown`), Kalshi and Polymarket (2–20, Any/Winners/Spreads/Totals/Props) (`MarketCrown`).
   Sizes above 8 use a typed stepper (`ui/SizeStepper.tsx`). Top Picks chips: All, PrizePicks (GKR rankings), each other
-  board, +EV. Every generator also has a multi-select sport picker (`ui/SportPicker.tsx`; none picked = all).
+  board, +EV. Every generator also has a multi-select sport picker (`ui/SportPicker.tsx`; none picked = all). Every generator also has a game-day picker (`ui/DayPicker.tsx`, `src/game-days.ts`): defaults to today, else the soonest day with games; "All days" turns it off.
 - **Payout tables (checked 2026-10-05).** PrizePicks Power 3/6/10/20/37.5x and Flex from 2 picks (2x/0.5x); Underdog
   Standard 3.5/6.5/12/20/35/65/120x and Flex 3–8 picks (3.25x/1.09x … 80x/3x/1x); Pick6 has no public chart (Base Payout
   shown in-app), so its numbers stay estimates. 2-pick Crowns are graded as Power.
