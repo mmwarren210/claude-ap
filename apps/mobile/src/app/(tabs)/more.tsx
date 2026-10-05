@@ -35,6 +35,23 @@ function Row({ icon, title, detail, onPress, locked, last }: { icon: IconName; t
   </Pressable>;
 }
 
+/** This copy of the app against the server's build: an old copy says to reopen. */
+const appCommit = (process.env.EXPO_PUBLIC_COMMIT ?? '').slice(0, 7) || null;
+function AppVersion() {
+  const { request } = useAuth();
+  const [server, setServer] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    void request('/v1/version').then(async (response) => response.ok ? (await response.json() as { commit: string | null }).commit : null)
+      .then((commit) => { if (active) setServer(commit); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [request]);
+  const old = !!appCommit && !!server && appCommit !== server;
+  return <Text style={[styles.footnote, old && { color: colors.gold }]}>
+    {old ? `Update available: close CrownIQ completely and open it again (this copy ${appCommit}, latest ${server}).`
+      : `Version ${appCommit ?? server ?? 'unknown'}`}</Text>;
+}
+
 export default function MoreScreen() {
   const { profile, logout, request, setUsername, demo } = useAuth();
   const { viewMode, setViewMode, ready, hiddenTips, showAllTips } = useDraft();
@@ -134,6 +151,7 @@ export default function MoreScreen() {
       <Pressable accessibilityRole="button" onPress={() => void logout()} style={styles.logout}>
         <Icon name="logout" size={22} color={colors.red} /><Text style={styles.logoutText}>{demo ? 'Exit demo' : 'Log Out'}</Text>
       </Pressable>
+      <AppVersion />
       <Text style={styles.footnote}>CrownIQ analysis is uncertain and no selection is guaranteed. Set limits and take a
         break when you need one. Confidential help: call or text 1-800-MY-RESET.</Text>
     </ScrollView>

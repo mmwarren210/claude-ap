@@ -151,6 +151,7 @@ function authorized(request: FastifyRequest, token?: string): boolean {
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+const serverStartedAt=new Date().toISOString();
 export function buildServer(options: ServerOptions = {}) {
   const app = Fastify({ logger: false });
   const service = new BoardService(options.provider ?? null, options.research ?? null,
@@ -1121,8 +1122,13 @@ export function buildServer(options: ServerOptions = {}) {
     const fair=await fairMoreFor().catch(()=>new Map<string,number>());
     const reads=Object.fromEntries(await historyReads.readsFor(lines,(id)=>fair.get(id)??null));
     historyCache={at:time,board,reads};
+    const plays=Object.values(reads).filter((read)=>read.direction!=='PASS').length;
+    console.log(`[history-reads] ${board.board.lines.length} lines, ${lines.length} without a GKR play, ${Object.keys(reads).length} reads, ${plays} plays`);
     return reads;
   }
+  // Which build is running, so the app can show its version (Railway sets the commit at deploy).
+  app.get('/v1/version',async()=>({commit:(process.env.RAILWAY_GIT_COMMIT_SHA??process.env.CROWNIQ_COMMIT??'').slice(0,7)||null,
+    startedAt:serverStartedAt}));
   app.get('/v1/history-reads',async(_request,reply)=>{
     const board=service.getBoard();
     if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});

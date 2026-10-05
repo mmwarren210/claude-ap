@@ -12,6 +12,9 @@ RUN npm ci --no-audit --no-fund
 COPY packages packages
 COPY apps/mobile apps/mobile
 ARG EXPO_PUBLIC_API_URL=
+# The commit Railway builds, so the app can tell when it is an old copy.
+ARG RAILWAY_GIT_COMMIT_SHA=
+ENV EXPO_PUBLIC_COMMIT=$RAILWAY_GIT_COMMIT_SHA
 RUN cd apps/mobile && npx expo export -p web --output-dir dist
 
 # Stage 2: the server. Installs only the server's workspaces.
