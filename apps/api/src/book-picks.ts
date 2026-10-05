@@ -23,6 +23,12 @@ export interface BookPick {
   readonly fairChance: number;
   /** The other book's price on the same side and number, for line shopping. */
   readonly otherBook: { readonly book: Sportsbook; readonly american: number | null } | null;
+  /**
+   * An easier number for GKR's side another listing offers (Hard Rock's alternate ladder): lower for Over, higher for
+   * Under, the easiest one whose price still needs under 60%. DraftKings usually has alternates too, but they don't come
+   * through the feed, so its cards point to Hard Rock's.
+   */
+  readonly altLine: { readonly book: Sportsbook; readonly line: number; readonly american: number | null } | null;
   /** The PrizePicks line for the same player and stat, for comparison. */
   readonly prizePicks: { readonly line: number; readonly lineType: string; readonly sides: readonly PlayableDirection[];
     readonly gkr: { readonly direction: string; readonly score: number | null; readonly reasonCode: string | null } | null } | null;
@@ -65,6 +71,13 @@ export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardL
   const others = new Map(prices.filter((price) => price.book !== book).map((price) =>
     [JSON.stringify([price.sport, normalizedName(price.player), price.market, price.line, dayKey(price.startTime)]), price]));
   const main = mainLines(prices.filter((price) => price.book === book));
+  // Every number either book prices per player and stat (Hard Rock's ladders), for the easier-line hint.
+  const ladders = new Map<string, FairPrice[]>();
+  for (const price of prices) {
+    if (!(sportsbooks as readonly string[]).includes(price.book)) continue;
+    const key = JSON.stringify([price.sport, normalizedName(price.player), price.market, dayKey(price.startTime)]);
+    ladders.set(key, [...ladders.get(key) ?? [], price]);
+  }
   const pairs = main.flatMap((price) => {
     const start = Date.parse(price.startTime);
     if (start <= now.getTime()) return [];
@@ -107,12 +120,18 @@ export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardL
     const side = analysis.direction, american = side === 'MORE' ? price.overAmerican : price.underAmerican;
     const other = others.get(JSON.stringify([price.sport, normalizedName(price.player), price.market, price.line, dayKey(price.startTime)]));
     const reference = analyses.get(research.id);
+    const alternates = (ladders.get(JSON.stringify([price.sport, normalizedName(price.player), price.market, dayKey(price.startTime)])) ?? [])
+      .filter((item) => (side === 'MORE' ? item.line < price.line : item.line > price.line) &&
+        (impliedChance(side === 'MORE' ? item.overAmerican : item.underAmerican) ?? 1) < PRICEY)
+      .sort((a, b) => side === 'MORE' ? a.line - b.line : b.line - a.line);
+    const alt = alternates[0];
     const pick: BookPick = { id: line.id, book, sport: research.sport, league: research.league, playerName: research.playerName,
       team: research.team ?? null, opponent: research.opponent ?? null, eventName: research.eventName,
       eventStartTime: research.eventStartTime, market: price.market, line: price.line, side,
       gkr: { score: analysis.score, modelVersion: analysis.modelVersion }, american, impliedChance: impliedChance(american),
       pricey: (impliedChance(american) ?? 0) >= PRICEY,
       fairChance: Math.round((side === 'MORE' ? price.fairOver : 1 - price.fairOver) * 10_000) / 10_000,
+      altLine: alt ? { book: alt.book as Sportsbook, line: alt.line, american: side === 'MORE' ? alt.overAmerican : alt.underAmerican } : null,
       otherBook: other ? { book: other.book as Sportsbook, american: side === 'MORE' ? other.overAmerican : other.underAmerican } : null,
       // PrizePicks' own line can PASS for a reason the book's line doesn't have: a Goblin or Demon offers only More.
       prizePicks: { line: research.threshold, lineType: research.lineType, sides: [...research.availableDirections],

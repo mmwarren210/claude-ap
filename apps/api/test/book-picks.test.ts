@@ -56,3 +56,16 @@ test('main lines and the ladder: Hard Rock alternates for GKR side, easier numbe
   assert.equal(at('draftkings', 240.5).main, true);
   assert.deepEqual(bookLadder(fixtureLine({ playerName: 'Nobody' }), 'MORE', prices, score), []);
 });
+
+test('DraftKings picks point to an easier Hard Rock number: lower for Over, the easiest one not pricey', () => {
+  const board = [fixtureLine({ id: 'pp-a', playerId: 'a', playerName: 'Jose Allen', threshold: 250.5 })];
+  const prices = [price('draftkings', 'Jose Allen', 250.5, 0.5, -110, -110),
+    price('hardrock', 'Jose Allen', 235.5, 0.65, -170, 140), price('hardrock', 'Jose Allen', 240.5, 0.6, -140, 115),
+    price('hardrock', 'Jose Allen', 245.5, 0.55, -120, 100), price('hardrock', 'Jose Allen', 255.5, 0.45, 110, -135)];
+  const more = (lines: readonly PropLine[]) => lines.map((item) => fixtureAnalysis(item, 'MORE', 85));
+  const [pick] = bookPicks('draftkings', prices, board, new Map(), more, now);
+  assert.deepEqual(pick!.altLine, { book: 'hardrock', line: 240.5, american: -140 }, '235.5 at -170 needs 63%: pricey');
+  const less = (lines: readonly PropLine[]) => lines.map((item) => fixtureAnalysis(item, 'LESS', 85));
+  assert.deepEqual(bookPicks('draftkings', prices, board, new Map(), less, now)[0]!.altLine,
+    { book: 'hardrock', line: 255.5, american: -135 }, 'Under: a higher number');
+});

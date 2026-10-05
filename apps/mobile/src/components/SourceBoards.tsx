@@ -8,6 +8,8 @@ import { colors, radius } from '../theme';
 import { BoardPicker, sourceNames } from './BoardPicker';
 import type { BoardSource, MarketPlatform, Sportsbook } from './BoardPicker';
 import { Notice } from './Screen';
+import { ScoutVerdict } from './ScoutVerdict';
+import type { AiRead } from '../scout';
 import { AppHeader } from './ui/AppHeader';
 import { ChipRow, FilterChip, GhostButton } from './ui/Controls';
 import { PlayerAvatar } from './ui/PlayerAvatar';
@@ -19,11 +21,13 @@ type BookPick = { id: string; league: string; playerName: string; team: string |
   eventStartTime: string; market: string; line: number; side: Side; gkr: { score: number }; american: number | null;
   impliedChance: number | null; pricey: boolean; fairChance: number;
   otherBook: { book: Sportsbook; american: number | null } | null;
+  altLine: { book: Sportsbook; line: number; american: number | null } | null;
+  scout?: AiRead | null;
   prizePicks: { line: number; lineType: string; sides: Side[];
     gkr: { direction: string; score: number | null; reasonCode: string | null } | null } | null };
 /** One Kalshi or Polymarket pick: a game market priced below Pinnacle's no-vig chance. */
 type MarketPick = { id: string; league: string; game: string; startTime: string; kind: 'WINNER' | 'SPREAD'; side: string;
-  price: number; cost: number; fair: number; edge: number; url: string | null };
+  price: number; cost: number; fair: number; edge: number; url: string | null; scout?: AiRead | null };
 
 const bookUrls: Readonly<Record<Sportsbook, string>> = { draftkings: 'https://sportsbook.draftkings.com/',
   hardrock: 'https://app.hardrock.bet/' };
@@ -83,7 +87,10 @@ function BookCard({ book, pick }: { book: Sportsbook; pick: BookPick }) {
           {pick.opponent ? ` vs ${pick.opponent}` : ''}</Text>
         <Text style={styles.meta}>{gameTime(pick.eventStartTime)}</Text>
       </View>
-      {pick.pricey && <Text style={styles.pricey}>PRICEY</Text>}
+      <View style={styles.tags}>
+        {pick.pricey && <Text style={styles.pricey}>PRICEY</Text>}
+        {pick.altLine && <Text style={styles.altTag}>{pick.side === 'MORE' ? 'CHECK LOWER LINE' : 'CHECK HIGHER LINE'}</Text>}
+      </View>
     </View>
     <View style={styles.middle}>
       <View style={styles.grow}>
@@ -105,6 +112,11 @@ function BookCard({ book, pick }: { book: Sportsbook; pick: BookPick }) {
         <Text style={styles.factLabel}>{other ? sourceNames[other.book] : 'Other book'}</Text></View>
     </View>
     <Text style={styles.note}>{prizePicksNote(pick)}{better ? ' · Best price' : ''}</Text>
+    {pick.altLine && <Text style={styles.altNote}>{sourceNames[pick.altLine.book]} has {pick.side === 'MORE' ? 'Over' : 'Under'}
+      {' '}{formatLine(pick.altLine.line)} at {odds(pick.altLine.american)}, an easier number at a fair price.
+      {book === 'draftkings' ? ' DraftKings usually offers alternate lines too: check its app for a ' +
+        `${pick.side === 'MORE' ? 'lower' : 'higher'} number.` : ''}</Text>}
+    <ScoutVerdict read={pick.scout ?? undefined} gkrDirection={pick.side} />
     {pick.pricey && <Text style={styles.pricyNote}>This price needs {pct(pick.impliedChance)} to break even. GKR’s score is a
       strength rating, not a win chance, so weigh the price before betting.</Text>}
   </View>;
@@ -137,6 +149,7 @@ function MarketCard({ platform, pick }: { platform: MarketPlatform; pick: Market
         <Text style={styles.factLabel}>Per $1</Text></View>
     </View>
     <Text style={styles.note}>Not a GKR score · market price against Pinnacle’s fair odds</Text>
+    <ScoutVerdict read={pick.scout ?? undefined} gkrDirection="MORE" />
     {!!pick.url && <GhostButton label={`Open in ${sourceNames[platform]}`} icon="open-in-new"
       onPress={() => void Linking.openURL(pick.url!)} />}
   </View>;
@@ -230,6 +243,10 @@ const styles = StyleSheet.create({
   factValue: { color: colors.text, fontSize: 17, fontWeight: '800' },
   factLabel: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
   note: { color: colors.textMuted, fontSize: 12.5 },
+  tags: { alignItems: 'flex-end', gap: 4 },
+  altTag: { color: colors.mint, borderColor: colors.mint, borderWidth: 1, borderRadius: radius.sm, paddingHorizontal: 7,
+    paddingVertical: 3, fontSize: 10.5, fontWeight: '800', letterSpacing: 0.6 },
+  altNote: { color: colors.mint, fontSize: 12, lineHeight: 17 },
   pricyNote: { color: colors.gold, fontSize: 12, lineHeight: 17 },
   leagueBadge: { width: 48, height: 48, borderRadius: 24, borderWidth: 2, borderColor: colors.mint, alignItems: 'center',
     justifyContent: 'center' },

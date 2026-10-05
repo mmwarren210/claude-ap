@@ -60,6 +60,9 @@ export function BookLadder({ line }: { line: PropLine }) {
         <Text style={[styles.cell, row.gkr !== null && styles.backed]}>{row.gkr ?? '—'}</Text>
       </View>)}
     </View>
+    {rows.some((row) => row.book === 'hardrock' && !row.main) && !rows.some((row) => row.book === 'draftkings' && !row.main) &&
+      <Text style={styles.note}>DraftKings usually offers alternate lines too, but only its main line comes through here: check
+        its app for a {side === 'MORE' ? 'lower' : 'higher'} number.</Text>}
     <Text style={styles.note}>“Needs” is the win rate the price requires; gold means pricey (60% or more). “Book” is the
       book’s own chance with its cut removed. GKR is scored at each number on the same research. PP marks PrizePicks’ number.</Text>
   </View>;

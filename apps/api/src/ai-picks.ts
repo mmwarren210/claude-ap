@@ -110,6 +110,8 @@ export interface AiRead {
   readonly kind?: 'scout' | 'second';
   /** GKR's pick when a second opinion was researched, for the record. */
   readonly gkr?: { readonly direction: PlayableDirection; readonly score: number | null; readonly modelVersion: string | null };
+  /** A second opinion on a prediction-market pick (a game outcome, not a player stat): never graded from box scores. */
+  readonly subject?: 'market';
   /** GKR's result on its own pick, for second opinions. */
   gkrGrade?: 'PENDING' | 'WIN' | 'LOSS' | 'PUSH' | 'DNP' | 'VOID';
   /** The read's grade on its own side; a second opinion that passed is VOID once the game is final. */
@@ -173,6 +175,16 @@ export class AiPickService {
   private running: Promise<unknown> = Promise.resolve();
   private inFlight = new Map<string, Promise<AiRead | null>>();
   private timers: NodeJS.Timeout[] = [];
+  /** More second-opinion candidates (the sportsbook and market tabs' strongest picks), strongest first. */
+  private extraSeconds: (() => { line: PropLine; gkr: NonNullable<AiRead['gkr']>; question?: PickQuestion }[]) | null = null;
+  setExtraSecondOpinions(source: () => { line: PropLine; gkr: NonNullable<AiRead['gkr']>; question?: PickQuestion }[]): void {
+    this.extraSeconds = source;
+  }
+  /** The read for one line at its number, if Scout has one (any kind). */
+  async readFor(line: PropLine): Promise<AiRead | null> {
+    await this.load();
+    return this.reads.get(this.key(line)) ?? null;
+  }
   private lastRun: { at: string; researched: number; failed: number; seconds: number } | null = null;
   /** Each provider's most recent failure, for the admin status (codes only, never a key or a payload). */
   private lastErrors: Partial<Record<ProviderRead['provider'], { at: string; error: string }>> = {};
@@ -225,14 +237,14 @@ export class AiPickService {
 
   /** Researches one line now (or returns the read it already has). Null when nobody could answer. */
   async research(line: PropLine, evidence: readonly Evidence[], fairMore: number | null,
-    source: 'auto' | 'user', gkr?: AiRead['gkr']): Promise<AiRead | null> {
+    source: 'auto' | 'user', gkr?: AiRead['gkr'], asked?: PickQuestion): Promise<AiRead | null> {
     await this.load();
     const key = this.key(line), existing = this.reads.get(key);
     if (existing) return existing;
     const pending = this.inFlight.get(key);
     if (pending) return pending;
     const task = (async () => {
-      const question = questionFor(line, evidence, fairMore);
+      const question = asked ?? questionFor(line, evidence, fairMore);
       const settled = await Promise.allSettled(this.researchers.map((researcher) => researcher.read(question,
         AbortSignal.timeout(150_000))));
       settled.forEach((result, index) => {
@@ -244,7 +256,7 @@ export class AiPickService {
       const combined = combineReads(reads);
       const read: AiRead = { lineId: line.id, threshold: line.threshold, ...combined, providers: reads,
         researchedAt: this.clock().toISOString(), eventStartTime: line.eventStartTime, lineSnapshot: structuredClone(line),
-        source, kind: gkr ? 'second' : 'scout', ...gkr ? { gkr, gkrGrade: 'PENDING' as const } : {}, grade: 'PENDING', actual: null };
+        source, kind: gkr ? 'second' : 'scout', ...asked ? { subject: 'market' as const } : {}, ...gkr ? { gkr, gkrGrade: 'PENDING' as const } : {}, grade: 'PENDING', actual: null };
       this.reads.set(key, read);
       await this.save();
       return read;
@@ -302,9 +314,13 @@ export class AiPickService {
     // A board the Top Picks list can't be built from skips second opinions, never the Scout picks above.
     let secondLines: ReturnType<AiPickService['secondOpinionLines']> = [];
     try { secondLines = this.secondOpinionLines(board); } catch { /* next run */ }
-    for (const { line, gkr } of secondLines) {
-      if (failedInARow >= 3) break;
-      const read = await this.research(line, evidence, fairMore(line.id), 'auto', gkr).catch(() => null);
+    // Then the sportsbook and prediction-market tabs' strongest picks, within the same caps.
+    const room = () => Math.min(this.options.secondPerRun ?? 8, (this.options.dailySecond ?? 0) - this.used('second')) - seconds;
+    const extras = room() > 0 ? (this.extraSeconds?.() ?? []).filter((item) => !this.reads.has(this.key(item.line))) : [];
+    const queue: { line: PropLine; gkr: NonNullable<AiRead['gkr']>; question?: PickQuestion }[] = [...secondLines, ...extras];
+    for (const { line, gkr, question } of queue) {
+      if (failedInARow >= 3 || (secondLines.every((item) => item.line !== line) && room() <= 0)) break;
+      const read = await this.research(line, evidence, question ? null : fairMore(line.id), 'auto', gkr, question).catch(() => null);
       if (read) { seconds++; failedInARow = 0; this.spend('second'); } else { failed++; failedInARow++; }
     }
     await this.save();
@@ -341,7 +357,8 @@ export class AiPickService {
   async grade(): Promise<number> {
     await this.load();
     if (!this.boxScores) return 0;
-    const pending = [...this.reads.values()].filter((read) => read.grade === 'PENDING' && (read.pick !== 'PASS' || read.gkr));
+    const pending = [...this.reads.values()].filter((read) => read.grade === 'PENDING' && read.subject !== 'market' &&
+      (read.pick !== 'PASS' || read.gkr));
     if (!pending.length) return 0;
     const report = await this.boxScores.results(pending.map((read) => ({ eventId: read.lineSnapshot.eventId,
       playerId: read.lineSnapshot.playerId, lineSnapshot: read.lineSnapshot })));
@@ -377,7 +394,7 @@ export class AiPickService {
     const decided = reads.filter((read) => read.grade === 'WIN' || read.grade === 'LOSS');
     // Second opinions: how GKR's own pick did when Scout agreed, disagreed or saw no edge. The case for (or against)
     // ever blending Scout into GKR rests on these numbers.
-    const seconds = all.filter((read) => read.gkr);
+    const seconds = all.filter((read) => read.gkr && read.subject !== 'market');
     const verdict = (read: AiRead) => read.pick === read.gkr!.direction ? 'agree' : read.pick === 'PASS' ? 'noEdge' : 'disagree';
     const gkrRecord = (group: AiRead[]) => {
       const done = group.filter((read) => read.gkrGrade === 'WIN' || read.gkrGrade === 'LOSS');

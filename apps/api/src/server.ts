@@ -45,7 +45,7 @@ import { gameLinesFor, injuryFor, marketsFor, normalizedName } from './context/m
 import type { SharpPropsFeed } from './context/sharp-props.js';
 import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
 import { bookLadder, bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
-import { marketPicks } from './market-picks.js';
+import { marketLine, marketPicks, marketQuestion } from './market-picks.js';
 import { gameScriptFor, scriptEligible } from './shadow-record.js';
 import type { LiveMarkets } from './market-live.js';
 import type { ShadowPick, ShadowRecord } from './shadow-record.js';
@@ -255,6 +255,32 @@ export function buildServer(options: ServerOptions = {}) {
     const every=setInterval(()=>{void recordShadow().catch(()=>undefined);},15*60_000);every.unref();
     const grading=setInterval(()=>{void shadow.grade().catch(()=>undefined);},60*60_000);grading.unref();
     shadowTimers.push(first,every,grading);
+  }
+  // Scout second opinions on the new tabs: the sportsbooks' strongest GKR picks (one per player and stat across both
+  // books), then each market's biggest edges. They share Scout's second-opinion caps.
+  let extraSeconds:{line:PropLine;gkr:NonNullable<AiRead['gkr']>;question?:ReturnType<typeof marketQuestion>}[]=[];
+  const refreshExtraSeconds=async()=>{
+    const next:typeof extraSeconds=[];const seen=new Set<string>();
+    const bookPicksAll=(await Promise.all(sportsbooks.map(async(book)=>{const result=await picksFor(book);
+      return (result?.picks??[]).map((pick)=>({pick,line:result!.lines.get(pick.id)}));}))).flat()
+      .sort((a,b)=>b.pick.gkr.score-a.pick.gkr.score);
+    for(const {pick,line} of bookPicksAll){
+      const key=`${line?.eventId}|${line?.playerId}|${pick.market}`;
+      if(!line||seen.has(key)||next.length>=6)continue;
+      seen.add(key);next.push({line,gkr:{direction:pick.side,score:pick.gkr.score,modelVersion:pick.gkr.modelVersion}});
+    }
+    for(const platform of ['kalshi','polymarket'] as const){
+      const result=await marketPicksFor(platform);
+      for(const pick of (result?.picks??[]).slice(0,3)){const line=marketLine(pick,now());
+        if(line)next.push({line,gkr:{direction:'MORE',score:null,modelVersion:'market-edge'},question:marketQuestion(pick,line)});}
+    }
+    extraSeconds=next;
+  };
+  if(options.aiPicks?.configured){
+    options.aiPicks.setExtraSecondOpinions(()=>extraSeconds);
+    const firstExtra=setTimeout(()=>{void refreshExtraSeconds().catch(()=>undefined);},60_000);firstExtra.unref();
+    const everyExtra=setInterval(()=>{void refreshExtraSeconds().catch(()=>undefined);},15*60_000);everyExtra.unref();
+    shadowTimers.push(firstExtra,everyExtra);
   }
   options.liveMarkets?.start();
   app.addHook('onClose', async () => {for(const timer of shadowTimers)clearTimeout(timer);options.liveMarkets?.stop();appShadow?.stop();options.aiPicks?.stop(); webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
@@ -889,7 +915,10 @@ export function buildServer(options: ServerOptions = {}) {
     if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_BOOK'});
     const result=await picksFor(parsed.data.book);
     if(!result)return reply.code(503).send({code:'BOOK_PICKS_UNAVAILABLE'});
-    return {book:parsed.data.book,name:sportsbookNames[parsed.data.book],fetchedAt:result.fetchedAt,picks:result.picks};
+    const picks=await Promise.all(result.picks.map(async(pick)=>{const line=result.lines.get(pick.id);
+      const read=line&&options.aiPicks?await options.aiPicks.readFor(line):null;
+      return {...pick,scout:read?aiView(read):null};}));
+    return {book:parsed.data.book,name:sportsbookNames[parsed.data.book],fetchedAt:result.fetchedAt,picks};
   });
   // Prediction-market picks: Kalshi or Polymarket game markets priced below Pinnacle's no-vig chance. Display only.
   /** A platform's prices: live from its free API when fresh, else the daily Apify feed. */
@@ -912,7 +941,11 @@ export function buildServer(options: ServerOptions = {}) {
     const parsed=z.object({platform:z.enum(['kalshi','polymarket'])}).safeParse(request.params);
     if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_PLATFORM'});
     const result=await marketPicksFor(parsed.data.platform);
-    return result?{platform:parsed.data.platform,...result}:reply.code(503).send({code:'MARKET_PICKS_UNAVAILABLE'});
+    if(!result)return reply.code(503).send({code:'MARKET_PICKS_UNAVAILABLE'});
+    const picks=await Promise.all(result.picks.map(async(pick)=>{const line=marketLine(pick,now());
+      const read=line&&options.aiPicks?await options.aiPicks.readFor(line):null;
+      return {...pick,scout:read?aiView(read):null};}));
+    return {platform:parsed.data.platform,...result,picks};
   });
   // Carry PrizePicks picks over to Underdog or Pick6: each pick's line on that app and how its number compares.
   app.post('/v1/apps/:app/port',async(request,reply)=>{

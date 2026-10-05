@@ -127,3 +127,28 @@ test('second opinions: Scout reads GKR Top Picks without being told GKR pick, an
   const off = new AiPickService([chatgpt], null, { dailyAuto: 5, dailyPerUser: 1 }, null, () => now);
   assert.equal((await off.runOnce(board, [], () => null)).seconds, 0);
 });
+
+test('Scout second opinions reach the sportsbook and market tabs within the same caps; market reads are never box-score graded', async () => {
+  const board = boardResponseSchema.parse({ board: { provider: 'prizepicks', fetchedAt: now.toISOString(), lines: [] },
+    analyses: [], rankedLineIds: [], builtAt: now.toISOString() });
+  const bookLine = fixtureLine({ id: 'draftkings:e:p:passing_yards:245.5', eventStartTime: '2030-09-24T18:00:00Z', threshold: 245.5 });
+  const marketLine = fixtureLine({ id: 'kalshi:NFL:game:winner', playerId: 'market:Raiders to win', playerName: 'Raiders to win',
+    market: 'game_winner', threshold: 0.5, eventStartTime: '2030-09-24T18:00:00Z' });
+  const marketQuestion: PickQuestion = { ...question, player: 'Raiders to win', stat: 'wins the game', line: 0.5,
+    facts: ['MORE means this side wins.'] };
+  const asked: PickQuestion[] = [];
+  const researcher: PickResearcher = { provider: 'claude', read: async (q) => { asked.push(q); return read('claude', 'MORE', 62); } };
+  let graded = 0;
+  const boxScores = { results: async (targets: unknown[]) => { graded += targets.length; return { facts: [], waiting: [], unsupported: [] }; } };
+  const service = new AiPickService([researcher], null, { dailyAuto: 5, dailyPerUser: 1, dailySecond: 1, secondPerRun: 5 },
+    boxScores as never, () => now);
+  service.setExtraSecondOpinions(() => [{ line: marketLine, gkr: { direction: 'MORE', score: null, modelVersion: 'market-edge' },
+    question: marketQuestion }, { line: bookLine, gkr: { direction: 'MORE', score: 88, modelVersion: 'm-1.0' } }]);
+  assert.equal((await service.runOnce(board, [], () => null)).seconds, 1, 'the daily cap of one holds across the tabs');
+  assert.equal(asked[0]?.stat, 'wins the game', 'the market question is asked as given');
+  const reads = await service.readFor(marketLine);
+  assert.equal(reads?.subject, 'market');
+  assert.equal(await service.readFor(bookLine), null, 'over the cap');
+  await service.grade();
+  assert.equal(graded, 0, 'market reads are never sent to the box-score grader');
+});

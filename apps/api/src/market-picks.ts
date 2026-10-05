@@ -1,3 +1,5 @@
+import type { PropLine, Sport } from '@crowniq/contracts';
+import type { PickQuestion } from './ai-picks.js';
 import type { GameLine, MarketOdds } from './context/feeds.js';
 import { normalizedName } from './context/match.js';
 
@@ -116,4 +118,31 @@ export function marketPicks(platform: MarketPlatform, markets: readonly MarketOd
     if (!best.has(key) || pick.edge > best.get(key)!.edge) best.set(key, pick);
   }
   return [...best.values()].sort((a, b) => b.edge - a.edge);
+}
+
+const leagueSport: Readonly<Record<string, Sport>> = { NFL: 'NFL', NCAAF: 'NCAAFB', NCAAFB: 'NCAAFB', MLB: 'MLB', NBA: 'NBA',
+  WNBA: 'WNBA', NHL: 'NHL', ATP: 'TENNIS', WTA: 'TENNIS' };
+
+/**
+ * A market pick as a line Scout can read: the side as the "player", "wins" (or covers) as the stat, 0.5 as the number, so
+ * MORE means it happens. Null for leagues CrownIQ doesn't cover.
+ */
+export function marketLine(pick: MarketPick, now: Date): PropLine | null {
+  const sport = leagueSport[pick.league.toUpperCase()];
+  if (!sport) return null;
+  return { id: pick.id, provider: 'prizepicks', sourceLineId: pick.id, sourceLineIdIsSynthetic: true, sport, league: pick.league,
+    eventId: `market:${pick.game}:${pick.startTime}`, eventName: pick.game, eventStartTime: new Date(pick.startTime).toISOString(),
+    playerId: `market:${pick.side}`, playerName: pick.side, team: null, opponent: null,
+    market: pick.kind === 'WINNER' ? 'game_winner' : 'game_spread', threshold: 0.5, availableDirections: ['MORE', 'LESS'],
+    lineType: 'REGULAR', fetchedAt: now.toISOString() };
+}
+
+/** What Scout is asked about a market pick: does this side win (or cover)? */
+export function marketQuestion(pick: MarketPick, line: PropLine): PickQuestion {
+  return { sport: line.sport, league: pick.league, event: pick.game, startTime: line.eventStartTime, player: pick.side,
+    team: null, opponent: null, stat: pick.kind === 'WINNER' ? 'wins the game' : `covers: ${pick.side}`, line: 0.5,
+    lineType: 'REGULAR', sides: ['MORE', 'LESS'],
+    facts: ['This is a game outcome market, not a player stat. MORE means this side wins (or covers the spread named); ' +
+      'LESS means it does not.', `${pick.platform === 'kalshi' ? 'Kalshi' : 'Polymarket'} price: ${Math.round(pick.price * 100)} cents ` +
+      'on the dollar.'] };
 }
