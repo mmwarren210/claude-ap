@@ -19,9 +19,11 @@ test('answers fail closed: a side the line lacks, low confidence or junk becomes
   assert.equal(parsePick('claude', { pick: 'MORE', confidence: 52 }, question, null).pick, 'PASS');
   assert.equal(parsePick('claude', { pick: 'OVER', confidence: 90 }, question, null).pick, 'PASS');
   const parsed = parsePick('chatgpt', { pick: 'MORE', confidence: 64, summary: 'Hot bat.', reasons: [
-    { text: 'Batting second', source_url: 'https://mlb.com/a' }, { text: 'Made up', source_url: 'https://fake.example/b' }] },
+    { kind: 'role', text: 'Batting second', source_url: 'https://mlb.com/a' },
+    { kind: 'vibes', text: 'Made up', source_url: 'https://fake.example/b' }] },
   question, new Set(['https://mlb.com/a']));
   assert.deepEqual([parsed.pick, parsed.confidence, parsed.reasons.map((item) => item.url)], ['MORE', 64, ['https://mlb.com/a', null]]);
+  assert.deepEqual(parsed.reasons.map((item) => item.kind), ['role', 'other'], 'an unknown evidence kind files as other');
 });
 
 test('reads combine: agreement averages, one PASS marks down, opposite sides PASS', () => {

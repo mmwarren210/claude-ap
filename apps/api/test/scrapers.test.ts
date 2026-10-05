@@ -345,3 +345,26 @@ test('a run’s charge is read again after it settles, so the budget counts what
   assert.equal(run.usageUsd, 0.405);
   assert.equal(reads, 1);
 });
+
+test('the daily budget counts Eastern days and the account real spend, whichever is higher', async () => {
+  const { DailySpendBudget, easternDay, easternMidnight } = await import('../src/scrapers/spend-budget.js');
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const folder = await mkdtemp(join(tmpdir(), 'crowniq-budget-'));
+  try {
+    // 10:30 PM Eastern on Oct 4 is already Oct 5 in UTC: still the same Eastern day.
+    let now = new Date('2030-10-05T02:30:00Z');
+    assert.equal(easternDay(now), '2030-10-04');
+    assert.equal(easternMidnight(now).toISOString(), '2030-10-04T04:00:00.000Z');
+    let actualSince: Date | null = null;
+    const budget = new DailySpendBudget(join(folder, 'spend.json'), 25, () => now, async (since) => { actualSince = since; return 30.82; });
+    await budget.record(2);
+    assert.equal(await budget.spent(), 30.82, 'Apify counts runs started elsewhere');
+    assert.equal(actualSince!.toISOString(), '2030-10-04T04:00:00.000Z');
+    assert.equal(await budget.remaining(), 0);
+    now = new Date('2030-10-05T04:30:00Z');
+    const failing = new DailySpendBudget(join(folder, 'spend.json'), 25, () => now, async () => { throw new Error('down'); });
+    assert.equal(await failing.spent(), 0, 'a new Eastern day starts at zero; an unreadable Apify falls back to the local count');
+  } finally { await rm(folder, { recursive: true, force: true }); }
+});

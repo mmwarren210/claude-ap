@@ -43,6 +43,24 @@ export class ApifyClient {
     return { id: data.id, status: data.status, datasetId: data.defaultDatasetId, usageUsd: Number.isFinite(usage) ? usage : 0 };
   }
 
+  /**
+   * What the account's actor runs that started since `since` cost, in USD (newest first, up to 1,000 runs). The truth
+   * for the daily budget: it includes runs started outside this server (the Apify console, another deployment).
+   */
+  async spentSince(since: Date): Promise<number> {
+    let total = 0;
+    for (let offset = 0; offset < 1000; offset += 200) {
+      const body = await this.json(`/actor-runs?desc=true&limit=200&offset=${offset}`);
+      const items = ((body.data as { items?: unknown[] } | undefined)?.items ?? []) as { startedAt?: string; usageTotalUsd?: number }[];
+      for (const item of items) {
+        if (!item.startedAt || Date.parse(item.startedAt) < since.getTime()) return Math.round(total * 10_000) / 10_000;
+        total += Number.isFinite(item.usageTotalUsd) ? item.usageTotalUsd! : 0;
+      }
+      if (items.length < 200) break;
+    }
+    return Math.round(total * 10_000) / 10_000;
+  }
+
   /** Start `actorId` (owner/name) with `input` and wait until it finishes. */
   async runActor(actorId: string, input: unknown, options: ApifyRunOptions): Promise<ApifyRun> {
     const params = new URLSearchParams({ waitForFinish: '60', maxTotalChargeUsd: String(options.maxChargeUsd),

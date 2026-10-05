@@ -81,7 +81,9 @@ const apify=new ApifyClient(process.env.APIFY_TOKEN?.trim()||null);
 // Scheduled slots already run today, saved so a restart or an overlapping deployment never repeats a paid pull.
 const scraperSlots=new SlotLedger(process.env.CROWNIQ_SCRAPER_SLOTS_FILE ?? `${dataDir}/scraper-slots.json`);
 const scraperBudget=new DailySpendBudget(process.env.CROWNIQ_SCRAPER_SPEND_FILE ?? `${dataDir}/scraper-spend.json`,
-  nonNegativeNumber('CROWNIQ_SCRAPER_DAILY_USD',20));
+  nonNegativeNumber('CROWNIQ_SCRAPER_DAILY_USD',25),()=>new Date(),
+  // Apify's own charges since midnight Eastern, so runs started anywhere count against the cap.
+  process.env.APIFY_TOKEN?.trim()?(since)=>apify.spentSince(since):null);
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
   [{source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9,12,15,18')},
     {source:lergassy,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_LERGASSY','12')},

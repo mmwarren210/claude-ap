@@ -28,7 +28,7 @@ import type { LineStyle } from '../../theme';
 import { useBoard } from '../../use-board';
 import { useDraft } from '../../use-draft';
 import { usePlayerGames } from '../../use-player-games';
-import { agreementText, aiPlay, lateNews, providerName, SCOUT, scoutVerdict, useAiPicks, verdictText } from '../../use-ai-picks';
+import { agreementText, aiPlay, lateNews, providerName, SCOUT, scoutEvidence, scoutVerdict, useAiPicks, verdictText } from '../../use-ai-picks';
 
 /** GKR couldn't score these (no model for the stat, or its data is missing); ChatGPT and Claude can research them. */
 const AI_ELIGIBLE = new Set(['MODEL_SUPPORT_INCOMPLETE', 'STALE_OR_MISSING_EVIDENCE', 'INSUFFICIENT_MODEL_COVERAGE',
@@ -341,8 +341,12 @@ export default function PlayerResearch() {
           {ai.providers.map((item) => <View key={item.provider} style={styles.aiProvider}>
             <Text style={styles.factorName}>{providerName(item.provider)} · {item.pick}{item.pick !== 'PASS' ? ` · ${item.confidence}` : ''}</Text>
             {!!item.summary && <Text style={styles.factorLine}>{item.summary}</Text>}
-            {item.reasons.map((reason, index) => <Text key={index} style={styles.factorDetail}>
-              • {reason.text}{reason.url ? <Text style={styles.link} onPress={() => void Linking.openURL(reason.url!)}> (source)</Text> : null}
+          </View>)}
+          {scoutEvidence(ai).map((group) => <View key={group.label} style={styles.aiProvider}>
+            <Text style={styles.evidenceLabel}>{group.label}</Text>
+            {group.items.map((reason, index) => <Text key={index} style={styles.factorDetail}>
+              • {reason.text} <Text style={styles.evidenceBy}>({reason.by})</Text>
+              {reason.url ? <Text style={styles.link} onPress={() => void Linking.openURL(reason.url!)}> source</Text> : null}
             </Text>)}
           </View>)}
         </View>
@@ -453,6 +457,8 @@ const styles = StyleSheet.create({
   supportSub: { color: colors.textMuted, fontSize: 11 },
   supportStatus: { color: colors.textFaint, fontSize: 11, fontWeight: '800', marginTop: 2 },
   lateNews: { color: colors.amber, fontSize: 13, lineHeight: 18, fontWeight: '700' },
+  evidenceLabel: { color: colors.mint, fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6 },
+  evidenceBy: { color: colors.textFaint, fontSize: 11 },
   aiProvider: { gap: 3, marginTop: 8 },
   groupTitle: { color: colors.textMuted, fontSize: 12, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase' },
   groupGap: { marginTop: 8 },
