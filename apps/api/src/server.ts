@@ -1268,32 +1268,40 @@ export function buildServer(options: ServerOptions = {}) {
     let run=appBoardRefresh.get(appName);
     if(!run){run=buildAppBoard(appName).then((value)=>{appBoardCache.set(appName,{at:now().getTime(),value});return value;})
       .finally(()=>appBoardRefresh.delete(appName));appBoardRefresh.set(appName,run);}
-    return cached?cached.value:run;
+    if(cached)return cached.value;
+    // Nothing built yet: wait up to 8 seconds for the full board, else send the lines now (GKR and Scout, History to follow).
+    const quick=new Promise<null>((resolve)=>{const timer=setTimeout(()=>resolve(null),8000);timer.unref();});
+    return (await Promise.race([run,quick]))??buildAppBoard(appName,false);
   }
-  const warmApps=setInterval(()=>{for(const appName of otherApps)void cachedAppBoard(appName).catch(()=>undefined);},3*60_000);
-  warmApps.unref();shadowTimers.push(warmApps);
+  const warmAppBoards=()=>{for(const appName of otherApps)void cachedAppBoard(appName).catch(()=>undefined);};
+  const warmAppsFirst=setTimeout(warmAppBoards,30_000);warmAppsFirst.unref();
+  const warmApps=setInterval(warmAppBoards,3*60_000);
+  warmApps.unref();shadowTimers.push(warmAppsFirst,warmApps);
   app.get('/v1/apps/:app/board',async(request,reply)=>{
     const parsed=z.object({app:z.enum(otherApps as [OtherApp,...OtherApp[]])}).safeParse(request.params);
     if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_APP'});
     if(!options.scrapedLines)return reply.code(503).send({code:'APP_LINES_UNAVAILABLE'});
     return cachedAppBoard(parsed.data.app);
   });
-  async function buildAppBoard(appName:OtherApp){
-    const parsed={data:{app:appName}};
-    const board=await appBoard(options.scrapedLines!,parsed.data.app,service.getBoard());
-    const scores=await scoresFor(parsed.data.app);
+  async function buildAppBoard(appName:OtherApp,withHistory=true){
+    const started=Date.now();
+    const board=await appBoard(options.scrapedLines!,appName,service.getBoard());
+    const scores=await scoresFor(appName);
     // Scout's read on the line, at this number, when it has one (lines GKR can't score).
     const reads=new Map((await options.aiPicks?.upcoming()??[]).map((read)=>[`${read.lineId}|${read.threshold}`,read]));
-    return {...board,gkrScored:!!options.appGkrScores,
-      lines:await Promise.all(board.lines.map(async(line)=>{const read=reads.get(`${line.id}|${line.threshold}`);
-        const gkr=scores.get(line.id)??null;
-        // A free History Read on lines GKR doesn't score.
-        const asLine=asBoard([line],board.fetchedAt??now().toISOString()).board.lines;
-        let history=gkr?null:(await historyReads.readsFor(asLine)).values().next().value??null;
-        if(!gkr&&!read&&(!history||history.direction==='PASS')&&options.baseRates){
-          const trend=await options.baseRates.trendFor(asLine[0]);if(trend)history=trendRead(trend);}
-        return {...line,gkr,history,
-          scout:read?{pick:read.pick,score:read.score,agreement:read.agreement}:null};}))};
+    // One History pass for every line GKR doesn't score (eight lookups at a time), not one pass per line.
+    const asLines=asBoard(board.lines,board.fetchedAt??now().toISOString()).board.lines;
+    const unscored=asLines.filter((line)=>!scores.has(line.id));
+    const history=withHistory?await historyReads.readsFor(unscored).catch(()=>new Map<string,HistoryRead>()):new Map<string,HistoryRead>();
+    const lines=await Promise.all(board.lines.map(async(line,index)=>{
+      const read=reads.get(`${line.id}|${line.threshold}`), gkr=scores.get(line.id)??null;
+      let found:HistoryRead|null=gkr?null:history.get(line.id)??null;
+      if(withHistory&&!gkr&&!read&&(!found||found.direction==='PASS')&&options.baseRates){
+        const trend=await options.baseRates.trendFor(asLines[index]!);if(trend)found=trendRead(trend);}
+      return {...line,gkr,history:found,scout:read?{pick:read.pick,score:read.score,agreement:read.agreement}:null};
+    }));
+    if(withHistory)console.log(`[app-board] ${appName} ${lines.length} lines, ${history.size} history reads, ${Math.round((Date.now()-started)/1000)}s`);
+    return {...board,gkrScored:!!options.appGkrScores,lines};
   }
   // Line shopping: every app's number for the same player and stat, the easiest number per side, and the books' line.
   let shopCache:{at:number;board:unknown;entries:ShopEntry[]}|null=null;
