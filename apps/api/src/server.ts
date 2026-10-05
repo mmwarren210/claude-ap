@@ -304,9 +304,21 @@ export function buildServer(options: ServerOptions = {}) {
         if(line)next.push({line,gkr:{direction:'MORE',score:null,modelVersion:'market-edge'},question:marketQuestion(pick,line)});}
     }
     extraSeconds=next;
+    // Scout's own picks on Underdog and Pick6 lines for players PrizePicks doesn't list (GKR has no research for them).
+    if(options.scrapedLines){
+      const lines:PropLine[]=[];
+      for(const app of otherApps){
+        const board=await appBoard(options.scrapedLines,app,service.getBoard()),scores=await scoresFor(app);
+        const only=board.lines.filter((line)=>!line.prizePicks&&!scores.has(line.id));
+        if(only.length)lines.push(...asBoard(only,board.fetchedAt??now().toISOString()).board.lines);
+      }
+      extraScout=lines;
+    }
   };
+  let extraScout:PropLine[]=[];
   if(options.aiPicks?.configured){
     options.aiPicks.setExtraSecondOpinions(()=>extraSeconds);
+    options.aiPicks.setExtraScoutLines(()=>extraScout);
     const firstExtra=setTimeout(()=>{void refreshExtraSeconds().catch(()=>undefined);},60_000);firstExtra.unref();
     const everyExtra=setInterval(()=>{void refreshExtraSeconds().catch(()=>undefined);},15*60_000);everyExtra.unref();
     shadowTimers.push(firstExtra,everyExtra);
@@ -957,8 +969,12 @@ export function buildServer(options: ServerOptions = {}) {
     if(!options.scrapedLines)return reply.code(503).send({code:'APP_LINES_UNAVAILABLE'});
     const board=await appBoard(options.scrapedLines,parsed.data.app,service.getBoard());
     const scores=await scoresFor(parsed.data.app);
+    // Scout's read on the line, at this number, when it has one (lines GKR can't score).
+    const reads=new Map((await options.aiPicks?.upcoming()??[]).map((read)=>[`${read.lineId}|${read.threshold}`,read]));
     return {...board,gkrScored:!!options.appGkrScores,
-      lines:board.lines.map((line)=>({...line,gkr:scores.get(line.id)??null}))};
+      lines:board.lines.map((line)=>{const read=reads.get(`${line.id}|${line.threshold}`);
+        return {...line,gkr:scores.get(line.id)??null,
+          scout:read?{pick:read.pick,score:read.score,agreement:read.agreement}:null};})};
   });
   // App scores are rebuilt at most every 2 minutes, or sooner when the PrizePicks board or its research changes.
   const appScoreCache=new Map<OtherApp,{at:number;key:readonly unknown[];scores:Map<string,AppScore>}>();

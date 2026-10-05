@@ -251,6 +251,15 @@ export class AiPickService {
   setExtraSecondOpinions(source: () => { line: PropLine; gkr: NonNullable<AiRead['gkr']>; question?: PickQuestion }[]): void {
     this.extraSeconds = source;
   }
+  /** More lines for Scout's own picks: Underdog and Pick6 lines for players PrizePicks doesn't list. */
+  private extraScout: (() => readonly PropLine[]) | null = null;
+  setExtraScoutLines(source: () => readonly PropLine[]): void { this.extraScout = source; }
+  /** Every read whose game hasn't started, for boards outside PrizePicks to look up by line. */
+  async upcoming(): Promise<AiRead[]> {
+    await this.load();
+    const now = this.clock().getTime();
+    return [...this.reads.values()].filter((read) => Date.parse(read.eventStartTime) > now);
+  }
   /** The read for one line at its number, if Scout has one (any kind). */
   async readFor(line: PropLine): Promise<AiRead | null> {
     await this.load();
@@ -351,8 +360,9 @@ export class AiPickService {
   }
 
   /**
-   * The scheduled run: lines GKR couldn't score in games starting within 12 hours, standard lines first, one line per
-   * player (the stat with the most lines on the board), within the daily cap.
+   * The scheduled run: lines GKR couldn't score in games starting within 12 hours (PrizePicks, then Underdog and Pick6
+   * lines for players PrizePicks doesn't list), standard lines first, one line per player and game on each board (the
+   * stat with the most lines), within the daily cap.
    */
   async runOnce(board: BoardResponse, evidence: readonly Evidence[], fairMore: (lineId: string) => number | null) {
     await this.load();
@@ -360,7 +370,9 @@ export class AiPickService {
     const now = this.clock().getTime(), analyses = new Map(board.analyses.map((item) => [item.lineId, item]));
     const marketCounts = new Map<string, number>();
     for (const line of board.board.lines) marketCounts.set(line.market, (marketCounts.get(line.market) ?? 0) + 1);
-    const candidates = board.board.lines.filter((line) => {
+    let extra: readonly PropLine[] = [];
+    try { extra = this.extraScout?.() ?? []; } catch { /* next run */ }
+    const candidates = [...board.board.lines, ...extra].filter((line) => {
       const start = Date.parse(line.eventStartTime);
       return start > now + 15 * 60_000 && start < now + 12 * 3600_000 && line.lineType === 'REGULAR' &&
         aiEligible(line, analyses.get(line.id)) && !this.reads.has(this.key(line));

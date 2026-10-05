@@ -226,3 +226,17 @@ test('both researchers look up a result through their strict formats, with the p
   assert.equal((await new OpenAiPickResearcher('key', 'gpt-5.4-mini', fetchFn, () => now).result(asked)).actual, 33);
   assert.equal(name, 'crowniq_result');
 });
+
+test('Scout also reads Underdog and Pick6 lines for players PrizePicks does not list, within the same caps', async () => {
+  const board = boardResponseSchema.parse({ board: { provider: 'prizepicks', fetchedAt: now.toISOString(), lines: [] },
+    analyses: [], rankedLineIds: [], builtAt: now.toISOString() });
+  const appLine = fixtureLine({ id: 'ud:abc', playerId: 'LOL:artemis', playerName: 'Artemis', sport: 'LOL', league: 'LOL',
+    eventId: 'ud-game:1', market: 'kills_on_maps_1_2', threshold: 8.5, eventStartTime: '2030-09-24T16:00:00Z',
+    availableDirections: ['MORE', 'LESS'] });
+  const researcher: PickResearcher = { provider: 'claude', read: async () => read('claude', 'LESS', 61) };
+  const service = new AiPickService([researcher], null, { dailyAuto: 5, dailyPerUser: 1 }, null, () => now);
+  service.setExtraScoutLines(() => [appLine]);
+  assert.equal((await service.runOnce(board, [], () => null)).researched, 1);
+  const upcoming = await service.upcoming();
+  assert.deepEqual(upcoming.map((item) => [item.lineId, item.threshold, item.pick, item.score]), [['ud:abc', 8.5, 'LESS', 61]]);
+});

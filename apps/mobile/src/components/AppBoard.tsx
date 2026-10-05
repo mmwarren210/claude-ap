@@ -8,6 +8,7 @@ import { entryName, entryOutlook, formatLine, gameTime, percent1 } from '../insi
 import { usePayouts } from '../use-payouts';
 import { buildSlip } from '../app-slip';
 import { colors, radius } from '../theme';
+import { SCOUT } from '../scout';
 import { useBoard } from '../use-board';
 import { appNames, copyAndOpen, slipText } from '../port';
 import type { PickApp } from '../port';
@@ -29,6 +30,8 @@ type AppLine = { id: string; sport: string; league: string; eventId: string; eve
   prizePicks: { threshold: number; lineType: string; gkr: { direction: Side; score: number } | null } | null;
   /** GKR on this app line itself (its number and sides), or null when GKR passes or can't read it. */
   gkr?: { direction: Side; score: number } | null;
+  /** Scout's read on this line (players PrizePicks doesn't list, where GKR has no research), or null. */
+  scout?: { pick: Side | 'PASS'; score: number | null; agreement: string } | null;
   /** Pick6 promos: a gimme pick, or the number before a promo moved it. */
   promo?: { gimme: boolean; originalLine: number | null } | null };
 
@@ -40,9 +43,16 @@ const boosted = (line: AppLine) => line.availableDirections.some((side) => boost
 const sideLabel = (app: PickApp, side: Side) => app === 'underdog' ? side === 'MORE' ? 'Higher' : 'Lower'
   : side === 'MORE' ? 'More' : 'Less';
 
+/** Scout's side on a line GKR can't read (55 and up is a play). */
+const scoutSide = (line: AppLine): Side | null => !line.gkr && line.scout && line.scout.pick !== 'PASS' &&
+  (line.scout.score ?? 0) >= 55 ? line.scout.pick : null;
+/** The side the card backs: GKR's, or Scout's where GKR can't read the line. */
+const backedSide = (line: AppLine): Side | null => line.gkr?.direction ?? scoutSide(line);
+
 function Reference({ line }: { line: AppLine }) {
   const reference = line.prizePicks;
-  if (!reference) return <Text style={styles.reference}>Not on PrizePicks · no GKR read</Text>;
+  if (!reference) return <Text style={styles.reference}>{line.scout ? scoutSide(line) ? `Not on PrizePicks · ${SCOUT} researched it`
+    : `Not on PrizePicks · ${SCOUT} sees no edge` : `Not on PrizePicks · ${SCOUT} hasn’t read it yet`}</Text>;
   const same = reference.threshold === line.threshold;
   return <Text style={[styles.reference, reference.gkr && styles.referenceStrong]}>
     PrizePicks {formatLine(reference.threshold)}{same ? ' (same line)' : ''} · {reference.gkr
@@ -75,13 +85,18 @@ function LineCard({ app, line, picked, onPick }: { app: PickApp; line: AppLine; 
       <Text style={styles.gkrScore}>GKR {Math.round(line.gkr.score)}</Text>
       <Text style={styles.gkrSide}>{sideLabel(app, line.gkr.direction)} {formatLine(line.threshold)}</Text>
     </View>}
+    {!line.gkr && scoutSide(line) && <View style={styles.gkr}>
+      <Text style={[styles.gkrScore, styles.scoutScore]}>{SCOUT} {Math.round(line.scout!.score!)}</Text>
+      <Text style={styles.gkrSide}>{sideLabel(app, scoutSide(line)!)} {formatLine(line.threshold)}</Text>
+    </View>}
     <Reference line={line} />
     <View style={styles.sides}>
       {line.availableDirections.map((side) => <Pressable key={side} accessibilityRole="button"
         accessibilityState={{ selected: picked === side }} onPress={() => onPick(side)}
-        style={[styles.side, line.gkr?.direction === side && styles.sideBacked, picked === side && styles.sideActive]}>
+        style={[styles.side, backedSide(line) === side && styles.sideBacked, picked === side && styles.sideActive]}>
         <Text style={[styles.sideText, picked === side && styles.sideTextActive]}>{sideLabel(app, side)}
-          {line.multipliers?.[side] ? ` · ${line.multipliers[side]}x` : ''}{line.gkr?.direction === side ? ' · GKR' : ''}</Text></Pressable>)}
+          {line.multipliers?.[side] ? ` · ${line.multipliers[side]}x` : ''}{line.gkr?.direction === side ? ' · GKR'
+            : scoutSide(line) === side ? ` · ${SCOUT}` : ''}</Text></Pressable>)}
     </View>
   </View>;
 }
@@ -115,13 +130,14 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   useFocusEffect(useCallback(() => { setState('loading'); void load(); }, [load]));
 
   const sports = useMemo(() => [...new Set(lines.map((line) => line.league))].sort(), [lines]);
-  // GKR picks: only lines GKR backs, strongest first.
+  // Picks: lines GKR backs (strongest first), then Scout's plays where GKR can't read the line.
   const shown = useMemo(() => {
     const inLeague = lines.filter((line) => (sport === 'ALL' || line.league === sport) && (!boostOnly || boosted(line)));
-    return gkrOnly ? inLeague.filter((line) => line.gkr).sort((a, b) => b.gkr!.score - a.gkr!.score) : inLeague;
+    const strength = (line: AppLine) => line.gkr ? 1000 + line.gkr.score : line.scout?.score ?? 0;
+    return gkrOnly ? inLeague.filter(backedSide).sort((a, b) => strength(b) - strength(a)) : inLeague;
   }, [lines, sport, gkrOnly, boostOnly]);
   const boostCount = useMemo(() => lines.filter(boosted).length, [lines]);
-  const backed = useMemo(() => lines.filter((line) => line.gkr).length, [lines]);
+  const backed = useMemo(() => lines.filter(backedSide).length, [lines]);
   const picks = new Map(slip.map((item) => [item.line.id, item.side]));
   const pick = (line: AppLine, side: Side) => {
     setMessage('');
@@ -184,7 +200,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
         each pick before you play it.</Text>
     </View>}
     {scored && <Segmented label="Which lines" value={gkrOnly ? 'GKR' : 'ALL'} onChange={(value) => setGkrOnly(value === 'GKR')}
-      options={[{ value: 'ALL', label: 'All lines' }, { value: 'GKR', label: `GKR picks (${backed})` }]} />}
+      options={[{ value: 'ALL', label: 'All lines' }, { value: 'GKR', label: `Picks (${backed})` }]} />}
     <Text style={styles.status}>{shown.length} lines{age === null ? '' : ` · captured ${age < 90 ? `${age} min` : `${Math.round(age / 60)} h`} ago`}</Text>
     <Text style={styles.note}>{scored ? `GKR scores ${appNames[app]} lines at ${appNames[app]}’s own number, using the same
       research as PrizePicks. These scores are new on ${appNames[app]} and are being tracked.` : `GKR doesn’t score
@@ -254,6 +270,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, borderRadius: radius.pill, backgroundColor: colors.mintWash,
     borderWidth: 1, borderColor: colors.mint },
   gkrScore: { color: colors.mint, fontSize: 14, fontWeight: '900' },
+  scoutScore: { color: colors.electric },
   gkrSide: { color: colors.text, fontSize: 13, fontWeight: '700' },
   tray: { position: 'absolute', left: 16, right: 16, bottom: 12, gap: 8, padding: 12, borderRadius: radius.lg,
     borderWidth: 1, borderColor: colors.mint, backgroundColor: colors.surface },

@@ -19,6 +19,9 @@
   Scout second opinions also cover the strongest DraftKings, Hard Rock, Kalshi and Polymarket tab picks (same caps).
 - **No AI product names on screen** (owner, 2026-10-05): the two research models show as **Scout A** and **Scout B**
   (`providerName`), and `unbrand` replaces any product name inside their text. Their prompt says never to name one.
+- **Scout reads app-only lines** (owner, 2026-10-05): Underdog and Pick6 lines for players PrizePicks doesn't list
+  (no GKR research) go to Scout's scheduled run after the PrizePicks lines, under the same caps. The app boards show
+  Scout's side and score ("Scout 61 · Less"), and the Picks filter includes them after GKR's.
 - **Tennis and esports go through Scout** (owner, 2026-10-05: "use Scout, that's what it's for"): no new stat source.
   Scout reads those lines like any line GKR can't score, and grades them itself: with no box score, both models look up
   the final number with a source page and must agree (`settleResult`); otherwise it waits, and is void four days on.
