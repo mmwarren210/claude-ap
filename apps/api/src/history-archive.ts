@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readdir, stat } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 // CrownIQ's own archive, for built-in verification and evidence later: every player game log it fetched, every final
@@ -19,8 +19,18 @@ export class HistoryArchive {
     const at = this.clock().toISOString();
     const task = this.chain.then(async () => {
       if (!this.dir || !records.length) return 0;
-      const seen = this.seen.get(stream) ?? new Set<string>();
-      this.seen.set(stream, seen);
+      // After a restart, the keys this month's file already holds count as written.
+      let seen = this.seen.get(stream);
+      if (!seen) {
+        seen = new Set<string>();
+        try {
+          for (const row of (await readFile(join(this.dir, `${stream}-${at.slice(0, 7)}.jsonl`), 'utf8')).split('\n')) {
+            const match = /^\{"key":"((?:[^"\\]|\\.)*)"/.exec(row);
+            if (match) seen.add(JSON.parse(`"${match[1]}"`) as string);
+          }
+        } catch { /* no file yet */ }
+        this.seen.set(stream, seen);
+      }
       if (seen.size > 500_000) seen.clear();
       const batch = new Set<string>();
       const fresh = records.filter(({ key }) => !seen.has(key) && !batch.has(key) && batch.add(key));

@@ -28,5 +28,8 @@ test('the archive appends each record once per key, by stream and month, and kee
     const lines = (await readFile(join(folder, 'lines-2030-10.jsonl'), 'utf8')).trim().split('\n').map((row) => JSON.parse(row));
     assert.deepEqual(lines.map((row) => [row.line, row.previousLine]), [[64.5, null], [66.5, 64.5]], 'new, then the move; no repeat');
     assert.deepEqual(Object.keys((await archive.status()).streams).sort(), ['games', 'lines', 'results']);
+    // A restarted server reads this month's keys back and doesn't write them twice.
+    const restarted = new HistoryArchive(folder, () => now);
+    assert.equal(await restarted.append('games', [{ key: 'g', record: {} }, { key: 'g2', record: {} }]), 1);
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
