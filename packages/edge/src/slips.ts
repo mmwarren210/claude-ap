@@ -62,3 +62,46 @@ export function buildSlips(picks: readonly EdgePick[], entries: readonly EdgeEnt
   }
   return slips.sort((a, b) => b.expectedProfit - a.expectedProfit);
 }
+
+export interface GenerateOptions {
+  readonly count?: number;
+  readonly maxPerEvent?: number;
+  readonly sport?: string;
+  /** Only legs starting within [from, to). */
+  readonly from?: number;
+  readonly to?: number;
+  readonly minEdge?: number;
+  /** How many generated entries one leg may appear in (1 = every entry uses different legs). */
+  readonly maxLegUses?: number;
+  readonly nowMs?: number;
+}
+
+/** Edge Gen: several entries of one type and size from Edge's positive-edge standard lines. Each entry takes the
+ * highest-probability eligible legs (EV rises with every leg's probability), one per player, at most `maxPerEvent`
+ * per game and at least two games, and a leg is reused across entries at most `maxLegUses` times. */
+export function generateEntries(picks: readonly EdgePick[], entry: EdgeEntry, options: GenerateOptions = {}): EdgeSlip[] {
+  const count = options.count ?? 3, maxPerEvent = options.maxPerEvent ?? 2, maxUses = options.maxLegUses ?? 1;
+  const now = options.nowMs ?? Date.now();
+  const pool = picks.filter((pick) => pick.edge !== null && pick.edge > (options.minEdge ?? 0) &&
+    Date.parse(pick.eventStartTime) > now && (!options.sport || pick.sport === options.sport) &&
+    (options.from === undefined || Date.parse(pick.eventStartTime) >= options.from) &&
+    (options.to === undefined || Date.parse(pick.eventStartTime) < options.to))
+    .sort((a, b) => b.probability - a.probability);
+  const uses = new Map<string, number>(), slips: EdgeSlip[] = [];
+  for (let index = 0; index < count; index++) {
+    const legs: EdgePick[] = [], players = new Set<string>(), events = new Map<string, number>();
+    for (const pick of pool) {
+      if (legs.length === entry.size) break;
+      if ((uses.get(pick.key) ?? 0) >= maxUses || players.has(pick.playerId) ||
+        (events.get(pick.eventId) ?? 0) >= maxPerEvent) continue;
+      if (legs.length === entry.size - 1 && events.size === 1 && events.has(pick.eventId)) continue;
+      legs.push(pick); players.add(pick.playerId); events.set(pick.eventId, (events.get(pick.eventId) ?? 0) + 1);
+    }
+    if (legs.length < entry.size) break;
+    const slip = evaluateSlip(entry, legs);
+    if (slip.expectedProfit <= 0) break;
+    slips.push(slip);
+    for (const leg of legs) uses.set(leg.key, (uses.get(leg.key) ?? 0) + 1);
+  }
+  return slips;
+}

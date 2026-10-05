@@ -305,6 +305,8 @@ export const edgePickSchema = z.object({
   projection: z.object({ mean: z.number().finite(), median: z.number().finite(),
     sd: z.number().nonnegative().finite(), family: z.enum(['POISSON', 'NEGBIN', 'NORMAL']) }),
   lineGap: z.number().finite().nullable(),
+  // Edge's own line: the number where MORE and LESS are closest to 50/50 on Edge's distribution.
+  fairLine: z.number().finite(),
   sources: z.object({
     market: z.object({ mean: z.number().finite(), weight: probability,
       books: z.array(edgeBookQuoteSchema) }).nullable(),
@@ -352,6 +354,27 @@ export const edgeBoardResponseSchema = z.object({
   slips: z.array(edgeSlipSchema),
 });
 
+export const edgeUnpricedLineSchema = z.object({
+  lineId: identifier, sport: sportSchema, league: identifier, eventId: identifier, eventName: identifier,
+  eventStartTime: timestamp, playerId: identifier, playerName: identifier, market: identifier,
+  threshold: z.number().finite(), lineType: lineTypeSchema, availableDirections: z.array(playableDirectionSchema),
+  reason: z.enum(['NO_DATA', 'NO_INDEPENDENT_READ']), note: z.string(),
+});
+// Every line on the board, read or not: Edge never hides a line it could not price.
+export const edgeBoardRowSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('PICK'), pick: edgePickSchema }),
+  z.object({ kind: z.literal('NO_READ'), line: edgeUnpricedLineSchema }),
+]);
+export const edgeBoardPageSchema = z.object({
+  modelVersion: identifier, builtAt: timestamp, boardFetchedAt: timestamp,
+  total: z.number().int(), offset: z.number().int(), limit: z.number().int(),
+  sports: z.array(z.string()), rows: z.array(edgeBoardRowSchema),
+});
+export const edgeGenResponseSchema = z.object({
+  modelVersion: identifier, builtAt: timestamp, pool: z.number().int(),
+  slips: z.array(edgeSlipSchema), notes: z.array(z.string()),
+});
+
 export type PropLine = z.infer<typeof propLineSchema>;
 export type MarketQuote = z.infer<typeof marketQuoteSchema>;
 export type EdgePick = z.infer<typeof edgePickSchema>;
@@ -360,6 +383,10 @@ export type EdgeSlip = z.infer<typeof edgeSlipSchema>;
 export type EdgeBoardResponse = z.infer<typeof edgeBoardResponseSchema>;
 export type EdgeTier = z.infer<typeof edgeTierSchema>;
 export type EdgeRating = z.infer<typeof edgeRatingSchema>;
+export type EdgeUnpricedLine = z.infer<typeof edgeUnpricedLineSchema>;
+export type EdgeBoardRow = z.infer<typeof edgeBoardRowSchema>;
+export type EdgeBoardPage = z.infer<typeof edgeBoardPageSchema>;
+export type EdgeGenResponse = z.infer<typeof edgeGenResponseSchema>;
 export type Board = z.infer<typeof boardSchema>;
 export type Evidence = z.infer<typeof evidenceSchema>;
 export type Analysis = z.infer<typeof analysisSchema>;

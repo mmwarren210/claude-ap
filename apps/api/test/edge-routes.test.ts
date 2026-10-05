@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import type { MarketQuote, PropLine } from '@crowniq/contracts';
-import { edgeBoardResponseSchema, edgePickSchema } from '@crowniq/contracts';
+import { edgeBoardPageSchema, edgeBoardResponseSchema, edgeGenResponseSchema, edgePickSchema } from '@crowniq/contracts';
 import type { OddsProvider } from '@crowniq/engine';
 import { buildServer } from '../src/server.js';
 import { EdgeLedger } from '../src/edge-ledger.js';
@@ -66,6 +66,20 @@ test('Edge routes price the board beside GKR, build slips, evaluate custom slips
     assert.equal((await app.inject('/v1/edge?view=bogus')).statusCode, 400);
     assert.equal((await app.inject('/v1/edge?sport=NFL')).json().picks.length, 0);
 
+    const page = edgeBoardPageSchema.parse((await app.inject('/v1/edge/board?sort=edge&limit=2')).json());
+    assert.equal(page.total, 4);
+    assert.equal(page.rows.length, 2);
+    assert.deepEqual(page.sports, ['NBA']);
+    assert.ok(page.rows.every((row) => row.kind === 'PICK' && row.pick.fairLine > 0));
+    assert.equal(edgeBoardPageSchema.parse((await app.inject('/v1/edge/board?filter=no_read')).json()).total, 0);
+    assert.equal(edgeBoardPageSchema.parse((await app.inject('/v1/edge/board?q=delta')).json()).total, 1);
+    assert.equal((await app.inject('/v1/edge/board?sort=bogus')).statusCode, 400);
+    const gen = edgeGenResponseSchema.parse((await app.inject({ method: 'POST', url: '/v1/edge/gen',
+      payload: { type: 'POWER', size: 2, count: 2 } })).json());
+    assert.equal(gen.pool, 4);
+    assert.equal(gen.slips.length, 2);
+    assert.equal(new Set(gen.slips.flatMap((slip) => slip.legs.map((leg) => leg.lineId))).size, 4);
+    assert.equal((await app.inject({ method: 'POST', url: '/v1/edge/gen', payload: { type: 'POWER', size: 7 } })).statusCode, 400);
     const line = (await app.inject('/v1/edge/line/line-0-LESS')).json();
     edgePickSchema.parse(line.pick);
     assert.equal(line.pick.side, 'LESS');

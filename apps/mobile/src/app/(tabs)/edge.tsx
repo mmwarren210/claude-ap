@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { EdgeBoardView } from '../../components/EdgeBoardView';
+import { EdgeGenView } from '../../components/EdgeGenView';
 import { EdgePickCard } from '../../components/EdgePickCard';
 import { EdgeSlipPanel, SlipSummary } from '../../components/EdgeSlipPanel';
 import { Notice, Screen } from '../../components/Screen';
@@ -13,8 +15,13 @@ import type { EdgeView } from '../../use-edge';
 const views: { key: EdgeView; label: string }[] = [
   { key: 'edges', label: 'Best edges' }, { key: 'alternates', label: 'Goblins & Demons' },
 ];
+type Section = 'top' | 'board' | 'gen';
+const sections: { key: Section; label: string }[] = [
+  { key: 'top', label: 'Top Picks' }, { key: 'board', label: 'Board' }, { key: 'gen', label: 'Gen' },
+];
 
 export default function EdgeScreen() {
+  const [section, setSection] = useState<Section>('top');
   const [view, setView] = useState<EdgeView>('edges');
   const [sport, setSport] = useState<string | null>(null);
   const { status, data, message, retry } = useEdge(view);
@@ -25,7 +32,15 @@ export default function EdgeScreen() {
   const picks = live.filter((pick) => !sport || pick.sport === sport).slice(0, 100);
   const inSlip = new Set(slip.map((leg) => leg.lineId));
   return <Screen eyebrow="CROWNIQ  /  EDGE ENGINE" title="Edge">
-    <Text style={styles.intro}>Hit probabilities priced from sharp sportsbook lines, the stats model and the PrizePicks ladder. Runs beside GKR.</Text>
+    <Text style={styles.intro}>CrownIQ&apos;s probability engine. It reads every line on the board, sets its own line, and picks the side with the edge.</Text>
+    <View style={styles.segments}>{sections.map((item) => <Pressable key={item.key} accessibilityRole="tab"
+      accessibilityState={{ selected: section === item.key }} onPress={() => setSection(item.key)}
+      style={[styles.segment, section === item.key && styles.segmentOn]}>
+      <Text style={[styles.segmentText, section === item.key && styles.segmentTextOn]}>{item.label}</Text></Pressable>)}</View>
+    {section === 'board' ? <><EdgeSlipPanel entries={data?.entries ?? []} /><EdgeBoardView /></>
+      : section === 'gen' ? data ? <><EdgeGenView entries={data.entries} sports={sports} nowMs={nowMs} /><EdgeSlipPanel entries={data.entries} /></>
+        : <Notice title={status === 'loading' ? 'Pricing the board' : 'Edge pending'} detail={message || 'Reading the saved board.'} />
+      : <>
     <View style={styles.chips}>{views.map((item) => <Pressable key={item.key} accessibilityRole="button"
       onPress={() => setView(item.key)} style={[styles.chip, view === item.key && styles.chipOn]}>
       <Text style={[styles.chipText, view === item.key && styles.chipTextOn]}>{item.label}</Text></Pressable>)}</View>
@@ -67,6 +82,7 @@ export default function EdgeScreen() {
       </View>
       <Pressable accessibilityRole="button" onPress={retry}><Text style={styles.link}>Refresh Edge</Text></Pressable>
     </>}
+    </>}
   </Screen>;
 }
 
@@ -91,4 +107,9 @@ const styles = StyleSheet.create({
   sectionDetail: { color: palette.muted, fontSize: 12, lineHeight: 18 },
   card: { backgroundColor: palette.card, borderWidth: 1, borderColor: palette.border, borderRadius: 18, padding: 16 },
   link: { color: palette.green, fontSize: 13, fontWeight: '800' },
+  segments: { flexDirection: 'row', backgroundColor: palette.card, borderWidth: 1, borderColor: palette.border, borderRadius: 14, padding: 3 },
+  segment: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 11 },
+  segmentOn: { backgroundColor: palette.greenDim },
+  segmentText: { color: palette.muted, fontSize: 13, fontWeight: '800' },
+  segmentTextOn: { color: palette.green },
 });

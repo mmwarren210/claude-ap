@@ -53,3 +53,21 @@ export function toggleSlipLeg(legs: readonly EdgePick[], pick: EdgePick, max = 6
   const others = legs.filter((leg) => leg.playerId !== pick.playerId);
   return others.length >= max ? [...others] : [...others, pick];
 }
+
+export type DayChoice = 'today' | 'tomorrow' | 'all';
+
+/** Local-time day window for the generator; `all` means no window. */
+export function dayRange(choice: DayChoice, nowMs: number): { from?: string; to?: string } {
+  if (choice === 'all') return {};
+  const start = new Date(nowMs);
+  start.setHours(0, 0, 0, 0);
+  if (choice === 'tomorrow') start.setDate(start.getDate() + 1);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { from: start.toISOString(), to: end.toISOString() };
+}
+
+/** "PP 24.5 · Edge 26.5" — the PrizePicks number beside the number Edge would set. */
+export function lineComparison(pick: EdgePick): string {
+  return `PP ${formatLine(pick.threshold)} · Edge line ${formatLine(pick.fairLine)}`;
+}

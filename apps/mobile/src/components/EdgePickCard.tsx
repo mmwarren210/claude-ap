@@ -1,7 +1,7 @@
 import type { EdgePick } from '@crowniq/contracts';
 import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { edgeSummary, formatLine, headline, pct, ratingColor, ratingLabel, tierLabel } from '../edge-format';
+import { edgeSummary, headline, lineComparison, pct, ratingColor, ratingLabel, tierLabel } from '../edge-format';
 import { edgeSlip } from '../edge-slip';
 import { palette } from '../theme';
 
@@ -29,8 +29,7 @@ export function EdgePickCard({ pick, rank, inSlip }: { pick: EdgePick; rank?: nu
       </View>
     </View>
     <Text style={styles.summary}>{edgeSummary(pick)}</Text>
-    {pick.lineGap !== null && Math.abs(pick.lineGap) >= .5 && pick.sources.market &&
-      <Text style={styles.detail}>Books project {formatLine(Math.round(pick.sources.market.mean * 10) / 10)} vs line {formatLine(pick.threshold)}</Text>}
+    <Text style={styles.edgeLine}>{lineComparison(pick)}</Text>
     {warning && <Text style={styles.warning}>⚠ {warning}</Text>}
     </Pressable>
     <Pressable accessibilityRole="button" onPress={() => edgeSlip.toggle(pick)} style={[styles.slip, inSlip && styles.slipOn]}>
@@ -53,6 +52,7 @@ const styles = StyleSheet.create({
   big: { fontSize: 28, fontWeight: '900', letterSpacing: -1 },
   small: { color: palette.muted, fontSize: 10, fontWeight: '700' },
   summary: { color: palette.text, fontSize: 12 },
+  edgeLine: { color: palette.green, fontSize: 12, fontWeight: '800' },
   warning: { color: palette.danger, fontSize: 11 },
   slip: { alignSelf: 'flex-start', borderWidth: 1, borderColor: palette.border, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5, marginTop: 2 },
   slipOn: { backgroundColor: palette.greenDim, borderColor: palette.green },

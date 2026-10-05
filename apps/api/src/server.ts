@@ -22,11 +22,11 @@ import { rankingCards, secondLookWatchlist } from './ranking-cards.js';
 import { auditPrizePicksLineTypes } from './prizepicks-line-types.js';
 import type { HistoryBackfillService, InternalHistorySport, InternalHistoryStore } from './internal-history.js';
 import type { ProductGradingStatus } from './background-grading.js';
-import { backtestHistory, customSlip, EdgeService, pickForLine, viewPicks } from './edge-service.js';
+import { backtestHistory, boardPage, customSlip, EdgeService, pickForLine, viewPicks } from './edge-service.js';
 import type { EdgeResultsWorker } from './edge-service.js';
 import type { EdgeLedger } from './edge-ledger.js';
 import type { EntryDefinition } from '@crowniq/edge';
-import { buildSlips } from '@crowniq/edge';
+import { buildSlips, EDGE_MODEL_VERSION, generateEntries } from '@crowniq/edge';
 
 export interface ServerOptions {
   provider?: OddsProvider | null;
@@ -537,6 +537,43 @@ export function buildServer(options: ServerOptions = {}) {
       ? buildSlips(viewPicks(snapshot,'edges',{...query.data,limit:500,nowMs}),snapshot.response.entries)
       : snapshot.response.slips.filter(live);
     return {...snapshot.response,picks,slips};
+  });
+  app.get('/v1/edge/board',async(request,reply)=>{
+    if(!edge)return reply.code(404).send({code:'EDGE_DISABLED'});
+    const query=z.object({sport:z.string().trim().min(1).max(20).optional(),market:z.string().trim().min(1).max(80).optional(),
+      q:z.string().trim().max(60).optional(),filter:z.enum(['all','picks','no_read']).default('all'),
+      sort:z.enum(['start','edge','probability']).default('start'),
+      offset:z.coerce.number().int().min(0).default(0),limit:z.coerce.number().int().min(1).max(200).default(100)})
+      .strict().safeParse(request.query);
+    if(!query.success)return reply.code(400).send({code:'INVALID_EDGE_QUERY'});
+    const snapshot=await edge.snapshot();
+    if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    return boardPage(snapshot,{...query.data,nowMs:now().getTime()});
+  });
+  app.post('/v1/edge/gen',async(request,reply)=>{
+    if(!edge)return reply.code(404).send({code:'EDGE_DISABLED'});
+    const body=z.object({type:z.enum(['POWER','FLEX']),size:z.number().int().min(2).max(6),
+      count:z.number().int().min(1).max(10).default(3),sport:z.string().trim().min(1).max(20).optional(),
+      from:z.iso.datetime({offset:true}).optional(),to:z.iso.datetime({offset:true}).optional(),
+      maxPerGame:z.number().int().min(1).max(3).default(2),maxLegUses:z.number().int().min(1).max(5).default(1)})
+      .strict().safeParse(request.body);
+    if(!body.success)return reply.code(400).send({code:'INVALID_GEN_REQUEST'});
+    const snapshot=await edge.snapshot();
+    if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    const entry=snapshot.response.entries.find((item)=>item.type===body.data.type&&item.size===body.data.size);
+    if(!entry)return reply.code(422).send({code:'ENTRY_UNSUPPORTED'});
+    const nowMs=now().getTime();
+    const slips=generateEntries(snapshot.response.picks,entry,{count:body.data.count,sport:body.data.sport,
+      from:body.data.from?Date.parse(body.data.from):undefined,to:body.data.to?Date.parse(body.data.to):undefined,
+      maxPerEvent:body.data.maxPerGame,maxLegUses:body.data.maxLegUses,nowMs});
+    const pool=snapshot.response.picks.filter((pick)=>pick.edge!==null&&pick.edge>0&&Date.parse(pick.eventStartTime)>nowMs&&
+      (!body.data.sport||pick.sport===body.data.sport)).length;
+    const notes=[`${pool} positive-edge standard lines were eligible.`];
+    if(slips.length<body.data.count)notes.push(slips.length
+      ? `Only ${slips.length} of ${body.data.count} entries had enough distinct +EV legs; Edge does not pad entries with weak legs.`
+      : 'Not enough +EV legs across two or more games for this entry right now.');
+    notes.push('Payouts are CrownIQ defaults; confirm them in the app. Same-game legs are correlated.');
+    return {modelVersion:EDGE_MODEL_VERSION,builtAt:new Date(nowMs).toISOString(),pool,slips,notes};
   });
   app.get('/v1/edge/line/:lineId',async(request,reply)=>{
     if(!edge)return reply.code(404).send({code:'EDGE_DISABLED'});

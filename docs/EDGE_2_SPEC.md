@@ -6,7 +6,8 @@
 
 ## How this spec is used
 
-- **Additive only.** GKR, book picks, exchange picks and app boards keep working unchanged. Edge replaces nothing until its own track record beats them on the metrics in §9.
+- **Standalone.** Edge is its own product inside CrownIQ: its own Top Picks, Board and Gen for every platform. It reads every line itself, including every line GKR skips, and never uses GKR output as an input or a comparison. Existing GKR screens, book picks, exchange picks and app boards keep working; Edge does not modify them.
+- **Every line gets a read or a reason.** Each line on every platform board appears on the Edge Board. It shows either Edge's pick, Edge's own line, hit % and EV, or **No read** with the specific missing input.
 - **No invented inputs.** Payouts, multipliers, fees and prices come from feeds or owner-set config, and every default says "confirm in app". Unknown means `null` and a visible label, never a guess.
 - **Phase gates.** Phases ship in order (§11). Each phase is pushed only when typecheck, tests and lint are green and its acceptance checks pass.
 
@@ -269,7 +270,7 @@ Include rest days, back-to-back, home/away, altitude, weather (NFL/MLB wind and 
 The stats signal's weight in the blend comes from its *measured* out-of-sample error versus the closing consensus (§9), not from its standard error. If the model doesn't beat the close on a market, its weight there decays toward zero automatically.
 
 **Acceptance for §5:**
-- Walk-forward backtest (the existing `backtestHistory`, extended) shows lower log loss than both the current Edge projection and the old GKR baseline on NBA points/rebounds/assists, NFL yards/receptions and MLB hits/strikeouts.
+- Walk-forward backtest (the existing `backtestHistory`, extended) shows lower log loss than both the current Edge projection and the original last-10-games baseline on NBA points/rebounds/assists, NFL yards/receptions and MLB hits/strikeouts.
 - The per-market table is on owner diagnostics.
 
 ---
@@ -343,7 +344,11 @@ Users paste or choose legs on any platform and get:
   - a NEWS_MODEL reprice that creates a +EV DFS line;
   - a Kalshi edge with ≥ $100 of depth.
   - Rate-limit to 1 per player per hour.
-- **Edge tab:**
+- **Edge tab, three sections** (built in `claude/edge-engine`; extend each one per platform):
+  - **Top Picks:** best +EV reads per platform.
+  - **Board:** every line from every platform with PP/app line vs Edge line, side, hit %, EV and No read rows.
+  - **Gen:** per-platform entry generator using that platform's payout tables and rules, with diversified, non-padded entries.
+- **Within those sections:**
   - platform chips;
   - sort by rank, EV or hit %;
   - STALE/STEAM badges with age;

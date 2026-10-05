@@ -29,9 +29,17 @@ export interface PricingInput {
   readonly alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>;
 }
 
+/** A line Edge could not read, with the reason shown to the user instead of hiding the line. */
+export interface UnpricedLine {
+  readonly line: PropLine;
+  readonly reason: 'NO_DATA' | 'NO_INDEPENDENT_READ';
+  readonly note: string;
+}
+
 export interface PricingResult {
   readonly picks: EdgePick[];
   readonly unpriced: number;
+  readonly unpricedLines: UnpricedLine[];
   readonly referenceEntry: EdgeEntry;
   readonly entries: EdgeEntry[];
   readonly quotesUsed: number;
@@ -89,6 +97,17 @@ function combine(sources: readonly (Source | null)[]): Source & { weights: numbe
   return { mean, se: Math.sqrt(1 / precision), weights: present.map((value) => value / precision) };
 }
 
+/** Edge's own line: the half-point where MORE and LESS are closest to 50/50 (for a continuous stat, the mean
+ * rounded to the nearest half). This is the number Edge would set if it were the book. */
+export function edgeLine(dist: Distribution): number {
+  if (!dist.discrete) return Math.round(dist.mean * 2) / 2;
+  const middle = median(dist);
+  const candidates = [middle - 1.5, middle - .5, middle + .5].filter((value) => value > 0);
+  if (!candidates.length) return .5;
+  return candidates.reduce((best, value) =>
+    Math.abs(conditionalOver(dist, value) - .5) < Math.abs(conditionalOver(dist, best) - .5) ? value : best);
+}
+
 const fmt = (value: number) => Number.isInteger(value) ? String(value) : value.toFixed(1);
 const pct = (value: number) => (value * 100).toFixed(1) + '%';
 
@@ -118,6 +137,14 @@ export function priceBoard(input: PricingInput): PricingResult {
 
   const picks: EdgePick[] = [];
   let unpriced = 0, quotesUsed = 0;
+  const unpricedLines: UnpricedLine[] = [];
+  const skip = (lines: readonly PropLine[], reason: UnpricedLine['reason']) => {
+    unpriced += lines.length;
+    const note = reason === 'NO_DATA'
+      ? 'No sportsbook price, stat history or regular line for this player and stat yet. Edge has no read; treat it as a coin flip.'
+      : 'Only the PrizePicks line itself is available (no sportsbook price or stat history), so Edge has no independent read.';
+    for (const line of lines) unpricedLines.push({ line, reason, note });
+  };
   const historyCache = new Map<string, readonly StatRow[] | undefined>();
   for (const [key, lines] of playerGroups) {
     const first = lines[0];
@@ -153,7 +180,7 @@ export function priceBoard(input: PricingInput): PricingResult {
       const sd = Math.sqrt(varianceAt(profile.variance, mean));
       ladder = { mean, se: (market ? .6 : .4) * sd, regularThreshold: regular };
     }
-    if (!market && !statSource && !ladder) { unpriced += lines.length; continue; }
+    if (!market && !statSource && !ladder) { skip(lines, 'NO_DATA'); continue; }
 
     const blend = combine([market, statSource, ladder]);
     const tier: EdgeTier = market ? (market.sharp && market.books >= 2 ? 'SHARP' : 'MARKET')
@@ -168,13 +195,14 @@ export function priceBoard(input: PricingInput): PricingResult {
     const marketDist = market ? makeDistribution(profile.family, market.mean,
       varianceAt(profile.variance, market.mean), profile.discrete) : null;
     const calibrated = !!(input.calibration?.bySport[first.sport] ?? input.calibration?.global);
+    const fairLine = edgeLine(dist);
 
     const byThreshold = new Map<number, PropLine[]>();
     for (const line of lines) byThreshold.set(line.threshold, [...(byThreshold.get(line.threshold) ?? []), line]);
     for (const [threshold, thresholdLines] of byThreshold) {
       const onlyLadder = tier === 'LADDER';
       const isRegular = thresholdLines.some((line) => line.lineType === 'REGULAR');
-      if (onlyLadder && isRegular) { unpriced += thresholdLines.length; continue; } // no independent view
+      if (onlyLadder && isRegular) { skip(thresholdLines, 'NO_INDEPENDENT_READ'); continue; }
       const outcome = outcomeAt(dist, threshold);
       const over = conditionalOver(dist, threshold);
       const sides = thresholdLines.map((line) => line.availableDirections.map((side) => ({ line, side })))
@@ -239,6 +267,7 @@ export function priceBoard(input: PricingInput): PricingResult {
         requiredPayoutFactor: round(reference / Math.max(p, 1e-4), 3), edgeScore, rating, tier,
         projection: { mean: round(dist.mean, 2), median: median(dist), sd: round(Math.sqrt(dist.variance), 2),
           family: dist.family },
+        fairLine,
         lineGap: market ? round(market.mean - threshold, 2) : stats ? round(stats.mean - threshold, 2) : null,
         sources: {
           market: market ? { mean: round(market.mean, 2), weight: round(blend.weights[0]),
@@ -255,6 +284,6 @@ export function priceBoard(input: PricingInput): PricingResult {
   }
   picks.sort((a, b) => (b.edge === null ? -1 : 1) - (a.edge === null ? -1 : 1) ||
     b.edgeScore - a.edgeScore || b.probability - a.probability);
-  return { picks, unpriced, referenceEntry, entries, quotesUsed };
+  return { picks, unpriced, unpricedLines, referenceEntry, entries, quotesUsed };
 }
 

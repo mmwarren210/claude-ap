@@ -6,6 +6,7 @@ import {
   applyCalibration, backtestProjection, breakEven, buildSlips, cdf, conditionalOver, defaultEntries,
   describeEntry, devigPower, evaluateSlip, fitCalibration, fitMean, fitPlatt, forecastReport,
   makeDistribution, outcomeAt, parseEntries, priceBoard, profileFor, projectFromRows, sigmoid, logit,
+  edgeLine, generateEntries,
 } from '../src/index.js';
 import type { StatRow } from '../src/index.js';
 
@@ -216,4 +217,45 @@ test('walk-forward backtest: count model beats the old mean/SD normal on low-cou
   assert.ok(result.games > 100);
   assert.ok(result.edge.logScore > result.baseline.logScore, JSON.stringify(result));
   assert.ok(result.edge.brierAtMedian < result.baseline.brierAtMedian, JSON.stringify(result));
+});
+
+test('Edge sets its own line at the 50/50 point of its distribution', () => {
+  const result = priceBoard({ now, lines: [line('more', 24.5, 'MORE'), line('less', 24.5, 'LESS')],
+    quotes: [quote('pinnacle', 27.5, 1.91, 1.91), quote('fanduel', 27.5, 1.91, 1.91)] });
+  const pick = result.picks[0];
+  assert.ok(pick.fairLine >= 26.5 && pick.fairLine <= 28.5, String(pick.fairLine));
+  assert.equal(pick.fairLine % 1, .5);
+  const dist = makeDistribution('NEGBIN', 6.2, 9);
+  assert.ok(Math.abs(conditionalOver(dist, edgeLine(dist)) - .5) < .12);
+  assert.equal(edgeLine(makeDistribution('NORMAL', 18.37, 30, false)), 18.5);
+});
+
+test('lines Edge cannot read are returned with a reason instead of disappearing', () => {
+  const result = priceBoard({ now, lines: [line('reg', 24.5, 'MORE'),
+    line('alt', 30.5, 'MORE', { playerId: 'p2', playerName: 'Lone Alternate', lineType: 'DEMON' })] });
+  assert.deepEqual(result.unpricedLines.map((item) => [item.line.id, item.reason]),
+    [['reg', 'NO_INDEPENDENT_READ'], ['alt', 'NO_DATA']]);
+  assert.ok(result.unpricedLines.every((item) => item.note.length > 20));
+});
+
+test('Edge Gen builds distinct entries within filters', () => {
+  const lines: PropLine[] = [], quotes: MarketQuote[] = [];
+  for (let index = 0; index < 12; index++) {
+    const event = 'e' + (index % 4), player = 'Gen Player ' + index;
+    const sport = index < 8 ? 'NBA' : 'NFL';
+    for (const direction of ['MORE', 'LESS'] as const) lines.push(line(`g${index}${direction}`, 20.5, direction,
+      { eventId: event, playerId: 'gp' + index, playerName: player, sport }));
+    quotes.push(quote('pinnacle', 22.5 + (index % 3) * .5, 1.87, 1.95, { eventId: event, playerName: player, sport }),
+      quote('fanduel', 22.5, 1.87, 1.95, { eventId: event, playerName: player, sport }));
+  }
+  const result = priceBoard({ now, lines, quotes });
+  const power3 = result.entries.find((entry) => entry.type === 'POWER' && entry.size === 3)!;
+  const slips = generateEntries(result.picks, power3, { count: 4, nowMs: now.getTime() });
+  assert.ok(slips.length >= 3);
+  const used = slips.flatMap((slip) => slip.legs.map((leg) => leg.lineId));
+  assert.equal(new Set(used).size, used.length, 'no leg reused when maxLegUses is 1');
+  assert.ok(slips.every((slip) => slip.expectedProfit > 0 && new Set(slip.legs.map((leg) => leg.eventId)).size >= 2));
+  const nflOnly = generateEntries(result.picks, power3, { count: 2, sport: 'NFL', nowMs: now.getTime() });
+  assert.ok(nflOnly.every((slip) => slip.legs.every((leg) => leg.sport === 'NFL')));
+  assert.equal(generateEntries(result.picks, power3, { from: Date.parse('2026-10-07T00:00:00Z'), nowMs: now.getTime() }).length, 0);
 });

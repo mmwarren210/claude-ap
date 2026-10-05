@@ -1,12 +1,31 @@
 # CrownIQ Edge engine
 
-Edge is a second scoring engine that runs **beside GKR**. It reads the same saved board and never changes GKR analyses, rankings, Crowns or tracked decisions. Where GKR produces a 0–100 rank index and PASSes most of the board, Edge prices every line it can as a **hit probability**. It then compares that probability with what a PrizePicks entry needs to break even.
+Edge is CrownIQ's standalone probability engine. It has its own **Top Picks**, **Board** and **Gen** inside the app's Edge tab. It reads every line on the saved board directly, including every line GKR skips or PASSes, and never depends on GKR output (nor changes it). For each line it:
+- prices a **hit probability**;
+- sets **its own line** (the number where MORE and LESS are 50/50 on Edge's distribution);
+- picks the side with the edge against what a PrizePicks entry needs to break even.
+
+Lines Edge has no data for are still listed, marked **No read** with the reason.
 
 Code: `packages/edge` (pure engine), `apps/api/src/edge-service.ts`, `apps/api/src/edge-ledger.ts`, and the app's **Edge** tab (`apps/mobile/src/app/(tabs)/edge.tsx`, `apps/mobile/src/app/edge/[lineId].tsx`).
 
-## Why a second engine
+## Why Edge is built differently
 
 GKR scores mostly from "last 5 games vs last 10 games" factor ratios. The distance between projection and line moves the score by at most ±12. It assumes a normal distribution even for 0.5-line count stats, and it cannot say whether a pick beats a payout. Edge is built around the one question that decides whether a pick is worth playing: *what is the probability it hits, and is that above break-even?*
+
+## In the app
+
+- **Top Picks.**
+  - Standard lines whose hit probability beats the break-even, ranked by rating.
+  - Goblin & Demon lines ranked by hit probability, with the minimum payout factor each needs.
+  - Best entries.
+- **Board.** Every line on the board, searchable and filterable by sport. Filters: every line / Edge reads / No read. Sorts: start time / biggest edge / hit %. Each row shows the PrizePicks line next to Edge's line ("PP 24.5 · Edge 26.5"), the side, hit %, rating and the main reason. Tapping a row opens the full read.
+- **Gen.** Generates up to 5 entries from Edge's +EV reads.
+  - Choose Power or Flex, entry size, today / tomorrow / any day, and sport.
+  - Each entry uses one leg per player, at most two legs per game and at least two games.
+  - No leg is reused across entries, and an entry is never padded with weak legs.
+  - Any entry loads into the slip, which prices it with exact EV.
+- **Pick detail.** Every input behind a read: each sportsbook quote with its fair price, the stats projection, source weights, the distribution, reasons and warnings.
 
 ## Inputs
 
@@ -38,6 +57,7 @@ Each priced line is returned as an `edgePickSchema` record in `packages/contract
 - **Probability:** hit probability for the better offered side and for the opposite side.
 - **Edge:** probability − break-even for standard lines. The break-even comes from the best configured entry, 54.2% for 6-pick Flex with the default tables.
 - **Rating:** ELITE ≥ 7 points, STRONG ≥ 4.5, VALUE ≥ 2, THIN > 0. The edge is first multiplied by a source factor: Sharp 1.0, Market 0.85, Model 0.6, Ladder 0.5.
+- **Edge line (`fairLine`):** the half-point where MORE and LESS are closest to 50/50 on Edge's distribution. It's the number Edge would post if it were the book.
 - **Required payout factor:** break-even ÷ probability, the minimum PrizePicks payout factor at which the leg is worth playing. This is the decision number for Goblins and Demons.
 - **Audit detail:** projection (mean, median, SD, family), every book quote with its fair over-probability, stats sample and hit rate at the line, source weights, plain-language reasons and warnings.
 
@@ -101,6 +121,8 @@ All routes require a signed-in profile; owner routes return 404 to anyone else.
 | Route | Purpose |
 | --- | --- |
 | `GET /v1/edge?view=edges\|alternates\|all&sport=&market=&limit=&minProbability=` | Ranked picks, counts, calibration status, entries and best slips. |
+| `GET /v1/edge/board?sport=&market=&q=&filter=all\|picks\|no_read&sort=start\|edge\|probability&offset=&limit=` | Every line with Edge's read, including No read lines. |
+| `POST /v1/edge/gen` `{type, size, count, sport?, from?, to?, maxPerGame?, maxLegUses?}` | Edge Gen entries. |
 | `GET /v1/edge/line/:lineId` | One line. The opposite side of a pick is returned flipped. |
 | `GET /v1/edge/player/:playerId` | Every priced line for a player. |
 | `POST /v1/edge/slip` `{type, lineIds}` | Exact EV for a custom 2–6 leg entry. |

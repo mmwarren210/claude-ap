@@ -1,7 +1,7 @@
-import type { BoardResponse, EdgeBoardResponse, EdgeEntry, EdgePick, EdgeSlip } from '@crowniq/contracts';
+import type { BoardResponse, EdgeBoardPage, EdgeBoardResponse, EdgeBoardRow, EdgeEntry, EdgePick, EdgeSlip } from '@crowniq/contracts';
 import { backtestProjection, buildSlips, defaultEntries, describeEntry, EDGE_MODEL_VERSION, evaluateSlip,
   fitCalibration, forecastReport, marketProfiles, normalizePlayerName, priceBoard, profileFor } from '@crowniq/edge';
-import type { EntryDefinition, StatRow } from '@crowniq/edge';
+import type { EntryDefinition, StatRow, UnpricedLine } from '@crowniq/edge';
 import type { EdgeLedger, TrackedEdgePick } from './edge-ledger.js';
 import type { InternalHistoryRow, InternalHistoryStore } from './internal-history.js';
 import type { StatApiOwnerResearch, StatApiPlayer, StatApiSport } from './stat-api-owner-research.js';
@@ -20,6 +20,8 @@ export interface EdgeServiceOptions {
 export interface EdgeSnapshot {
   readonly response: EdgeBoardResponse;
   readonly byLine: ReadonlyMap<string, EdgePick>;
+  /** Lines Edge could not read, kept so the Edge board still lists every line. */
+  readonly unpriced: readonly UnpricedLine[];
   readonly computedAt: number;
   readonly durationMs: number;
 }
@@ -112,7 +114,8 @@ export class EdgeService {
         byLine.set(pick.lineId, pick);
         if (pick.oppositeLineId && !byLine.has(pick.oppositeLineId)) byLine.set(pick.oppositeLineId, pick);
       }
-      const snapshot = { response, byLine, computedAt: now.getTime(), durationMs: Date.now() - startedAt };
+      const snapshot = { response, byLine, unpriced: priced.unpricedLines, computedAt: now.getTime(),
+        durationMs: Date.now() - startedAt };
       this.current = snapshot; this.key = key; this.lastError = null;
       void this.options.ledger?.record(priced.picks).catch(() => undefined);
       return snapshot;
@@ -282,4 +285,36 @@ export function backtestHistory(rows: readonly InternalHistoryRow[], maxPlayers 
 function marketProfilesFor(sport: string): Record<string, true> {
   return Object.fromEntries(Object.keys(marketProfiles).filter((key) => key.startsWith(sport + ':'))
     .map((key) => [key.slice(sport.length + 1), true as const]));
+}
+
+export type EdgeBoardFilter = 'all' | 'picks' | 'no_read';
+export type EdgeBoardSort = 'start' | 'edge' | 'probability';
+
+/** Every line on the board with Edge's read: priced picks (any rating) and the lines it could not read. */
+export function boardPage(snapshot: EdgeSnapshot, query: { sport?: string; market?: string; q?: string;
+  filter: EdgeBoardFilter; sort: EdgeBoardSort; offset: number; limit: number; nowMs: number }): EdgeBoardPage {
+  const text = query.q?.trim().toLowerCase();
+  const keep = (item: { sport: string; market: string; playerName: string; eventStartTime: string }) =>
+    Date.parse(item.eventStartTime) > query.nowMs && (!query.sport || item.sport === query.sport) &&
+    (!query.market || item.market === query.market) && (!text || item.playerName.toLowerCase().includes(text));
+  const picks: EdgeBoardRow[] = query.filter === 'no_read' ? [] : snapshot.response.picks.filter(keep)
+    .map((pick) => ({ kind: 'PICK' as const, pick }));
+  const unread: EdgeBoardRow[] = query.filter === 'picks' ? [] : snapshot.unpriced
+    .map(({ line, reason, note }) => ({ lineId: line.id, sport: line.sport, league: line.league, eventId: line.eventId,
+      eventName: line.eventName, eventStartTime: line.eventStartTime, playerId: line.playerId, playerName: line.playerName,
+      market: line.market, threshold: line.threshold, lineType: line.lineType,
+      availableDirections: [...line.availableDirections], reason, note }))
+    .filter(keep).map((line) => ({ kind: 'NO_READ' as const, line }));
+  const start = (row: EdgeBoardRow) => row.kind === 'PICK' ? row.pick.eventStartTime : row.line.eventStartTime;
+  const name = (row: EdgeBoardRow) => row.kind === 'PICK' ? row.pick.playerName : row.line.playerName;
+  const strength = (row: EdgeBoardRow) => row.kind === 'PICK'
+    ? query.sort === 'probability' ? row.pick.probability : row.pick.edge ?? -1 : -2;
+  const rows = [...picks, ...unread].sort(query.sort === 'start'
+    ? (a, b) => start(a).localeCompare(start(b)) || name(a).localeCompare(name(b))
+    : (a, b) => strength(b) - strength(a));
+  const sports = [...new Set([...snapshot.response.picks.map((pick) => pick.sport),
+    ...snapshot.unpriced.map((item) => item.line.sport)])].sort();
+  return { modelVersion: snapshot.response.modelVersion, builtAt: snapshot.response.builtAt,
+    boardFetchedAt: snapshot.response.boardFetchedAt, total: rows.length, offset: query.offset, limit: query.limit,
+    sports, rows: rows.slice(query.offset, query.offset + query.limit) };
 }
