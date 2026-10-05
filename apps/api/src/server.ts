@@ -427,6 +427,18 @@ export function buildServer(options: ServerOptions = {}) {
     catch(error){return (error as Error).message==='ACCOUNT_NOT_FOUND'?reply.code(404).send({code:'ACCOUNT_NOT_FOUND'})
       :reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
   });
+  // Delete account: removes the member's account and personal data (App Store and Google Play require it).
+  app.post('/v1/auth/delete',async(request,reply)=>{
+    const user=await currentUser(request);
+    if(!user||!options.product)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(limited(`delete:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
+    const input=z.object({confirmation:z.string().min(1).max(128)}).strict().safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'CONFIRMATION_REQUIRED'});
+    try{await options.product.deleteAccount(user.accountId,input.data.confirmation);return {deleted:true};}
+    catch(error){const code=(error as Error).message;
+      if(code==='INVALID_CREDENTIALS'||code==='CONFIRMATION_REQUIRED')return reply.code(403).send({code});
+      return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
+  });
   app.post('/v1/auth/password',async(request,reply)=>{
     const user=await currentUser(request);
     if(!user||!options.product)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});

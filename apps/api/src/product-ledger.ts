@@ -443,6 +443,31 @@ export class ProductLedger {
     data.sessions=data.sessions.filter((item)=>item.accountId!==account.id);
     const result=this.session(data,account);await this.write(data);return result;
   });}
+  /**
+   * Deletes an account and everything personal to it: profile, sessions, saved picks, private and public Crowns, follows
+   * and credits. GKR's own tracked decisions are not the member's and stay. Accounts with a password must confirm it;
+   * Google and Apple accounts confirm by typing DELETE. A lifetime seat frees up.
+   */
+  async deleteAccount(accountId:string,confirmation:string){return this.exclusive(async()=>{
+    const data=await this.read(),account=data.accounts.find((item)=>item.id===accountId);
+    if(!account)throw new Error('ACCOUNT_NOT_FOUND');
+    if(account.passwordHash&&account.passwordSalt){
+      const actual=await passwordKey(confirmation,account.passwordSalt);
+      if(!timingSafeEqual(actual,Buffer.from(account.passwordHash,'hex')))throw new Error('INVALID_CREDENTIALS');
+    }else if(confirmation!=='DELETE')throw new Error('CONFIRMATION_REQUIRED');
+    const publicId=data.profiles.find((item)=>item.actorKey===accountId)?.publicId;
+    data.accounts=data.accounts.filter((item)=>item.id!==accountId);
+    data.sessions=data.sessions.filter((item)=>item.accountId!==accountId);
+    data.savedPicks=data.savedPicks.filter((item)=>item.accountId!==accountId);
+    data.privateCrowns=data.privateCrowns.filter((item)=>item.accountId!==accountId);
+    data.profiles=data.profiles.filter((item)=>item.actorKey!==accountId);
+    if(publicId){
+      data.crowns=data.crowns.filter((item)=>item.ownerPublicId!==publicId);
+      data.follows=data.follows.filter((item)=>item.followerPublicId!==publicId&&item.followedPublicId!==publicId);
+      data.publicCredits=data.publicCredits.filter((item)=>item.publicId!==publicId);
+    }
+    await this.write(data);
+  });}
   /** Sets a new password after checking the current one. The family code can't be kept as a password. */
   async changePassword(accountId:string,current:string,next:string){return this.exclusive(async()=>{
     const data=await this.read(),account=data.accounts.find((item)=>item.id===accountId);

@@ -15,7 +15,7 @@ import { pickApps } from '../../components/AppBoard';
 import type { PickApp } from '../../components/AppBoard';
 import { entryName, percent1 } from '../../insights';
 import { usePayouts } from '../../use-payouts';
-import { ChangePassword, MemberResetCode } from '../../components/AccountSecurity';
+import { ChangePassword, DeleteAccount, MemberResetCode } from '../../components/AccountSecurity';
 import { colors, radius } from '../../theme';
 import { useDraft } from '../../use-draft';
 
@@ -133,6 +133,7 @@ export default function MoreScreen() {
       {!!profile?.publicId && !demo && <Text selectable style={styles.sheetNote}>Profile ID: {profile.publicId}</Text>}
       {!demo && profile?.plan !== 'GUEST' && <ChangePassword />}
       {owner && <MemberResetCode />}
+      {!demo && profile?.plan !== 'GUEST' && <DeleteAccount />}
     </Sheet>
     <Sheet visible={sheet === 'payouts'} title="Payout estimates" onClose={() => setSheet(null)}>
       <Segmented label="Pick'em app" options={pickApps} value={payoutApp} onChange={setPayoutApp} />

@@ -72,3 +72,31 @@ const styles = StyleSheet.create({
   code: { alignItems: 'center', gap: 6, borderWidth: 1, borderColor: colors.mint, borderRadius: radius.md, padding: 12 },
   codeText: { color: colors.mint, fontSize: 28, fontWeight: '900', letterSpacing: 2 },
 });
+
+/** Delete account: confirm with the password (or DELETE for Google and Apple sign-ins), then a second tap. */
+export function DeleteAccount() {
+  const { request, logout } = useAuth();
+  const [confirmation, setConfirmation] = useState(''), [armed, setArmed] = useState(false);
+  const [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
+  const remove = async () => {
+    if (!confirmation) { setMessage('Enter your password first.'); return; }
+    if (!armed) { setArmed(true); setMessage('This can’t be undone. Your picks, Crowns and profile are deleted. Tap again to delete.'); return; }
+    setBusy(true);
+    const response = await request('/v1/auth/delete', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ confirmation }) }).catch(() => null);
+    setBusy(false); setArmed(false);
+    if (response?.ok) { await logout(); return; }
+    setMessage(response?.status === 403 ? 'That password isn’t right.' : 'Could not delete your account. Try again.');
+  };
+  return <View style={styles.box}>
+    <Text style={[styles.label, { color: colors.red }]}>Delete account</Text>
+    <Text style={styles.note}>Removes your profile, saved picks and Crowns for good. If you signed up with Google or Apple,
+      type DELETE instead of a password.</Text>
+    <TextInput accessibilityLabel="Password to delete account" secureTextEntry autoComplete="current-password" value={confirmation}
+      onChangeText={(value) => { setConfirmation(value); setArmed(false); }} placeholder="Your password"
+      placeholderTextColor={colors.textFaint} style={styles.input} />
+    <GhostButton label={busy ? 'Deleting…' : armed ? 'Tap again to delete forever' : 'Delete my account'} icon="delete-outline"
+      tone={colors.red} disabled={busy} onPress={() => void remove()} />
+    {!!message && <Text style={[styles.note, armed && { color: colors.red }]}>{message}</Text>}
+  </View>;
+}

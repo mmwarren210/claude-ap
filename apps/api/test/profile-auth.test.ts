@@ -323,3 +323,19 @@ test('a forgotten password resets with a one-time owner code that expires, signs
     await assert.rejects(ledger.resetPassword('Forgot_one',late.code,'another-new-passphrase'),/RESET_INVALID/,'expires in 24 hours');
   }finally{await rm(folder,{recursive:true,force:true});}
 });
+
+test('delete account removes the member and their personal data after confirming the password; GKR records stay',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-delete-'));
+  try{const clock=start;
+    const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>clock,()=>[]);
+    const keep=await ledger.register('keep@example.org','long-private-passphrase','Keep_one');
+    const gone=await ledger.register('gone@example.org','long-private-passphrase','Gone_one');
+    const me=(await ledger.authenticate(gone.token))!;
+    await assert.rejects(ledger.deleteAccount(me.accountId,'wrong-password'),/INVALID_CREDENTIALS/);
+    await ledger.deleteAccount(me.accountId,'long-private-passphrase');
+    assert.equal(await ledger.authenticate(gone.token),null,'signed out everywhere');
+    await assert.rejects(ledger.login('Gone_one','long-private-passphrase'),/INVALID_CREDENTIALS/);
+    assert.ok(await ledger.authenticate(keep.token),'other members are untouched');
+    assert.ok((await ledger.register('gone@example.org','long-private-passphrase','Gone_one')).token,'the email and name are free again');
+  }finally{await rm(folder,{recursive:true,force:true});}
+});
