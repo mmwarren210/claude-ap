@@ -183,14 +183,14 @@ test('the family code as a first password makes a lifetime account that must set
   try{let clock=start;const path=join(folder,'ledger.json');const code='Family-Code-For-Tests!';
     const ledger=new ProductLedger(path,'CROWN_STRONG',()=>clock,undefined,undefined,0,100,code);
     const plans:string[]=[];
-    for(let index=0;index<10;index++){
+    for(let index=0;index<20;index++){
       clock=new Date(start.getTime()+index*60_000);
       const result=await ledger.register(`member${index}@example.org`,code,`Member_${index}`);
       plans.push(result.profile.plan);
       assert.equal((result.profile as {mustChangePassword?:boolean}).mustChangePassword,true);
     }
-    assert.deepEqual(plans,Array(10).fill('LIFETIME'));
-    await assert.rejects(ledger.register('eleven@example.org',code,'Member_10'),/LIFETIME_FULL/);
+    assert.deepEqual(plans,Array(20).fill('LIFETIME'));
+    await assert.rejects(ledger.register('late@example.org',code,'Member_20'),/LIFETIME_FULL/);
     const normal=await ledger.register('normal@example.org','long-private-passphrase','Normal_one');
     assert.equal(normal.profile.plan,'FREE','no code: a member seat');
     // A family member signs in with the code, must change it, and can't keep the code.
@@ -220,7 +220,7 @@ test('the member cap applies to sign-ups without the family code',async()=>{
     await assert.rejects(ledger.register('late@example.org','long-private-passphrase','Late_one'),/MEMBERS_FULL/);
     await assert.rejects(ledger.loginWithProvider('GOOGLE','sub-1','g@example.org','Google_one'),/MEMBERS_FULL/);
     await ledger.register('family@example.org','Family-Code-For-Tests!','Family_one');
-    assert.deepEqual(await ledger.membership(),{lifetime:{used:1,limit:10},members:{used:3,limit:3},guests:0,suspended:0},
+    assert.deepEqual(await ledger.membership(),{lifetime:{used:1,limit:20},members:{used:3,limit:3},guests:0,suspended:0},
       'a family sign-up still works when member seats are full');
   }finally{await rm(folder,{recursive:true,force:true});}
 });

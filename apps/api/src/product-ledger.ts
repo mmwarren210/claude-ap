@@ -55,12 +55,12 @@ interface Account {id:string;username:string;email:string|null;passwordSalt:stri
 /** A shared guest link: up to `maxGuests` devices each get their own account for `days` days. */
 export interface GuestPass {code:string;maxGuests:number;days:number}
 /**
- * Lifetime family members: never charged and not counted toward the member cap (owner, 2026-10-05: 10 lifetime family
- * members plus 100 members, 110 in all). A family member signs up normally with the family code as the first password
+ * Lifetime family members: never charged and not counted toward the member cap (owner, 2026-10-05: 20 lifetime family
+ * members plus 100 members, 120 in all). A family member signs up normally with the family code as the first password
  * (CROWNIQ_FAMILY_CODE, kept in Railway Variables), then sets their own. Accounts made before this rule keep the
  * lifetime status they had.
  */
-export const LIFETIME_MEMBERS=10;
+export const LIFETIME_MEMBERS=20;
 const LEGACY_LIFETIME_BEFORE='2026-10-05T03:00:00.000Z';
 /** Members allowed besides the lifetime ones. Guests (guest links) and suspended accounts don't take a seat. */
 export const DEFAULT_MAX_MEMBERS=100;
@@ -311,7 +311,7 @@ export class ProductLedger {
   }
   async register(email:string,password:string,username:string){return this.exclusive(async()=>{
     const data=await this.read(),name=username.trim(),address=normalizedEmail(email);
-    // The family code as the first password makes a lifetime family account (while the 10 seats last).
+    // The family code as the first password makes a lifetime family account (while the 20 seats last).
     const family=!!this.familyCode&&sameSecret(password,this.familyCode);
     if(family&&lifetimeIds(data.accounts).size>=LIFETIME_MEMBERS)throw new Error('LIFETIME_FULL');
     if(!family)this.assertSeat(data.accounts);
