@@ -260,7 +260,8 @@ const primaryEvidenceAdapters=[manualEvidence,internalEvidence,publicNflEvidence
 const gkrResearch=primaryEvidenceAdapters.length===0?null:primaryEvidenceAdapters.length===1
   ? primaryEvidenceAdapters[0]:new CompositeResearchAdapter(primaryEvidenceAdapters);
 // NHL, soccer and college football history from ESPN's public game logs (free), for their approved models.
-const espnEvidence=process.env.GKR_ESPN_EVIDENCE==='false'?null:new EspnGkrEvidence(fetch,{allowedKeys:approvedModelKeys,archive:historyArchive});
+const espnEvidence=process.env.GKR_ESPN_EVIDENCE==='false'?null:new EspnGkrEvidence(fetch,{allowedKeys:approvedModelKeys,archive:historyArchive,
+  maxPlayers:process.env.GKR_ESPN_MAX_PLAYERS?Number(process.env.GKR_ESPN_MAX_PLAYERS):undefined});
 const freeHistoryEvidence=playerHistory?new FreeHistoryEvidence(playerHistory,approvedModelKeys):null;
 const secondLookAdapters=[statEvidence,currentContext,espnEvidence,freeHistoryEvidence]
   .filter((item):item is NonNullable<typeof item>=>!!item);

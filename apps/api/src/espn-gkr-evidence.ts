@@ -234,7 +234,9 @@ export class EspnGkrEvidence implements ResearchAdapter {
     const counters = { searches: 0, cacheHits: 0 };
     let failures = 0, skipped = targets.length - eligible.length, noSources = 0;
     const byGame = new Map<string, ResearchTarget[]>();
-    for (const target of eligible) byGame.set(target.eventId, [...byGame.get(target.eventId) ?? [], target]);
+    // Soonest games first, so the player cap never leaves tonight's games unresearched while next week's are done.
+    const soonest = [...eligible].sort((a, b) => a.eventStartTime.localeCompare(b.eventStartTime));
+    for (const target of soonest) byGame.set(target.eventId, [...byGame.get(target.eventId) ?? [], target]);
     const evidence: Evidence[] = [];
     let players = 0;
     for (const group of byGame.values()) {
@@ -244,7 +246,7 @@ export class EspnGkrEvidence implements ResearchAdapter {
       const byPlayer = new Map<string, ResearchTarget[]>();
       for (const target of group) byPlayer.set(target.playerId, [...byPlayer.get(target.playerId) ?? [], target]);
       for (const playerTargets of byPlayer.values()) {
-        if (players >= (this.options.maxPlayers ?? 400)) { skipped += playerTargets.length; continue; }
+        if (players >= (this.options.maxPlayers ?? 1500)) { skipped += playerTargets.length; continue; }
         const first = playerTargets[0], wanted = normalizedPlayer(first.playerName);
         const matches = sharedName(rosters.athletes.filter((athlete) => normalizedPlayer(athlete.name) === wanted), first.team,
           (athlete) => athlete.team);

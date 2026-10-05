@@ -1148,14 +1148,21 @@ export function buildServer(options: ServerOptions = {}) {
     historyCache={at:time,board,reads};
     // Why GKR passes: reason codes, and the score spread of lines it did score, by sport.
     const why:Record<string,number>={},scored:Record<string,number>={};
+    const missing:Record<string,number>={},evidenceKinds=new Map(service.getEvidence().map((item)=>[item.id,item.kind]));
     for(const analysis of board.analyses){
       const line=board.board.lines.find((item)=>item.id===analysis.lineId);
       const sport=line?.sport??'?';
       if(analysis.score!==null){const bucket=analysis.score>=80?'80+':analysis.score>=74?'74-79':analysis.score>=68?'68-73':'<68';
         scored[`${sport} ${bucket}`]=(scored[`${sport} ${bucket}`]??0)+1;}
       else why[`${sport} ${analysis.reasonCode??'NONE'}`]=(why[`${sport} ${analysis.reasonCode??'NONE'}`]??0)+1;
+      // Missing evidence: is it the projection (research never reached the player) or a status (lineup, injury report)?
+      if(analysis.reasonCode==='STALE_OR_MISSING_EVIDENCE'&&line){
+        const kinds=analysis.evidenceIds.map((id)=>evidenceKinds.get(id)).filter(Boolean) as string[];
+        const projection=kinds.includes(line.market.includes('fantasy')?'fantasy_scenarios':'projection:'+line.market);
+        const key=`${sport} ${projection?'has projection, waiting on status':'no projection'}`;missing[key]=(missing[key]??0)+1;
+      }
     }
-    console.log(`[gkr-coverage] ${board.analyses.length} analyses | scored ${JSON.stringify(scored)} | unscored ${JSON.stringify(Object.entries(why).sort((a,b)=>b[1]-a[1]).slice(0,40))}`);
+    console.log(`[gkr-coverage] ${board.analyses.length} analyses | scored ${JSON.stringify(scored)} | unscored ${JSON.stringify(Object.entries(why).sort((a,b)=>b[1]-a[1]).slice(0,40))} | missing evidence ${JSON.stringify(Object.entries(missing).sort((a,b)=>b[1]-a[1]))}`);
     const plays=Object.values(reads).filter((read)=>read.direction!=='PASS'&&!read.lean).length;
     const leans=Object.values(reads).filter((read)=>read.lean).length;
     const bySport:Record<string,[number,number,number]>={};
