@@ -156,7 +156,7 @@ export default function TopPicksScreen() {
     }).catch(() => { if (active) setEv({ status: 'error', value: null }); });
     return () => { active = false; };
   }, [mode, demo, request]);
-  const { data: board, nowMs, freshness } = useBoard();
+  const { data: board, nowMs } = useBoard();
   const { beta } = useBeta(board?.builtAt ?? null);
   const { status, data, message, retry } = useRankings();
   const [size, setSize] = useState(5);
@@ -188,10 +188,6 @@ export default function TopPicksScreen() {
       <ChipRow>{topLists.map((item) => <FilterChip key={item.value} label={item.label} active={mode === item.value} chevron={false}
         onPress={() => setMode(item.value)} />)}</ChipRow>
       {mode === 'ALL' ? <AllPicks /> : mode !== 'GKR' && mode !== 'EV' ? <AllPicks key={mode} only={mode} /> : mode === 'EV' ? <>
-        <Text style={styles.sectionText}>The sportsbooks’ no-vig chance for the same player and stat (at the same number, or
-          estimated from their nearby numbers) against what each app’s easiest entry needs per pick
-          (PrizePicks {((ev.value?.breakEvens?.prizepicks ?? ev.value?.breakEven ?? 0.5421) * 100).toFixed(1)}%). History’s read on
-          the same line shows beside it. Standard lines only; separate from GKR scores.</Text>
         <ChipRow>
           <FilterChip label="All apps" active={evApp === 'ALL'} chevron={false} onPress={() => setEvApp('ALL')} />
           {(Object.keys(evApps) as (keyof typeof evApps)[]).map((app) => <FilterChip key={app} label={evApps[app]}
@@ -219,8 +215,6 @@ export default function TopPicksScreen() {
         <FilterChip icon="chart-line" label={filter.lineType === 'ALL' ? 'Line Style' : optionLabel('lineType', filter.lineType)}
           active={filter.lineType !== 'ALL'} onPress={() => setSheet('lineType')} />
       </ChipRow>
-      {freshness !== 'DEMO' && board && <Text style={styles.note}>Saved snapshot. Lines can move near game time; confirm the exact line and direction in
-        PrizePicks within an hour of the start.</Text>}
       {!!notice && <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text>}
       {!data ? <Notice title={status === 'loading' ? 'Loading top picks' : 'Top picks pending'}
         detail={message || 'Checking the saved full-board analysis.'} />

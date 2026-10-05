@@ -1319,13 +1319,25 @@ export function buildServer(options: ServerOptions = {}) {
   // most every 2 minutes or when the board, its research or the book prices change.
   const bookPickCache=new Map<Sportsbook,{at:number;key:readonly unknown[];picks:BookPick[];fetchedAt:string|null;
     lines:Map<string,PropLine>}>();
+  // Book picks read History for every prop the book prices, which is slow the first time: the last set is served at once
+  // while a fresh one builds (the very first build is waited for), and they're kept warm in the background.
+  const bookRefresh=new Map<Sportsbook,Promise<Awaited<ReturnType<typeof buildBookPicks>>>>();
   async function picksFor(book:Sportsbook){
     const board=service.getBoard();
     if(!options.appGkrScores||!options.sharpProps||!board)return null;
-    const {fetchedAt,prices}=await options.sharpProps.current();
+    const {prices}=await options.sharpProps.current();
     const now=(options.clock??(()=>new Date()))(),key=[board,service.getEvidence(),prices];
     const cached=bookPickCache.get(book);
     if(cached&&now.getTime()-cached.at<2*60_000&&key.every((item,index)=>cached.key[index]===item))return cached;
+    let run=bookRefresh.get(book);
+    if(!run){run=buildBookPicks(book).finally(()=>bookRefresh.delete(book));bookRefresh.set(book,run);}
+    return cached??run;
+  }
+  async function buildBookPicks(book:Sportsbook){
+    const board=service.getBoard();
+    if(!board||!options.sharpProps)return null;
+    const {fetchedAt,prices}=await options.sharpProps.current();
+    const now=(options.clock??(()=>new Date()))(),key=[board,service.getEvidence(),prices];
     const lines=new Map<string,PropLine>();
     // The same History Reads every tab uses, at the book's own number (blended with the book's no-vig chance).
     // Over-only props (DraftKings' soccer shots, no under) join too: History can read them though no fair chance exists.
@@ -1403,7 +1415,24 @@ export function buildServer(options: ServerOptions = {}) {
     const feed=options.contextFeeds?await options.contextFeeds.items<MarketOdds>(platform):{fetchedAt:null,items:[]};
     return {...feed,live:false};
   }
+  // Market picks (with Kalshi props' History) are cached for 2 minutes and served stale while a fresh set builds.
+  const marketCache=new Map<MarketPlatform,{at:number;value:Awaited<ReturnType<typeof buildMarketPicks>>}>();
+  const marketRefresh=new Map<MarketPlatform,Promise<Awaited<ReturnType<typeof buildMarketPicks>>>>();
   async function marketPicksFor(platform:MarketPlatform){
+    const cached=marketCache.get(platform);
+    if(cached&&now().getTime()-cached.at<2*60_000)return cached.value;
+    let run=marketRefresh.get(platform);
+    if(!run){run=buildMarketPicks(platform).then((value)=>{marketCache.set(platform,{at:now().getTime(),value});return value;})
+      .finally(()=>marketRefresh.delete(platform));marketRefresh.set(platform,run);}
+    return cached?cached.value:run;
+  }
+  // Keep the book and market picks warm so the tabs open fast.
+  const warmPicks=()=>{for(const book of sportsbooks)void picksFor(book).catch(()=>undefined);
+    for(const platform of ['kalshi','polymarket'] as const)void marketPicksFor(platform).catch(()=>undefined);};
+  const warmFirst=setTimeout(warmPicks,45_000);warmFirst.unref();
+  const warmEvery=setInterval(warmPicks,3*60_000);warmEvery.unref();
+  shadowTimers.push(warmFirst,warmEvery);
+  async function buildMarketPicks(platform:MarketPlatform){
     if(!options.contextFeeds&&!options.sharpProps)return null;
     const [markets,games]=await Promise.all([marketItems(platform),
       options.contextFeeds?options.contextFeeds.items<GameLine>('pinnacle'):Promise.resolve({fetchedAt:null,items:[] as GameLine[]})]);
