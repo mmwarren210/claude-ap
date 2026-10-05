@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { mergePayouts } from '@crowniq/contracts';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -100,6 +101,8 @@ process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`,undefi
 // The owner's Railway variable is named `sharp_api`; SHARPAPI_KEY also works.
 const sharpProps=new SharpPropsFeed((process.env.SHARPAPI_KEY ?? process.env.sharp_api)?.trim()||null,
   process.env.CROWNIQ_SHARP_PROPS_FILE ?? `${dataDir}/sharp-props.json`);
+// A bad CROWNIQ_PAYOUTS falls back to the defaults rather than stopping the server.
+const payouts=mergePayouts((()=>{try{return JSON.parse(process.env.CROWNIQ_PAYOUTS??'null');}catch{return null;}})());
 const evBreakEven=process.env.CROWNIQ_EV_BREAK_EVEN?Number(process.env.CROWNIQ_EV_BREAK_EVEN):undefined;
 const provider: OddsProvider | null = scrapedLines ? new ScrapedPrizePicksProvider(scrapedLines)
   : providerName !== 'the_odds_api' || !apiKey ? null
@@ -289,7 +292,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provid
   aiPicks:aiPickers.length?new AiPickService(aiPickers,`${dataDir}/ai-picks.json`,{
     dailyAuto:Number(process.env.CROWNIQ_AI_PICKS_DAILY ?? 120),dailyPerUser:Number(process.env.CROWNIQ_AI_PICKS_USER_DAILY ?? 15),
     perRun:Number(process.env.CROWNIQ_AI_PICKS_PER_RUN ?? 15)},new BoxScoreResults()):null,
-  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults()}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,
+  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults()}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,payouts,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,

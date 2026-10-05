@@ -162,7 +162,7 @@ export default function TopPicksScreen() {
         value={mode} onChange={setMode} />
       {mode === 'EV' ? <>
         <Text style={styles.sectionText}>Sportsbooks’ no-vig chance for the same player, stat and number, against the
-          {` ${((ev.value?.breakEven ?? 0.5421) * 100).toFixed(1)}%`} a PrizePicks 5–6 pick Flex needs per pick. Standard lines only.
+          {` ${((ev.value?.breakEven ?? 0.5421) * 100).toFixed(1)}%`} PrizePicks’ easiest entry needs per pick. Standard lines only.
           Separate from GKR scores.</Text>
         {demo ? <Notice title="+EV needs a profile" detail="Sign in to see live +EV picks." />
           : ev.status !== 'ready' ? <Notice title={ev.status === 'error' ? '+EV unavailable' : 'Loading +EV picks'}

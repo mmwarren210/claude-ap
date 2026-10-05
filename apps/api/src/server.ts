@@ -4,10 +4,10 @@ import { dirname } from 'node:path';
 import Fastify from 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { nflPassingResultSchema } from '@crowniq/contracts';
+import { bestBreakEven, DEFAULT_PAYOUTS, entryBreakEvens, nflPassingResultSchema, pickAppSchema } from '@crowniq/contracts';
 import { ModelRegistry, routeResearch, snapshotSelection } from '@crowniq/engine';
 import type { OddsProvider, ResearchAdapter } from '@crowniq/engine';
-import type { BoardResponse } from '@crowniq/contracts';
+import type { BoardResponse, Payouts } from '@crowniq/contracts';
 import { idlePullJob } from './owner-pull-job.js';
 import type { OwnerPullJob, OwnerPullJobStore } from './owner-pull-job.js';
 import { BoardService } from './board-service.js';
@@ -102,6 +102,8 @@ export interface ServerOptions {
   sharpProps?: SharpPropsFeed | null;
   /** Break-even chance per pick for +EV (default 54.21%, PrizePicks' best Flex). */
   evBreakEven?: number;
+  /** Each app's payout tables (defaults, or CROWNIQ_PAYOUTS merged over them). */
+  payouts?: Payouts;
   /** JSON-lines history of the books' view of board lines, one row per line per refresh. */
   booksHistoryFile?: string | null;
 }
@@ -718,13 +720,17 @@ export function buildServer(options: ServerOptions = {}) {
       markets:marketsFor(line,[...kalshi.items,...polymarket.items],game),
       fetchedAt:{injuries:injuries.fetchedAt,pinnacle:pinnacle.fetchedAt,kalshi:kalshi.fetchedAt,polymarket:polymarket.fetchedAt}};
   });
+  // Each app's payouts and the per-pick hit rate every entry needs to break even.
+  const payouts=options.payouts??DEFAULT_PAYOUTS;
+  app.get('/v1/payouts', async () => ({payouts,breakEvens:Object.fromEntries(pickAppSchema.options.map((name)=>
+    [name,entryBreakEvens(payouts[name])]))}));
   // CrownIQ's own +EV: sportsbook no-vig chances against the pick'em break-even. Separate from GKR; never scored.
   app.get('/v1/ev', async (_request, reply) => {
     const board=service.getBoard();
     if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
     if(!options.sharpProps)return reply.code(503).send({code:'EV_UNCONFIGURED'});
     const {fetchedAt,prices}=await options.sharpProps.current();
-    const breakEven=options.evBreakEven??DEFAULT_BREAK_EVEN;
+    const breakEven=options.evBreakEven??bestBreakEven(payouts.prizepicks)?.breakEven??DEFAULT_BREAK_EVEN;
     const picks=evPicks(board,prices,now(),breakEven);
     return {app:'prizepicks',fetchedAt,breakEven,matched:picks.length,
       picks:picks.filter((pick)=>pick.edge>0).slice(0,150)};

@@ -314,3 +314,96 @@ export type SecondLookCard = z.infer<typeof secondLookCardSchema>;
 export type RankingsResponse = z.infer<typeof rankingsResponseSchema>;
 export type SavedSelection = z.infer<typeof savedSelectionSchema>;
 export type NflPassingResult = z.infer<typeof nflPassingResultSchema>;
+
+/* ---------- Pick'em payouts and break-evens ---------- */
+
+export const pickAppSchema = z.enum(['prizepicks', 'underdog', 'pick6']);
+export type PickApp = z.infer<typeof pickAppSchema>;
+export const entryModeSchema = z.enum(['POWER', 'FLEX']);
+export type EntryMode = z.infer<typeof entryModeSchema>;
+
+const multiplier = z.number().nonnegative().finite();
+/** Multipliers by legs, then by hits ("6": { "6": 25, "5": 2 }). A hit count that isn't listed pays nothing. */
+export const payoutTableSchema = z.record(z.string().regex(/^[2-8]$/), z.record(z.string().regex(/^[0-8]$/), multiplier));
+export const appPayoutsSchema = z.object({ POWER: payoutTableSchema, FLEX: payoutTableSchema });
+export const payoutsSchema = z.record(pickAppSchema, appPayoutsSchema);
+export type PayoutTable = Readonly<Record<string, Readonly<Record<string, number>>>>;
+export type AppPayouts = Readonly<Record<EntryMode, PayoutTable>>;
+export type Payouts = Readonly<Record<PickApp, AppPayouts>>;
+
+/**
+ * Standard-line payouts each app has published (estimates: the apps change them, pay less on some lines and run
+ * promos). The server can replace them with CROWNIQ_PAYOUTS without a release. Pick6 has no Flex play.
+ */
+export const DEFAULT_PAYOUTS: Payouts = {
+  prizepicks: {
+    POWER: { 2: { 2: 3 }, 3: { 3: 5 }, 4: { 4: 10 }, 5: { 5: 20 }, 6: { 6: 37.5 } },
+    FLEX: { 3: { 3: 3, 2: 1 }, 4: { 4: 6, 3: 1.5 }, 5: { 5: 10, 4: 2, 3: 0.4 }, 6: { 6: 25, 5: 2, 4: 0.4 } },
+  },
+  underdog: {
+    POWER: { 2: { 2: 3 }, 3: { 3: 6 }, 4: { 4: 10 }, 5: { 5: 20 }, 6: { 6: 37.5 } },
+    FLEX: { 3: { 3: 3, 2: 1 }, 4: { 4: 6, 3: 1.5 }, 5: { 5: 10, 4: 2.5 }, 6: { 6: 25, 5: 2.6, 4: 0.25 } },
+  },
+  pick6: {
+    POWER: { 2: { 2: 3 }, 3: { 3: 5 }, 4: { 4: 10 }, 5: { 5: 20 }, 6: { 6: 40 } },
+    FLEX: {},
+  },
+};
+
+const choose = (n: number, k: number) => { let result = 1; for (let i = 1; i <= k; i++) result = result * (n - k + i) / i; return result; };
+
+/** What a 1-unit entry returns on average when every pick hits with chance p. */
+export function entryReturn(table: Readonly<Record<string, number>>, legs: number, p: number): number {
+  let total = 0;
+  for (const [hits, pays] of Object.entries(table)) {
+    const k = Number(hits);
+    total += pays * choose(legs, k) * p ** k * (1 - p) ** (legs - k);
+  }
+  return total;
+}
+
+/** The chance each pick must hit for this entry to break even, to 4 places; null when it never pays back. */
+export function breakEven(table: Readonly<Record<string, number>> | undefined, legs: number): number | null {
+  if (!table || entryReturn(table, legs, 1) < 1) return null;
+  let low = 0, high = 1;
+  for (let step = 0; step < 50; step++) {
+    const mid = (low + high) / 2;
+    if (entryReturn(table, legs, mid) < 1) low = mid; else high = mid;
+  }
+  return Math.round(high * 10_000) / 10_000;
+}
+
+export interface EntryBreakEven { readonly mode: EntryMode; readonly legs: number; readonly breakEven: number; readonly fullHit: number }
+
+/** Every entry an app offers with its break-even, lowest first. */
+export function entryBreakEvens(payouts: AppPayouts): EntryBreakEven[] {
+  const entries: EntryBreakEven[] = [];
+  for (const mode of entryModeSchema.options) for (const [legs, table] of Object.entries(payouts[mode])) {
+    const value = breakEven(table, Number(legs));
+    if (value !== null) entries.push({ mode, legs: Number(legs), breakEven: value, fullHit: table[legs] ?? 0 });
+  }
+  return entries.sort((a, b) => a.breakEven - b.breakEven || a.legs - b.legs);
+}
+
+/** The app's easiest entry to beat: the lowest per-pick break-even it offers. */
+export const bestBreakEven = (payouts: AppPayouts): EntryBreakEven | null => entryBreakEvens(payouts)[0] ?? null;
+
+/**
+ * Defaults with a valid override merged in by entry size: { "pick6": { "POWER": { "3": { "3": 6 } } } } changes only
+ * Pick6's 3-pick Power payout. An empty table ({}) removes that entry. Anything invalid leaves the defaults.
+ */
+export function mergePayouts(override: unknown): Payouts {
+  const parsed = z.partialRecord(pickAppSchema, appPayoutsSchema.partial()).safeParse(override);
+  if (!parsed.success) return DEFAULT_PAYOUTS;
+  const merged = { ...DEFAULT_PAYOUTS } as Record<PickApp, AppPayouts>;
+  for (const [app, modes] of Object.entries(parsed.data) as [PickApp, Partial<AppPayouts>][]) {
+    const next = { ...merged[app] } as Record<EntryMode, PayoutTable>;
+    for (const [mode, table] of Object.entries(modes) as [EntryMode, PayoutTable][]) {
+      const sizes: Record<string, Readonly<Record<string, number>>> = { ...next[mode], ...table };
+      for (const legs of Object.keys(sizes)) if (!Object.keys(sizes[legs]!).length) delete sizes[legs];
+      next[mode] = sizes;
+    }
+    merged[app] = next;
+  }
+  return merged;
+}

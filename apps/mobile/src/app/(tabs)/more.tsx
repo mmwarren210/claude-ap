@@ -1,3 +1,4 @@
+import { entryBreakEvens } from '@crowniq/contracts';
 import { router, useFocusEffect } from 'expo-router';
 import type { Href } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
@@ -7,10 +8,13 @@ import { useAuth } from '../../auth';
 import { Sheet } from '../../components/Sheet';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { alpha } from '../../components/ui/color';
-import { PrimaryButton } from '../../components/ui/Controls';
+import { PrimaryButton, Segmented } from '../../components/ui/Controls';
 import type { IconName } from '../../components/ui/Icon';
 import { Icon } from '../../components/ui/Icon';
-import { flexPayouts } from '../../insights';
+import { pickApps } from '../../components/AppBoard';
+import type { PickApp } from '../../components/AppBoard';
+import { entryName, percent1 } from '../../insights';
+import { usePayouts } from '../../use-payouts';
 import { colors, radius } from '../../theme';
 import { useDraft } from '../../use-draft';
 
@@ -34,6 +38,8 @@ export default function MoreScreen() {
   const [owner, setOwner] = useState(false);
   const [stats, setStats] = useState<{ picks: number; crowns: number; rate: number | null } | null>(null);
   const [sheet, setSheet] = useState<'account' | 'payouts' | null>(null);
+  const [payoutApp, setPayoutApp] = useState<PickApp>('prizepicks');
+  const payouts = usePayouts();
   const [name, setName] = useState(profile?.username ?? ''), [message, setMessage] = useState('');
   useEffect(() => {
     let active = true;
@@ -92,7 +98,7 @@ export default function MoreScreen() {
         <Row icon="account-outline" title="Account" detail="Display username" onPress={() => setSheet('account')} />
         <Row icon="view-grid-outline" title="Board view" detail={viewMode === 'LITE' ? 'Lite · top qualified' : 'Full · every line'}
           onPress={ready ? () => setViewMode(viewMode === 'LITE' ? 'FULL' : 'LITE') : undefined} />
-        <Row icon="cash-multiple" title="Payout estimates" detail="Flex table" onPress={() => setSheet('payouts')} />
+        <Row icon="cash-multiple" title="Payout estimates" detail="By app" onPress={() => setSheet('payouts')} />
         <Row icon="lightbulb-on-outline" title="Pick tips" detail={hiddenTips.length
           ? `${hiddenTips.length} hidden · tap to show again` : 'On · advice before weaker picks'}
           onPress={hiddenTips.length ? showAllTips : undefined} />
@@ -126,12 +132,14 @@ export default function MoreScreen() {
       {!!profile?.publicId && !demo && <Text selectable style={styles.sheetNote}>Profile ID: {profile.publicId}</Text>}
     </Sheet>
     <Sheet visible={sheet === 'payouts'} title="Payout estimates" onClose={() => setSheet(null)}>
-      <Text style={styles.sheetNote}>Results estimate units with these default PrizePicks Flex multipliers at 1 unit per Crown.
-        PrizePicks sets the real payouts and changes them for Goblins and Demons.</Text>
-      {Object.entries(flexPayouts).map(([legs, table]) => <View key={legs} style={styles.payoutRow}>
-        <Text style={styles.payoutLegs}>{legs} legs</Text>
-        <Text style={styles.payoutValues}>{Object.entries(table).sort((a, b) => Number(b[0]) - Number(a[0]))
-          .map(([hits, multiplier]) => `${hits}/${legs}: ${multiplier}x`).join('   ')}</Text>
+      <Segmented label="Pick'em app" options={pickApps} value={payoutApp} onChange={setPayoutApp} />
+      <Text style={styles.sheetNote}>“Needs” is how often each pick must hit for that entry to break even; lower is easier.
+        These are the apps’ standard payouts. The apps set the real ones and pay less on Goblins, Demons and some lines.</Text>
+      {entryBreakEvens(payouts[payoutApp]).map((entry) => <View key={`${entry.mode}${entry.legs}`} style={styles.payoutRow}>
+        <Text style={styles.payoutLegs}>{entryName(entry.legs, entry.mode)}</Text>
+        <Text style={styles.payoutValues}>{Object.entries(payouts[payoutApp][entry.mode][entry.legs] ?? {})
+          .sort((a, b) => Number(b[0]) - Number(a[0])).map(([hits, multiplier]) => `${hits}/${entry.legs}: ${multiplier}x`).join('   ')}</Text>
+        <Text style={styles.payoutNeeds}>{percent1(entry.breakEven)}</Text>
       </View>)}
     </Sheet>
   </SafeAreaView>;
@@ -178,6 +186,7 @@ const styles = StyleSheet.create({
   sheetNote: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
   payoutRow: { flexDirection: 'row', gap: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.borderStrong },
-  payoutLegs: { color: colors.text, fontSize: 14, fontWeight: '800', width: 60 },
+  payoutLegs: { color: colors.text, fontSize: 14, fontWeight: '800', width: 104 },
+  payoutNeeds: { color: colors.mint, fontSize: 14, fontWeight: '800' },
   payoutValues: { color: colors.textMuted, fontSize: 13, flex: 1 },
 });

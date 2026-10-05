@@ -14,7 +14,9 @@ import { Icon } from '../../components/ui/Icon';
 import { LineBadge } from '../../components/ui/LineBadge';
 import { PlayerAvatar } from '../../components/ui/PlayerAvatar';
 import { ScoreRing } from '../../components/ui/ScoreRing';
-import { crownIssueMessage, crownMinimumLineScore, formatLine, fullHitMultiplier, gameTime, lineStats, marketLabel, signed } from '../../insights';
+import { crownIssueMessage, crownMinimumLineScore, formatLine, entryName, entryOutlook, gameTime, lineStats, marketLabel, percent1, signed } from '../../insights';
+import { usePayouts } from '../../use-payouts';
+import { pickApps } from '../../components/AppBoard';
 import { autoCrown, betterSwap, checkLeg, gkrBacked, shareCrown } from '../../state';
 import { PortSheet } from '../../components/PortSheet';
 import { appNames } from '../../port';
@@ -92,6 +94,7 @@ export default function CrownScreen() {
   const [edges, setEdges] = useState<Record<string, number | null>>({});
   const [message, setMessage] = useState('');
   const [portApp, setPortApp] = useState<PickApp | null>(null);
+  const [playApp, setPlayApp] = useState<PickApp>('prizepicks');
   const tips = useTipFlow(setMessage);
   const [keptLeg, setKeptLeg] = useState<string | null>(null);
   const analyses = useMemo(() => new Map(board?.analyses.map((item) => [item.lineId, item])), [board]);
@@ -109,7 +112,12 @@ export default function CrownScreen() {
   const knownEdges = legs.map((leg) => edges[leg.line.id]).filter((edge): edge is number => typeof edge === 'number');
   const avgEdge = knownEdges.length ? knownEdges.reduce((sum, edge) => sum + edge, 0) / knownEdges.length : null;
   const confidence = average === null ? '—' : average >= 90 ? 'High' : average >= 85 ? 'Strong' : average >= 80 ? 'Solid' : 'Low';
-  const multiplier = fullHitMultiplier(legs.length);
+  const payouts = usePayouts();
+  const entryLegs = legs.length || size;
+  const power = entryOutlook(payouts[playApp], entryLegs, 'POWER'), flex = entryOutlook(payouts[playApp], entryLegs, 'FLEX');
+  // The entry that needs the lowest hit rate per pick, which is the one to play when both exist.
+  const easier = flex && (!power || flex.breakEven <= power.breakEven) ? { mode: 'FLEX' as const, ...flex }
+    : power ? { mode: 'POWER' as const, ...power } : null;
   const suggestions = candidates.filter(({ line }) => !legs.some((leg) => leg.line.id === line.id))
     .filter(({ line, analysis }) => analysis.direction !== 'PASS' &&
       (({ block, tips: advice }) => !block && !advice.length)(checkLeg(legs, line, analysis, analysis.direction, nowMs)))
@@ -220,17 +228,22 @@ export default function CrownScreen() {
       <GlowCard accent={colors.mint}>
         <View style={styles.panelHead}><Icon name="chart-bar" size={26} color={colors.mint} />
           <View style={styles.legBody}><Text style={styles.panelTitle}>Projected Outcome</Text>
-            <Text style={styles.legMeta}>Estimated Flex payout if every leg hits</Text></View></View>
+            <Text style={styles.legMeta}>Estimated payout if every leg hits, by app</Text></View></View>
+        <View style={styles.appPicker}><Segmented label="Pick'em app" options={pickApps} value={playApp} onChange={setPlayApp} /></View>
         <View style={styles.metrics}>
-          <View style={styles.metric}><Text style={styles.metricValue}>{multiplier ? `${multiplier}x` : '—'}</Text>
-            <Text style={styles.metricLabel}>Est. Multiplier</Text></View>
-          <View style={[styles.metric, styles.metricDivider]}><Text style={styles.metricValue}>{legs.length || '—'}</Text>
-            <Text style={styles.metricLabel}>Legs</Text></View>
+          <View style={styles.metric}><Text style={styles.metricValue}>{power ? `${power.fullHit}x` : '—'}</Text>
+            <Text style={styles.metricLabel}>Power</Text></View>
+          <View style={[styles.metric, styles.metricDivider]}><Text style={styles.metricValue}>{flex ? `${flex.fullHit}x` : '—'}</Text>
+            <Text style={styles.metricLabel}>Flex</Text></View>
           <View style={[styles.metric, styles.metricDivider]}><Text style={styles.metricValue}>{confidence}</Text>
             <Text style={styles.metricLabel}>Confidence</Text></View>
         </View>
+        <Text style={styles.breakEven}>{easier ? `Best play: ${entryName(entryLegs, easier.mode)}. Each pick needs to hit ` +
+          `${percent1(easier.breakEven)} of the time to break even.` : `${appNames[playApp]} has no ${entryLegs}-pick entry.`}
+          {easier && power && flex ? ` (${easier.mode === 'FLEX' ? 'Power' : 'Flex'} needs ` +
+            `${percent1(easier.mode === 'FLEX' ? power.breakEven : flex.breakEven)}.)` : ''}</Text>
         <Text style={styles.disclaimer}>No win probability is shown: CrownIQ’s model is not calibrated yet. Payouts are
-          estimates; PrizePicks sets the real multiplier, which changes for Goblins and Demons.</Text>
+          estimates; {appNames[playApp]} sets the real multipliers, which change on Goblins, Demons and some lines.</Text>
         <View style={styles.actions}>
           <PrimaryButton label={built ? 'Generate New' : 'Generate'} icon="shuffle-variant" onPress={generate}
             style={styles.action} disabled={!candidates.length} />
@@ -271,6 +284,8 @@ const styles = StyleSheet.create({
   confidence: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   confidenceText: { color: colors.mint, fontSize: 13, fontWeight: '700' },
   metrics: { flexDirection: 'row', marginTop: 14 },
+  appPicker: { marginTop: 12 },
+  breakEven: { color: colors.text, fontSize: 13, lineHeight: 19, marginTop: 12, fontWeight: '600' },
   metric: { flex: 1, alignItems: 'center', gap: 2 },
   metricDivider: { borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: colors.borderStrong },
   metricValue: { color: colors.text, fontSize: 20, fontWeight: '900' },

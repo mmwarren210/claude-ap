@@ -1,4 +1,5 @@
-import type { PlayerGameLog } from '@crowniq/contracts';
+import { breakEven, DEFAULT_PAYOUTS } from '@crowniq/contracts';
+import type { AppPayouts, EntryMode, PlayerGameLog } from '@crowniq/contracts';
 
 /** Plain names for provider market keys. Unknown keys are title-cased, never guessed. */
 const marketNames: Readonly<Record<string, string>> = {
@@ -78,33 +79,42 @@ export function signed(value: number | null | undefined, digits = 1): string {
 /* ---------- Crown payouts ---------- */
 
 /**
- * Estimated PrizePicks Flex payouts (multiplier by legs, then by hits). PrizePicks changes these and
- * adjusts them for Goblins and Demons, so every unit figure built on them is labelled an estimate.
+ * The table an entry of this size uses: Flex where the app offers it for that many legs, else Power (all must hit).
+ * The apps change payouts and pay less on Goblins, Demons and some lines, so every unit figure is an estimate.
  */
-export const flexPayouts: Readonly<Record<number, Readonly<Record<number, number>>>> = {
-  2: { 2: 3 }, 3: { 3: 3, 2: 1 }, 4: { 4: 6, 3: 1.5 }, 5: { 5: 10, 4: 2, 3: 0.4 }, 6: { 6: 25, 5: 2, 4: 0.4 },
-};
+export function entryTable(payouts: AppPayouts, legs: number, mode: EntryMode = 'FLEX'): { mode: EntryMode;
+  table: Readonly<Record<string, number>> } | null {
+  const table = payouts[mode][legs];
+  if (table) return { mode, table };
+  const other: EntryMode = mode === 'FLEX' ? 'POWER' : 'FLEX';
+  return payouts[other][legs] ? { mode: other, table: payouts[other][legs]! } : null;
+}
 
 export type CrownStatus = 'CASHED' | 'SPLIT' | 'MISSED' | 'PENDING';
 type LegGrade = 'WIN' | 'LOSS' | 'PUSH' | 'PENDING' | 'DNP' | 'VOID' | string;
 
-/** Status and estimated units (1-unit stake) for a Crown from its leg grades. */
-export function crownOutcome(grades: readonly LegGrade[]): { status: CrownStatus; units: number | null;
-  multiplier: number | null } {
+/** Status and estimated units (1-unit stake, Flex where offered) for a Crown from its leg grades and its app's payouts. */
+export function crownOutcome(grades: readonly LegGrade[], payouts: AppPayouts = DEFAULT_PAYOUTS.prizepicks): {
+  status: CrownStatus; units: number | null; multiplier: number | null } {
   if (grades.some((grade) => grade === 'PENDING')) return { status: 'PENDING', units: null, multiplier: null };
-  // Pushes and voids drop out of the entry, as PrizePicks reduces the pick count.
+  // Pushes and voids drop out of the entry, as the apps reduce the pick count.
   const live = grades.filter((grade) => grade === 'WIN' || grade === 'LOSS');
   const wins = live.filter((grade) => grade === 'WIN').length;
-  const table = flexPayouts[live.length];
-  const multiplier = table?.[wins] ?? 0;
+  const multiplier = entryTable(payouts, live.length)?.table[wins] ?? 0;
   const status: CrownStatus = live.length > 0 && wins === live.length ? 'CASHED' : multiplier > 0 ? 'SPLIT' : 'MISSED';
   return { status, units: Math.round((multiplier - 1) * 100) / 100, multiplier };
 }
 
-/** Full-hit multiplier a Crown of this size pays, for the projected outcome. */
-export function fullHitMultiplier(legs: number): number | null {
-  return flexPayouts[legs]?.[legs] ?? null;
+/** What an entry of this size pays when every leg hits, and the per-pick hit rate it needs to break even. */
+export function entryOutlook(payouts: AppPayouts, legs: number, mode: EntryMode): { fullHit: number; breakEven: number } | null {
+  const table = payouts[mode][legs];
+  const value = breakEven(table, legs);
+  return table && value !== null ? { fullHit: table[legs] ?? 0, breakEven: value } : null;
 }
+
+/** "6-pick Flex" */
+export const entryName = (legs: number, mode: EntryMode) => `${legs}-pick ${mode === 'FLEX' ? 'Flex' : 'Power'}`;
+export const percent1 = (value: number) => `${(value * 100).toFixed(1)}%`;
 
 /** Same minimum leg scores the server's Crown audit applies (packages/engine/src/crowns.ts). */
 export const crownMinimumLineScore: Readonly<Record<number, number>> = { 2: 88, 3: 86, 4: 84, 5: 82, 6: 80 };

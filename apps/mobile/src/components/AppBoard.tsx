@@ -3,7 +3,9 @@ import { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth';
-import { formatLine, gameTime } from '../insights';
+import { bestBreakEven } from '@crowniq/contracts';
+import { entryName, entryOutlook, formatLine, gameTime, percent1 } from '../insights';
+import { usePayouts } from '../use-payouts';
 import { colors, radius } from '../theme';
 import { useBoard } from '../use-board';
 import { appNames, copyAndOpen, slipText } from '../port';
@@ -123,6 +125,13 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     } catch { setMessage('Could not reach CrownIQ. Try again.'); }
   };
 
+  const appPayouts = usePayouts()[app];
+  const easiest = bestBreakEven(appPayouts);
+  // This slip's size at the app's payouts: the entry (Power or Flex) that needs the lowest hit rate per pick.
+  const slipEntry = slip.length >= 2 ? (['FLEX', 'POWER'] as const).flatMap((mode) => {
+    const outlook = entryOutlook(appPayouts, slip.length, mode);
+    return outlook ? [{ mode, ...outlook }] : [];
+  }).sort((a, b) => a.breakEven - b.breakEven)[0] ?? null : null;
   const age = fetchedAt ? Math.max(0, Math.round((nowMs - Date.parse(fetchedAt)) / 60_000)) : null;
   const header = <View style={styles.header}>
     <AppHeader subtitle={`${appNames[app]} board`} />
@@ -138,6 +147,9 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
       research as PrizePicks. These scores are new on ${appNames[app]} and are being tracked.` : `GKR doesn’t score
       ${appNames[app]} lines yet.`} PrizePicks’ line for the same player and stat shows for comparison. Confirm the line in
       {' '}{appNames[app]} before you play it.</Text>
+    {easiest && <Text style={styles.breakEven}>{slipEntry ? `Your ${slip.length} picks: play ${entryName(slip.length,
+      slipEntry.mode)} (${slipEntry.fullHit}x). Each pick needs to hit ${percent1(slipEntry.breakEven)} to break even. `
+      : ''}Easiest ${appNames[app]} entry: {entryName(easiest.legs, easiest.mode)}, {percent1(easiest.breakEven)} per pick.</Text>}
     {!!message && <Text accessibilityRole="alert" style={styles.message}>{message}</Text>}
   </View>;
 
@@ -168,6 +180,7 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 16, paddingBottom: 140, gap: 12 },
   header: { gap: 12, marginBottom: 2 },
   status: { color: colors.textMuted, fontSize: 13 },
+  breakEven: { color: colors.text, fontSize: 13, lineHeight: 19, fontWeight: '600' },
   note: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
   message: { color: colors.gold, fontSize: 13, fontWeight: '600' },
   card: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, padding: 12, gap: 10 },

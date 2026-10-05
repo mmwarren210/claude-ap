@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { analysisSchema, boardResponseSchema, propLineSchema } from '@crowniq/contracts';
+import { analysisSchema, boardResponseSchema, DEFAULT_PAYOUTS, propLineSchema } from '@crowniq/contracts';
+import { crownOutcome, entryOutlook } from '../src/insights.js';
 import { addLeg, betterSwap, boardLinesForMode, CROWN_LEG_FLOOR, emptyFilters, evidenceExpired, freshness, gkrBacked, shareCrown,
   visibleLines } from '../src/state.js';
 import { parseDraft, profileDraftKey } from '../src/draft-codec.js';
@@ -150,4 +151,16 @@ test('Full shows one card per player: their strongest play, GKR first, then the 
   assert.deepEqual(boardLinesForMode(withOther,emptyFilters,'FULL',undefined,ai).map((item)=>item.id),['one','three']);
   const aiOnly=new Map([['three',{pick:'PASS',score:null}]]);
   assert.deepEqual(boardLinesForMode(withOther,emptyFilters,'FULL',undefined,aiOnly).map((item)=>item.id),['one']);
+});
+
+test('Crown units use the app payouts: Flex where offered, Power otherwise',()=>{
+  // PrizePicks 5-pick Flex pays 2x on 4 of 5; Pick6 has no Flex, so 4 of 5 pays nothing.
+  const grades=['WIN','WIN','WIN','WIN','LOSS'];
+  assert.deepEqual(crownOutcome(grades),{status:'SPLIT',units:1,multiplier:2});
+  assert.deepEqual(crownOutcome(grades,DEFAULT_PAYOUTS.pick6),{status:'MISSED',units:-1,multiplier:0});
+  assert.deepEqual(crownOutcome(['WIN','WIN'],DEFAULT_PAYOUTS.underdog),{status:'CASHED',units:2,multiplier:3});
+  // A push drops out: 3 legs with a push grade as a 2-pick entry.
+  assert.equal(crownOutcome(['WIN','WIN','PUSH']).multiplier,3);
+  assert.deepEqual(entryOutlook(DEFAULT_PAYOUTS.pick6,6,'POWER'),{fullHit:40,breakEven:0.5407});
+  assert.equal(entryOutlook(DEFAULT_PAYOUTS.pick6,6,'FLEX'),null);
 });

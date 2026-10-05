@@ -12,6 +12,7 @@ import type { IconName } from '../../components/ui/Icon';
 import { Icon } from '../../components/ui/Icon';
 import { PlayerAvatar } from '../../components/ui/PlayerAvatar';
 import { UnitsChart } from '../../components/ui/UnitsChart';
+import { usePayouts } from '../../use-payouts';
 import { crownOutcome, formatLine, marketAbbrev, signed } from '../../insights';
 import type { CrownStatus } from '../../insights';
 import { colors, lineStyleOf, lineStyles, radius } from '../../theme';
@@ -99,7 +100,8 @@ export default function ResultsScreen() {
     .sort((a, b) => when(b).localeCompare(when(a)));
   let streak = 0; for (const pick of ordered) { if (pick.result !== 'WIN') break; streak++; }
 
-  const outcomes = useMemo(() => crowns.filter((crown) => !!crown.personal === (book === 'YOURS')).map((crown) => ({ crown, ...crownOutcome(crown.legs.map((leg) => leg.grade)) })), [crowns, book]);
+  const payouts = usePayouts();
+  const outcomes = useMemo(() => crowns.filter((crown) => !!crown.personal === (book === 'YOURS')).map((crown) => ({ crown, ...crownOutcome(crown.legs.map((leg) => leg.grade), payouts[crown.app ?? 'prizepicks']) })), [crowns, book, payouts]);
   const rangedCrowns = outcomes.filter((item) => inRange(item.crown.savedAt, range));
   const settled = rangedCrowns.filter((item) => item.units !== null);
   const units = settled.reduce((sum, item) => sum + (item.units ?? 0), 0);
