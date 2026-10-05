@@ -10,8 +10,10 @@ import type { Filters } from '../state';
 import { colors, radius, rankAccents } from '../theme';
 import { useBoard } from '../use-board';
 import { useDraft } from '../use-draft';
-import { AppBoard, pickApps } from './AppBoard';
-import type { PickApp } from './AppBoard';
+import { AppBoard } from './AppBoard';
+import { BoardPicker } from './BoardPicker';
+import type { BoardSource } from './BoardPicker';
+import { BookBoard, MarketBoard } from './SourceBoards';
 import { BoardCard } from './BoardCard';
 import { CrownTray } from './CrownTray';
 import { FilterSheet, optionLabel } from './FilterSheet';
@@ -38,15 +40,17 @@ function freshnessLine(freshness: string, fetchedAt: string | undefined, nowMs: 
 }
 
 // The chosen pick'em app survives leaving and returning to the Board tab.
-let lastApp: PickApp = 'prizepicks';
+let lastApp: BoardSource = 'prizepicks';
 
 export default function BoardView() {
-  const [app, setAppState] = useState<PickApp>(lastApp);
-  const setApp = useCallback((next: PickApp) => { lastApp = next; setAppState(next); }, []);
+  const [app, setAppState] = useState<BoardSource>(lastApp);
+  const setApp = useCallback((next: BoardSource) => { lastApp = next; setAppState(next); }, []);
+  if (app === 'draftkings' || app === 'hardrock') return <BookBoard book={app} onSource={setApp} />;
+  if (app === 'kalshi' || app === 'polymarket') return <MarketBoard platform={app} onSource={setApp} />;
   return app === 'prizepicks' ? <PrizePicksBoard onApp={setApp} /> : <AppBoard app={app} onApp={setApp} />;
 }
 
-function PrizePicksBoard({ onApp }: { onApp: (app: PickApp) => void }) {
+function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
   const { status, data, message, freshness, refreshing, nowMs, reload, needsBootstrap, bootstrapPull } = useBoard();
   const { filters, setFilters, viewMode, ready } = useDraft();
   // While the Board is on screen, reread the saved board every 5 minutes (free; picks up context refreshes).
@@ -85,7 +89,7 @@ function PrizePicksBoard({ onApp }: { onApp: (app: PickApp) => void }) {
 
   const header = <View style={styles.header}>
     <AppHeader subtitle="Sports Intelligence · Powered by GKR" />
-    <Segmented label="Pick'em app" options={pickApps} value={'prizepicks' as PickApp} onChange={onApp} />
+    <BoardPicker value="prizepicks" onChange={onApp} />
     {data && <TextInput value={query} onChangeText={setQuery} placeholder="Search any player" placeholderTextColor={colors.textFaint}
       accessibilityLabel="Search players" style={styles.search} autoCorrect={false} />}
     {found && <View style={styles.results}>

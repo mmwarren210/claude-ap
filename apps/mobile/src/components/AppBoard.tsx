@@ -10,14 +10,15 @@ import { colors, radius } from '../theme';
 import { useBoard } from '../use-board';
 import { appNames, copyAndOpen, slipText } from '../port';
 import type { PickApp } from '../port';
+import { BoardPicker, pickApps } from './BoardPicker';
+import type { BoardSource } from './BoardPicker';
 import { Notice } from './Screen';
 import { AppHeader } from './ui/AppHeader';
 import { ChipRow, FilterChip, GhostButton, PrimaryButton, Segmented } from './ui/Controls';
 import { PlayerAvatar } from './ui/PlayerAvatar';
 
 export type { PickApp };
-export const pickApps: readonly { value: PickApp; label: string }[] = [
-  { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'Pick6' }];
+export { pickApps };
 
 type Side = 'MORE' | 'LESS';
 /** One Underdog or Pick6 line, as /v1/apps/:app/board serves it. */
@@ -74,7 +75,7 @@ function LineCard({ app, line, picked, onPick }: { app: PickApp; line: AppLine; 
  * An Underdog or Pick6 board: the app's own lines, picked and saved as the user's own slip. GKR scores each line it can
  * read at the app's own number; the same PrizePicks line and its GKR score show beside it.
  */
-export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; onApp: (app: PickApp) => void }) {
+export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; onApp: (app: BoardSource) => void }) {
   const { request, demo } = useAuth();
   const { nowMs } = useBoard();
   const [lines, setLines] = useState<AppLine[]>([]), [fetchedAt, setFetchedAt] = useState<string | null>(null);
@@ -135,7 +136,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   const age = fetchedAt ? Math.max(0, Math.round((nowMs - Date.parse(fetchedAt)) / 60_000)) : null;
   const header = <View style={styles.header}>
     <AppHeader subtitle={`${appNames[app]} board`} />
-    <Segmented label="Pick'em app" options={pickApps} value={app} onChange={onApp} />
+    <BoardPicker value={app} onChange={onApp} />
     {lines.length > 0 && <ChipRow>
       <FilterChip label="All leagues" active={sport === 'ALL'} onPress={() => setSport('ALL')} />
       {sports.map((league) => <FilterChip key={league} label={league} active={sport === league} onPress={() => setSport(league)} />)}
