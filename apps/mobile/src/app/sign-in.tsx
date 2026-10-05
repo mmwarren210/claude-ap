@@ -28,8 +28,7 @@ export default function SignIn() {
           <AppIcon size={132} />
           <Text style={styles.word}>Crown<Text style={styles.iq}>IQ</Text></Text>
           <Text style={styles.tag}>Sports Intelligence · Powered by GKR</Text>
-          <Text style={styles.betaNote}>BETA · Not fully released yet. Family members are our testers: report bugs and
-            ideas in More → Beta feedback.</Text>
+          <View style={styles.betaPill}><Text style={styles.betaPillText}>BETA · NOW TESTING</Text></View>
         </View>
 
         {(guest.signingIn || !!guest.message) && <View style={styles.panel}>
@@ -80,7 +79,8 @@ export default function SignIn() {
 }
 
 const styles = StyleSheet.create({
-  betaNote: { color: colors.gold, fontSize: 13, fontWeight: '700', textAlign: 'center', lineHeight: 19, marginTop: 10, maxWidth: 340 },
+  betaPill: { marginTop: 12, borderWidth: 1.5, borderColor: colors.gold, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 5 },
+  betaPillText: { color: colors.gold, fontSize: 12, fontWeight: '900', letterSpacing: 2 },
   safe: { flex: 1, backgroundColor: colors.background },
   content: { padding: 20, paddingBottom: 40, gap: 22 },
   hero: { alignItems: 'center', gap: 4, paddingTop: 18 },

@@ -25,6 +25,7 @@ import { Sheet } from './Sheet';
 import { AppHeader } from './ui/AppHeader';
 import { ChipRow, FilterChip, PrimaryButton, Segmented } from './ui/Controls';
 import { Icon } from './ui/Icon';
+import { ReportNudge } from './ReportNudge';
 
 export const windows: readonly { value: Window; label: string }[] = [
   { value: 'L5', label: 'L5' }, { value: 'L10', label: 'L10' }, { value: 'L15', label: 'L15' },
@@ -166,7 +167,8 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
         ? 'No qualified plays yet' : data ? 'No matching lines' : 'Board unavailable'}
         detail={!ready ? 'Loading your saved view.' : status === 'loading' ? 'Looking for the latest saved board.'
           : data && viewMode === 'LITE' ? 'Nothing on this board qualifies for these filters. PASS is a valid result. Full view in More shows every play.'
-            : data ? 'Reset filters or try another sport.' : message} />} />
+            : data ? 'Reset filters or try another sport.' : message} />}
+      ListFooterComponent={<ReportNudge where="board" />} />
     <CrownTray />
     {data && sheet && <FilterSheet key={sheet} visible onClose={() => setSheet(null)} mode={viewMode} data={data}
       value={filters} onApply={setFilters} only={sheet === 'ALL' ? undefined : sheet} />}

@@ -27,6 +27,7 @@ import { useBoard } from '../../use-board';
 import { useDraft } from '../../use-draft';
 import { usePlayerGames } from '../../use-player-games';
 import { useRankings } from '../../use-rankings';
+import { ReportNudge } from '../../components/ReportNudge';
 
 const sizes = [2, 3, 4, 5, 6].map((value) => ({ value, label: `Top ${value}` }));
 
@@ -266,6 +267,7 @@ export default function CrownScreen() {
         <GhostButton label={demo ? 'Share (sign in)' : 'Share to Social'} icon="account-group-outline" style={styles.action}
           onPress={() => void save('/v1/social/crowns', 'Shared to Social.')} />
       </View>}
+      <ReportNudge where="crown" />
     </ScrollView>
     {tips.sheet}
     <PortSheet key={portApp ?? 'closed'} app={portApp} legs={legs} onClose={() => setPortApp(null)} />

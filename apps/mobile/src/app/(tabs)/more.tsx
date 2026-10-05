@@ -1,5 +1,5 @@
 import { entryBreakEvens } from '@crowniq/contracts';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import type { Href } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -39,7 +39,11 @@ export default function MoreScreen() {
   const { viewMode, setViewMode, ready, hiddenTips, showAllTips } = useDraft();
   const [owner, setOwner] = useState(false);
   const [stats, setStats] = useState<{ picks: number; crowns: number; rate: number | null } | null>(null);
+  const { feedback: openFeedback } = useLocalSearchParams<{ feedback?: string }>();
   const [sheet, setSheet] = useState<'account' | 'payouts' | 'feedback' | 'updates' | 'review' | null>(null);
+  // A "report it" nudge elsewhere in the app opens Beta feedback here.
+  const [lastOpen, setLastOpen] = useState<string | undefined>(undefined);
+  if (openFeedback && openFeedback !== lastOpen && !demo) { setLastOpen(openFeedback); setSheet('feedback'); }
   const [payoutApp, setPayoutApp] = useState<PickApp>('prizepicks');
   const payouts = usePayouts();
   const [name, setName] = useState(profile?.username ?? ''), [message, setMessage] = useState('');
@@ -144,7 +148,7 @@ export default function MoreScreen() {
       {owner && <MemberAccess />}
       {!demo && profile?.plan !== 'GUEST' && <DeleteAccount />}
     </Sheet>
-    <Sheet visible={sheet === 'feedback'} title="Beta feedback" onClose={() => setSheet(null)}><BetaFeedback /></Sheet>
+    <Sheet visible={sheet === 'feedback'} title="Beta feedback" onClose={() => { setSheet(null); router.setParams({ feedback: undefined }); }}><BetaFeedback /></Sheet>
     <Sheet visible={sheet === 'updates'} title="Updates" onClose={() => setSheet(null)}><PatchNotes /></Sheet>
     <Sheet visible={sheet === 'review'} title="Review feedback" onClose={() => setSheet(null)}><FeedbackReview /></Sheet>
     <Sheet visible={sheet === 'payouts'} title="Payout estimates" onClose={() => setSheet(null)}>

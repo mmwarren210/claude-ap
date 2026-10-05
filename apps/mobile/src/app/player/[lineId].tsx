@@ -30,6 +30,7 @@ import { useBoard } from '../../use-board';
 import { useDraft } from '../../use-draft';
 import { usePlayerGames } from '../../use-player-games';
 import { agreementText, aiPlay, lateNews, providerName, SCOUT, scoutEvidence, scoutVerdict, unbrand, useAiPicks, verdictText } from '../../use-ai-picks';
+import { ReportNudge } from '../../components/ReportNudge';
 
 /** GKR couldn't score these (no model for the stat, or its data is missing); Scout can research them. */
 const AI_ELIGIBLE = new Set(['MODEL_SUPPORT_INCOMPLETE', 'STALE_OR_MISSING_EVIDENCE', 'INSUFFICIENT_MODEL_COVERAGE',
@@ -386,6 +387,7 @@ export default function PlayerResearch() {
         <Text style={styles.link}>Like {otherSide} instead? Add it as your call</Text></Pressable>}
       <Pressable accessibilityRole="button" onPress={savePick} style={styles.savePick}>
         <Text style={styles.link}>Save this pick to Results</Text></Pressable>
+      <ReportNudge where="player" />
     </ScrollView>
 
     <View style={styles.footer}>

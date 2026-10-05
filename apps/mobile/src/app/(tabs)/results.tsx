@@ -18,6 +18,7 @@ import { crownOutcome, formatLine, marketAbbrev, signed } from '../../insights';
 import type { CrownStatus } from '../../insights';
 import { colors, lineStyleOf, lineStyles, radius } from '../../theme';
 import { useBoard } from '../../use-board';
+import { ReportNudge } from '../../components/ReportNudge';
 
 type Pick = { id: string; savedAt: string; playerName: string; market: string; sport: string; threshold: number;
   direction: string; lineType: string; lineScore: number; result: string; actual: number | null; eventStartTime?: string };
@@ -231,6 +232,7 @@ export default function ResultsScreen() {
         </View>)}
       </View>}
       <Pressable accessibilityRole="button" onPress={() => router.push('/(tabs)/top-picks')}><Text style={styles.link}>Find today’s top picks</Text></Pressable>
+      <ReportNudge where="results" />
     </ScrollView>
   </SafeAreaView>;
 }
