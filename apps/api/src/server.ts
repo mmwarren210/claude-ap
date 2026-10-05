@@ -44,6 +44,8 @@ import type { ContextFeeds, GameLine, InjuryNote, MarketOdds } from './context/f
 import { gameLinesFor, injuryFor, marketsFor, normalizedName } from './context/match.js';
 import type { SharpPropsFeed } from './context/sharp-props.js';
 import { bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
+import { bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
+import type { BookPick, Sportsbook } from './book-picks.js';
 import { serveWebApp } from './web-app.js';
 
 /** How far ahead the public demo shows real lines. */
@@ -803,6 +805,29 @@ export function buildServer(options: ServerOptions = {}) {
     appScoreCache.set(app,{at:now.getTime(),key,scores});
     return scores;
   }
+  // Sportsbook picks: GKR's side on each DraftKings or Hard Rock prop at the book's number (no PASS lines), rebuilt at
+  // most every 2 minutes or when the board, its research or the book prices change.
+  const bookPickCache=new Map<Sportsbook,{at:number;key:readonly unknown[];picks:BookPick[];fetchedAt:string|null}>();
+  async function picksFor(book:Sportsbook){
+    const board=service.getBoard();
+    if(!options.appGkrScores||!options.sharpProps||!board)return null;
+    const {fetchedAt,prices}=await options.sharpProps.current();
+    const now=(options.clock??(()=>new Date()))(),key=[board,service.getEvidence(),prices];
+    const cached=bookPickCache.get(book);
+    if(cached&&now.getTime()-cached.at<2*60_000&&key.every((item,index)=>cached.key[index]===item))return cached;
+    const picks=bookPicks(book,prices,board.board.lines,new Map(board.analyses.map((item)=>[item.lineId,item])),
+      (items)=>service.scoreLines(items),now);
+    const entry={at:now.getTime(),key,picks,fetchedAt};
+    bookPickCache.set(book,entry);
+    return entry;
+  }
+  app.get('/v1/books/:book/picks',async(request,reply)=>{
+    const parsed=z.object({book:z.enum(sportsbooks)}).safeParse(request.params);
+    if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_BOOK'});
+    const result=await picksFor(parsed.data.book);
+    if(!result)return reply.code(503).send({code:'BOOK_PICKS_UNAVAILABLE'});
+    return {book:parsed.data.book,name:sportsbookNames[parsed.data.book],fetchedAt:result.fetchedAt,picks:result.picks};
+  });
   // Carry PrizePicks picks over to Underdog or Pick6: each pick's line on that app and how its number compares.
   app.post('/v1/apps/:app/port',async(request,reply)=>{
     const parsed=z.object({app:z.enum(otherApps as [OtherApp,...OtherApp[]])}).safeParse(request.params);
@@ -973,6 +998,12 @@ export function buildServer(options: ServerOptions = {}) {
       if (!authorized(request, options.adminToken)) return reply.code(401).send({ code: 'UNAUTHORIZED' });
     });
     admin.get('/status', async () => service.getStatus());
+    admin.get('/book-picks/:book', async (request, reply) => {
+      const parsed=z.object({book:z.enum(sportsbooks)}).safeParse(request.params);
+      if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_BOOK'});
+      const result=await picksFor(parsed.data.book);
+      return result?{fetchedAt:result.fetchedAt,picks:result.picks}:reply.code(503).send({code:'BOOK_PICKS_UNAVAILABLE'});
+    });
     admin.get('/grading', async () => ({ worker: options.autoGradingStatus?.() ?? null }));
     admin.get('/ai-picks', async (_request, reply) => options.aiPicks ? options.aiPicks.status()
       : reply.code(503).send({ code: 'AI_UNCONFIGURED' }));
