@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { analysisSchema, boardResponseSchema, DEFAULT_PAYOUTS, propLineSchema } from '@crowniq/contracts';
 import { crownOutcome, entryOutlook } from '../src/insights.js';
-import { aiPlay, lateNews, scoutVerdict } from '../src/scout.js';
+import { agreementText, aiPlay, lateNews, providerName, scoutEvidence, scoutVerdict, unbrand } from '../src/scout.js';
 import { bandOf, betaNote } from '../src/beta.js';
 import { buildSlip } from '../src/app-slip.js';
 import { buildBookSlip, buildMarketSlip, parlayAmerican } from '../src/slip-builders.js';
@@ -229,4 +229,17 @@ test('sportsbook and market slip builders: fair prices first, one per player or 
   const market=(id:string,game:string,edge:number)=>({id,game,startTime:'2030-01-01T20:00:00Z',edge,side:'x',price:0.4});
   assert.deepEqual(buildMarketSlip([market('1','g1',0.03),market('2','g1',0.05),market('3','g2',0.02)],3,now).map((pick)=>pick.id),
     ['2','3'],'one per game, biggest edge first');
+});
+
+test('the app never shows an AI product name: the two models are Scout A and Scout B', () => {
+  assert.deepEqual([providerName('chatgpt'), providerName('claude')], ['Scout A', 'Scout B']);
+  assert.equal(unbrand('ChatGPT and Claude agree; GPT-5.4 mini saw OpenAI’s note and Claude’s source.'),
+    'Scout and Scout agree; Scout saw Scout’s note and Scout’s source.');
+  assert.equal(unbrand('Boston is missing Charlie McAvoy.'), 'Boston is missing Charlie McAvoy.');
+  const read = { pick: 'MORE' as const, score: 60, agreement: 'BOTH' as const, researchedAt: '2030-01-01T00:00:00Z',
+    providers: [{ provider: 'chatgpt' as const, pick: 'MORE', confidence: 60, summary: '', lateNews: 'Claude found he is out.',
+      reasons: [{ text: 'ChatGPT read the depth chart', url: null, kind: 'role' as const }] }] };
+  assert.equal(agreementText(read), 'Both scouts agree');
+  assert.equal(lateNews(read), 'Scout found he is out.');
+  assert.deepEqual(scoutEvidence(read)[0].items[0], { text: 'Scout read the depth chart', url: null, by: 'Scout A' });
 });

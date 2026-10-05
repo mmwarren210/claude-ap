@@ -17,6 +17,8 @@
   as agrees/disagrees/no edge plus late news, never changing the GKR score (`CROWNIQ_SCOUT_SECOND_DAILY`, default 40).
   `/admin/ai-picks` tracks GKR's hit rate by verdict; blending Scout into GKR would need a new opt-in model version.
   Scout second opinions also cover the strongest DraftKings, Hard Rock, Kalshi and Polymarket tab picks (same caps).
+- **No AI product names on screen** (owner, 2026-10-05): the two research models show as **Scout A** and **Scout B**
+  (`providerName`), and `unbrand` replaces any product name inside their text. Their prompt says never to name one.
 - **Tennis and esports go through Scout** (owner, 2026-10-05: "use Scout, that's what it's for"): no new stat source.
   Scout reads those lines like any line GKR can't score, and grades them itself: with no box score, both models look up
   the final number with a source page and must agree (`settleResult`); otherwise it waits, and is void four days on.

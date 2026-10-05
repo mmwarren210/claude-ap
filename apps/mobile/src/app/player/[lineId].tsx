@@ -29,9 +29,9 @@ import type { LineStyle } from '../../theme';
 import { useBoard } from '../../use-board';
 import { useDraft } from '../../use-draft';
 import { usePlayerGames } from '../../use-player-games';
-import { agreementText, aiPlay, lateNews, providerName, SCOUT, scoutEvidence, scoutVerdict, useAiPicks, verdictText } from '../../use-ai-picks';
+import { agreementText, aiPlay, lateNews, providerName, SCOUT, scoutEvidence, scoutVerdict, unbrand, useAiPicks, verdictText } from '../../use-ai-picks';
 
-/** GKR couldn't score these (no model for the stat, or its data is missing); ChatGPT and Claude can research them. */
+/** GKR couldn't score these (no model for the stat, or its data is missing); Scout can research them. */
 const AI_ELIGIBLE = new Set(['MODEL_SUPPORT_INCOMPLETE', 'STALE_OR_MISSING_EVIDENCE', 'INSUFFICIENT_MODEL_COVERAGE',
   'MODEL_CALIBRATION_UNAPPROVED']);
 const askErrors: Readonly<Record<string, string>> = {
@@ -187,7 +187,7 @@ export default function PlayerResearch() {
     setAsking(true); setNotice('');
     const result = await ask(line.id);
     setAsking(false);
-    if (result.error) setNotice(askErrors[result.error] ?? 'ChatGPT and Claude couldn’t answer right now. Try again soon.');
+    if (result.error) setNotice(askErrors[result.error] ?? `${SCOUT} couldn’t answer right now. Try again soon.`);
   };
   const styleOf = lineStyleOf(line.lineType);
   const pickStyle = (style: LineStyle) => {
@@ -336,14 +336,14 @@ export default function PlayerResearch() {
         <Text style={styles.sectionTitle}>{gkrPass ? `${SCOUT} · ${ai.pick === 'PASS' ? 'PASS' : `${ai.pick} ${formatLine(line.threshold)}`}`
           + (ai.score !== null ? ` · ${ai.score}` : '') : `${SCOUT} second opinion · ${verdictText[scoutVerdict(ai, analysis?.direction)!]}`}</Text>
         <View style={styles.panel}>
-          <Text style={styles.factorDetail}>{agreementText(ai)}. {gkrPass ? `GKR can’t score this stat yet, so ${SCOUT} (ChatGPT ` +
-            `and Claude) researched it. This is ${SCOUT}’s score, not a GKR score.` : `${SCOUT} (ChatGPT and Claude) researched ` +
+          <Text style={styles.factorDetail}>{agreementText(ai)}. {gkrPass ? `GKR can’t score this stat yet, so ${SCOUT}` +
+            ` researched it. This is ${SCOUT}’s score, not a GKR score.` : `${SCOUT} researched ` +
             `this line on its own, without seeing GKR’s pick${ai.pick === 'PASS' ? '' : `, and picked ${ai.pick} at ${ai.score}`}. ` +
             'GKR’s score is unchanged.'}</Text>
           {!!lateNews(ai) && <Text style={styles.lateNews}>Late news: {lateNews(ai)}</Text>}
           {ai.providers.map((item) => <View key={item.provider} style={styles.aiProvider}>
             <Text style={styles.factorName}>{providerName(item.provider)} · {item.pick}{item.pick !== 'PASS' ? ` · ${item.confidence}` : ''}</Text>
-            {!!item.summary && <Text style={styles.factorLine}>{item.summary}</Text>}
+            {!!item.summary && <Text style={styles.factorLine}>{unbrand(item.summary)}</Text>}
           </View>)}
           {scoutEvidence(ai).map((group) => <View key={group.label} style={styles.aiProvider}>
             <Text style={styles.evidenceLabel}>{group.label}</Text>
@@ -354,7 +354,7 @@ export default function PlayerResearch() {
           </View>)}
         </View>
       </View>}
-      {canAsk && <GhostButton label={asking ? `${SCOUT} is researching…` : `Ask ${SCOUT} (ChatGPT + Claude)`} icon="binoculars"
+      {canAsk && <GhostButton label={asking ? `${SCOUT} is researching…` : `Ask ${SCOUT}`} icon="binoculars"
         onPress={() => void askAi()} disabled={asking} />}
       {betaRead && betaRead.change !== 'SAME' && <Notice title={betaRead.change === 'LATE_NEWS_PASS'
         ? `GKR Beta passes (GKR ${Math.round(betaRead.gkr.score)} ${betaRead.gkr.direction})`

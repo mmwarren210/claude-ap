@@ -1,7 +1,7 @@
-// Scout reads (ChatGPT + Claude): types and pure helpers, kept free of React so tests can load them.
+// Scout reads (two research models, shown as Scout A and Scout B; the app never names the AI products): types and pure helpers, kept free of React so tests can load them.
 
 /**
- * A Scout read (ChatGPT + Claude): a pick on a line GKR can't score (kind scout), or a second opinion on a GKR Top
+ * A Scout read (two research models): a pick on a line GKR can't score (kind scout), or a second opinion on a GKR Top
  * Pick (kind second). Its own score, never a GKR score.
  */
 export type AiRead = {
@@ -20,7 +20,7 @@ export const evidenceGroups: readonly { kind: EvidenceKind; label: string }[] = 
 export function scoutEvidence(read: AiRead): { label: string; items: { text: string; url: string | null; by: string }[] }[] {
   return evidenceGroups.map(({ kind, label }) => ({ label, items: read.providers.flatMap((provider) => provider.reasons
     .filter((reason) => (reason.kind ?? 'other') === kind)
-    .map((reason) => ({ text: reason.text, url: reason.url, by: providerName(provider.provider) }))) }))
+    .map((reason) => ({ text: unbrand(reason.text), url: reason.url, by: providerName(provider.provider) }))) }))
     .filter((group) => group.items.length);
 }
 /** A Scout pick (not a second opinion) that names a side, so the line is a play. */
@@ -34,11 +34,18 @@ export function scoutVerdict(read: AiRead | undefined, gkrDirection: string | un
 }
 export const verdictText: Readonly<Record<ScoutVerdict, string>> = { AGREES: 'Scout agrees', DISAGREES: 'Scout disagrees',
   NO_EDGE: 'Scout sees no edge' };
-/** The first late-news warning either model gave, or null. */
-export const lateNews = (read: AiRead | undefined) => read?.providers.find((item) => item.lateNews)?.lateNews ?? null;
-/** The name the app shows for the ChatGPT + Claude read, so it never reads as plain "AI". */
+/** The name the app shows for the research read, so it never reads as plain "AI" or names an AI product. */
 export const SCOUT = 'Scout';
-export const providerName = (provider: string) => provider === 'chatgpt' ? 'ChatGPT' : 'Claude';
-export const agreementText = (read: AiRead) => read.agreement === 'BOTH' ? 'ChatGPT and Claude agree'
+/** Each research model's name on screen (owner, 2026-10-05: never the AI products' names). */
+export const providerName = (provider: string) => provider === 'chatgpt' ? 'Scout A' : 'Scout B';
+/** A model's own words with any AI product's name replaced by Scout (older reads, or a model naming itself). */
+export const unbrand = (text: string) => text
+  .replace(/\b(chat\s?gpt|gpt[-\s]?[\d.]+(?:[-\s]?(?:mini|nano|pro|turbo))?|gpt|openai|claude|anthropic|opus|sonnet|haiku|gemini)\b(['’]s)?/gi, 'Scout$2');
+/** The first late-news warning either model gave, or null. */
+export const lateNews = (read: AiRead | undefined) => {
+  const news = read?.providers.find((item) => item.lateNews)?.lateNews;
+  return news ? unbrand(news) : null;
+};
+export const agreementText = (read: AiRead) => read.agreement === 'BOTH' ? 'Both scouts agree'
   : read.agreement === 'ONE' ? 'One scout picked a side, the other passed' : read.agreement === 'SPLIT'
-    ? 'ChatGPT and Claude disagree' : `${providerName(read.providers[0]?.provider ?? '')} only`;
+    ? 'The two scouts disagree' : `${providerName(read.providers[0]?.provider ?? '')} only`;

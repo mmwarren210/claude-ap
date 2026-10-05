@@ -70,7 +70,7 @@ test('ChatGPT and Claude run side by side; a finding both make is kept once and 
   const merged = mergeAgreedFindings([[base], [{ ...base, id: 'web-claude:b' },
     { ...base, id: 'web-claude:c', kind: 'web:weather' }]]);
   assert.equal(merged.length, 2);
-  assert.match(merged[0].finding, /ChatGPT and Claude both found this/);
+  assert.match(merged[0].finding, /Both scouts found this/);
   assert.equal(merged[1].finding, base.finding);
   assert.deepEqual([merged[0].quality, merged[0].confidence], ['LOW', 0.5], 'agreement never raises a score input');
 

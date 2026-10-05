@@ -199,7 +199,7 @@ export default function OwnerBoardScreen(){
         method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({acknowledgeResearchCost:true}),
       }));
-      setMessage(`Web research started · up to ${result.maxSearches.toLocaleString()} OpenAI searches. Findings are shown as context and never change scores.`);
+      setMessage(`Web research started · up to ${result.maxSearches.toLocaleString()} web searches. Findings are shown as context and never change scores.`);
     }catch(cause){
       const text=cause instanceof Error?cause.message:'Web research could not start.';
       setError(text==='WEB_RESEARCH_UNCONFIGURED'?'Web research is not configured on this server.':
@@ -298,7 +298,7 @@ export default function OwnerBoardScreen(){
       </Pressable>
       <Pressable accessibilityRole="button" disabled={busy||!diagnostics}
         onPress={()=>void runWebResearch()} style={[styles.secondary,(busy||!diagnostics)&&styles.disabled]}>
-        <Text style={styles.secondaryText}>Run web research (uses OpenAI searches)</Text>
+        <Text style={styles.secondaryText}>Run web research (uses paid web searches)</Text>
       </Pressable>
       {!!message&&<Text accessibilityRole="alert" style={styles.success}>{message}</Text>}
       {!!error&&error!=='BOARD_UNAVAILABLE'&&<Text accessibilityRole="alert" style={styles.error}>{error}</Text>}

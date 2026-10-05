@@ -490,5 +490,5 @@ export function mergeAgreedFindings(byProvider: readonly (readonly Evidence[])[]
     }
   });
   return [...groups.values()].map(({ item, providers }) => providers.size < 2 ? item
-    : evidenceSchema.parse({ ...item, finding: `${item.finding} (ChatGPT and Claude both found this.)` }));
+    : evidenceSchema.parse({ ...item, finding: `${item.finding} (Both scouts found this.)` }));
 }

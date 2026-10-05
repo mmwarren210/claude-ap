@@ -50,7 +50,7 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
   onPress }: { line: PropLine; analysis: Analysis | undefined; ai?: AiRead; booksPick?: BooksPick; betaLine?: string | null; more?: number; photoUrl: string | null | undefined;
   accent: string; window: Window; expired?: boolean; onPress: () => void }) {
   const gkrPass = !analysis || analysis.direction === 'PASS';
-  // Where GKR can't score, the Scout read (ChatGPT + Claude) is the pick, labeled as such.
+  // Where GKR can't score, the Scout read is the pick, labeled as such.
   const aiPick = gkrPass && aiPlay(ai) ? ai! : null;
   // Next, where Scout hasn't read the line: the side DraftKings and Hard Rock back (labeled Books, never a GKR score).
   const booksSide = gkrPass && !aiPick && booksPick && (!ai || ai.kind === 'second') ? booksPick : null;
@@ -106,7 +106,7 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
       {aiPick && <ScoutVerdict read={ai} gkrDirection={undefined} />}
       {booksSide && <Text style={styles.aiNote}>GKR can’t score this stat yet. DraftKings and Hard Rock give {booksSide.side}{' '}
         {Math.round(booksSide.fair * 100)}% with their cut removed; this is the books’ number, not a GKR score.</Text>}
-      {aiPick && <Text style={styles.aiNote}>GKR can’t score this stat yet. {SCOUT} (ChatGPT and Claude) researched it;
+      {aiPick && <Text style={styles.aiNote}>GKR can’t score this stat yet. {SCOUT} researched it;
         this is {SCOUT}’s score, not a GKR score.</Text>}
       {more > 0 && <Text style={styles.more}>+{more} more {more === 1 ? 'play' : 'plays'} on {line.playerName.split(' ')[0]}’s page</Text>}
       {expired && <Text style={styles.expired}>Evidence expired, reanalysis needed</Text>}

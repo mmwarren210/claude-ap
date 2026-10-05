@@ -64,6 +64,6 @@ export function betaFor(analysis: Analysis, read: AiRead | null): BetaRead | nul
   const shift = read.pick === gkr.direction ? size : -size;
   const score = Math.max(0, Math.min(100, Math.round((gkr.score + shift) * 100) / 100));
   return { direction: gkr.direction, score, gkr, change: shift > 0 ? 'UP' : 'DOWN', shift, scouted: true, modelVersion,
-    why: shift > 0 ? `ChatGPT and Claude both back ${gkr.direction} (${read.score}) on matchup or role.`
-      : `ChatGPT and Claude both lean ${read.pick} (${read.score}) on matchup or role, against GKR’s ${gkr.direction}.` };
+    why: shift > 0 ? `Both scouts back ${gkr.direction} (${read.score}) on matchup or role.`
+      : `Both scouts lean ${read.pick} (${read.score}) on matchup or role, against GKR’s ${gkr.direction}.` };
 }
