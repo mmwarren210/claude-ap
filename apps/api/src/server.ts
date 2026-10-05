@@ -45,6 +45,8 @@ import { gameLinesFor, injuryFor, marketsFor, normalizedName } from './context/m
 import type { SharpPropsFeed } from './context/sharp-props.js';
 import { bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
 import { bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
+import { marketPicks } from './market-picks.js';
+import type { MarketPlatform } from './market-picks.js';
 import type { BookPick, Sportsbook } from './book-picks.js';
 import { serveWebApp } from './web-app.js';
 
@@ -827,6 +829,18 @@ export function buildServer(options: ServerOptions = {}) {
     const result=await picksFor(parsed.data.book);
     if(!result)return reply.code(503).send({code:'BOOK_PICKS_UNAVAILABLE'});
     return {book:parsed.data.book,name:sportsbookNames[parsed.data.book],fetchedAt:result.fetchedAt,picks:result.picks};
+  });
+  // Prediction-market picks: Kalshi or Polymarket game markets priced below Pinnacle's no-vig chance. Display only.
+  async function marketPicksFor(platform:MarketPlatform){
+    if(!options.contextFeeds)return null;
+    const [markets,games]=await Promise.all([options.contextFeeds.items<MarketOdds>(platform),options.contextFeeds.items<GameLine>('pinnacle')]);
+    return {fetchedAt:markets.fetchedAt,pinnacleAt:games.fetchedAt,picks:marketPicks(platform,markets.items,games.items,now())};
+  }
+  app.get('/v1/markets/:platform/picks',async(request,reply)=>{
+    const parsed=z.object({platform:z.enum(['kalshi','polymarket'])}).safeParse(request.params);
+    if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_PLATFORM'});
+    const result=await marketPicksFor(parsed.data.platform);
+    return result?{platform:parsed.data.platform,...result}:reply.code(503).send({code:'MARKET_PICKS_UNAVAILABLE'});
   });
   // Carry PrizePicks picks over to Underdog or Pick6: each pick's line on that app and how its number compares.
   app.post('/v1/apps/:app/port',async(request,reply)=>{
