@@ -20,7 +20,7 @@ import { ScoreRing } from './ui/ScoreRing';
 
 type Side = 'MORE' | 'LESS';
 /** One DraftKings or Hard Rock pick, as /v1/books/:book/picks serves it: GKR's side at the book's number. */
-export type BookPick = { id: string; league: string; playerName: string; team: string | null; opponent: string | null;
+export type BookPick = { id: string; league: string; eventName?: string; playerName: string; team: string | null; opponent: string | null;
   eventStartTime: string; market: string; line: number; side: Side; by?: 'GKR' | 'HISTORY' | 'VALUE'; score?: number;
   note?: string | null; gkr: { score: number } | null; american: number | null;
   impliedChance: number | null; pricey: boolean; fairChance: number | null;

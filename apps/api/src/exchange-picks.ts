@@ -167,7 +167,8 @@ export function exchangePropPicks(offers: readonly OverOnlyPrice[], prices: read
     const fair = fromBooks ?? fromHistory;
     if (fair === null) continue;
     const edge = round(fair - cost);
-    if (edge < (fromBooks !== null ? BOOK_EDGE : HISTORY_EDGE)) continue;
+    // A prop edge above the ceiling is almost always a mismatch (another game or a stale price), so it's left out.
+    if (edge < (fromBooks !== null ? BOOK_EDGE : HISTORY_EDGE) || edge > (fromBooks !== null ? MAX_GAME_EDGE : 0.2)) continue;
     const side = `${offer.player} over ${offer.line} ${line.market.replace(/^(player|batter|pitcher)_/, '').replace(/_/g, ' ')}`;
     const pick: MarketPick = { id: line.id, platform: 'kalshi', league: line.league, game: line.eventName, startTime: line.eventStartTime,
       kind: 'PROP', side, question: side, home: offer.home ?? '', away: offer.away ?? '', team: 'home', handicap: null,

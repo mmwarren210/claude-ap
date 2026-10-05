@@ -41,11 +41,19 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
   NBA: basketball, WNBA: basketball,
   NHL: { player_shots_on_goal: 'shots_on_goal', player_points: 'points', player_saves: 'saves', player_assists: 'assists',
     player_goals: 'goals', player_blocked_shots: 'blocked_shots', player_power_play_points: 'power_play_points' },
-  TENNIS: { player_total_games: 'total_games', player_games_won: 'games_won', player_aces: 'aces',
+  // Hard Rock's "player total games" is the games that player wins (market "team_total", lines 7.5–13.5), the same stat as
+  // DraftKings' "games won"; DraftKings' own "player total games" (4.5, 7.5) is a set stat and is left out (bookMarket).
+  TENNIS: { player_total_games: 'games_won', player_games_won: 'games_won', player_aces: 'aces',
     player_double_faults: 'double_faults' },
   SOCCER: { player_shots: 'shots', player_shots_on_target: 'sot', player_assists: 'assists', player_goals: 'goals',
     player_fouls: 'fouls', player_saves: 'goalie_saves' },
 };
+
+/** A row's CrownIQ market key, with the few book-specific exceptions (see TENNIS above). */
+function bookMarket(sport: Sport, book: string, type: string): string | undefined {
+  if (sport === 'TENNIS' && type === 'player_total_games' && book !== 'hardrock') return undefined;
+  return marketKeys[sport]?.[type];
+}
 
 /** One book's de-vigged price for one player, stat and number. */
 export interface FairPrice {
@@ -67,7 +75,7 @@ export function fairPrices(rows: readonly unknown[]): FairPrice[] {
   const pairs = new Map<string, { over?: Row; under?: Row }>();
   for (const value of rows) {
     const row = value as Row;
-    const sport = leagueSports[String(row.league)], market = sport ? marketKeys[sport]?.[String(row.market_type)] : undefined;
+    const sport = leagueSports[String(row.league)], market = sport ? bookMarket(sport, String(row.sportsbook), String(row.market_type)) : undefined;
     if (!sport || !market || row.is_live === true || row.is_active === false || typeof row.line !== 'number' ||
       typeof row.player_name !== 'string' || (row.selection_type !== 'over' && row.selection_type !== 'under')) continue;
     const key = JSON.stringify([row.sportsbook, row.event_id, normalizedName(row.player_name), market, row.line]);
@@ -80,7 +88,7 @@ export function fairPrices(rows: readonly unknown[]): FairPrice[] {
     const pOver = Number(over?.odds_probability), pUnder = Number(under?.odds_probability);
     if (!over || !under || !(pOver > 0) || !(pUnder > 0) || pOver + pUnder < 0.95) continue;
     const sport = leagueSports[String(over.league)]!;
-    prices.push({ book: String(over.sportsbook), sport, player: String(over.player_name), market: marketKeys[sport]![String(over.market_type)]!,
+    prices.push({ book: String(over.sportsbook), sport, player: String(over.player_name), market: bookMarket(sport, String(over.sportsbook), String(over.market_type))!,
       line: over.line as number, fairOver: Math.round(pOver / (pOver + pUnder) * 10_000) / 10_000,
       overAmerican: typeof over.odds_american === 'number' ? over.odds_american : null,
       underAmerican: typeof under.odds_american === 'number' ? under.odds_american : null,
@@ -118,7 +126,7 @@ export function overOnlyPrices(rows: readonly unknown[]): OverOnlyPrice[] {
   const unders = new Set(rows.filter((value) => (value as Row).selection_type === 'under').map((value) => key(value as Row)));
   for (const value of rows) {
     const row = value as Row;
-    const sport = leagueSports[String(row.league)], market = sport ? marketKeys[sport]?.[String(row.market_type)] : undefined;
+    const sport = leagueSports[String(row.league)], market = sport ? bookMarket(sport, String(row.sportsbook), String(row.market_type)) : undefined;
     const price = Number(row.odds_probability);
     if (!sport || !market || unders.has(key(row)) || row.selection_type !== 'over' || row.is_live === true ||
       row.is_active === false || typeof row.line !== 'number' || typeof row.player_name !== 'string' || !(price > 0 && price < 1)) continue;

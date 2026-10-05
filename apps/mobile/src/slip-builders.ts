@@ -1,6 +1,7 @@
 // Slip builders for the sportsbook and prediction-market tabs. Pure, so tests can load them.
 
 export type BookSlipPick = { id: string; eventStartTime: string; playerName: string; market: string; line: number;
+  eventName?: string; league?: string;
   side: 'MORE' | 'LESS'; gkr: { score: number } | null; score?: number; american: number | null; pricey: boolean };
 export type MarketSlipPick = { id: string; game: string; startTime: string; edge: number; side: string; price: number };
 
@@ -16,11 +17,15 @@ export function buildBookSlip<T extends BookSlipPick>(picks: readonly T[], size:
     .sort((a, b) => Number(a.pricey) - Number(b.pricey) || Number(!!b.gkr) - Number(!!a.gkr) ||
       (b.gkr?.score ?? b.score ?? 0) - (a.gkr?.score ?? a.score ?? 0));
   const rotated = [...ordered.slice(offset), ...ordered.slice(0, offset)];
-  const chosen: T[] = [], players = new Set<string>();
+  // One per player, and per game at most two legs (one in tennis, where both players' legs are the same match): books
+  // often refuse or reprice legs from the same game.
+  const chosen: T[] = [], players = new Set<string>(), games = new Map<string, number>();
   for (const pick of rotated) {
     if (chosen.length >= size) break;
-    if (players.has(pick.playerName)) continue;
-    players.add(pick.playerName); chosen.push(pick);
+    const game = `${pick.eventName ?? pick.id}|${pick.eventStartTime.slice(0, 13)}`;
+    const perGame = /ATP|WTA|TENNIS/i.test(pick.league ?? '') ? 1 : 2;
+    if (players.has(pick.playerName) || (games.get(game) ?? 0) >= perGame) continue;
+    players.add(pick.playerName); games.set(game, (games.get(game) ?? 0) + 1); chosen.push(pick);
   }
   return chosen;
 }

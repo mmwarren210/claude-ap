@@ -30,6 +30,9 @@ export interface MarketPick {
   readonly volume24h: number | null; readonly url: string | null;
 }
 
+/** The biggest edge believed on a game market; anything above is treated as a mismatch or a stale price. */
+export const MAX_MARKET_EDGE = 0.12;
+
 /** Kalshi's trading fee per contract: 7% of price times (1 - price), rounded up to the cent. Polymarket: none. */
 export const platformFee = (platform: MarketPlatform, price: number) =>
   platform === 'kalshi' ? Math.ceil(0.07 * price * (1 - price) * 100 - 1e-9) / 100 : 0;
@@ -100,20 +103,24 @@ export function marketPicks(platform: MarketPlatform, markets: readonly MarketOd
         // Winner markets. Kalshi: "X vs Y — Dallas" with Yes/No; Polymarket: outcomes named by team, or "Will X win?".
         const subject = /— (.+)$/.exec(market.question)?.[1] ?? /^Will (.+?) win/.exec(market.question)?.[1] ?? null;
         if (subject) {
-          const team = names(subject, home) ? 'home' : names(subject, away) ? 'away' : null;
+          // A name that fits both teams ("New York" for the Islanders and the Rangers) can't be priced, so it's skipped.
+          const team = names(subject, home) && names(subject, away) ? null : names(subject, home) ? 'home' : names(subject, away) ? 'away' : null;
           const yes = market.outcomes.find((outcome) => outcome.name === 'Yes');
           if (team && yes) sides.push({ side: `${subject} to win`, team, price: yes.probability / 100, kind: 'WINNER', handicap: null });
         } else for (const outcome of market.outcomes) {
-          const team = names(outcome.name, home) ? 'home' : names(outcome.name, away) ? 'away' : null;
+          const team = names(outcome.name, home) && names(outcome.name, away) ? null
+            : names(outcome.name, home) ? 'home' : names(outcome.name, away) ? 'away' : null;
           if (team) sides.push({ side: `${outcome.name} to win`, team, price: outcome.probability / 100, kind: 'WINNER', handicap: null });
         }
       }
       for (const { side, team, price, kind, handicap } of sides) {
         const source = kind === 'SPREAD' ? spread! : moneyline!;
         const fair = team === 'home' ? source.homeFair! : source.awayFair!;
-        if (price <= 0.02 || price >= 0.98) continue;
+        // Long shots and near-locks are left out, and so is an edge too big to be real: a market that far from fair odds is
+        // almost always a different market matched by mistake (a series or futures price) or a stale one.
+        if (price < 0.15 || price > 0.85) continue;
         const cost = round(price + platformFee(platform, price)), edge = round(fair - cost);
-        if (edge < minEdge) continue;
+        if (edge < minEdge || edge > MAX_MARKET_EDGE) continue;
         picks.push({ id: `${platform}:${league}:${title}:${market.question}:${side}`, platform, league, game: title,
           startTime, kind, side, question: market.question, home, away, team, handicap, price: round(price), cost, fair: round(fair), edge,
           volume24h: market.volume24h, url: market.url });

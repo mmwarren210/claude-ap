@@ -100,3 +100,15 @@ test('+EV from nearby numbers: between two numbers a book prices, or a one-sided
   assert.equal(chanceAt([p(30.5, 0.5)], 24.5), null, 'too far away');
   assert.equal(chanceAt([p(20.5, 0.8), p(28.5, 0.2)], 24.5)?.how, undefined, 'numbers more than 3 apart are not bridged');
 });
+
+test('tennis: Hard Rock’s player total games is that player’s games won; DraftKings’ set-level total games is left out', async () => {
+  const { fairPrices } = await import('../src/context/sharp-props.js');
+  const row = (sportsbook: string, market_type: string, selection_type: string, line: number, p: number) => ({ sportsbook, league: 'atp',
+    market_type, selection_type, line, odds_probability: p, odds_american: -110, player_name: 'A Player', event_id: 'e',
+    event_start_time: '2030-10-05T20:00Z', is_live: false, is_active: true });
+  const prices = fairPrices([row('hardrock', 'player_total_games', 'over', 11.5, 0.5), row('hardrock', 'player_total_games', 'under', 11.5, 0.5),
+    row('draftkings', 'player_total_games', 'over', 7.5, 0.5), row('draftkings', 'player_total_games', 'under', 7.5, 0.5),
+    row('draftkings', 'player_games_won', 'over', 11.5, 0.5), row('draftkings', 'player_games_won', 'under', 11.5, 0.5)]);
+  assert.deepEqual(prices.map((price) => `${price.book}:${price.market}:${price.line}`).sort(),
+    ['draftkings:games_won:11.5', 'hardrock:games_won:11.5']);
+});

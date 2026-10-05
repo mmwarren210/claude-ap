@@ -34,3 +34,17 @@ test('market picks: winner and spread sides cheaper than Pinnacle, after fees; n
   assert.deepEqual(marketPicks('polymarket', [market('polymarket', 'Chiefs vs. Raiders', [['Chiefs', 67], ['Raiders', 33]])],
     games, new Date('2030-10-04T21:00:00Z')), [], 'started games drop');
 });
+
+test('market picks: a name that fits both teams, a long shot, or an edge too big to be real is left out', async () => {
+  const { marketPicks } = await import('../src/market-picks.js');
+  const start = '2030-10-05T23:00:00Z', now = new Date('2030-10-05T12:00:00Z');
+  const games = [{ league: 'NHL', home: 'New York Rangers', away: 'New York Islanders', startTime: start, market: 'moneyline' as const,
+    line: null, homePrice: null, awayPrice: null, homeFair: 0.55, awayFair: 0.45, sourceUrl: null },
+  { league: 'MLB', home: 'San Diego Padres', away: 'Milwaukee Brewers', startTime: start, market: 'moneyline' as const,
+    line: null, homePrice: null, awayPrice: null, homeFair: 0.58, awayFair: 0.42, sourceUrl: null }];
+  const market = (eventTitle: string, question: string, yes: number) => ({ platform: 'kalshi' as const, eventTitle, question,
+    outcomes: [{ name: 'Yes', probability: yes }, { name: 'No', probability: 100 - yes }], closeTime: start, volume24h: null, url: null });
+  const picks = marketPicks('kalshi', [market('New York Islanders vs New York Rangers', 'Islanders vs Rangers — New York', 40),
+    market('Brewers vs Padres', 'Brewers vs Padres — San Diego', 12)], games as never, now);
+  assert.deepEqual(picks, [], '"New York" fits both teams; the Padres at 12¢ against a 58% fair chance is a mismatch');
+});
