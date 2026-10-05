@@ -28,7 +28,8 @@ test('book picks: GKR side at the book number, no PASS, one per player and stat,
   const [pick] = picks;
   assert.deepEqual([pick!.line, pick!.side, pick!.gkr.score, pick!.american, pick!.fairChance], [235.5, 'MORE', 88, -125, 0.55]);
   assert.deepEqual(pick!.otherBook, { book: 'hardrock', american: -120 });
-  assert.deepEqual(pick!.prizePicks, { line: 240.5, gkr: { direction: 'MORE', score: 85 } });
+  assert.deepEqual(pick!.prizePicks, { line: 240.5, lineType: 'REGULAR', sides: ['MORE', 'LESS'],
+    gkr: { direction: 'MORE', score: 85, reasonCode: null } });
   assert.equal(impliedChance(-125), 0.5556);
   assert.equal(impliedChance(150), 0.4);
   assert.equal(bookPicks('draftkings', prices, board, new Map(), score, new Date('2030-09-26T00:00:00Z')).length, 0, 'started games drop');

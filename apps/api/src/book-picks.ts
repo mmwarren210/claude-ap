@@ -22,7 +22,8 @@ export interface BookPick {
   /** The other book's price on the same side and number, for line shopping. */
   readonly otherBook: { readonly book: Sportsbook; readonly american: number | null } | null;
   /** The PrizePicks line for the same player and stat, for comparison. */
-  readonly prizePicks: { readonly line: number; readonly gkr: { readonly direction: string; readonly score: number | null } | null } | null;
+  readonly prizePicks: { readonly line: number; readonly lineType: string; readonly sides: readonly PlayableDirection[];
+    readonly gkr: { readonly direction: string; readonly score: number | null; readonly reasonCode: string | null } | null } | null;
 }
 
 export const impliedChance = (american: number | null) => american === null ? null
@@ -83,7 +84,9 @@ export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardL
       gkr: { score: analysis.score, modelVersion: analysis.modelVersion }, american, impliedChance: impliedChance(american),
       fairChance: Math.round((side === 'MORE' ? price.fairOver : 1 - price.fairOver) * 10_000) / 10_000,
       otherBook: other ? { book: other.book as Sportsbook, american: side === 'MORE' ? other.overAmerican : other.underAmerican } : null,
-      prizePicks: { line: research.threshold, gkr: reference ? { direction: reference.direction, score: reference.score } : null } };
+      // PrizePicks' own line can PASS for a reason the book's line doesn't have: a Goblin or Demon offers only More.
+      prizePicks: { line: research.threshold, lineType: research.lineType, sides: [...research.availableDirections],
+        gkr: reference ? { direction: reference.direction, score: reference.score, reasonCode: reference.reasonCode ?? null } : null } };
     const key = `${research.eventId}|${research.playerId}|${price.market}`, current = best.get(key);
     if (!current || pick.gkr.score > current.gkr.score) best.set(key, pick);
   });
