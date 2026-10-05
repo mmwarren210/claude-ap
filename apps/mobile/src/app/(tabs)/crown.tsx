@@ -30,6 +30,7 @@ import { ReportNudge } from '../../components/ReportNudge';
 import { AppCrown } from '../../components/AppCrown';
 import { BookCrown, MarketCrown } from '../../components/ProviderCrowns';
 import { crownOpening, openCrownOn } from '../../crown-legs';
+import { inSports, SportPicker } from '../../components/ui/SportPicker';
 import type { CrownProvider } from '../../crown-legs';
 
 const crownProviders: readonly { value: CrownProvider | 'prizepicks'; label: string }[] = [
@@ -111,6 +112,7 @@ export default function CrownScreen() {
   useFocusEffect(useCallback(() => { setProvider(crownOpening()); }, []));
   const playApp: PickApp = provider === 'underdog' || provider === 'pick6' ? provider : 'prizepicks';
   const [lineKind, setLineKind] = useState<'ANY' | 'REGULAR' | 'GOBLIN' | 'DEMON'>('ANY');
+  const [sports, setSports] = useState<string[]>([]);
   const tips = useTipFlow(setMessage);
   const [keptLeg, setKeptLeg] = useState<string | null>(null);
   const analyses = useMemo(() => new Map(board?.analyses.map((item) => [item.lineId, item])), [board]);
@@ -148,7 +150,7 @@ export default function CrownScreen() {
 
   const generate = () => {
     // The line type chosen above: standard lines, Goblins or Demons only (or any).
-    const pool = lineKind === 'ANY' ? candidates : candidates.filter(({ line }) => line.lineType === lineKind);
+    const pool = candidates.filter(({ line }) => (lineKind === 'ANY' || line.lineType === lineKind) && inSports(sports, line.league));
     const next = autoCrown(pool, size, crownMinimumLineScore[size], built ? offset + 1 : 0, nowMs);
     setOffset(built ? offset + 1 : 0); setBuilt(true); setName(null); replace(next);
     setMessage(next.length < size ? `Only ${next.length} picks meet the ${crownMinimumLineScore[size]} minimum for a ` +
@@ -203,6 +205,8 @@ export default function CrownScreen() {
       <AppHeader subtitle="Your Crown" />
       {appPicker}
       <Segmented label="Crown size" options={sizesFor(6)} value={size} onChange={setSize} />
+      <SportPicker options={[...new Set(candidates.map(({ line }) => line.league))].sort()} selected={sports}
+        onChange={(next) => { setSports(next); setBuilt(false); setOffset(0); }} />
       <Segmented label="Line type" value={lineKind} onChange={(value) => { setLineKind(value); setBuilt(false); setOffset(0); }}
         options={[{ value: 'ANY' as const, label: 'Any' }, { value: 'REGULAR' as const, label: 'Standard' },
           { value: 'GOBLIN' as const, label: 'Goblin' }, { value: 'DEMON' as const, label: 'Demon' }]} />

@@ -162,7 +162,7 @@ test('Crown units use the app payouts: Flex where offered, Power otherwise',()=>
   const grades=['WIN','WIN','WIN','WIN','LOSS'];
   assert.deepEqual(crownOutcome(grades),{status:'SPLIT',units:1,multiplier:2});
   assert.deepEqual(crownOutcome(grades,DEFAULT_PAYOUTS.pick6),{status:'MISSED',units:-1,multiplier:0});
-  assert.deepEqual(crownOutcome(['WIN','WIN'],DEFAULT_PAYOUTS.underdog),{status:'CASHED',units:2,multiplier:3});
+  assert.deepEqual(crownOutcome(['WIN','WIN'],DEFAULT_PAYOUTS.underdog),{status:'CASHED',units:2.5,multiplier:3.5},'Underdog 2-pick Standard pays 3.5x');
   // A push drops out: 3 legs with a push grade as a 2-pick entry.
   assert.equal(crownOutcome(['WIN','WIN','PUSH']).multiplier,3);
   assert.deepEqual(entryOutlook(DEFAULT_PAYOUTS.pick6,6,'POWER'),{fullHit:40,breakEven:0.5407});

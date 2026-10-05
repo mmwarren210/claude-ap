@@ -13,6 +13,7 @@ import { PrimaryButton, Segmented } from './ui/Controls';
 import { GlowCard } from './ui/GlowCard';
 import { Icon } from './ui/Icon';
 import { SizeStepper } from './ui/SizeStepper';
+import { inSports, SportPicker } from './ui/SportPicker';
 import { formatLine, marketLabel } from '../insights';
 
 // Crown generators for the sportsbooks (DraftKings, Hard Rock) and prediction markets (Kalshi, Polymarket), beside the
@@ -44,7 +45,9 @@ export function BookCrown({ book }: { book: Sportsbook }) {
   const [stored, setStored] = useCrownLegs<BookPick>(book);
   const max = book === 'draftkings' ? 8 : 20;
   const [size, setSize] = useState(3), [kind, setKind] = useState<BookKind>('ANY'), [built, setBuilt] = useState(0);
-  const pool = useMemo(() => picks.filter((pick) => kind === 'ANY' || (kind === 'FAIR' ? !pick.pricey : (pick.by ?? 'GKR') === kind)), [picks, kind]);
+  const [sports, setSports] = useState<string[]>([]);
+  const pool = useMemo(() => picks.filter((pick) => inSports(sports, pick.league) &&
+    (kind === 'ANY' || (kind === 'FAIR' ? !pick.pricey : (pick.by ?? 'GKR') === kind))), [picks, kind, sports]);
   const first = useMemo(() => buildBookSlip(pool, size, nowMs, 0), [pool, size, nowMs]);
   const legs = stored.length ? stored : first;
   const parlay = parlayAmerican(legs);
@@ -52,6 +55,8 @@ export function BookCrown({ book }: { book: Sportsbook }) {
   const name = sourceNames[book];
   return <View style={styles.wrap}>
     <SizeStepper value={size} onChange={(value) => { setSize(value); setStored([]); setBuilt(0); }} max={max} />
+    <SportPicker options={[...new Set(picks.map((pick) => pick.league))].sort()} selected={sports}
+      onChange={(next) => { setSports(next); setStored([]); setBuilt(0); }} />
     <Segmented label="Pick type" value={kind} onChange={(value) => { setKind(value); setStored([]); setBuilt(0); }} options={bookKinds} />
     <Summary title={`${name} Crown`} lines={`${legs.length} ${legs.length === 1 ? 'pick' : 'picks'} · ${stored.length && !built ? 'Hand-picked'
       : 'Auto-built'} from ${pool.length} backed ${name} props`} stats={[
@@ -78,16 +83,20 @@ export function MarketCrown({ platform }: { platform: MarketPlatform }) {
   const { nowMs } = useBoard();
   const [stored, setStored] = useCrownLegs<MarketPick>(platform);
   const [size, setSize] = useState(3), [kind, setKind] = useState<MarketKind>('ANY'), [built, setBuilt] = useState(0);
+  const [sports, setSports] = useState<string[]>([]);
   const kinds = [{ value: 'ANY' as const, label: 'Any' }, { value: 'WINNER' as const, label: 'Winners' },
     { value: 'SPREAD' as const, label: 'Spreads' }, { value: 'TOTAL' as const, label: 'Totals' },
     ...(platform === 'kalshi' ? [{ value: 'PROP' as const, label: 'Props' }] : [])];
-  const pool = useMemo(() => picks.filter((pick) => kind === 'ANY' || pick.kind === kind), [picks, kind]);
+  const pool = useMemo(() => picks.filter((pick) => inSports(sports, pick.league) && (kind === 'ANY' || pick.kind === kind)),
+    [picks, kind, sports]);
   const first = useMemo(() => buildMarketSlip(pool, size, nowMs), [pool, size, nowMs]);
   const legs = stored.length ? stored : first;
   const cost = legs.reduce((sum, pick) => sum + pick.cost, 0), fair = legs.reduce((sum, pick) => sum + pick.fair, 0);
   const name = sourceNames[platform];
   return <View style={styles.wrap}>
     <SizeStepper value={size} onChange={(value) => { setSize(value); setStored([]); setBuilt(0); }} max={20} />
+    <SportPicker options={[...new Set(picks.map((pick) => pick.league))].sort()} selected={sports}
+      onChange={(next) => { setSports(next); setStored([]); setBuilt(0); }} />
     <Segmented label="Market type" value={kind} onChange={(value) => { setKind(value); setStored([]); setBuilt(0); }} options={kinds} />
     <Summary title={`${name} Crown`} lines={`${legs.length} ${legs.length === 1 ? 'contract' : 'contracts'} · ${stored.length && !built
       ? 'Hand-picked' : 'Auto-built'} from ${pool.length} priced below fair`} stats={[

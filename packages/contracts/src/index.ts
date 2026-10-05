@@ -333,16 +333,21 @@ export type Payouts = Readonly<Record<PickApp, AppPayouts>>;
 
 /**
  * Standard-line payouts each app has published (estimates: the apps change them, pay less on some lines and run
- * promos). The server can replace them with CROWNIQ_PAYOUTS without a release. Pick6 has no Flex play.
+ * promos). The server can replace them with CROWNIQ_PAYOUTS without a release. Pick6 has no Flex play, and publishes no fixed
+ * chart: it shows a Base Payout at entry and pays extra by contest standings, so its numbers here are estimates.
  */
 export const DEFAULT_PAYOUTS: Payouts = {
+  // PrizePicks' published chart (checked 2026-10-05): Power 3/6/10/20/37.5x; Flex now starts at 2 picks.
   prizepicks: {
-    POWER: { 2: { 2: 3 }, 3: { 3: 5 }, 4: { 4: 10 }, 5: { 5: 20 }, 6: { 6: 37.5 } },
-    FLEX: { 3: { 3: 3, 2: 1 }, 4: { 4: 6, 3: 1.5 }, 5: { 5: 10, 4: 2, 3: 0.4 }, 6: { 6: 25, 5: 2, 4: 0.4 } },
-  },
-  underdog: {
     POWER: { 2: { 2: 3 }, 3: { 3: 6 }, 4: { 4: 10 }, 5: { 5: 20 }, 6: { 6: 37.5 } },
-    FLEX: { 3: { 3: 3, 2: 1 }, 4: { 4: 6, 3: 1.5 }, 5: { 5: 10, 4: 2.5 }, 6: { 6: 25, 5: 2.6, 4: 0.25 } },
+    FLEX: { 2: { 2: 2, 1: 0.5 }, 3: { 3: 3, 2: 1 }, 4: { 4: 6, 3: 1.5 }, 5: { 5: 10, 4: 2, 3: 0.4 }, 6: { 6: 25, 5: 2, 4: 0.4 } },
+  },
+  // Underdog's published base multipliers (checked 2026-10-05), before each pick's own multiplier: Standard 2–8 picks,
+  // Flex 3–8 picks (6+ picks are double-flexed).
+  underdog: {
+    POWER: { 2: { 2: 3.5 }, 3: { 3: 6.5 }, 4: { 4: 12 }, 5: { 5: 20 }, 6: { 6: 35 }, 7: { 7: 65 }, 8: { 8: 120 } },
+    FLEX: { 3: { 3: 3.25, 2: 1.09 }, 4: { 4: 6, 3: 1.4 }, 5: { 5: 10, 4: 2.5 }, 6: { 6: 25, 5: 2.6, 4: 0.25 },
+      7: { 7: 40, 6: 2.75, 5: 0.5 }, 8: { 8: 80, 7: 3, 6: 1 } },
   },
   pick6: {
     POWER: { 2: { 2: 3 }, 3: { 3: 5 }, 4: { 4: 10 }, 5: { 5: 20 }, 6: { 6: 40 } },

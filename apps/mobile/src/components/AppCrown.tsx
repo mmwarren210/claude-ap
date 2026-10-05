@@ -14,6 +14,7 @@ import { usePayouts } from '../use-payouts';
 import { alpha } from './ui/color';
 import { GhostButton, PrimaryButton, Segmented } from './ui/Controls';
 import { useCrownLegs } from '../crown-legs';
+import { inSports, SportPicker } from './ui/SportPicker';
 import { GlowCard } from './ui/GlowCard';
 import { Icon } from './ui/Icon';
 import { PlayerAvatar } from './ui/PlayerAvatar';
@@ -60,6 +61,7 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
   // Picks added on the board, or the last generated Crown (shared with the board); until then, one built from the lines.
   const [stored, setStored] = useCrownLegs<Leg>(app);
   const [kind, setKind] = useState<'ANY' | 'STANDARD' | 'BOOSTED' | 'GKR'>('ANY');
+  const [sports, setSports] = useState<string[]>([]);
   const [built, setBuilt] = useState(0);
   const [name, setName] = useState<string | null>(null), [editing, setEditing] = useState(false);
   const [message, setMessage] = useState('');
@@ -75,11 +77,11 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
   // The line type to build from: any backed line, standard payouts only, boosted picks only, or GKR's picks only.
   const pickOf = useCallback((line: AppLine) => {
     const back = backing(line);
-    if (!back) return null;
+    if (!back || !inSports(sports, line.league)) return null;
     const multiplier = line.multipliers?.[back.side] ?? 1;
     if (kind === 'STANDARD' && multiplier !== 1 || kind === 'BOOSTED' && multiplier <= 1.01 || kind === 'GKR' && back.by !== 'GKR') return null;
     return back;
-  }, [kind]);
+  }, [kind, sports]);
   const first = useMemo(() => buildSlip(lines ?? [], size, nowMs, 0, pickOf), [lines, size, nowMs, pickOf]);
   const legs: readonly Leg[] = stored.length ? stored : first;
   const backedCount = (lines ?? []).filter((line) => backing(line) && Date.parse(line.eventStartTime) > nowMs).length;
@@ -118,6 +120,8 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
     .catch(() => undefined);
 
   return <View style={styles.wrap}>
+    <SportPicker options={[...new Set((lines ?? []).map((line) => line.league))].sort()} selected={sports}
+      onChange={(next) => { setSports(next); setStored([]); setBuilt(0); }} />
     <Segmented label="Line type" value={kind} onChange={(value) => { setKind(value); setStored([]); setBuilt(0); }}
       options={[{ value: 'ANY' as const, label: 'Any' }, { value: 'STANDARD' as const, label: 'Standard' },
         { value: 'BOOSTED' as const, label: 'Boosted' }, { value: 'GKR' as const, label: 'GKR only' }]} />

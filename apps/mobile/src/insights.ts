@@ -100,7 +100,9 @@ export function crownOutcome(grades: readonly LegGrade[], payouts: AppPayouts = 
   // Pushes and voids drop out of the entry, as the apps reduce the pick count.
   const live = grades.filter((grade) => grade === 'WIN' || grade === 'LOSS');
   const wins = live.filter((grade) => grade === 'WIN').length;
-  const multiplier = entryTable(payouts, live.length)?.table[wins] ?? 0;
+  // Flex where the app offers it, except 2 picks: those are graded as Power (PrizePicks' 2-pick Flex is new; 2-pick
+  // entries have always been graded as Power here).
+  const multiplier = entryTable(payouts, live.length, live.length === 2 ? 'POWER' : 'FLEX')?.table[wins] ?? 0;
   const status: CrownStatus = live.length > 0 && wins === live.length ? 'CASHED' : multiplier > 0 ? 'SPLIT' : 'MISSED';
   return { status, units: Math.round((multiplier - 1) * 100) / 100, multiplier };
 }
