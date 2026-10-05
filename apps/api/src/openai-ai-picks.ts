@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { parsePick, pickInstructions, pickRequest, pickSchema } from './ai-picks.js';
-import type { PickQuestion, PickResearcher, ProviderRead } from './ai-picks.js';
+import { parsePick, parseResult, pickInstructions, pickRequest, pickSchema, resultInstructions, resultSchema } from './ai-picks.js';
+import type { PickQuestion, PickResearcher, ProviderRead, ResultAnswer, ResultQuestion } from './ai-picks.js';
 
 /** The pages a Responses API answer's web searches consulted. */
 function searchedUrls(body: unknown): Set<string> {
@@ -41,10 +41,22 @@ export class OpenAiPickResearcher implements PickResearcher {
   }
 
   async read(question: PickQuestion, signal?: AbortSignal): Promise<ProviderRead> {
+    const { json, urls } = await this.call(pickInstructions, 'crowniq_pick', pickSchema, pickRequest(question, this.clock()), signal);
+    return parsePick(this.provider, json, question, urls);
+  }
+
+  async result(question: ResultQuestion, signal?: AbortSignal): Promise<ResultAnswer> {
+    const { json, urls } = await this.call(resultInstructions, 'crowniq_result', resultSchema,
+      JSON.stringify({ now: this.clock().toISOString(), ...question }), signal);
+    return parseResult(this.provider, json, urls);
+  }
+
+  /** One Responses API call with web search and a strict JSON answer; returns the answer and the pages consulted. */
+  private async call(instructions: string, name: string, schema: object, content: string, signal?: AbortSignal) {
     const body = JSON.stringify({ model: this.model, store: false, max_output_tokens: 1500, max_tool_calls: 3,
       tools: [{ type: 'web_search' }], include: ['web_search_call.action.sources'],
-      text: { format: { type: 'json_schema', name: 'crowniq_pick', strict: true, schema: pickSchema } },
-      input: [{ role: 'developer', content: pickInstructions }, { role: 'user', content: pickRequest(question, this.clock()) }] });
+      text: { format: { type: 'json_schema', name, strict: true, schema } },
+      input: [{ role: 'developer', content: instructions }, { role: 'user', content }] });
     for (let attempt = 0; attempt < 3; attempt++) {
       const timeout = AbortSignal.timeout(60_000);
       const response = await this.fetchFn('https://api.openai.com/v1/responses', { method: 'POST', body,
@@ -53,7 +65,7 @@ export class OpenAiPickResearcher implements PickResearcher {
       if (response.ok) {
         const result = await response.json() as unknown, text = outputText(result);
         if (!text) throw new Error('AI_PICK_EMPTY');
-        return parsePick(this.provider, JSON.parse(text), question, searchedUrls(result));
+        return { json: JSON.parse(text) as unknown, urls: searchedUrls(result) };
       }
       // OpenAI's error code says why (a rate limit retries; insufficient_quota means the account is out of credit).
       const code = await response.json().then((value: { error?: { code?: unknown } }) =>

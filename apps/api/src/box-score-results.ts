@@ -131,6 +131,10 @@ function sameTeam(a: string | null | undefined, names: readonly string[]) {
       nickname(a).length >= 3);
   });
 }
+/** Two players can share a name (two Max Muncys): more than one match keeps only those on the line's team. */
+export function sharedName<T>(matches: readonly T[], team: string | null | undefined, teamsOf: (item: T) => readonly string[]): T[] {
+  return matches.length > 1 && team ? matches.filter((item) => sameTeam(team, teamsOf(item))) : [...matches];
+}
 const lineTeams = (line: PropLine) => [...new Set([line.homeTeam, line.awayTeam, line.team, line.opponent]
   .filter((value): value is string => !!value))];
 
@@ -233,7 +237,7 @@ export function mlbRows(boxscore: unknown): Row[] {
 function factFor(target: GradeTarget, rows: readonly Row[], read: Read, source: { name: string; url: string },
   now: Date): ResultFact | null {
   const line = target.lineSnapshot, wanted = normalizedPlayer(line.playerName);
-  const matches = rows.filter((row) => normalizedPlayer(row.name) === wanted);
+  const matches = sharedName(rows.filter((row) => normalizedPlayer(row.name) === wanted), line.team, (row) => [row.team]);
   if (matches.length !== 1) return null;
   const row = matches[0];
   const base = { eventId: line.eventId, playerId: line.playerId, market: line.market, sourceName: source.name,

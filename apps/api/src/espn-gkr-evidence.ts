@@ -3,7 +3,7 @@ import type { HistoryArchive } from './history-archive.js';
 import type { Evidence, PropLine } from '@crowniq/contracts';
 import { evidenceSchema } from '@crowniq/contracts';
 import type { ResearchAdapter, ResearchHealth, ResearchTarget } from '@crowniq/engine';
-import { matchGame, normalizedPlayer } from './box-score-results.js';
+import { matchGame, normalizedPlayer, sharedName } from './box-score-results.js';
 import type { Game } from './box-score-results.js';
 import { historyEvidence } from './stat-api-gkr-evidence.js';
 import type { HistorySpec } from './stat-api-gkr-evidence.js';
@@ -103,7 +103,7 @@ export function gameLogRows(log: unknown): Row[] {
   return [...rows.values()];
 }
 
-type Athlete = { id: string; name: string; available: boolean; starter: boolean | null };
+type Athlete = { id: string; name: string; team: readonly string[]; available: boolean; starter: boolean | null };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 24);
 
 export interface EspnGkrEvidenceOptions {
@@ -184,14 +184,14 @@ export class EspnGkrEvidence implements ResearchAdapter {
       }
     }
     const athletes: Athlete[] = [];
-    for (const teamId of game.teams) {
+    for (const [index, teamId] of game.teams.entries()) {
       const roster = obj(await this.json(`${SITE}/${rosterPath}/teams/${teamId}/roster`, 30 * 60_000, counters));
       // Hockey and soccer rosters are flat; football groups them ({items:[...]}).
       for (const entry of arr(roster?.athletes).flatMap((item) => Array.isArray(obj(item)?.items) ? arr(obj(item)!.items) : [item])) {
         const athlete = obj(entry), id = str(athlete?.id), name = str(athlete?.fullName) || str(athlete?.displayName);
         if (!id || !name) continue;
         const status = str(obj(athlete?.status)?.type).toLowerCase();
-        athletes.push({ id, name, available: (status === '' || status === 'active') && arr(athlete?.injuries).length === 0,
+        athletes.push({ id, name, team: game.sides[index] ?? [], available: (status === '' || status === 'active') && arr(athlete?.injuries).length === 0,
           starter: starters.size ? starters.get(id) ?? false : null });
       }
     }
@@ -229,7 +229,8 @@ export class EspnGkrEvidence implements ResearchAdapter {
       for (const playerTargets of byPlayer.values()) {
         if (players >= (this.options.maxPlayers ?? 400)) { skipped += playerTargets.length; continue; }
         const first = playerTargets[0], wanted = normalizedPlayer(first.playerName);
-        const matches = rosters.athletes.filter((athlete) => normalizedPlayer(athlete.name) === wanted);
+        const matches = sharedName(rosters.athletes.filter((athlete) => normalizedPlayer(athlete.name) === wanted), first.team,
+          (athlete) => athlete.team);
         if (matches.length !== 1) { noSources += playerTargets.length; continue; }
         players++;
         const athlete = matches[0];

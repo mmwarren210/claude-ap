@@ -124,3 +124,24 @@ test('a quarterback grades sacks taken; a defender grades sacks made', () => {
   assert.equal(read({ 'passing.passingAttempts': 30, 'passing.sacks': 3 }), 3);
   assert.equal(read({ 'defensive.sacks': 1.5 }), 1.5);
 });
+
+test('two players with the same name in one game: the one on the line team grades', async () => {
+  const athlete = (name: string, shots: string) => ({ athlete: { displayName: name }, stats: ['0', '0', '0', shots, '0'] });
+  const fetchFn: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.includes('/hockey/nhl/scoreboard')) return json(espnScoreboard('78', 'Chicago Blackhawks', 'Buffalo Sabres'));
+    if (url.includes('/hockey/nhl/summary?event=78')) return json({ boxscore: { players: ['Chicago Blackhawks', 'Buffalo Sabres']
+      .map((team, index) => ({ team: { displayName: team }, statistics: [{ name: 'forwards',
+        keys: ['plusMinus', 'goals', 'assists', 'shotsTotal', 'shotsMissed'], athletes: [athlete('Sam Twin', index ? '1' : '4')] }] })) } });
+    return new Response('missing', { status: 404 });
+  };
+  const nhl = { sport: 'NHL' as const, league: 'NHL', homeTeam: 'Sabres', awayTeam: 'Blackhawks', opponent: 'Sabres',
+    playerName: 'Sam Twin', market: 'shots_on_goal' };
+  const report = await new BoxScoreResults(fetchFn, () => now).results([
+    target({ ...nhl, id: 'a', playerId: 'hawk', team: 'Blackhawks' }),
+    target({ ...nhl, id: 'b', playerId: 'sabre', team: 'Buffalo Sabres', opponent: 'Blackhawks' }),
+    target({ ...nhl, id: 'c', playerId: 'unknown', team: null }),
+  ]);
+  assert.deepEqual(report.facts.map((fact) => [fact.playerId, fact.actual]), [['hawk', 4], ['sabre', 1]],
+    'with no team on the line, the shared name stays ungraded');
+});

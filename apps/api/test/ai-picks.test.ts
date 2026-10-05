@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { analysisSchema, boardResponseSchema } from '@crowniq/contracts';
 import { fixtureAnalysis, fixtureLine } from '../../../packages/engine/test/fixtures.js';
-import { aiEligible, AiPickService, combineReads, parsePick, realNews } from '../src/ai-picks.js';
-import type { PickQuestion, PickResearcher, ProviderRead } from '../src/ai-picks.js';
+import { aiEligible, AiPickService, combineReads, parsePick, parseResult, realNews, settleResult } from '../src/ai-picks.js';
+import type { PickQuestion, PickResearcher, ProviderRead, ResultAnswer } from '../src/ai-picks.js';
 import { ClaudePickResearcher } from '../src/claude-ai-picks.js';
 import { OpenAiPickResearcher } from '../src/openai-ai-picks.js';
 
@@ -160,4 +160,69 @@ test('late news that only says there is none is empty; real news stays', () => {
     'No last-24-hour injury or weather note surfaced.', 'Nothing new on his status.', '']) assert.equal(realNews(text), '', text);
   for (const text of ['Ruled out with a hamstring injury this morning.',
     'No injury news, but the posted lineup leaves Rojo out of the starting XI.']) assert.equal(realNews(text), text, text);
+});
+
+test('result answers fail closed: no searched page or no real number is NOT_FOUND; two models must match', () => {
+  const pages = new Set(['https://hltv.example/match/1']);
+  assert.deepEqual(parseResult('claude', { status: 'FINAL', actual: 31, source_url: 'https://hltv.example/match/1' }, pages),
+    { provider: 'claude', status: 'FINAL', actual: 31, url: 'https://hltv.example/match/1' });
+  assert.equal(parseResult('claude', { status: 'FINAL', actual: 31, source_url: 'https://made.up/page' }, pages).status, 'NOT_FOUND');
+  assert.equal(parseResult('claude', { status: 'FINAL', actual: -2, source_url: 'https://hltv.example/match/1' }, pages).status, 'NOT_FOUND');
+  const answer = (provider: ResultAnswer['provider'], status: ResultAnswer['status'], actual: number | null): ResultAnswer =>
+    ({ provider, status, actual, url: status === 'NOT_FOUND' ? null : `https://${provider}.example/r` });
+  assert.deepEqual(settleResult([answer('claude', 'FINAL', 31), answer('chatgpt', 'FINAL', 31)], 2)?.actual, 31);
+  assert.equal(settleResult([answer('claude', 'FINAL', 31), answer('chatgpt', 'FINAL', 29)], 2), null, 'numbers differ');
+  assert.equal(settleResult([answer('claude', 'FINAL', 31)], 2), null, 'one of two models answered');
+  assert.equal(settleResult([answer('claude', 'FINAL', 31)], 1)?.actual, 31, 'a single model stands alone');
+  assert.equal(settleResult([answer('claude', 'DNP', null), answer('chatgpt', 'DNP', null)], 2)?.status, 'DNP');
+  assert.equal(settleResult([answer('claude', 'NOT_FOUND', null), answer('chatgpt', 'NOT_FOUND', null)], 2), null);
+});
+
+test('Scout grades the esports and tennis reads no box score carries, within its daily cap; stale ones void', async () => {
+  const later = new Date('2030-09-25T12:00:00Z');
+  let clock = now;
+  const esports = (id: string, start: string) => fixtureLine({ id, playerId: id, playerName: `Player ${id}`, sport: 'CS2', league: 'CS2',
+    market: 'maps_1_2_kills', threshold: 30.5, eventStartTime: start, availableDirections: ['MORE', 'LESS'] });
+  const lines = [esports('a', '2030-09-24T14:00:00Z'), esports('b', '2030-09-24T15:00:00Z'), esports('c', '2030-09-24T16:00:00Z')];
+  const board = boardResponseSchema.parse({ board: { provider: 'prizepicks', fetchedAt: now.toISOString(), lines }, analyses: [],
+    rankedLineIds: [], builtAt: now.toISOString() });
+  const lookups: string[] = [];
+  const fake = (provider: ResultAnswer['provider'], kills: Record<string, number>): PickResearcher => ({ provider,
+    read: async () => read(provider, 'MORE', 64),
+    result: async (q) => { lookups.push(`${provider}:${q.player}:${q.stat}`);
+      const actual = kills[q.player];
+      return actual === undefined ? { provider, status: 'NOT_FOUND', actual: null, url: null }
+        : { provider, status: 'FINAL', actual, url: `https://${provider}.example/${q.player}` }; } });
+  const service = new AiPickService([fake('claude', { 'Player a': 34, 'Player b': 22 }), fake('chatgpt', { 'Player a': 34, 'Player b': 25 })],
+    null, { dailyAuto: 5, dailyPerUser: 1, dailyResults: 2 }, null, () => clock);
+  await service.runOnce(board, [], () => null);
+  clock = later;
+  assert.equal(await service.grade(), 1, 'a: both found 34; b: the numbers differ, so it waits');
+  assert.equal(lookups.length, 4, 'two lines looked up, within the daily cap of two');
+  assert.ok(lookups.every((item) => item.endsWith('maps 1 2 kills')));
+  const a = await service.readFor(lines[0]);
+  assert.deepEqual([a?.grade, a?.actual, a?.resultSources?.length], ['WIN', 34, 2]);
+  assert.equal((await service.status()).today.results, 2);
+  clock = new Date('2030-09-29T12:00:00Z');
+  assert.equal(await service.grade(), 2, 'four days on, b and c are void');
+  assert.equal((await service.readFor(lines[2]))?.grade, 'VOID');
+});
+
+test('both researchers look up a result through their strict formats, with the page they found', async () => {
+  const asked = { sport: 'CS2', league: 'CS2', event: 'NAVI vs FaZe', startTime: '2030-09-24T14:00:00Z', player: 's1mple',
+    team: 'NAVI', opponent: 'FaZe', stat: 'maps 1 2 kills' };
+  const client = { beta: { messages: { create: async (params: { tools: { name: string }[] }) => ({ stop_reason: 'tool_use', content: [
+    { type: 'web_search_tool_result', content: [{ type: 'web_search_result', url: 'https://hltv.example/m' }] },
+    { type: 'tool_use', name: params.tools[1].name, input: { status: 'FINAL', actual: 33, source_url: 'https://hltv.example/m' } }] }) } } };
+  assert.deepEqual(await new ClaudePickResearcher({ client: client as never, clock: () => now }).result(asked),
+    { provider: 'claude', status: 'FINAL', actual: 33, url: 'https://hltv.example/m' });
+  let name = '';
+  const fetchFn: typeof fetch = async (_input, init) => {
+    name = (JSON.parse(String(init?.body)) as { text: { format: { name: string } } }).text.format.name;
+    return new Response(JSON.stringify({ output: [{ type: 'web_search_call', action: { sources: [{ url: 'https://hltv.example/m' }] } },
+      { type: 'message', content: [{ type: 'output_text', text: JSON.stringify({ status: 'FINAL', actual: 33, source_url: 'https://hltv.example/m' }) }] }] }),
+    { status: 200 });
+  };
+  assert.equal((await new OpenAiPickResearcher('key', 'gpt-5.4-mini', fetchFn, () => now).result(asked)).actual, 33);
+  assert.equal(name, 'crowniq_result');
 });

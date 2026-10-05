@@ -47,3 +47,19 @@ test('NHL players get history evidence and roster availability; an injured playe
   assert.equal(adapter.getHealth().skipped, 1, 'hits are not in ESPN game logs');
   assert.ok(evidence.every((item) => item.sourceType === 'PUBLIC'));
 });
+
+test('a name on both rosters resolves to the player on the line team', async () => {
+  const fetchFn: typeof fetch = async (input) => {
+    const url = String(input);
+    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+    if (url.includes('/scoreboard')) return json({ events: [{ id: '77', date: '2030-10-04T23:00Z', competitions: [{ competitors: [
+      { team: { id: '2', displayName: 'Buffalo Sabres', name: 'Sabres' } }, { team: { id: '4', displayName: 'Chicago Blackhawks', name: 'Blackhawks' } }] }] }] });
+    if (url.includes('/teams/4/roster')) return json({ athletes: [{ id: '20', fullName: 'Sam Twin', status: { type: 'active' }, injuries: [] }] });
+    if (url.includes('/teams/2/roster')) return json({ athletes: [{ id: '21', fullName: 'Sam Twin', status: { type: 'active' }, injuries: [{ status: 'Out' }] }] });
+    if (url.includes('/athletes/20/gamelog')) return json(log([2, 3, 4, 3, 2, 4, 3, 5, 3, 4, 2, 3]));
+    return new Response('missing', { status: 404 });
+  };
+  const evidence = await new EspnGkrEvidence(fetchFn, { clock: () => now }).research([target('Sam Twin', 'shots_on_goal')]);
+  assert.equal(evidence.find((item) => item.kind === 'status:player_available')?.numeric?.value, 1, 'the Blackhawks Sam Twin');
+  assert.ok(evidence.some((item) => item.kind === 'projection:shots_on_goal'));
+});
