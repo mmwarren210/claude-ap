@@ -41,23 +41,31 @@ test('the history feeds Scout facts and the card game log, newest first, and kee
   assert.deepEqual(await history.factsFor({ sport: 'TENNIS', playerName: 'Nobody Here', market: 'total_games', threshold: 20 }), []);
 });
 
-test('Dota from OpenDota: the pro player list, then their last tournament maps; facts are per map', async () => {
+test('Dota from OpenDota: recent pro matches, each match’s listed pros, kept as their last maps; facts are per map', async () => {
   const urls: string[] = [];
   const fetchFn: typeof fetch = async (input) => {
     const url = String(input); urls.push(url);
     if (url.endsWith('/proPlayers')) return json([{ account_id: 111, name: 'Gakgos' }]);
-    if (url.includes('/players/111/matches')) return json([
-      { kills: 3, deaths: 5, assists: 12, last_hits: 40, start_time: 1917000000, leagueid: 15000 },
-      { kills: 7, deaths: 2, assists: 9, last_hits: 55, start_time: 1916900000, leagueid: 15000 },
-      { kills: 20, deaths: 1, assists: 1, last_hits: 300, start_time: 1916800000, leagueid: 0 }]);
+    if (url.endsWith('/proMatches')) return json([{ match_id: 902, start_time: 1917000000, radiant_name: 'FLY', dire_name: 'NAVI' },
+      { match_id: 901, start_time: 1916900000, radiant_name: 'NAVI', dire_name: 'FLY' }]);
+    if (url.includes('less_than_match_id')) return json([]);
+    if (url.endsWith('/matches/902')) return json({ players: [{ account_id: 111, isRadiant: true, kills: 3, deaths: 5, assists: 12, last_hits: 40 },
+      { account_id: 999, isRadiant: false, kills: 9 }] });
+    if (url.endsWith('/matches/901')) return json({ players: [{ account_id: 111, isRadiant: false, kills: 7, deaths: 2, assists: 9, last_hits: 55 }] });
     return new Response('missing', { status: 404 });
   };
-  const history = new PlayerHistory([new OpenDotaHistory(fetchFn, () => now)], null, () => now);
+  const source = new OpenDotaHistory(fetchFn, async () => undefined);
+  const history = new PlayerHistory([source], null, () => now);
+  await history.refresh();
   assert.deepEqual(await history.factsFor({ sport: 'DOTA', playerName: 'gakgos', market: 'maps_1_2_kills', threshold: 9.5 }),
     ['Last 2 maps (OpenDota pro matches, newest first): 3, 7. Average 5.0 per map.',
       'This line covers maps 1 and 2 together: about 10.0 at that average.']);
-  assert.ok(urls.some((url) => url.includes('lobby_type=1')), 'tournament lobbies only; a game outside a league is dropped');
+  assert.equal((await source.games('Gakgos'))?.games[0].opponent, 'NAVI');
   assert.equal(await history.gameLog('DOTA', 'DOTA:g', 'Gakgos', 'maps_1_2_kills'), null, 'a two-map line has no single-row log');
+  const calls = urls.length;
+  await history.refresh();
+  assert.equal(urls.filter((url) => url.includes('/matches/9')).length, 2, 'a second refresh loads only new matches');
+  assert.ok(urls.length > calls);
 });
 
 test('League of Legends from Leaguepedia: a player’s last pro games by page or in-game name', async () => {

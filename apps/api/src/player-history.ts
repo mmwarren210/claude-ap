@@ -127,9 +127,13 @@ abstract class CachedSource implements HistorySource {
   games(playerName: string) {
     const key = normalizedName(playerName), now = this.clock().getTime(), cached = this.cache.get(key);
     if (cached && cached.until > now) return cached.value;
-    const value = this.load(playerName).catch((error: unknown) => {
-      this.lastError = String(error instanceof Error ? error.message : error).slice(0, 160); return null; });
-    this.cache.set(key, { until: now + 6 * 3600_000, value });
+    const entry = { until: now + 6 * 3600_000, value: Promise.resolve<HistoryResult | null>(null) };
+    entry.value = this.load(playerName).catch((error: unknown) => {
+      // A failure (a rate limit, say) is retried after 15 minutes, not six hours.
+      this.lastError = String(error instanceof Error ? error.message : error).slice(0, 160);
+      entry.until = this.clock().getTime() + 15 * 60_000; return null; });
+    this.cache.set(key, entry);
+    const value = entry.value;
     if (this.cache.size > 5000) this.cache.clear();
     return value;
   }
@@ -141,33 +145,78 @@ abstract class CachedSource implements HistorySource {
   }
 }
 
-/** Dota 2 from OpenDota's free API: a pro player's last 20 tournament maps (kills, deaths, assists, last hits). */
-export class OpenDotaHistory extends CachedSource {
+/**
+ * Dota 2 from OpenDota's free API: the recent pro (league) matches, each match's players (league matches are public even
+ * when a player hides their own history), kept as each player's last 20 maps. Loads up to 400 matches the first time,
+ * then only new ones, one request a second (OpenDota's free limit is 60 a minute).
+ */
+export class OpenDotaHistory implements HistorySource {
   readonly name = 'OpenDota pro matches';
   readonly sports = ['DOTA'];
-  private pros: Promise<Map<string, number>> | null = null;
-  private proList() {
-    this.pros ??= this.json('https://api.opendota.com/api/proPlayers').then((body) => {
-      const map = new Map<string, number>();
-      for (const value of arr(body)) { const row = obj(value), id = num(row?.account_id), name = String(row?.name ?? '');
-        if (id && name && !map.has(normalizedName(name))) map.set(normalizedName(name), id); }
-      return map;
-    }).catch(() => { this.pros = null; return new Map<string, number>(); });
-    return this.pros;
+  lastError: string | null = null;
+  private seen = new Set<number>();
+  private players = new Map<string, HistoryGame[]>();
+  private refreshing: Promise<number> | null = null;
+  constructor(private readonly fetchFn: typeof fetch = fetch, private readonly pause = (ms: number) => new Promise<void>((done) => {
+    const timer = setTimeout(done, ms); timer.unref?.(); }), private readonly maxMatches = 400) {}
+  private async json(url: string): Promise<unknown> {
+    const response = await this.fetchFn(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
+    if (!response.ok) throw new Error(`OPENDOTA_HTTP_${response.status}`);
+    return response.json();
   }
-  protected async load(playerName: string): Promise<HistoryResult | null> {
-    const pros = await this.proList(), id = pros.get(normalizedName(playerName));
-    if (!id) { this.lastError = pros.size ? 'NOT_A_LISTED_PRO' : 'PRO_LIST_EMPTY'; return null; }
-    const url = `https://api.opendota.com/api/players/${id}/matches?limit=${KEEP}&lobby_type=1` +
-      ['kills', 'deaths', 'assists', 'last_hits', 'start_time', 'leagueid'].map((field) => `&project=${field}`).join('');
-    const games = arr(await this.json(url)).flatMap((value) => {
-      const row = obj(value), start = num(row?.start_time);
-      if (!start || !num(row?.leagueid)) return [];
-      return [{ date: new Date(start * 1000).toISOString(), opponent: null, stats: { kills: num(row?.kills) ?? NaN,
-        deaths: num(row?.deaths) ?? NaN, assists: num(row?.assists) ?? NaN, cs: num(row?.last_hits) ?? NaN } }];
-    });
-    if (!games.length) this.lastError = 'NO_TOURNAMENT_MAPS';
-    return games.length ? { games, source: this.name, url: `https://www.opendota.com/players/${id}`, perMap: true } : null;
+  refresh(): Promise<number> {
+    this.refreshing ??= this.load().finally(() => { this.refreshing = null; });
+    return this.refreshing;
+  }
+  private async load(): Promise<number> {
+    try {
+      const names = new Map<number, string>();
+      for (const value of arr(await this.json('https://api.opendota.com/api/proPlayers'))) {
+        const row = obj(value), id = num(row?.account_id), name = String(row?.name ?? '').trim();
+        if (id && name) names.set(id, name);
+      }
+      // Newest pro matches first, until a page holds only matches already loaded (or the cap is reached).
+      const fresh: { id: number; start: number; radiant: string | null; dire: string | null }[] = [];
+      let before: number | null = null;
+      for (let page = 0; page < Math.ceil(this.maxMatches / 100) && fresh.length < this.maxMatches; page++) {
+        const rows = arr(await this.json(`https://api.opendota.com/api/proMatches${before ? `?less_than_match_id=${before}` : ''}`));
+        if (!rows.length) break;
+        let added = 0;
+        for (const value of rows) {
+          const row = obj(value), id = num(row?.match_id), start = num(row?.start_time);
+          if (!id || !start) continue;
+          before = before === null ? id : Math.min(before, id);
+          if (this.seen.has(id)) continue;
+          fresh.push({ id, start, radiant: typeof row?.radiant_name === 'string' ? row.radiant_name : null,
+            dire: typeof row?.dire_name === 'string' ? row.dire_name : null }); added++;
+        }
+        if (!added) break;
+        await this.pause(1000);
+      }
+      for (const match of fresh.slice(0, this.maxMatches)) {
+        try {
+          const detail = obj(await this.json(`https://api.opendota.com/api/matches/${match.id}`));
+          for (const value of arr(detail?.players)) {
+            const player = obj(value), id = num(player?.account_id), name = id ? names.get(id) : undefined;
+            if (!name) continue;
+            const radiant = player?.isRadiant === true || (num(player?.player_slot) ?? 128) < 128;
+            const key = normalizedName(name), rows = this.players.get(key) ?? [];
+            rows.push({ date: new Date(match.start * 1000).toISOString(), opponent: radiant ? match.dire : match.radiant,
+              stats: { kills: num(player?.kills) ?? NaN, deaths: num(player?.deaths) ?? NaN, assists: num(player?.assists) ?? NaN,
+                cs: num(player?.last_hits) ?? NaN } });
+            this.players.set(key, rows.sort((x, y) => y.date.localeCompare(x.date)).slice(0, KEEP));
+          }
+          this.seen.add(match.id);
+        } catch (error) { this.lastError = String(error instanceof Error ? error.message : error).slice(0, 120); }
+        await this.pause(1000);
+      }
+    } catch (error) { this.lastError = String(error instanceof Error ? error.message : error).slice(0, 120); }
+    return this.players.size;
+  }
+  async games(playerName: string): Promise<HistoryResult | null> {
+    const games = this.players.get(normalizedName(playerName));
+    if (!games?.length && !this.players.size && !this.lastError) this.lastError = 'NOT_LOADED_YET';
+    return games?.length ? { games, source: this.name, url: 'https://www.opendota.com/matches/pro', perMap: true } : null;
   }
 }
 
@@ -182,8 +231,14 @@ export class LeaguepediaHistory extends CachedSource {
         'ScoreboardPlayers.CS=CS,ScoreboardPlayers.DateTime_UTC=Date,ScoreboardPlayers.Team=Team',
       where: `ScoreboardPlayers.Link="${name}" OR ScoreboardPlayers.Name="${name}"`,
       order_by: 'ScoreboardPlayers.DateTime_UTC DESC', limit: String(KEEP) });
-    const body = obj(await this.json(`https://lol.fandom.com/api.php?${params}`));
-    if (body?.error) this.lastError = `CARGO_${String(obj(body.error)?.code ?? 'ERROR').slice(0, 40)}`;
+    let body: Json | null = null;
+    // Leaguepedia throttles shared cloud servers; two slower tries before giving up for now.
+    for (const wait of [0, 4000, 12000]) {
+      if (wait) await new Promise<void>((done) => { const timer = setTimeout(done, wait); timer.unref?.(); });
+      body = obj(await this.json(`https://lol.fandom.com/api.php?${params}`));
+      if (String(obj(body?.error)?.code ?? '') !== 'ratelimited') break;
+    }
+    if (body?.error) { this.lastError = `CARGO_${String(obj(body.error)?.code ?? 'ERROR').slice(0, 40)}`; throw new Error(this.lastError); }
     const games = arr(body?.cargoquery).flatMap((value) => {
       const row = obj(obj(value)?.title), date = String(row?.Date ?? '');
       if (!Number.isFinite(Date.parse(date.replace(' ', 'T') + 'Z'))) return [];
