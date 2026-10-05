@@ -439,6 +439,22 @@ export function buildServer(options: ServerOptions = {}) {
     catch(error){return (error as Error).message==='ACCOUNT_NOT_FOUND'?reply.code(404).send({code:'ACCOUNT_NOT_FOUND'})
       :reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
   });
+  // The owner's member list, and revoking or restoring any account's access.
+  app.get('/v1/owner/members',async(request,reply)=>{
+    const user=await currentUser(request);
+    if(!options.product||!options.ownerPublicId||user?.publicId!==options.ownerPublicId)return reply.code(404).send({code:'NOT_FOUND'});
+    return {members:await options.product.members(),seats:await options.product.membership()};
+  });
+  app.post('/v1/owner/members/access',async(request,reply)=>{
+    const user=await currentUser(request);
+    if(!options.product||!options.ownerPublicId||user?.publicId!==options.ownerPublicId)return reply.code(404).send({code:'NOT_FOUND'});
+    const input=z.object({publicId:z.string().uuid(),access:z.enum(['REVOKE','RESTORE'])}).strict().safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'MEMBER_REQUIRED'});
+    try{return await options.product.setAccess(input.data.publicId,input.data.access==='REVOKE',options.ownerPublicId);}
+    catch(error){const code=(error as Error).message;
+      return code==='ACCOUNT_NOT_FOUND'?reply.code(404).send({code}):code==='CANNOT_REVOKE_OWNER'||code==='MEMBERS_FULL'
+        ?reply.code(409).send({code}):reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
+  });
   // Delete account: removes the member's account and personal data (App Store and Google Play require it).
   app.post('/v1/auth/delete',async(request,reply)=>{
     const user=await currentUser(request);

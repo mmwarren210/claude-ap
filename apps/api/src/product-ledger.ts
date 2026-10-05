@@ -415,6 +415,34 @@ export class ProductLedger {
     const profile=data.profiles.find((item)=>normalizedName(item.displayName)===normalizedName(entered));
     return profile?data.accounts.find((item)=>item.id===profile.actorKey&&!item.guest):undefined;
   }
+  /** Every account for the owner's member list, newest first: name, plan and whether access is revoked. */
+  async members(){
+    const data=await this.read(),lifetime=lifetimeIds(data.accounts);
+    const profiles=new Map(data.profiles.map((item)=>[item.actorKey,item]));
+    return data.accounts.flatMap((account)=>{
+      const profile=profiles.get(account.id);
+      return profile?[{publicId:profile.publicId,username:account.guest?'Guest':account.username,email:account.email,
+        plan:account.guest?'GUEST' as const:lifetime.has(account.id)?'LIFETIME' as const:'MEMBER' as const,
+        revoked:account.status==='SUSPENDED',createdAt:account.createdAt,
+        ...(account.guest?{guestExpiresAt:account.guest.expiresAt}:{})}]:[];
+    }).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
+  }
+  /**
+   * Revokes or restores one account's access (owner only). Revoking signs them out everywhere at once, blocks sign-in and
+   * reset codes, hides their public profile and frees a member seat. Restoring a member needs a free seat. The owner's
+   * own account can't be revoked.
+   */
+  async setAccess(publicId:string,revoke:boolean,ownerPublicId:string|null){return this.exclusive(async()=>{
+    const data=await this.read(),profile=data.profiles.find((item)=>item.publicId===publicId);
+    const account=profile?data.accounts.find((item)=>item.id===profile.actorKey):undefined;
+    if(!profile||!account)throw new Error('ACCOUNT_NOT_FOUND');
+    if(revoke&&ownerPublicId&&publicId===ownerPublicId)throw new Error('CANNOT_REVOKE_OWNER');
+    if(!revoke&&account.status==='SUSPENDED'&&!account.guest&&!lifetimeIds(data.accounts).has(account.id))this.assertSeat(data.accounts);
+    account.status=revoke?'SUSPENDED':'FREE';profile.isSuspended=revoke;
+    if(revoke){data.sessions=data.sessions.filter((item)=>item.accountId!==account.id);delete account.reset;}
+    await this.write(data);
+    return {publicId,username:account.guest?'Guest':account.username,revoked:revoke};
+  });}
   /**
    * A one-time reset code for a member who forgot their password (the owner passes it on; there is no email yet). It
    * lasts 24 hours and replaces any earlier code.

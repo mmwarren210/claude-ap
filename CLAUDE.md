@@ -25,6 +25,10 @@
   60 lookups a day, 10 per hourly run (`CROWNIQ_SCOUT_RESULTS_DAILY`, `CROWNIQ_SCOUT_RESULTS_PER_RUN`).
 - **Shared names** (two Max Muncys): grading and ESPN rosters keep only the namesake on the line's team (`sharedName`);
   with no team on the line, nothing is matched. The Stat API adapter already did this.
+- **Revoke access** (owner, 2026-10-05): More → Member access lists every account with Revoke/Restore
+  (`/v1/owner/members`, `/v1/owner/members/access`). Revoked accounts are signed out at once, can't sign in or reset,
+  and free a member seat; restoring a member needs a free seat. The owner can't revoke themselves.
+- **Railway names stay as they are** (owner, 2026-10-05): users never see them; only what users see avoids AI names.
 - **Membership keys** for the 100 members: the owner said wait two weeks (from 2026-10-05).
 - **GKR Beta** (owner, 2026-10-05; `scout-beta.ts`): GKR plus Scout's research as its own model version
   (`+SCOUT-BETA-0.1`). Late news (out, benched, scratched) passes a line; both models agreeing on matchup, role or

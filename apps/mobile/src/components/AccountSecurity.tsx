@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../auth';
 import { colors, radius } from '../theme';
@@ -63,6 +63,68 @@ export function MemberResetCode() {
   </View>;
 }
 
+type Member = { publicId: string; username: string; email: string | null; plan: 'LIFETIME' | 'MEMBER' | 'GUEST';
+  revoked: boolean; createdAt: string };
+const planWord: Readonly<Record<Member['plan'], string>> = { LIFETIME: 'Lifetime', MEMBER: 'Member', GUEST: 'Guest' };
+
+/** Owner only: every account, with a button to revoke or restore its access. */
+export function MemberAccess() {
+  const { request, profile } = useAuth();
+  const [members, setMembers] = useState<Member[] | null>(null), [message, setMessage] = useState('');
+  const [find, setFind] = useState(''), [armed, setArmed] = useState<string | null>(null), [busy, setBusy] = useState(false);
+  const fetchMembers = useCallback(() => request('/v1/owner/members').then(async (response) => response.ok
+    ? (await response.json() as { members: Member[] }).members : null).catch(() => null), [request]);
+  const load = async () => {
+    const list = await fetchMembers();
+    if (list) setMembers(list); else setMessage('Could not load members.');
+  };
+  useEffect(() => {
+    let active = true;
+    void fetchMembers().then((list) => {
+      if (!active) return;
+      if (list) setMembers(list); else setMessage('Could not load members.');
+    });
+    return () => { active = false; };
+  }, [fetchMembers]);
+  const change = async (member: Member) => {
+    // Revoking takes a second tap; restoring doesn't.
+    if (!member.revoked && armed !== member.publicId) { setArmed(member.publicId); return; }
+    setBusy(true); setArmed(null); setMessage('');
+    const response = await request('/v1/owner/members/access', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ publicId: member.publicId, access: member.revoked ? 'RESTORE' : 'REVOKE' }) }).catch(() => null);
+    const code = response && !response.ok ? (await response.json().catch(() => ({})) as { code?: string }).code : null;
+    if (!response) setMessage('Could not reach CrownIQ.');
+    else if (code === 'MEMBERS_FULL') setMessage('All 100 member seats are taken, so they can’t be restored right now.');
+    else if (code === 'CANNOT_REVOKE_OWNER') setMessage('You can’t revoke your own account.');
+    else if (!response.ok) setMessage('That didn’t work. Try again.');
+    else setMessage(member.revoked ? `${member.username} can sign in again.` : `${member.username} is signed out and can’t sign in.`);
+    await load(); setBusy(false);
+  };
+  const wanted = find.trim().toLowerCase();
+  const shown = (members ?? []).filter((item) => !wanted || item.username.toLowerCase().includes(wanted) ||
+    (item.email ?? '').toLowerCase().includes(wanted));
+  return <View style={styles.box}>
+    <Text style={styles.label}>Member access</Text>
+    <Text style={styles.note}>Revoke signs someone out right away and stops them signing in. Their seat frees up. Restore
+      lets them back in with the same account.</Text>
+    <TextInput accessibilityLabel="Find a member" autoCapitalize="none" autoCorrect={false} value={find} onChangeText={setFind}
+      placeholder="Find by username or email" placeholderTextColor={colors.textFaint} style={styles.input} />
+    {!!message && <Text style={styles.note}>{message}</Text>}
+    {members === null ? <Text style={styles.note}>Loading…</Text> : shown.slice(0, 50).map((member) =>
+      <View key={member.publicId} style={styles.member}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.memberName} numberOfLines={1}>{member.username}</Text>
+          <Text style={[styles.note, member.revoked && { color: colors.red }]} numberOfLines={1}>
+            {planWord[member.plan]}{member.revoked ? ' · Revoked' : ''}{member.email ? ` · ${member.email}` : ''}</Text>
+        </View>
+        {member.publicId !== profile?.publicId && <GhostButton disabled={busy}
+          label={member.revoked ? 'Restore' : armed === member.publicId ? 'Tap again to revoke' : 'Revoke'}
+          icon={member.revoked ? 'account-check' : 'account-cancel'} onPress={() => void change(member)} />}
+      </View>)}
+    {shown.length > 50 && <Text style={styles.note}>Showing 50 of {shown.length}. Type a name to narrow it down.</Text>}
+  </View>;
+}
+
 const styles = StyleSheet.create({
   box: { gap: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.borderStrong, paddingTop: 14 },
   label: { color: colors.text, fontSize: 14, fontWeight: '700' },
@@ -71,6 +133,8 @@ const styles = StyleSheet.create({
   note: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
   code: { alignItems: 'center', gap: 6, borderWidth: 1, borderColor: colors.mint, borderRadius: radius.md, padding: 12 },
   codeText: { color: colors.mint, fontSize: 28, fontWeight: '900', letterSpacing: 2 },
+  member: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  memberName: { color: colors.text, fontSize: 15, fontWeight: '700' },
 });
 
 /** Delete account: confirm with the password (or DELETE for Google and Apple sign-ins), then a second tap. */

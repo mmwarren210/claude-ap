@@ -339,3 +339,31 @@ test('delete account removes the member and their personal data after confirming
     assert.ok((await ledger.register('gone@example.org','long-private-passphrase','Gone_one')).token,'the email and name are free again');
   }finally{await rm(folder,{recursive:true,force:true});}
 });
+
+test('the owner revokes and restores any account: revoked is signed out, blocked and frees a seat',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-revoke-'));
+  try{let clock=start;
+    const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>clock,undefined,undefined,0,2,'Family-Code-For-Tests!');
+    const owner=await ledger.register('owner@example.org','long-private-passphrase','Owner_one');
+    clock=new Date(start.getTime()+60_000);
+    const member=await ledger.register('member@example.org','long-private-passphrase','Member_one');
+    const ownerId=(await ledger.authenticate(owner.token))!.publicId,memberId=(await ledger.authenticate(member.token))!.publicId;
+    await assert.rejects(ledger.setAccess(ownerId,true,ownerId),/CANNOT_REVOKE_OWNER/);
+    await assert.rejects(ledger.setAccess('00000000-0000-4000-8000-000000000000',true,ownerId),/ACCOUNT_NOT_FOUND/);
+    await ledger.setAccess(memberId,true,ownerId);
+    assert.equal(await ledger.authenticate(member.token),null,'signed out at once');
+    await assert.rejects(ledger.login('Member_one','long-private-passphrase'));
+    await assert.rejects(ledger.createResetCode('Member_one').then(({code})=>ledger.resetPassword('Member_one',code,'a-brand-new-passphrase')),/RESET_INVALID/);
+    assert.deepEqual((await ledger.members()).map((item)=>[item.username,item.plan,item.revoked]),
+      [['Member_one','MEMBER',true],['Owner_one','MEMBER',false]]);
+    assert.equal((await ledger.membership()).members.used,1,'a revoked member frees the seat');
+    clock=new Date(start.getTime()+120_000);
+    await ledger.register('next@example.org','long-private-passphrase','Next_one');
+    await assert.rejects(ledger.setAccess(memberId,false,ownerId),/MEMBERS_FULL/,'restoring needs a free seat');
+    await ledger.register('family@example.org','Family-Code-For-Tests!','Family_one');
+    const familyId=(await ledger.members()).find((item)=>item.username==='Family_one')!.publicId;
+    await ledger.setAccess(familyId,true,ownerId);
+    await ledger.setAccess(familyId,false,ownerId);
+    assert.equal((await ledger.members()).find((item)=>item.username==='Family_one')!.revoked,false,'lifetime restores without a seat');
+  }finally{await rm(folder,{recursive:true,force:true});}
+});
