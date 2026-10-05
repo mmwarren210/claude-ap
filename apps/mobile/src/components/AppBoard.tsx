@@ -133,8 +133,12 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   // Picks: lines GKR backs (strongest first), then Scout's plays where GKR can't read the line.
   const shown = useMemo(() => {
     const inLeague = lines.filter((line) => (sport === 'ALL' || line.league === sport) && (!boostOnly || boosted(line)));
-    const strength = (line: AppLine) => line.gkr ? 1000 + line.gkr.score : line.scout?.score ?? 0;
-    return gkrOnly ? inLeague.filter(backedSide).sort((a, b) => strength(b) - strength(a)) : inLeague;
+    // Playable lines first (GKR's, then Scout's, strongest first), then lines not read yet, then Scout's no-edge reads;
+    // each group keeps game-time order.
+    const strength = (line: AppLine) => line.gkr ? 1000 + line.gkr.score : scoutSide(line) ? line.scout!.score ?? 0 : 0;
+    const group = (line: AppLine) => backedSide(line) ? 0 : line.scout ? 2 : 1;
+    const ordered = [...inLeague].sort((a, b) => group(a) - group(b) || strength(b) - strength(a));
+    return gkrOnly ? ordered.filter(backedSide) : ordered;
   }, [lines, sport, gkrOnly, boostOnly]);
   const boostCount = useMemo(() => lines.filter(boosted).length, [lines]);
   const backed = useMemo(() => lines.filter(backedSide).length, [lines]);
