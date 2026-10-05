@@ -1001,8 +1001,13 @@ export function buildServer(options: ServerOptions = {}) {
     admin.get('/book-picks/:book', async (request, reply) => {
       const parsed=z.object({book:z.enum(sportsbooks)}).safeParse(request.params);
       if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_BOOK'});
-      const result=await picksFor(parsed.data.book);
-      return result?{fetchedAt:result.fetchedAt,picks:result.picks}:reply.code(503).send({code:'BOOK_PICKS_UNAVAILABLE'});
+      const result=await picksFor(parsed.data.book),board=service.getBoard();
+      if(!result||!board||!options.sharpProps)return reply.code(503).send({code:'BOOK_PICKS_UNAVAILABLE'});
+      // Where the book's lines drop out (no PrizePicks match, or GKR passes), for the owner.
+      const counts:Record<string,number>={};
+      bookPicks(parsed.data.book,(await options.sharpProps.current()).prices,board.board.lines,
+        new Map(board.analyses.map((item)=>[item.lineId,item])),(items)=>service.scoreLines(items),now(),counts);
+      return {fetchedAt:result.fetchedAt,counts,picks:result.picks};
     });
     admin.get('/grading', async () => ({ worker: options.autoGradingStatus?.() ?? null }));
     admin.get('/ai-picks', async (_request, reply) => options.aiPicks ? options.aiPicks.status()

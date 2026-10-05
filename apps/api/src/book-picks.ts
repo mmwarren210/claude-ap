@@ -35,7 +35,8 @@ const dayKey = (iso: string) => iso.slice(0, 10);
  * picks one. One pick per player and stat (the highest score), strongest first.
  */
 export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardLines: readonly PropLine[],
-  analyses: ReadonlyMap<string, Analysis>, scoreLines: (lines: readonly PropLine[]) => Analysis[], now: Date): BookPick[] {
+  analyses: ReadonlyMap<string, Analysis>, scoreLines: (lines: readonly PropLine[]) => Analysis[], now: Date,
+  counts?: Record<string, number>): BookPick[] {
   const byPlayer = new Map<string, PropLine[]>();
   for (const line of boardLines) {
     const key = JSON.stringify([line.sport, normalizedName(line.playerName), line.market]);
@@ -59,6 +60,16 @@ export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardL
     return [{ price, research, line }];
   });
   const scored = scoreLines(pairs.map((pair) => pair.line));
+  if (counts) {
+    const mine = prices.filter((price) => price.book === book);
+    for (const price of mine) counts[`prices:${price.sport}`] = (counts[`prices:${price.sport}`] ?? 0) + 1;
+    counts.upcoming = mine.filter((price) => Date.parse(price.startTime) > now.getTime()).length;
+    counts.onPrizePicks = pairs.length;
+    for (const analysis of scored) {
+      const key = analysis.direction === 'PASS' ? `pass:${analysis.reasonCode ?? 'NONE'}` : 'picked';
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+  }
   const best = new Map<string, BookPick>();
   pairs.forEach(({ price, research, line }, index) => {
     const analysis = scored[index];
