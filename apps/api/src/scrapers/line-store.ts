@@ -62,8 +62,10 @@ export class ScrapedLineStore {
   }
 
   /**
-   * Add one pull's lines from `source`. When `complete` (the pull was not cut short), lines of the
-   * pulled apps that it no longer lists, on games not yet started, are marked removed.
+   * Add one pull's lines from `source`. When `complete` (the pull was not cut short), lines of the pulled apps that this
+   * source listed before and no longer lists, on games not yet started, lose this source; a line is marked removed only
+   * when no source lists it any more. (One source covering part of an app, like The Odds API's share of PrizePicks, never
+   * clears what the other sources found.)
    */
   async ingest(source: string, lines: readonly ScrapedLine[], options: { complete: boolean; apps: readonly DfsApp[] }): Promise<IngestReport> {
     await this.load();
@@ -93,14 +95,30 @@ export class ScrapedLineStore {
     }
     if (options.complete) {
       for (const [id, line] of this.lines) {
-        if (seen.has(id) || line.removedAt || started(line) || !options.apps.includes(line.app)) continue;
-        this.lines.set(id, { ...line, removedAt: at }); removed++;
+        if (seen.has(id) || line.removedAt || started(line) || !options.apps.includes(line.app) ||
+          !line.confirmedBy.includes(source)) continue;
+        const confirmedBy = line.confirmedBy.filter((item) => item !== source);
+        if (confirmedBy.length) { this.lines.set(id, { ...line, confirmedBy }); continue; }
+        this.lines.set(id, { ...line, confirmedBy, removedAt: at }); removed++;
       }
     }
     // Keep two days of finished games for reference, then let them go.
     for (const [id, line] of this.lines) if (Date.parse(line.startTime) < now.getTime() - 2 * 86_400_000) this.lines.delete(id);
     await this.save();
     return { received: lines.length, added, moved, unchanged, frozen, removed };
+  }
+
+  /** Puts back lines marked removed at or after `since` on games not yet started (undoing a bad pull). */
+  async restoreRemoved(since: Date): Promise<number> {
+    await this.load();
+    const now = this.clock().getTime();
+    let restored = 0;
+    for (const [id, line] of this.lines) {
+      if (!line.removedAt || Date.parse(line.removedAt) < since.getTime() || Date.parse(line.startTime) <= now) continue;
+      this.lines.set(id, { ...line, removedAt: null }); restored++;
+    }
+    if (restored) await this.save();
+    return restored;
   }
 
   /** Lines still on offer for games that have not started. */

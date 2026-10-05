@@ -73,6 +73,15 @@ test('the store keeps one record per line, replaces moved numbers, confirms acro
   const removal = await store.ingest('scraper-a', [line({ line: 66.5 }), line({ propId: 'b-77', line: 66.5 })], { complete: true, apps: ['prizepicks'] });
   assert.equal(removal.removed, 1);
   assert.equal((await store.active()).some((item) => item.appLineId === '1002'), false);
+  // A source that covers part of the app (The Odds API) never takes down what only the other sources list, and a line
+  // another source still lists stays when this one drops it.
+  const partial = await store.ingest('the-odds-api', [line({ propId: 'odds-9', player: 'Odds Only', line: 10.5 })],
+    { complete: true, apps: ['prizepicks'] });
+  assert.equal(partial.removed, 0);
+  assert.ok((await store.active()).some((item) => item.appLineId === '1001'), 'a scraper line survives the Odds API pull');
+  const dropped = await store.ingest('the-odds-api', [], { complete: true, apps: ['prizepicks'] });
+  assert.equal(dropped.removed, 1, 'only the line the Odds API alone listed goes');
+  assert.equal((await store.restoreRemoved(new Date('2030-01-01T00:00:00Z'))) >= 1, true, 'a bad pull can be undone');
   // Once the game starts the line is frozen and leaves the active board.
   clock = new Date('2030-10-04T17:30:00.000Z');
   const late = await store.ingest('scraper-a', [line({ line: 90.5 })], { complete: true, apps: ['prizepicks'] });

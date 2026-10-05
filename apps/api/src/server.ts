@@ -1266,6 +1266,11 @@ export function buildServer(options: ServerOptions = {}) {
       if(!input.success)return reply.code(400).send({code:'SOURCE_REQUIRED'});
       return options.scraperPuller.pull(input.data.source);
     });
+    admin.post('/scrapers/restore', async (request, reply) => {
+      const input=z.object({since:z.iso.datetime()}).strict().safeParse(request.body);
+      if(!input.success||!options.scrapedLines)return reply.code(400).send({code:'SINCE_REQUIRED'});
+      return {restored:await options.scrapedLines.restoreRemoved(new Date(input.data.since))};
+    });
     admin.get('/scrapers', async (_request, reply) => options.scraperPuller
       ? options.scraperPuller.status() : reply.code(503).send({ code: 'SCRAPERS_UNCONFIGURED' }));
     admin.post('/sharp-props/refresh', async (_request, reply) => options.sharpProps
