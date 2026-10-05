@@ -78,3 +78,32 @@ test('League of Legends from Leaguepedia: a player’s last pro games by page or
   assert.deepEqual(log?.games.map((game) => game.value), [310, 280]);
   assert.ok(decodeURIComponent(asked).includes('ScoreboardPlayers.Link="Massu"'));
 });
+
+test('Sleeper: each line’s recent performance for that exact stat; matched across stat spellings; refreshed at most twice a day', async () => {
+  const { SleeperHistory, statKind } = await import('../src/player-history.js');
+  assert.equal(statKind('kills_maps_1_2'), statKind('maps_1_2_kills'));
+  assert.equal(statKind('Kills on Maps 1+2'), statKind('kills_maps_1_2'));
+  assert.notEqual(statKind('kills_maps_1_2'), statKind('kills'));
+  const rows = [{ playerName: 'Mason Sanderson', stat: 'headshots_maps_1_2', recentPerformance: [
+    { date: '2030-09-26', opponent: 'Voca', value: 19 }, { date: '2030-10-04', opponent: 'BB Team', value: 17 },
+    { date: '2030-10-03', opponent: 'MOUZ', value: 11 }] },
+  { playerName: 'Aryna Sabalenka', stat: 'aces', recentPerformance: [{ date: '2030-10-01', opponent: 'X', value: 7 }] }];
+  let runs = 0;
+  let clock = now;
+  const sleeper = new SleeperHistory({ run: async () => { runs++; return rows; } }, null, () => clock);
+  const appended: unknown[] = [];
+  const espn = new EspnTennisHistory(async () => json(scoreboard), () => now);
+  const history = new PlayerHistory([espn, sleeper], { append: async (_s: string, r: unknown[]) => { appended.push(...r); return r.length; } } as never, () => now);
+  await history.refresh();
+  await history.refresh();
+  assert.equal(runs, 1, 'not again within 12 hours');
+  clock = new Date(now.getTime() + 13 * 3600_000);
+  await sleeper.refresh();
+  assert.equal(runs, 2);
+  assert.deepEqual(await history.factsFor({ sport: 'CS2', playerName: 'Mason Sanderson', market: 'maps_1_2_headshots', threshold: 14.5 }),
+    ['Last 3 matches (Sleeper recent performance, newest first): 17, 11, 19. Average 15.7.', 'Went over 14.5 in 2 of those 3.']);
+  const log = await history.gameLog('CS2', 'CS2:mason', 'Mason Sanderson', 'headshots_maps_1_2');
+  assert.deepEqual(log?.games.map((game) => game.value), [17, 11, 19], 'a series-level source fills a two-map line’s log');
+  assert.equal((await history.values('TENNIS', 'Jaume Munar', 'total_games_won'))?.source, 'ESPN tennis scoreboards');
+  assert.equal((await history.values('TENNIS', 'Aryna Sabalenka', 'aces'))?.values[0].value, 7, 'Sleeper fills what ESPN lacks');
+});

@@ -16,6 +16,9 @@ export interface HistorySource {
   /** Bulk sources load everything here (tennis); per-player sources do nothing. Returns how many players it holds. */
   refresh(): Promise<number>;
   games(playerName: string): Promise<HistoryResult | null>;
+  /** Sources that already hold values per stat (Sleeper's recent performance) answer for a market directly. */
+  valuesFor?(playerName: string, market: string): Promise<{ values: { date: string; opponent: string | null; value: number }[];
+    source: string; url: string } | null>;
 }
 
 const KEEP = 20;
@@ -255,6 +258,82 @@ export class LeaguepediaHistory extends CachedSource {
   }
 }
 
+/** A stat's kind and scope, so "kills_maps_1_2", "maps_1_2_kills" and "Kills on Maps 1+2" match each other. */
+export function statKind(stat: string) {
+  const m = stat.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  const kind = ['headshots', 'kills', 'deaths', 'assists', 'double_faults', 'aces', 'break_points', 'games_won', 'games_lost',
+    'total_games', 'sets_won', 'total_sets', 'fantasy'].find((name) => m.includes(name)) ?? m;
+  return `${kind}|${twoMaps(m) ? 'maps12' : /1st_set|first_set|set_1/.test(m) ? 'set1' : 'all'}`;
+}
+
+/** The Apify run that pulls Sleeper's lines, kept apart from the client so tests can stand in for it. */
+export interface SleeperRunner { run(): Promise<unknown[] | null> }
+
+/**
+ * Sleeper's pick'em lines carry each player's recent results for that exact stat (the last 10 series for a CS2 "kills,
+ * maps 1+2" line, the last matches for tennis aces). One small Apify run (about a cent) twice a day, under the shared
+ * scraper cap; the answers are saved so a restart doesn't pay again.
+ */
+export class SleeperHistory implements HistorySource {
+  readonly name = 'Sleeper recent performance';
+  readonly sports = ['CS2', 'TENNIS'];
+  lastError: string | null = null;
+  private byPlayer = new Map<string, { date: string; opponent: string | null; value: number }[]>();
+  private fetchedAt = 0;
+  private loaded = false;
+  constructor(private readonly runner: SleeperRunner | null, private readonly file: string | null,
+    private readonly clock: () => Date = () => new Date(), private readonly everyHours = 12) {}
+
+  private async load() {
+    if (this.loaded) return;
+    this.loaded = true;
+    if (!this.file) return;
+    try {
+      const { readFile } = await import('node:fs/promises');
+      const saved = JSON.parse(await readFile(this.file, 'utf8')) as { fetchedAt: number; rows: [string, { date: string; opponent: string | null; value: number }[]][] };
+      this.byPlayer = new Map(saved.rows); this.fetchedAt = saved.fetchedAt;
+    } catch { /* first run */ }
+  }
+  /** Reads Sleeper's rows into player-and-stat histories. */
+  ingest(rows: readonly unknown[]) {
+    const next = new Map<string, { date: string; opponent: string | null; value: number }[]>();
+    for (const value of rows) {
+      const row = obj(value), player = String(row?.playerName ?? ''), stat = String(row?.stat ?? row?.wagerType ?? '');
+      const recent = arr(row?.recentPerformance).flatMap((item) => { const game = obj(item), result = num(game?.value), date = String(game?.date ?? '');
+        return result === null || !Number.isFinite(Date.parse(date)) ? [] : [{ date, opponent: typeof game?.opponent === 'string' ? game.opponent : null, value: result }]; });
+      if (!player || !stat || !recent.length) continue;
+      next.set(`${normalizedName(player)}|${statKind(stat)}`, recent.sort((a, b) => b.date.localeCompare(a.date)).slice(0, KEEP));
+    }
+    return next;
+  }
+  async refresh(): Promise<number> {
+    await this.load();
+    if (!this.runner || this.clock().getTime() - this.fetchedAt < this.everyHours * 3600_000 - 600_000) return this.byPlayer.size;
+    try {
+      const rows = await this.runner.run();
+      if (!rows) { this.lastError = 'BUDGET_OR_NOT_CONFIGURED'; return this.byPlayer.size; }
+      const next = this.ingest(rows);
+      if (next.size) {
+        this.byPlayer = next; this.fetchedAt = this.clock().getTime();
+        if (this.file) {
+          const { mkdir, rename, writeFile } = await import('node:fs/promises');
+          const { dirname } = await import('node:path');
+          await mkdir(dirname(this.file), { recursive: true });
+          await writeFile(`${this.file}.tmp`, JSON.stringify({ fetchedAt: this.fetchedAt, rows: [...this.byPlayer] }));
+          await rename(`${this.file}.tmp`, this.file);
+        }
+      }
+    } catch (error) { this.lastError = String(error instanceof Error ? error.message : error).slice(0, 120); }
+    return this.byPlayer.size;
+  }
+  async games() { return null; }
+  async valuesFor(playerName: string, market: string) {
+    await this.load();
+    const values = this.byPlayer.get(`${normalizedName(playerName)}|${statKind(market)}`);
+    return values?.length ? { values, source: this.name, url: 'https://sleeper.com/picks' } : null;
+  }
+}
+
 /** The sources together: refreshed on a timer, read by Scout and the game-log route, written to the archive. */
 export class PlayerHistory {
   private timer: NodeJS.Timeout | null = null;
@@ -263,8 +342,10 @@ export class PlayerHistory {
   constructor(private readonly sources: readonly HistorySource[], private readonly archive: HistoryArchive | null = null,
     private readonly clock: () => Date = () => new Date()) {}
 
-  private sourceFor(sport: string) { return this.sources.find((source) => source.sports.includes(sport)) ?? null; }
-  supports(sport: string) { return !!this.sourceFor(sport); }
+  private sourcesFor(sport: string) { return this.sources.filter((source) => source.sports.includes(sport)); }
+  private sourceFor(sport: string) { return this.sourcesFor(sport)[0] ?? null; }
+  supports(sport: string) { return this.sourcesFor(sport).length > 0; }
+
 
   async refresh() {
     for (const source of this.sources) {
@@ -286,15 +367,22 @@ export class PlayerHistory {
   }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
 
-  /** A player's recent values for one market (newest first), with the source; null when there is none. */
+  /** A player's recent values for one market (newest first), from the first source that has them; null when none does. */
   async values(sport: string, playerName: string, market: string) {
-    const source = this.sourceFor(sport);
-    const result = source ? await source.games(playerName) : null;
-    if (!result) return null;
-    this.keep(sport, playerName, result);
-    const values = result.games.flatMap((game) => { const value = statFor(sport, market, game.stats);
-      return value === null ? [] : [{ date: game.date, opponent: game.opponent, value }]; });
-    return values.length ? { ...result, values } : null;
+    for (const source of this.sourcesFor(sport)) {
+      if (source.valuesFor) {
+        const direct = await source.valuesFor(playerName, market).catch(() => null);
+        if (direct?.values.length) return { ...direct, perMap: false };
+        continue;
+      }
+      const result = await source.games(playerName).catch(() => null);
+      if (!result) continue;
+      this.keep(sport, playerName, result);
+      const values = result.games.flatMap((game) => { const value = statFor(sport, market, game.stats);
+        return value === null ? [] : [{ date: game.date, opponent: game.opponent, value }]; });
+      if (values.length) return { values, source: result.source, url: result.url, perMap: result.perMap };
+    }
+    return null;
   }
 
   private keep(sport: string, playerName: string, result: HistoryResult) {
@@ -309,9 +397,8 @@ export class PlayerHistory {
 
   /** The card's game log: whole matches only (a two-map esports line has no single-row value). */
   async gameLog(sport: string, playerId: string, playerName: string, market: string): Promise<PlayerGameLog | null> {
-    if (twoMaps(market)) return null;
     const found = await this.values(sport, playerName, market);
-    if (!found) return null;
+    if (!found || (found.perMap && twoMaps(market))) return null;
     return { sport: sport as PlayerGameLog['sport'], playerId, playerName, market, source: 'FREE_PUBLIC_HISTORY',
       unit: null, games: found.values.slice(0, KEEP).map((game) => ({ date: game.date.slice(0, 10), opponent: game.opponent, value: game.value })) };
   }

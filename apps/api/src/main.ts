@@ -1,4 +1,4 @@
-import { EspnTennisHistory, LeaguepediaHistory, OpenDotaHistory, PlayerHistory } from './player-history.js';
+import { EspnTennisHistory, LeaguepediaHistory, OpenDotaHistory, PlayerHistory, SleeperHistory } from './player-history.js';
 import { FeedbackStore } from './feedback.js';
 import 'dotenv/config';
 import { mergePayouts } from '@crowniq/contracts';
@@ -56,10 +56,6 @@ import { CurrentContextResearch } from './current-context.js';
 const dataDir=(process.env.CROWNIQ_DATA_DIR ?? 'tmp').replace(/\/$/,'');
 // CrownIQ's own archive: every game log, graded result and line it has seen, kept for verification and evidence.
 const historyArchive=new HistoryArchive(`${dataDir}/archive`);
-// Free public history for tennis and esports (ESPN, OpenDota, Leaguepedia): Scout facts, card game logs and the archive.
-const playerHistory=process.env.CROWNIQ_FREE_HISTORY==='false'?null
-  :new PlayerHistory([new EspnTennisHistory(),new OpenDotaHistory(),new LeaguepediaHistory()],historyArchive);
-playerHistory?.start();
 const apiKey = process.env.THE_ODDS_API_KEY;
 const providerMode = process.env.ODDS_PROVIDER ?? 'auto';
 if (!['auto', 'none', 'the_odds_api', 'scrapers'].includes(providerMode)) {
@@ -94,6 +90,20 @@ const scraperBudget=new DailySpendBudget(process.env.CROWNIQ_SCRAPER_SPEND_FILE 
   nonNegativeNumber('CROWNIQ_SCRAPER_DAILY_USD',25),()=>new Date(),
   // Apify's own charges since midnight Eastern, so runs started anywhere count against the cap.
   process.env.APIFY_TOKEN?.trim()?(since)=>apify.spentSince(since):null);
+// Player history for tennis and esports: free public sources (ESPN, OpenDota, Leaguepedia) plus Sleeper's recent
+// performance (CS2, tennis; about a cent a run on Apify, twice a day, under the scraper cap). Scout facts, card game logs
+// and the archive; no GKR score uses it.
+const sleeperRunner={async run(){
+  if(await scraperBudget.remaining()<0.5)return null;
+  const run=await apify.runActor('solidcode/sleeper-player-props-scraper',{leagues:['cs','tennis'],maxResults:3000},
+    {maxChargeUsd:0.5,timeoutSecs:600});
+  await scraperBudget.record(run.usageUsd);
+  return run.status==='SUCCEEDED'?await apify.datasetItems(run.datasetId):null;
+}};
+const playerHistory=process.env.CROWNIQ_FREE_HISTORY==='false'?null
+  :new PlayerHistory([new EspnTennisHistory(),new OpenDotaHistory(),new LeaguepediaHistory(),
+    new SleeperHistory(process.env.CROWNIQ_SLEEPER_HISTORY==='false'?null:sleeperRunner,`${dataDir}/sleeper-history.json`)],historyArchive);
+playerHistory?.start();
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
   [{source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9,12,15,18')},
     {source:lergassy,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_LERGASSY','12')},
