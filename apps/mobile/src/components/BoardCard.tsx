@@ -21,9 +21,8 @@ import { ScoreRing } from './ui/ScoreRing';
 import type { Stat } from './ui/StatStrip';
 import { rateTone, StatStrip } from './ui/StatStrip';
 
-export function matchup(line: { opponent: string | null; eventName: string }): string {
-  return line.opponent ? `vs ${line.opponent}` : line.eventName;
-}
+import { matchup } from '../matchup';
+export { matchup };
 
 export function evidenceDetail(analysis: Analysis | undefined): string {
   if (!analysis || analysis.evidenceQuality === 'NONE') return 'No attributed evidence';
@@ -85,7 +84,8 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
             {pass ? 'PASS' : direction} {formatLine(line.threshold)}</Text>
         </View>
         <View style={styles.ringBox}><ScoreRing score={aiPick ? aiPick.score : booksSide ? Math.round(booksSide.fair * 100) : analysis?.score ?? null}
-          band={aiPick || booksSide ? undefined : analysis?.scoreBand} size={64} />
+          band={aiPick || booksSide ? undefined : analysis?.scoreBand} size={64}
+          {...aiPick || booksSide ? { label: 'PLAY', tint: colors.mint, who: aiPick ? SCOUT : 'Books' } : {}} />
           {aiPick && <Text style={styles.aiTag}>{SCOUT.toUpperCase()}</Text>}
           {booksSide && <Text style={styles.aiTag}>BOOKS</Text>}
 </View>

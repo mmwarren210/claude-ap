@@ -243,3 +243,10 @@ test('the app never shows an AI product name: the two models are Scout A and Sco
   assert.equal(lateNews(read), 'Scout found he is out.');
   assert.deepEqual(scoutEvidence(read)[0].items[0], { text: 'Scout read the depth chart', url: null, by: 'Scout A' });
 });
+
+test('an event name that is a feed id shows as a plain match label', async () => {
+  const { matchup } = await import('../src/matchup.js');
+  assert.equal(matchup({ opponent: null, eventName: 'LOL JDGSR46300.2916666667', league: 'LOL' }), 'LOL match');
+  assert.equal(matchup({ opponent: null, eventName: 'NAVI vs FaZe', league: 'CS2' }), 'NAVI vs FaZe');
+  assert.equal(matchup({ opponent: 'Carlos Alcaraz', eventName: 'x', league: 'TENNIS' }), 'vs Carlos Alcaraz');
+});

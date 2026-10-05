@@ -232,7 +232,10 @@ export default function PlayerResearch() {
             <Text style={styles.meta}><Text style={styles.strong}>{line.league}</Text>{line.team ? `   ${line.team}` : ''}</Text>
             <Text style={styles.meta}>{matchup(line)} · {gameTime(line.eventStartTime)}</Text>
           </View>
-          <ScoreRing score={analysis?.score ?? null} band={analysis?.scoreBand} size={84} />
+          {/* Where GKR can't score and Scout picks a side, the dial is Scout's, labeled as such. */}
+          {aiSide ? <View style={{ alignItems: 'center' }}><ScoreRing score={ai!.score} band={undefined} size={84} label="PLAY"
+            tint={colors.mint} who={SCOUT} /><Text style={styles.scoutTag}>{SCOUT.toUpperCase()}</Text></View>
+            : <ScoreRing score={analysis?.score ?? null} band={analysis?.scoreBand} size={84} />}
         </View>
         <View style={styles.styles}>
           {(['GOBLIN', 'KINGS', 'DEMON'] as const).map((style) => {
@@ -403,6 +406,7 @@ export default function PlayerResearch() {
 }
 
 const styles = StyleSheet.create({
+  scoutTag: { color: colors.blue, fontSize: 11, fontWeight: '800', letterSpacing: 1, marginTop: 2 },
   safe: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 28, gap: 14 },
   share: { width: 44, height: 44, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong,
