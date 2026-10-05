@@ -19,7 +19,6 @@ import { CurrentContextResearch } from './current-context.js';
 import { defaultConsensusBooks, parseEntries } from '@crowniq/edge';
 import { EdgeLedger } from './edge-ledger.js';
 import { EdgeResultsWorker } from './edge-service.js';
-import { HeadToHeadLedger } from './head-to-head.js';
 
 const apiKey = process.env.THE_ODDS_API_KEY;
 const providerMode = process.env.ODDS_PROVIDER ?? 'auto';
@@ -133,12 +132,10 @@ const edgeFactor=(name:string)=>{
   return parsed;
 };
 const edgeLedger=edgeEnabled?new EdgeLedger(process.env.CROWNIQ_EDGE_LEDGER_FILE??'tmp/edge-ledger.json'):null;
-// Edge vs GKR on the same lines, graded from the same results.
-const headToHead=edgeEnabled?new HeadToHeadLedger(process.env.CROWNIQ_HEAD_TO_HEAD_FILE??'tmp/head-to-head.json'):null;
 const edgeWorker=edgeLedger && process.env.EDGE_AUTO_GRADE!=='false'
   ? new EdgeResultsWorker(edgeLedger,internalHistory,statSource,{maxPlayers:
-    process.env.EDGE_AUTO_GRADE_MAX_PLAYERS?Number(process.env.EDGE_AUTO_GRADE_MAX_PLAYERS):undefined,headToHead}):null;
-const edgeOptions={enabled:edgeEnabled,ledger:edgeLedger,worker:edgeWorker,headToHead,
+    process.env.EDGE_AUTO_GRADE_MAX_PLAYERS?Number(process.env.EDGE_AUTO_GRADE_MAX_PLAYERS):undefined}):null;
+const edgeOptions={enabled:edgeEnabled,ledger:edgeLedger,worker:edgeWorker,
   entries:parseEntries(process.env.EDGE_PAYOUTS),
   alternateFactors:{GOBLIN:edgeFactor('EDGE_GOBLIN_FACTOR'),DEMON:edgeFactor('EDGE_DEMON_FACTOR')}};
 const googleClients=(process.env.CROWNIQ_GOOGLE_CLIENT_IDS??'').split(',').map((id)=>id.trim()).filter(Boolean);

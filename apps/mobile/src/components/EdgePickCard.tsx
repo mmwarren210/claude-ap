@@ -1,7 +1,7 @@
 import type { EdgePick } from '@crowniq/contracts';
 import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { edgeSummary, formatLine, gkrVerdict, headline, pct, ratingColor, ratingLabel, tierLabel } from '../edge-format';
+import { edgeSummary, formatLine, headline, pct, ratingColor, ratingLabel, tierLabel } from '../edge-format';
 import { edgeSlip } from '../edge-slip';
 import { palette } from '../theme';
 
@@ -10,8 +10,6 @@ export function EdgePickCard({ pick, rank, inSlip }: { pick: EdgePick; rank?: nu
   const start = new Date(pick.eventStartTime);
   // Payout-factor guidance is already in the summary line for alternates.
   const warning = pick.warnings.find((item) => !item.includes('payout factor'));
-  const verdict = gkrVerdict(pick);
-  const verdictColor = verdict.tone === 'agree' ? palette.green : verdict.tone === 'disagree' ? palette.danger : palette.muted;
   return <View style={styles.card}><Pressable accessibilityRole="button" accessibilityLabel={`Edge detail for ${pick.playerName}`}
     onPress={() => router.push({ pathname: '/edge/[lineId]', params: { lineId: pick.lineId } })} style={styles.body}>
     <View style={styles.row}>
@@ -33,10 +31,6 @@ export function EdgePickCard({ pick, rank, inSlip }: { pick: EdgePick; rank?: nu
     <Text style={styles.summary}>{edgeSummary(pick)}</Text>
     {pick.lineGap !== null && Math.abs(pick.lineGap) >= .5 && pick.sources.market &&
       <Text style={styles.detail}>Books project {formatLine(Math.round(pick.sources.market.mean * 10) / 10)} vs line {formatLine(pick.threshold)}</Text>}
-    <View style={styles.versus}>
-      <Text style={styles.versusEdge}>EDGE: {pick.side} {formatLine(pick.threshold)} · {pct(pick.probability, 0)}</Text>
-      <Text style={[styles.versusGkr, { color: verdictColor }]}>{verdict.label}</Text>
-    </View>
     {warning && <Text style={styles.warning}>⚠ {warning}</Text>}
     </Pressable>
     <Pressable accessibilityRole="button" onPress={() => edgeSlip.toggle(pick)} style={[styles.slip, inSlip && styles.slipOn]}>
@@ -60,9 +54,6 @@ const styles = StyleSheet.create({
   small: { color: palette.muted, fontSize: 10, fontWeight: '700' },
   summary: { color: palette.text, fontSize: 12 },
   warning: { color: palette.danger, fontSize: 11 },
-  versus: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 6 },
-  versusEdge: { color: palette.green, fontSize: 11, fontWeight: '800' },
-  versusGkr: { fontSize: 11, fontWeight: '800', flexShrink: 1, textAlign: 'right' },
   slip: { alignSelf: 'flex-start', borderWidth: 1, borderColor: palette.border, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5, marginTop: 2 },
   slipOn: { backgroundColor: palette.greenDim, borderColor: palette.green },
   slipText: { color: palette.muted, fontSize: 12, fontWeight: '800' },

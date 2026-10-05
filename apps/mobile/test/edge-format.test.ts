@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { edgePickSchema } from '@crowniq/contracts';
-import { edgeSummary, gkrVerdict, marketLabel, signedPoints, signedUnits, sportsFrom, toggleSlipLeg } from '../src/edge-format.js';
+import { edgeSummary, marketLabel, signedPoints, sportsFrom, toggleSlipLeg } from '../src/edge-format.js';
 
 const base = edgePickSchema.parse({ key: 'k1', lineId: 'l1', oppositeLineId: null, sport: 'NBA', league: 'NBA',
   eventId: 'e1', eventName: 'A @ B', eventStartTime: '2030-01-02T00:00:00Z', playerId: 'p1', playerName: 'Fixture',
@@ -30,14 +30,4 @@ test('slip legs toggle, replace the same player and cap at six', () => {
   assert.equal(toggleSlipLeg(legs, legs[0]).length, 0);
   const many = Array.from({ length: 6 }, (_, index) => ({ ...base, lineId: 'x' + index, playerId: 'p' + index }));
   assert.equal(toggleSlipLeg(many, { ...base, lineId: 'new', playerId: 'new' }).length, 6);
-});
-
-test('GKR verdict is phrased against the Edge side', () => {
-  assert.deepEqual(gkrVerdict(base), { label: 'GKR: not scored', tone: 'none' });
-  const gkr = { direction: 'MORE' as const, score: 84, scoreBand: 'PLAYABLE' as const, reasonCode: null };
-  assert.deepEqual(gkrVerdict({ ...base, gkr }), { label: 'GKR: MORE 30.5 · 84 · agrees', tone: 'agree' });
-  assert.equal(gkrVerdict({ ...base, gkr: { ...gkr, direction: 'LESS' } }).tone, 'disagree');
-  assert.deepEqual(gkrVerdict({ ...base, gkr: { ...gkr, direction: 'PASS', score: null } }), { label: 'GKR: PASS', tone: 'pass' });
-  assert.equal(signedUnits(2.345), '+2.3u');
-  assert.equal(signedUnits(-1), '−1.0u');
 });

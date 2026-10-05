@@ -403,7 +403,7 @@ Users paste or choose legs on any platform and get:
 
 | Phase | Contents | Ships when |
 | --- | --- | --- |
-| P1 | §1 snapshot store, identity/market map, ESPN grading; port `packages/edge` **and the Edge vs GKR head-to-head** (`head-to-head.ts`, `/v1/edge/head-to-head`, scoreboard screen, GKR verdict on every Edge card) from `claude/edge-engine`, extended so every platform's GKR-scored lines (Underdog, Pick6, DraftKings, Hard Rock, Kalshi) are compared too | 24h of snapshots, match-rate targets met, head-to-head recording live |
+| P1 | §1 snapshot store, identity/market map, ESPN grading; port `packages/edge` from `claude/edge-engine` | 24h of snapshots, match-rate targets met |
 | P2 | §2 pricing core with leave-one-out, freshness, learned dispersion/book weights; §4 payout layers for all 7 platforms; basic Edge tab | Per-platform EV tests pass; live board priced on all platforms |
 | P3 | §3 steam/stale/news; §6 ranking; §8 push alerts | STALE replay report exists; alerts rate-limited |
 | P4 | §9 evaluation + CLV + track-record screen + backtest harness | Metrics visible per platform |

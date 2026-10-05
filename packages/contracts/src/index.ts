@@ -318,9 +318,6 @@ export const edgePickSchema = z.object({
   warnings: z.array(z.string()),
   calibrated: z.boolean(),
   modelVersion: identifier,
-  // GKR's call on the same player, market and number, for side-by-side display.
-  gkr: z.object({ direction: directionSchema, score: z.number().nullable(), scoreBand: scoreBandSchema.nullable(),
-    reasonCode: z.string().nullable() }).nullable().optional(),
 });
 export const edgeEntrySchema = z.object({
   type: z.enum(['POWER', 'FLEX']), size: z.number().int().min(2).max(6),
@@ -355,36 +352,6 @@ export const edgeBoardResponseSchema = z.object({
   slips: z.array(edgeSlipSchema),
 });
 
-// ---- Edge vs GKR head-to-head scoreboard ----
-const engineRecordSchema = z.object({
-  calls: z.number().int(), graded: z.number().int(), wins: z.number().int(), losses: z.number().int(),
-  pushes: z.number().int(), hitRate: z.number().nullable(),
-  ci95: z.tuple([z.number(), z.number()]).nullable(),
-  // Flat one-unit legs paid at the reference entry's break-even odds.
-  units: z.number(), roi: z.number().nullable(),
-  // Average closing market probability of the engine's side (sportsbook-priced lines only).
-  closingFair: z.number().nullable(), beatCloseRate: z.number().nullable(), closingSamples: z.number().int(),
-});
-export const headToHeadTierSchema = z.object({ gkr: engineRecordSchema, edge: engineRecordSchema });
-export const headToHeadReportSchema = z.object({
-  since: timestamp.nullable(), updatedAt: timestamp, breakEven: z.number(),
-  tiers: z.object({ top: headToHeadTierSchema, all: headToHeadTierSchema }),
-  overlap: z.object({ both: z.number().int(), agree: z.number().int(), disagree: z.number().int(),
-    disagreementsGraded: z.number().int(), gkrWins: z.number().int(), edgeWins: z.number().int(),
-    gkrOnly: z.number().int(), edgeOnly: z.number().int() }),
-  leader: z.object({ engine: z.enum(['EDGE', 'GKR', 'TIE', 'TOO_EARLY']), margin: z.number().nullable(),
-    pValue: z.number().nullable(), note: z.string() }),
-  daily: z.array(z.object({ date: z.string(), gkrUnits: z.number(), edgeUnits: z.number(),
-    gkrGraded: z.number().int(), edgeGraded: z.number().int() })),
-  // All-calls record per sport.
-  bySport: z.record(z.string(), headToHeadTierSchema),
-  recentDisagreements: z.array(z.object({ playerName: z.string(), sport: z.string(), market: z.string(),
-    threshold: z.number(), eventStartTime: timestamp, actual: z.number().nullable(),
-    gkr: z.object({ side: playableDirectionSchema, score: z.number().nullable() }),
-    edge: z.object({ side: playableDirectionSchema, probability: z.number() }),
-    winner: z.enum(['EDGE', 'GKR', 'PUSH', 'PENDING']) })),
-});
-
 export type PropLine = z.infer<typeof propLineSchema>;
 export type MarketQuote = z.infer<typeof marketQuoteSchema>;
 export type EdgePick = z.infer<typeof edgePickSchema>;
@@ -393,8 +360,6 @@ export type EdgeSlip = z.infer<typeof edgeSlipSchema>;
 export type EdgeBoardResponse = z.infer<typeof edgeBoardResponseSchema>;
 export type EdgeTier = z.infer<typeof edgeTierSchema>;
 export type EdgeRating = z.infer<typeof edgeRatingSchema>;
-export type HeadToHeadReport = z.infer<typeof headToHeadReportSchema>;
-export type EngineRecord = z.infer<typeof engineRecordSchema>;
 export type Board = z.infer<typeof boardSchema>;
 export type Evidence = z.infer<typeof evidenceSchema>;
 export type Analysis = z.infer<typeof analysisSchema>;
