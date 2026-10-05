@@ -372,4 +372,4 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 }
 
 await app.listen({ host, port });
-console.log('CrownIQ API listening on ' + host + ':' + port);
+console.log('CrownIQ API listening on ' + host + ':' + port + ' · build ' + ((process.env.RAILWAY_GIT_COMMIT_SHA ?? '').slice(0, 7) || 'unknown'));

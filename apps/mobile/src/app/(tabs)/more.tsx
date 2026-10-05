@@ -2,7 +2,7 @@ import { entryBreakEvens } from '@crowniq/contracts';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import type { Href } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../auth';
 import { Sheet } from '../../components/Sheet';
@@ -20,6 +20,7 @@ import { BetaFeedback, FeedbackReview, PatchNotes } from '../../components/Feedb
 import { ScoutQueue } from '../../components/ScoutQueue';
 import { colors, radius } from '../../theme';
 import { useDraft } from '../../use-draft';
+import { appCommit, isOutdated } from '../../version';
 
 const helpUrl = 'https://www.ncpgambling.org/help-treatment/about-the-national-problem-gambling-helpline/';
 
@@ -35,8 +36,8 @@ function Row({ icon, title, detail, onPress, locked, last }: { icon: IconName; t
   </Pressable>;
 }
 
-/** This copy of the app against the server's build: an old copy says to reopen. */
-const appCommit = (process.env.EXPO_PUBLIC_COMMIT ?? '').slice(0, 7) || null;
+/** The version row: this copy's build against the server's. Tapping it reloads the app (a home-screen copy has no
+ * pull-to-refresh). */
 function AppVersion() {
   const { request } = useAuth();
   const [server, setServer] = useState<string | null>(null);
@@ -46,10 +47,11 @@ function AppVersion() {
       .then((commit) => { if (active) setServer(commit); }).catch(() => undefined);
     return () => { active = false; };
   }, [request]);
-  const old = !!appCommit && !!server && appCommit !== server;
-  return <Text style={[styles.footnote, old && { color: colors.gold }]}>
-    {old ? `Update available: close CrownIQ completely and open it again (this copy ${appCommit}, latest ${server}).`
-      : `Version ${appCommit ?? server ?? 'unknown'}`}</Text>;
+  const old = isOutdated(appCommit, server);
+  const version = appCommit ?? server ?? 'unknown';
+  return <Row icon={old ? 'update' : 'check-circle-outline'} last title={old ? 'Update ready: tap to load' : 'App version'}
+    detail={old ? `${appCommit} → ${server}` : `${version} · up to date · tap to reload`}
+    onPress={Platform.OS === 'web' && typeof window !== 'undefined' ? () => window.location.reload() : undefined} />;
 }
 
 export default function MoreScreen() {
@@ -120,8 +122,9 @@ export default function MoreScreen() {
       <Text style={styles.heading}>Beta</Text>
       <View style={styles.group}>
         <Row icon="bug-outline" title="Beta feedback" detail="Report a bug or idea" onPress={demo ? undefined : () => setSheet('feedback')} />
-        <Row icon="bullhorn-outline" title="Updates" detail="Patches and fixes" last={!owner} onPress={demo ? undefined : () => setSheet('updates')} />
-        {owner && <Row icon="clipboard-check-outline" title="Review feedback" detail="Owner" last onPress={() => setSheet('review')} />}
+        <Row icon="bullhorn-outline" title="Updates" detail="Patches and fixes" onPress={demo ? undefined : () => setSheet('updates')} />
+        {owner && <Row icon="clipboard-check-outline" title="Review feedback" detail="Owner" onPress={() => setSheet('review')} />}
+        <AppVersion />
       </View>
 
       <Text style={styles.heading}>App Settings</Text>
@@ -151,7 +154,6 @@ export default function MoreScreen() {
       <Pressable accessibilityRole="button" onPress={() => void logout()} style={styles.logout}>
         <Icon name="logout" size={22} color={colors.red} /><Text style={styles.logoutText}>{demo ? 'Exit demo' : 'Log Out'}</Text>
       </Pressable>
-      <AppVersion />
       <Text style={styles.footnote}>CrownIQ analysis is uncertain and no selection is guaranteed. Set limits and take a
         break when you need one. Confidential help: call or text 1-800-MY-RESET.</Text>
     </ScrollView>

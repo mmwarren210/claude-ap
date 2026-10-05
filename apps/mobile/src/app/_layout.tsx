@@ -5,6 +5,7 @@ import { DraftProvider } from '../use-draft';
 import { AuthProvider, useAuth } from '../auth';
 import { colors } from '../theme';
 import { SetPassword } from '../components/SetPassword';
+import { useAutoUpdate } from '../auto-update';
 
 const crownTheme = {
   ...DarkTheme,
@@ -33,6 +34,7 @@ function ProfileRouter(){
   </DraftProvider></BoardProvider>:navigator;
 }
 export default function RootLayout() {
+  useAutoUpdate();
   return <ThemeProvider value={crownTheme}>
     <StatusBar style="light" />
     <AuthProvider><ProfileRouter /></AuthProvider>

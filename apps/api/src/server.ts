@@ -185,6 +185,7 @@ export function buildServer(options: ServerOptions = {}) {
     const path=request.url.split('?')[0];
     if(options.requireProfiles && path.startsWith('/v1/') &&
       !path.startsWith('/v1/admin/') && !path.startsWith('/v1/auth/') && !path.startsWith('/v1/demo/') &&
+      path!=='/v1/version' &&
       !await currentUser(request))return reply.code(401).send({code:'PROFILE_REQUIRED'});
   });
   app.addHook('onReady',async()=>{

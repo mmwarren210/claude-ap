@@ -278,3 +278,11 @@ test('board plays where GKR can’t score: Scout first, then the History Read, t
   assert.deepEqual([plays.get('a')?.kind, plays.get('h')?.kind, plays.get('s')?.kind, plays.get('b')?.kind, plays.has('p')],
     ['scout', 'history', 'history', 'books', false]);
 });
+
+test('auto-update: only a known, different server build counts as newer', async () => {
+  const { isOutdated } = await import('../src/version.js');
+  assert.equal(isOutdated('abc1234', 'def5678'), true);
+  assert.equal(isOutdated('abc1234', 'abc1234'), false);
+  assert.equal(isOutdated(null, 'abc1234'), false);
+  assert.equal(isOutdated('abc1234', null), false);
+});
