@@ -160,9 +160,15 @@ export class OpenDotaHistory implements HistorySource {
   constructor(private readonly fetchFn: typeof fetch = fetch, private readonly pause = (ms: number) => new Promise<void>((done) => {
     const timer = setTimeout(done, ms); timer.unref?.(); }), private readonly maxMatches = 400) {}
   private async json(url: string): Promise<unknown> {
-    const response = await this.fetchFn(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
-    if (!response.ok) throw new Error(`OPENDOTA_HTTP_${response.status}`);
-    return response.json();
+    // OpenDota's free tier allows 60 a minute; on "too many requests" wait and try twice more.
+    for (const wait of [0, 15_000, 45_000]) {
+      if (wait) await this.pause(wait);
+      const response = await this.fetchFn(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
+      if (response.status === 429) continue;
+      if (!response.ok) throw new Error(`OPENDOTA_HTTP_${response.status}`);
+      return response.json();
+    }
+    throw new Error('OPENDOTA_HTTP_429');
   }
   refresh(): Promise<number> {
     this.refreshing ??= this.load().finally(() => { this.refreshing = null; });
@@ -208,7 +214,7 @@ export class OpenDotaHistory implements HistorySource {
           }
           this.seen.add(match.id);
         } catch (error) { this.lastError = String(error instanceof Error ? error.message : error).slice(0, 120); }
-        await this.pause(1000);
+        await this.pause(1500);
       }
     } catch (error) { this.lastError = String(error instanceof Error ? error.message : error).slice(0, 120); }
     return this.players.size;
