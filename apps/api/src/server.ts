@@ -1111,6 +1111,12 @@ export function buildServer(options: ServerOptions = {}) {
       ? options.sharpProps.refresh() : reply.code(503).send({ code: 'EV_UNCONFIGURED' }));
     admin.get('/context', async (_request, reply) => options.contextFeeds
       ? { feeds: await options.contextFeeds.status(), sharpProps: await options.sharpProps?.status() ?? null } : reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' }));
+    // One context feed's saved items (read-only), for the owner to check what a feed holds.
+    admin.get('/context/:id/items', async (request, reply) => {
+      const parsed=z.object({id:z.enum(['injuries','pinnacle','kalshi','polymarket'])}).safeParse(request.params);
+      if(!parsed.success||!options.contextFeeds)return reply.code(404).send({code:'UNKNOWN_FEED'});
+      return options.contextFeeds.items(parsed.data.id);
+    });
     // Pulls one context feed now; it spends from the shared daily scraper budget.
     admin.post('/context/pull', async (request, reply) => {
       if (!options.contextFeeds) return reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' });
