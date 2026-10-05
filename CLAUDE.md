@@ -28,8 +28,10 @@
 - **Revoke access** (owner, 2026-10-05): More → Member access lists every account with Revoke/Restore
   (`/v1/owner/members`, `/v1/owner/members/access`). Revoked accounts are signed out at once, can't sign in or reset,
   and free a member seat; restoring a member needs a free seat. The owner can't revoke themselves.
-- **Public address: https://crowniq.up.railway.app** (owner, 2026-10-05). The old `claude-ap-production` address
-  still works; other Railway names stay as they are (users don't see them).
+- **Public address: https://crowniq.up.railway.app** (owner, 2026-10-05). The old `claude-ap-production` address is
+  turned off. Admin curls and the deploy live check need `crowniq.up.railway.app` allowed in the session environment's
+  network settings (and the admin token injected for it); until then deploy with `CROWNIQ_SKIP_LIVE_CHECK=1`.
+  Other Railway names stay as they are (users don't see them).
 - **GKR 80 and up is a play** (owner, 2026-10-05): Crown legs need 80 at every size (was 88/86/84/82/80), and GKR's
   tracked record saves picks from 80 (`CROWNIQ_AUTO_TRACK_MIN_BAND` default PLAYABLE). Ranking stays by score. Scout's
   own scale (55 and up) is unchanged.

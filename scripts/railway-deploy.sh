@@ -7,7 +7,8 @@ set -euo pipefail
 API=https://backboard.railway.app/graphql/v2
 SERVICE_ID=6e3355d4-5663-4ac1-920d-e4b5020756b2
 ENVIRONMENT_ID=dd8a8b68-9cdf-4c08-9b53-40a782d3bd47
-# Claude sessions check through the original address (CROWNIQ_APP_URL): the sandbox network filter blocks the new one.
+# Claude sessions can't reach this address until it is allowed in the session environment's network settings; there
+# Railway's SUCCESS status is the check (set CROWNIQ_SKIP_LIVE_CHECK=1).
 APP_URL=${CROWNIQ_APP_URL:-https://crowniq.up.railway.app}
 
 if [[ $# -gt 0 ]]; then
@@ -40,5 +41,6 @@ for _ in $(seq 1 80); do
 done
 [[ "$status" == SUCCESS ]] || { echo 'Timed out waiting for the deployment'; exit 1; }
 
+if [[ -n "${CROWNIQ_SKIP_LIVE_CHECK:-}" ]]; then echo "Deployed (live check skipped: $APP_URL not reachable from here)"; exit 0; fi
 curl -sS --fail --retry 5 --retry-delay 5 --retry-all-errors "$APP_URL/health" | jq -e '.status == "ok"'
 curl -sS --fail -o /dev/null -w 'Web app: %{http_code}\n' "$APP_URL/"
