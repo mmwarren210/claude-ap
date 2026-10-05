@@ -12,7 +12,8 @@ import { colors, radius, rankAccents } from '../theme';
 import { useBoard } from '../use-board';
 import { usePayouts } from '../use-payouts';
 import { alpha } from './ui/color';
-import { GhostButton, PrimaryButton } from './ui/Controls';
+import { GhostButton, PrimaryButton, Segmented } from './ui/Controls';
+import { useCrownLegs } from '../crown-legs';
 import { GlowCard } from './ui/GlowCard';
 import { Icon } from './ui/Icon';
 import { PlayerAvatar } from './ui/PlayerAvatar';
@@ -56,8 +57,9 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
   const { request, demo } = useAuth();
   const { nowMs } = useBoard();
   const [lines, setLines] = useState<AppLine[] | null>(null);
-  // The first Crown is built straight from the lines; Generate New and removing a leg replace it.
-  const [chosen, setChosen] = useState<Leg[] | null>(null);
+  // Picks added on the board, or the last generated Crown (shared with the board); until then, one built from the lines.
+  const [stored, setStored] = useCrownLegs<Leg>(app);
+  const [kind, setKind] = useState<'ANY' | 'STANDARD' | 'BOOSTED' | 'GKR'>('ANY');
   const [built, setBuilt] = useState(0);
   const [name, setName] = useState<string | null>(null), [editing, setEditing] = useState(false);
   const [message, setMessage] = useState('');
@@ -67,15 +69,23 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
     const body = response?.ok ? await response.json() as { lines: AppLine[] } : null;
     setLines(body?.lines ?? []);
   }, [app, request, demo]);
-  useFocusEffect(useCallback(() => { setChosen(null); setBuilt(0); setMessage(''); setLines(null); void load(); }, [load]));
+  useFocusEffect(useCallback(() => { setBuilt(0); setMessage(''); setLines(null); void load(); }, [load]));
 
   const payouts = usePayouts()[app];
+  // The line type to build from: any backed line, standard payouts only, boosted picks only, or GKR's picks only.
+  const pickOf = useCallback((line: AppLine) => {
+    const back = backing(line);
+    if (!back) return null;
+    const multiplier = line.multipliers?.[back.side] ?? 1;
+    if (kind === 'STANDARD' && multiplier !== 1 || kind === 'BOOSTED' && multiplier <= 1.01 || kind === 'GKR' && back.by !== 'GKR') return null;
+    return back;
+  }, [kind]);
+  const first = useMemo(() => buildSlip(lines ?? [], size, nowMs, 0, pickOf), [lines, size, nowMs, pickOf]);
+  const legs: readonly Leg[] = stored.length ? stored : first;
   const backedCount = (lines ?? []).filter((line) => backing(line) && Date.parse(line.eventStartTime) > nowMs).length;
-  const first = useMemo(() => buildSlip(lines ?? [], size, nowMs, 0, backing), [lines, size, nowMs]);
-  const legs = chosen ?? first;
-  const setLegs = (next: Leg[]) => setChosen(next);
+  const setLegs = (next: readonly Leg[]) => setStored(next);
   const generate = (round: number) => {
-    const next = buildSlip(lines ?? [], size, nowMs, round * size, backing);
+    const next = buildSlip(lines ?? [], size, nowMs, round * size, pickOf);
     setBuilt(round + 1); setLegs(next); setName(null);
     setMessage(next.length < 2 ? `Fewer than 2 ${appNames[app]} lines are backed right now.`
       : next.length < size ? `Only ${next.length} ${appNames[app]} lines qualify right now.` : '');
@@ -108,6 +118,9 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
     .catch(() => undefined);
 
   return <View style={styles.wrap}>
+    <Segmented label="Line type" value={kind} onChange={(value) => { setKind(value); setStored([]); setBuilt(0); }}
+      options={[{ value: 'ANY' as const, label: 'Any' }, { value: 'STANDARD' as const, label: 'Standard' },
+        { value: 'BOOSTED' as const, label: 'Boosted' }, { value: 'GKR' as const, label: 'GKR only' }]} />
     <GlowCard accent={colors.mint}>
       <View style={styles.head}>
         <Icon name="crown" size={54} color={colors.neon} />
@@ -117,7 +130,7 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
             : <Pressable accessibilityRole="button" onPress={() => setEditing(true)} style={styles.nameRow}>
               <Text style={styles.title} numberOfLines={1}>{crownName}</Text>
               <Icon name="pencil-outline" size={18} color={colors.textMuted} /></Pressable>}
-          <Text style={styles.meta}>{legs.length} {legs.length === 1 ? 'Leg' : 'Legs'} · Auto-built from {appNames[app]}’s own lines ·
+          <Text style={styles.meta}>{legs.length} {legs.length === 1 ? 'Leg' : 'Legs'} · {stored.length && !built ? 'Hand-picked' : 'Auto-built'} from {appNames[app]}’s own lines ·
             {' '}{lines === null ? 'loading…' : `${backedCount} backed`}</Text>
           <View style={styles.confidence}><Icon name="creation" size={15} color={colors.mint} />
             <Text style={styles.confidenceText}>{confidence} confidence</Text></View>
@@ -163,6 +176,7 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
         real one before you submit.</Text>
     </GlowCard>
     {legs.length >= 2 && <GhostButton label={`Copy picks & open ${appNames[app]}`} icon="open-in-new" onPress={copy} />}
+    {stored.length > 0 && <GhostButton label="Clear Crown" icon="close" onPress={() => { setStored([]); setBuilt(0); }} />}
   </View>;
 }
 

@@ -1,13 +1,13 @@
 import type { Analysis, PropLine } from '@crowniq/contracts';
-import { router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../auth';
 import { matchup } from '../../components/BoardCard';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { alpha } from '../../components/ui/color';
-import { GhostButton, PrimaryButton, Segmented } from '../../components/ui/Controls';
+import { ChipRow, FilterChip, GhostButton, PrimaryButton, Segmented } from '../../components/ui/Controls';
 import { GlowCard } from '../../components/ui/GlowCard';
 import { useTipFlow } from '../../components/TipSheet';
 import { Icon } from '../../components/ui/Icon';
@@ -16,7 +16,6 @@ import { PlayerAvatar } from '../../components/ui/PlayerAvatar';
 import { ScoreRing } from '../../components/ui/ScoreRing';
 import { adjustedOutlook, crownIssueMessage, slipAdjustment, crownMinimumLineScore, formatLine, entryName, entryOutlook, gameTime, lineStats, marketLabel, percent1, signed } from '../../insights';
 import { usePayouts } from '../../use-payouts';
-import { pickApps } from '../../components/AppBoard';
 import { autoCrown, betterSwap, checkLeg, gkrBacked, shareCrown } from '../../state';
 import { PortSheet } from '../../components/PortSheet';
 import { appNames } from '../../port';
@@ -29,6 +28,14 @@ import { usePlayerGames } from '../../use-player-games';
 import { useRankings } from '../../use-rankings';
 import { ReportNudge } from '../../components/ReportNudge';
 import { AppCrown } from '../../components/AppCrown';
+import { BookCrown, MarketCrown } from '../../components/ProviderCrowns';
+import { crownOpening, openCrownOn } from '../../crown-legs';
+import type { CrownProvider } from '../../crown-legs';
+
+const crownProviders: readonly { value: CrownProvider | 'prizepicks'; label: string }[] = [
+  { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'DK Pick’em' },
+  { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' }, { value: 'kalshi', label: 'Kalshi' },
+  { value: 'polymarket', label: 'Polymarket' }];
 
 /** PrizePicks takes up to 6 picks; Underdog and DK Pick’em up to 8. */
 const sizesFor = (most: number) => Array.from({ length: most - 1 }, (_, index) => index + 2).map((value) => ({ value,
@@ -98,7 +105,12 @@ export default function CrownScreen() {
   const [edges, setEdges] = useState<Record<string, number | null>>({});
   const [message, setMessage] = useState('');
   const [portApp, setPortApp] = useState<PickApp | null>(null);
-  const [playApp, setPlayApp] = useState<PickApp>('prizepicks');
+  // Which provider's Crown: the three pick'em apps, the sportsbooks and the prediction markets. A board's "Open Crown"
+  // picks it.
+  const [provider, setProvider] = useState<CrownProvider | 'prizepicks'>(crownOpening());
+  useFocusEffect(useCallback(() => { setProvider(crownOpening()); }, []));
+  const playApp: PickApp = provider === 'underdog' || provider === 'pick6' ? provider : 'prizepicks';
+  const [lineKind, setLineKind] = useState<'ANY' | 'REGULAR' | 'GOBLIN' | 'DEMON'>('ANY');
   const tips = useTipFlow(setMessage);
   const [keptLeg, setKeptLeg] = useState<string | null>(null);
   const analyses = useMemo(() => new Map(board?.analyses.map((item) => [item.lineId, item])), [board]);
@@ -135,7 +147,9 @@ export default function CrownScreen() {
   const showSwap = swap && swap.weakest.line.id !== keptLeg ? swap : null;
 
   const generate = () => {
-    const next = autoCrown(candidates, size, crownMinimumLineScore[size], built ? offset + 1 : 0, nowMs);
+    // The line type chosen above: standard lines, Goblins or Demons only (or any).
+    const pool = lineKind === 'ANY' ? candidates : candidates.filter(({ line }) => line.lineType === lineKind);
+    const next = autoCrown(pool, size, crownMinimumLineScore[size], built ? offset + 1 : 0, nowMs);
     setOffset(built ? offset + 1 : 0); setBuilt(true); setName(null); replace(next);
     setMessage(next.length < size ? `Only ${next.length} picks meet the ${crownMinimumLineScore[size]} minimum for a ` +
       `${size}-leg Crown right now.` : '');
@@ -166,15 +180,20 @@ export default function CrownScreen() {
     } catch { setMessage('Could not reach CrownIQ. Your draft is still on this device.'); }
   };
 
-  // Underdog and Pick6 Crowns are built from that app's own lines (different numbers, no Goblins or Demons).
-  const appPicker = <Segmented label="Play on" options={pickApps} value={playApp}
-    onChange={(app) => { setPlayApp(app); if (app === 'prizepicks' && size > 6) setSize(6); }} />;
-  if (playApp !== 'prizepicks') return <SafeAreaView style={styles.safe} edges={['top']}>
-    <ScrollView contentContainerStyle={styles.content}>
+  // Every provider has its own Crown: Underdog and DK Pick'em from their own lines (no Goblins or Demons), the
+  // sportsbooks and prediction markets from their boards.
+  const appPicker = <ChipRow>{crownProviders.map((item) => <FilterChip key={item.value} label={item.label}
+    active={provider === item.value} chevron={false} onPress={() => { setProvider(item.value); openCrownOn(item.value);
+      if (item.value === 'prizepicks' && size > 6) setSize(6); }} />)}</ChipRow>;
+  if (provider !== 'prizepicks') return <SafeAreaView style={styles.safe} edges={['top']}>
+    <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <AppHeader subtitle="Your Crown" />
       {appPicker}
-      <Segmented label="Crown size" options={sizesFor(8)} value={size} onChange={setSize} />
-      <AppCrown key={`${playApp}-${size}`} app={playApp} size={size} />
+      {provider === 'underdog' || provider === 'pick6' ? <>
+        <Segmented label="Crown size" options={sizesFor(8)} value={size} onChange={setSize} />
+        <AppCrown key={`${provider}-${size}`} app={provider} size={size} />
+      </> : provider === 'draftkings' || provider === 'hardrock' ? <BookCrown key={provider} book={provider} />
+        : <MarketCrown key={provider} platform={provider} />}
       <ReportNudge where="crown" />
     </ScrollView>
   </SafeAreaView>;
@@ -184,6 +203,9 @@ export default function CrownScreen() {
       <AppHeader subtitle="Your Crown" />
       {appPicker}
       <Segmented label="Crown size" options={sizesFor(6)} value={size} onChange={setSize} />
+      <Segmented label="Line type" value={lineKind} onChange={(value) => { setLineKind(value); setBuilt(false); setOffset(0); }}
+        options={[{ value: 'ANY' as const, label: 'Any' }, { value: 'REGULAR' as const, label: 'Standard' },
+          { value: 'GOBLIN' as const, label: 'Goblin' }, { value: 'DEMON' as const, label: 'Demon' }]} />
       <GlowCard accent={colors.mint}>
         <View style={styles.summary}>
           <Icon name="crown" size={54} color={colors.neon} />

@@ -33,9 +33,10 @@ export function parlayAmerican(picks: readonly { american: number | null }[]): n
 }
 
 /** A prediction-market slip: the biggest edges, one per game. */
-export function buildMarketSlip<T extends MarketSlipPick>(picks: readonly T[], size: number, nowMs: number): T[] {
+export function buildMarketSlip<T extends MarketSlipPick>(picks: readonly T[], size: number, nowMs: number, offset = 0): T[] {
   const chosen: T[] = [], games = new Set<string>();
-  for (const pick of [...picks].sort((a, b) => b.edge - a.edge)) {
+  const ordered = [...picks].sort((a, b) => b.edge - a.edge);
+  for (const pick of [...ordered.slice(offset), ...ordered.slice(0, offset)]) {
     if (chosen.length >= size) break;
     if (Date.parse(pick.startTime) <= nowMs || games.has(pick.game)) continue;
     games.add(pick.game); chosen.push(pick);

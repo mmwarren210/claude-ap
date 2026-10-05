@@ -1,5 +1,6 @@
 import { useRecordText } from '../use-hit-rates';
-import { useFocusEffect } from 'expo-router';
+import { openCrownOn, useCrownLegs } from '../crown-legs';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,19 +8,18 @@ import { useAuth } from '../auth';
 import { bestBreakEven } from '@crowniq/contracts';
 import { entryName, entryOutlook, formatLine, gameTime, percent1 } from '../insights';
 import { usePayouts } from '../use-payouts';
-import { buildSlip } from '../app-slip';
 import { colors, radius } from '../theme';
 import { SCOUT } from '../scout';
 import { useBoard } from '../use-board';
-import { appNames, copyAndOpen, slipText } from '../port';
+import { appNames } from '../port';
 import type { PickApp } from '../port';
 import { BoardPicker, pickApps } from './BoardPicker';
 import type { BoardSource } from './BoardPicker';
 import { Notice } from './Screen';
 import { AppHeader } from './ui/AppHeader';
-import { ChipRow, FilterChip, GhostButton, PrimaryButton, Segmented } from './ui/Controls';
+import { ChipRow, FilterChip, PrimaryButton, Segmented } from './ui/Controls';
 import { PlayerAvatar } from './ui/PlayerAvatar';
-import { backedSide, backing, historySide, scoutSide, sideLabel } from '../app-lines';
+import { backedSide, historySide, scoutSide, sideLabel } from '../app-lines';
 import type { AppLine, Side } from '../app-lines';
 
 export type { PickApp };
@@ -110,9 +110,9 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   const [gkrOnly, setGkrOnly] = useState(false);
   const [boostOnly, setBoostOnly] = useState(false);
   const [scored, setScored] = useState(false);
-  const [slip, setSlip] = useState<{ line: AppLine; side: Side }[]>([]);
+  // Picks go to this app's Crown (built, saved and copied in the Crown tab).
+  const [slip, setSlip] = useCrownLegs<{ line: AppLine; side: Side }>(app);
   const [message, setMessage] = useState('');
-  const [slipSize, setSlipSize] = useState(4), [built, setBuilt] = useState(0);
   const load = useCallback(async () => {
     if (demo) { setState('ready'); return; }
     try {
@@ -147,8 +147,9 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     if (slip.some((item) => item.line.playerId === line.playerId && item.line.id !== line.id)) {
       setMessage(`${line.playerName} is already on this slip.`); return;
     }
-    if (!picks.has(line.id) && slip.length >= 8) { setMessage(`A ${appNames[app]} slip holds up to 8 picks.`); return; }
+    if (!picks.has(line.id) && slip.length >= 8) { setMessage(`A ${appNames[app]} Crown holds up to 8 picks.`); return; }
     setSlip([...slip.filter((item) => item.line.id !== line.id), { line, side }]);
+    setMessage(`Added ${line.playerName} to your ${appNames[app]} Crown.`);
   };
   // Ask Scout on one line now (same daily allowance as Ask Scout on the PrizePicks board).
   const [asking, setAsking] = useState<Set<string>>(new Set());
@@ -165,17 +166,6 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     setMessage(body.code === 'DAILY_LIMIT_REACHED' ? `You’ve used today’s Ask ${SCOUT} picks. More tomorrow.`
       : body.code === 'EVENT_STARTED' ? 'That game has started.' : `${SCOUT} couldn’t answer right now. Try again soon.`);
   };
-  const save = async () => {
-    try {
-      const response = await request('/v1/me/crowns', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ app, personal: true, lineIds: slip.map((item) => item.line.id),
-          directions: Object.fromEntries(slip.map((item) => [item.line.id, item.side])) }) });
-      if (response.ok) { setSlip([]); setMessage(`Saved to Your Picks in Results. It’s graded once the games finish.`); return; }
-      setMessage(response.status === 403 ? 'Demo mode is read-only. Sign in to save slips.'
-        : 'Could not save this slip. A line may have moved or started; refresh and try again.');
-    } catch { setMessage('Could not reach CrownIQ. Try again.'); }
-  };
-
   const appPayouts = usePayouts()[app];
   const easiest = bestBreakEven(appPayouts);
   // This slip's size at the app's payouts: the entry (Power or Flex) that needs the lowest hit rate per pick.
@@ -183,18 +173,6 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     const outlook = entryOutlook(appPayouts, slip.length, mode);
     return outlook ? [{ mode, ...outlook }] : [];
   }).sort((a, b) => a.breakEven - b.breakEven)[0] ?? null : null;
-  // The slip builder: GKR's strongest lines on this app, at the chosen size; "Build another" rotates past the top ones.
-  const build = () => {
-    const next = buildSlip(lines.filter((line) => sport === 'ALL' || line.league === sport), slipSize, nowMs, built * slipSize, backing);
-    setBuilt(built + 1); setSlip(next);
-    const entry = (['FLEX', 'POWER'] as const).flatMap((mode) => {
-      const outlook = entryOutlook(appPayouts, next.length, mode);
-      return outlook ? [{ mode, ...outlook }] : [];
-    }).sort((a, b) => a.breakEven - b.breakEven)[0];
-    setMessage(next.length < 2 ? `Fewer than 2 ${appNames[app]} lines are backed right now.`
-      : `Built ${next.length} picks from the strongest backed ${appNames[app]} lines${next.length < slipSize ? ` (only ${next.length} qualify)` : ''}.` +
-        (entry ? ` Play ${entryName(next.length, entry.mode)}: each pick needs ${percent1(entry.breakEven)}.` : ''));
-  };
   // Underdog and Pick6 multiply the entry's payout by each pick's own multiplier (a boost above 1x, a cut below).
   const slipBoost = Math.round(slip.reduce((product, item) => product * (item.line.multipliers?.[item.side] ?? 1), 1) * 100) / 100;
   const age = fetchedAt ? Math.max(0, Math.round((nowMs - Date.parse(fetchedAt)) / 60_000)) : null;
@@ -207,14 +185,6 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
       {boostCount > 0 && <FilterChip label={`Boosted (${boostCount})`} icon="rocket-launch-outline" active={boostOnly}
         chevron={false} onPress={() => setBoostOnly(!boostOnly)} />}
     </ChipRow>}
-    {scored && backed >= 2 && <View style={styles.builder}>
-      <Text style={styles.builderTitle}>Slip builder</Text>
-      <Segmented label="Slip size" value={slipSize} onChange={(value) => { setSlipSize(value); setBuilt(0); }}
-        options={[2, 3, 4, 5, 6, 7, 8].map((value) => ({ value, label: `${value}` }))} />
-      <PrimaryButton label={built ? 'Build another' : `Build a ${slipSize}-pick slip`} icon="auto-fix" onPress={build} />
-      <Text style={styles.note}>GKR 80 and up first, then {SCOUT}’s plays, then History plays. One per player, at most two per game and at least two teams. Review
-        each pick before you play it.</Text>
-    </View>}
     {scored && <Segmented label="Which lines" value={gkrOnly ? 'GKR' : 'ALL'} onChange={(value) => setGkrOnly(value === 'GKR')}
       options={[{ value: 'ALL', label: 'All lines' }, { value: 'GKR', label: `Picks (${backed})` }]} />}
     <Text style={styles.status}>{shown.length} lines{age === null ? '' : ` · captured ${age < 90 ? `${age} min` : `${Math.round(age / 60)} h`} ago`}</Text>
@@ -239,13 +209,8 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
           : state === 'error' ? 'Could not reach CrownIQ. Try again in a moment.'
             : `${appNames[app]} lines are pulled four times a day (9am, noon, 3pm and 6pm ET).`} />} />
     {slip.length > 0 && <View style={styles.tray}>
-      <Text style={styles.trayText}>{slip.length} {slip.length === 1 ? 'pick' : 'picks'} on your {appNames[app]} slip</Text>
-      <PrimaryButton label={slip.length < 2 ? 'Add 1 more to save' : 'Save slip'} icon="content-save-outline"
-        disabled={slip.length < 2} onPress={() => void save()} />
-      <GhostButton label={`Copy picks & open ${appNames[app]}`} icon="open-in-new" onPress={() => void copyAndOpen(app,
-        slipText(app, slip.map((item) => ({ player: item.line.playerName, stat: item.line.stat, line: item.line.threshold,
-          side: item.side })))).then((how) => setMessage(how === 'copied' ? `Picks copied. Find each player in ${appNames[app]}.`
-          : `Tap Copy in the share sheet, then find each player in ${appNames[app]}.`)).catch(() => undefined)} />
+      <Text style={styles.trayText}>{slip.length} {slip.length === 1 ? 'pick' : 'picks'} in your {appNames[app]} Crown</Text>
+      <PrimaryButton label="Open Crown" icon="crown" onPress={() => { openCrownOn(app); router.push('/(tabs)/crown'); }} />
     </View>}
   </SafeAreaView>;
 }

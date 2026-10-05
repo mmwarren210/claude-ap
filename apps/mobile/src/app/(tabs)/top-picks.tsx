@@ -30,6 +30,13 @@ import { betaNote } from '../../beta';
 import { useAiPicks } from '../../use-ai-picks';
 import type { AiRead } from '../../use-ai-picks';
 import { AllPicks } from '../../components/AllPicks';
+import type { PickSource } from '../../all-picks';
+
+/** Top Picks by provider: everything together, PrizePicks' GKR rankings, each other board, and +EV. */
+const topLists: readonly { value: 'ALL' | 'GKR' | 'EV' | Exclude<PickSource, 'prizepicks'>; label: string }[] = [
+  { value: 'ALL', label: 'All' }, { value: 'GKR', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' },
+  { value: 'pick6', label: 'DK Pick’em' }, { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' },
+  { value: 'kalshi', label: 'Kalshi' }, { value: 'polymarket', label: 'Polymarket' }, { value: 'EV', label: '+EV' }];
 
 type Card = RankingCard | SecondLookCard;
 type ListFilter = { sport: string; date: string; lineType: string };
@@ -136,7 +143,7 @@ function EvCard({ pick, onAdd }: { pick: EvPick; onAdd: () => void }) {
 
 export default function TopPicksScreen() {
   const { request, demo } = useAuth();
-  const [mode, setMode] = useState<'ALL' | 'GKR' | 'EV'>('ALL');
+  const [mode, setMode] = useState<'ALL' | 'GKR' | 'EV' | Exclude<PickSource, 'prizepicks'>>('ALL');
   const [evApp, setEvApp] = useState<'ALL' | keyof typeof evApps>('ALL');
   const { reads: scoutReads } = useAiPicks();
   const [ev, setEv] = useState<{ status: 'idle' | 'loading' | 'ready' | 'error'; value: EvResponse | null }>({ status: 'idle', value: null });
@@ -178,9 +185,9 @@ export default function TopPicksScreen() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Top Picks" />
-      <Segmented label="Pick list" options={[{ value: 'ALL' as const, label: 'Every app' }, { value: 'GKR' as const, label: 'GKR' },
-        { value: 'EV' as const, label: '+EV' }]} value={mode} onChange={setMode} />
-      {mode === 'ALL' ? <AllPicks /> : mode === 'EV' ? <>
+      <ChipRow>{topLists.map((item) => <FilterChip key={item.value} label={item.label} active={mode === item.value} chevron={false}
+        onPress={() => setMode(item.value)} />)}</ChipRow>
+      {mode === 'ALL' ? <AllPicks /> : mode !== 'GKR' && mode !== 'EV' ? <AllPicks key={mode} only={mode} /> : mode === 'EV' ? <>
         <Text style={styles.sectionText}>The sportsbooks’ no-vig chance for the same player and stat (at the same number, or
           estimated from their nearby numbers) against what each app’s easiest entry needs per pick
           (PrizePicks {((ev.value?.breakEvens?.prizepicks ?? ev.value?.breakEven ?? 0.5421) * 100).toFixed(1)}%). History’s read on

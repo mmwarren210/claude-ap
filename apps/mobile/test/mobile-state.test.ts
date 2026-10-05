@@ -321,3 +321,15 @@ test('every app: GKR, then Scout, then History, then the biggest edges; started 
     pick('e2', 'VALUE', 52, 0.05), pick('old', 'GKR', 99, null, '2030-01-01T11:00:00Z'), pick('g', 'GKR', 80)], now).map((item) => item.key),
   ['g', 's', 'h', 'e2', 'e1']);
 });
+
+test('provider Crowns: a board adds a pick, tapping again removes it, and each provider caps its own Crown', async () => {
+  const { crownLegs, setCrownLegs, toggleCrownLeg } = await import('../src/crown-legs.js');
+  const key = (item: { id: string }) => item.id;
+  setCrownLegs('hardrock', []);
+  assert.equal(toggleCrownLeg('hardrock', { id: 'a' }, key, 2), 'added');
+  assert.equal(toggleCrownLeg('hardrock', { id: 'b' }, key, 2), 'added');
+  assert.equal(toggleCrownLeg('hardrock', { id: 'c' }, key, 2), 'full');
+  assert.equal(toggleCrownLeg('hardrock', { id: 'a' }, key, 2), 'removed');
+  assert.deepEqual(crownLegs('hardrock'), [{ id: 'b' }]);
+  assert.deepEqual(crownLegs('kalshi'), [], 'each provider has its own');
+});

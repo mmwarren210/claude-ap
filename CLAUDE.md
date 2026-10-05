@@ -143,3 +143,11 @@ and confirm it ends with a healthy `/health` (see `docs/DEPLOY.md`).
   +EV pick carries the History Read on the same line ("History agrees/disagrees"). Top Picks opens on **Every app**
   (`AllPicks.tsx`, `all-picks.ts` `rankAll`): PrizePicks GKR/Scout/History, Underdog and DK Pick'em backed lines,
   DraftKings/Hard Rock GKR/History/Value picks, and Kalshi/Polymarket edges in one list with board chips.
+- **Boards vs Crown vs Top Picks (2026-10-05).** Board tab = picks boards only (no slip builders): each line shows where
+  it scores, with "Add to Crown" (DraftKings/Hard Rock/Kalshi/Polymarket cards; Underdog/DK Pick'em side buttons; PrizePicks
+  via the player screen). Those picks go to a per-provider store (`crown-legs.ts`, session only). The Crown tab has a
+  generator for every provider (chips): PrizePicks (line type Any/Standard/Goblin/Demon, 2–6), Underdog and DK Pick'em
+  (Any/Standard/Boosted/GKR only, 2–8), DraftKings (2–8) and Hard Rock (2–20) with pick type Any/GKR/History/Value/Fair
+  price (`ProviderCrowns.tsx` `BookCrown`), Kalshi and Polymarket (2–20, Any/Winners/Spreads/Totals/Props) (`MarketCrown`).
+  Sizes above 8 use a typed stepper (`ui/SizeStepper.tsx`). Top Picks chips: All, PrizePicks (GKR rankings), each other
+  board, +EV.

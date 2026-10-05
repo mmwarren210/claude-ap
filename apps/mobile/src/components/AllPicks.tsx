@@ -24,14 +24,15 @@ const word = (side: 'MORE' | 'LESS') => side === 'MORE' ? 'More' : 'Less';
 const odds = (american: number | null) => american === null ? '' : ` (${american > 0 ? '+' : ''}${american})`;
 
 /** The best picks on every board, ranked together; chips narrow it to one board. */
-export function AllPicks() {
+export function AllPicks({ only }: { only?: PickSource } = {}) {
   const { request, demo } = useAuth();
   const { data: board, nowMs } = useBoard();
   const { data: ranked } = useRankings();
   const { reads: scout } = useAiPicks();
   const history = useHistoryReads();
   const [others, setOthers] = useState<AnyPick[] | null>(null);
-  const [source, setSource] = useState<PickSource | 'ALL'>('ALL');
+  const [chosen, setSource] = useState<PickSource | 'ALL'>('ALL');
+  const source = only ?? chosen;
   useFocusEffect(useCallback(() => {
     if (demo) { setOthers([]); return; }
     let active = true;
@@ -83,13 +84,13 @@ export function AllPicks() {
   const counts = new Map<string, number>();
   for (const pick of all) counts.set(pick.source, (counts.get(pick.source) ?? 0) + 1);
   return <View style={styles.wrap}>
-    <Text style={styles.explain}>The best picks from every board in one list: GKR first, then {SCOUT}, then History (the
-      player’s recent games against that number), then price edges. Each shows where to play it.</Text>
-    <ChipRow>
+    <Text style={styles.explain}>{only ? `${sourceLabels[only]}’s best picks` : 'The best picks from every board in one list'}: GKR
+      first, then {SCOUT}, then History (the player’s recent games against that number), then price edges.</Text>
+    {!only && <ChipRow>
       <FilterChip label={`All (${all.length})`} active={source === 'ALL'} chevron={false} onPress={() => setSource('ALL')} />
       {(Object.keys(sourceLabels) as PickSource[]).filter((item) => counts.get(item)).map((item) => <FilterChip key={item}
         label={`${sourceLabels[item]} (${counts.get(item)})`} active={source === item} chevron={false} onPress={() => setSource(item)} />)}
-    </ChipRow>
+    </ChipRow>}
     {others === null && <Notice title="Loading every board" detail="Gathering picks from each app, book and market." />}
     {others !== null && !shown.length && <Notice title="No picks right now" detail="Check back after the next update." />}
     {shown.map((pick, index) => <Pressable key={`${pick.source}|${pick.key}|${pick.by}`} accessibilityRole="button" disabled={!pick.lineId}
