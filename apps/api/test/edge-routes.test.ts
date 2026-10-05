@@ -10,6 +10,8 @@ import { buildServer } from '../src/server.js';
 import { EdgeLedger } from '../src/edge-ledger.js';
 import { EdgeResultsWorker } from '../src/edge-service.js';
 import { InternalHistoryStore } from '../src/internal-history.js';
+import { HeadToHeadLedger } from '../src/head-to-head.js';
+import { headToHeadReportSchema } from '@crowniq/contracts';
 
 // Synthetic board and sportsbook prices only; nothing here is a real line or a real result.
 const clockTime = new Date('2030-01-10T12:00:00Z');
@@ -43,9 +45,10 @@ test('Edge routes price the board beside GKR, build slips, evaluate custom slips
   };
   const ledger = new EdgeLedger(join(directory, 'edge.json'), clock);
   const history = new InternalHistoryStore(join(directory, 'history.json'), clock);
-  const worker = new EdgeResultsWorker(ledger, history, null, { clock });
+  const headToHead = new HeadToHeadLedger(join(directory, 'h2h.json'), clock);
+  const worker = new EdgeResultsWorker(ledger, history, null, { clock, headToHead });
   const app = buildServer({ provider, adminToken: 'fixture-token', clock, internalHistory: history,
-    edge: { ledger, worker } });
+    edge: { ledger, worker, headToHead } });
   const auth = { authorization: 'Bearer fixture-token' };
   try {
     assert.equal((await app.inject('/v1/edge')).statusCode, 503);
@@ -63,6 +66,8 @@ test('Edge routes price the board beside GKR, build slips, evaluate custom slips
     assert.deepEqual(edge.picks.filter((pick) => pick.playerName === 'Delta Forward').map((pick) => pick.side), ['LESS']);
     assert.ok(edge.picks.every((pick) => pick.edge! > 0));
     assert.ok(edge.slips.length > 0);
+    assert.deepEqual(edge.picks[0].gkr, { direction: 'PASS', score: null, scoreBand: 'PASS',
+      reasonCode: 'MODEL_SUPPORT_INCOMPLETE' }, 'every pick carries GKR\'s call on the same line');
     assert.equal((await app.inject('/v1/edge?view=bogus')).statusCode, 400);
     assert.equal((await app.inject('/v1/edge?sport=NFL')).json().picks.length, 0);
 
@@ -97,13 +102,17 @@ test('Edge routes price the board beside GKR, build slips, evaluate custom slips
       direction: null, lineScore: null, dataConfidence: null })));
     const run = await worker.runOnce();
     assert.equal(run?.graded, 3);
+    const versus = headToHeadReportSchema.parse((await app.inject('/v1/edge/head-to-head')).json());
+    assert.equal(versus.tiers.all.edge.calls, 4);
+    assert.equal(versus.tiers.all.gkr.calls, 0, 'GKR passed on every fixture line');
+    assert.equal(versus.tiers.all.edge.graded, 4, 'graded from the same fact and history rows as the Edge ledger');
     performance = (await app.inject('/v1/edge/performance')).json();
     assert.equal(performance.pending, 0);
     assert.equal(performance.overall.graded, 4);
     const outcomes = Object.fromEntries(performance.recent.map((pick: { playerName: string; outcome: string }) =>
       [pick.playerName, pick.outcome]));
     assert.deepEqual(outcomes, { 'Alpha Guard': 'WIN', 'Bravo Wing': 'LOSS', 'Charlie Big': 'LOSS', 'Delta Forward': 'LOSS' });
-  } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await app.close(); await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 }); }
 });
 
 test('Edge can be disabled without touching the GKR board', async () => {

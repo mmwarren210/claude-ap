@@ -94,6 +94,30 @@ Default standard-line tables, overridable with `EDGE_PAYOUTS`. Confirm the curre
    - breakdowns by tier, rating and sport.
 5. **Backtest.** `GET /v1/owner/edge/backtest` replays the stats projection walk-forward over all internal history. For each game it predicts only from earlier games and compares against the original GKR projection (mean/SD of the last 10 games as a normal), reporting log score, MAE and Brier per market.
 
+## Edge vs GKR head-to-head
+
+Edge has to earn its place against GKR on identical terms, so a dedicated ledger (`apps/api/src/head-to-head.ts`, `CROWNIQ_HEAD_TO_HEAD_FILE`) records both engines on the same lines.
+
+- **When.** Every Edge pricing pass snapshots both engines on the same standard PrizePicks lines. Passes run on every board change, on app requests, and on a 5-minute server timer so nothing is missed when no one has the app open.
+- **What counts as a call.**
+  - GKR: a non-PASS direction. Its "top picks" are scores of 80 and up.
+  - Edge: a rated standard line. Its "top picks" are STRONG or ELITE.
+- **Sticky calls.** An engine's last pre-game side counts even if a later refresh drops it, for example when GKR's evidence expires near game time. Neither engine is penalized for that.
+- **Grading.** Both engines are graded from the same result: admin result facts, internal-history box scores, or Stat API finals fetched by the hourly worker.
+- **What's compared, per engine and per tier:**
+  - calls, record and hit rate with a Wilson 95% interval;
+  - units (one unit per leg, paid at the reference break-even) and ROI;
+  - closing value: the sportsbook-implied chance of the engine's side at the last pre-game price, and how often it beat break-even.
+- **The verdict comes from the lines where they disagree.** That's the same line and same moment with opposite sides and one result, scored with a sign test against 50/50, and requires at least 30 graded disagreements before declaring a leader. Hit rate alone would reward an engine for making fewer, safer calls, so units and hit rate are reported beside the verdict rather than deciding it.
+- **Exclusions.** Goblins and Demons are left out of the head-to-head because their payout factors are unknown.
+
+In the app:
+- every Edge pick card shows GKR's call on the same line, marked agrees, disagrees or PASS;
+- pick detail has an Edge vs GKR panel;
+- **Edge vs GKR scoreboard** (from the Edge tab) shows the verdict, both records side by side, the disagreement record, units by day, a breakdown by sport and recent disagreements with who was right.
+
+`GET /v1/edge/head-to-head` returns the same report.
+
 ## API
 
 All routes require a signed-in profile; owner routes return 404 to anyone else.
@@ -105,6 +129,7 @@ All routes require a signed-in profile; owner routes return 404 to anyone else.
 | `GET /v1/edge/player/:playerId` | Every priced line for a player. |
 | `POST /v1/edge/slip` `{type, lineIds}` | Exact EV for a custom 2–6 leg entry. |
 | `GET /v1/edge/performance` | Graded track record. |
+| `GET /v1/edge/head-to-head` | Edge vs GKR scoreboard on the same lines. |
 | `GET /v1/owner/edge/status`, `POST /v1/owner/edge/grade`, `GET /v1/owner/edge/backtest` | Owner diagnostics. |
 | `POST /v1/admin/edge/results` | Admin result facts. |
 

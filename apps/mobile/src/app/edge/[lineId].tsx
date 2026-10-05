@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../../auth';
 import { Notice, Screen } from '../../components/Screen';
-import { edgeSummary, formatLine, headline, pct, ratingLabel, signedPoints, tierLabel } from '../../edge-format';
+import { edgeSummary, formatLine, gkrVerdict, headline, pct, ratingLabel, signedPoints, tierLabel } from '../../edge-format';
 import { edgeSlip, useEdgeSlip } from '../../edge-slip';
 import { palette } from '../../theme';
 
@@ -50,6 +50,23 @@ export default function EdgeDetail() {
       <Pressable accessibilityRole="button" onPress={() => edgeSlip.toggle(pick)} style={[styles.button, inSlip && styles.buttonOn]}>
         <Text style={styles.link}>{inSlip ? '✓ In slip (tap to remove)' : '+ Add to slip'}</Text></Pressable>
     </View>
+    <Section title="EDGE vs GKR">
+      <View style={styles.versusRow}>
+        <View style={styles.versusCol}>
+          <Text style={styles.versusLabel}>EDGE</Text>
+          <Text style={styles.versusCall}>{pick.side} {formatLine(pick.threshold)}</Text>
+          <Text style={styles.muted}>{pct(pick.probability)} to hit{pick.edge !== null ? ` · ${signedPoints(pick.edge)} pts` : ''}</Text>
+        </View>
+        <View style={styles.versusCol}>
+          <Text style={styles.versusLabel}>GKR</Text>
+          <Text style={styles.versusCall}>{pick.gkr ? pick.gkr.direction === 'PASS' ? 'PASS' : `${pick.gkr.direction} ${formatLine(pick.threshold)}` : 'Not scored'}</Text>
+          <Text style={styles.muted}>{pick.gkr?.score !== null && pick.gkr?.score !== undefined ? `Score ${pick.gkr.score}${pick.gkr.scoreBand ? ' · ' + pick.gkr.scoreBand.replace('_', ' ') : ''}`
+            : pick.gkr?.reasonCode ? pick.gkr.reasonCode.replaceAll('_', ' ').toLowerCase() : 'No GKR model for this line'}</Text>
+        </View>
+      </View>
+      <Text style={styles.muted}>{gkrVerdict(pick).tone === 'disagree' ? 'The engines disagree on this line. The scoreboard tracks who was right.'
+        : gkrVerdict(pick).tone === 'agree' ? 'Both engines take the same side.' : 'Only Edge has a call here.'}</Text>
+    </Section>
     <Section title="WHY">{pick.reasons.map((reason) => <Text key={reason} style={styles.text}>• {reason}</Text>)}</Section>
     {pick.warnings.length > 0 && <Section title="CAUTION">{pick.warnings.map((warning) =>
       <Text key={warning} style={styles.warning}>⚠ {warning}</Text>)}</Section>}
@@ -98,4 +115,8 @@ const styles = StyleSheet.create({
   sectionTitle: { color: palette.green, fontSize: 11, fontWeight: '900', letterSpacing: 1.4 },
   bookRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
   bookName: { flex: 1 },
+  versusRow: { flexDirection: 'row', gap: 10 },
+  versusCol: { flex: 1, gap: 2, backgroundColor: palette.background, borderRadius: 12, padding: 10 },
+  versusLabel: { color: palette.muted, fontSize: 10, fontWeight: '900', letterSpacing: 1.2 },
+  versusCall: { color: palette.text, fontSize: 16, fontWeight: '900' },
 });

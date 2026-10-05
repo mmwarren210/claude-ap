@@ -3,6 +3,8 @@ import { backtestProjection, buildSlips, defaultEntries, describeEntry, EDGE_MOD
   fitCalibration, forecastReport, marketProfiles, normalizePlayerName, priceBoard, profileFor } from '@crowniq/edge';
 import type { EntryDefinition, StatRow } from '@crowniq/edge';
 import type { EdgeLedger, TrackedEdgePick } from './edge-ledger.js';
+import { gkrCall } from './head-to-head.js';
+import type { HeadToHeadLedger } from './head-to-head.js';
 import type { InternalHistoryRow, InternalHistoryStore } from './internal-history.js';
 import type { StatApiOwnerResearch, StatApiPlayer, StatApiSport } from './stat-api-owner-research.js';
 
@@ -10,6 +12,7 @@ export interface EdgeServiceOptions {
   readonly board: () => BoardResponse | null;
   readonly history?: InternalHistoryStore | null;
   readonly ledger?: EdgeLedger | null;
+  readonly headToHead?: HeadToHeadLedger | null;
   readonly entries?: readonly EntryDefinition[];
   readonly alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>;
   readonly clock?: () => Date;
@@ -94,6 +97,9 @@ export class EdgeService {
       const priced = priceBoard({ now, lines: board.board.lines, quotes: board.board.marketQuotes ?? [],
         entries: this.entries, calibration, alternateFactors: this.options.alternateFactors,
         history: (player) => { const list = rows.get(playerKey(player.sport, player.playerName)); return list ? dedupeRows(list) : undefined; } });
+      // GKR's call on the same player, market and number, for side-by-side display.
+      const analyses = new Map(board.analyses.map((analysis) => [analysis.lineId, analysis]));
+      for (const pick of priced.picks) pick.gkr = gkrCall(analyses, [pick.lineId, pick.oppositeLineId]);
       const slips = buildSlips(priced.picks, priced.entries);
       const count = (tier: string) => priced.picks.filter((pick) => pick.tier === tier).length;
       const response: EdgeBoardResponse = {
@@ -115,6 +121,7 @@ export class EdgeService {
       const snapshot = { response, byLine, computedAt: now.getTime(), durationMs: Date.now() - startedAt };
       this.current = snapshot; this.key = key; this.lastError = null;
       void this.options.ledger?.record(priced.picks).catch(() => undefined);
+      void this.options.headToHead?.record(board, priced.picks, priced.referenceEntry.breakEven).catch(() => undefined);
       return snapshot;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : 'EDGE_PRICING_FAILED';
@@ -155,6 +162,10 @@ export function customSlip(snapshot: EdgeSnapshot, entry: EdgeEntry, lineIds: re
   return evaluateSlip(entry, legs as EdgePick[]);
 }
 
+/** Anything gradable from a player's box score: Edge picks and head-to-head lines. */
+type GradableItem = Pick<TrackedEdgePick, 'sport' | 'playerName' | 'playerId' | 'eventId' | 'eventName' |
+  'eventStartTime' | 'league' | 'market'>;
+
 const tableFor = (sport: string, market: string) => sport === 'MLB'
   ? market.startsWith('pitcher_') ? 'game_player_pitching_stats' : 'game_player_batter_stats' : 'game_player_stats';
 
@@ -166,7 +177,7 @@ export class EdgeResultsWorker {
   private last: { at: string; graded: number; fetchedPlayers: number; error: string | null } | null = null;
   constructor(private readonly ledger: EdgeLedger, private readonly history: InternalHistoryStore,
     private readonly source: Pick<StatApiOwnerResearch, 'search' | 'inspect'> | null,
-    private readonly options: { maxPlayers?: number; clock?: () => Date } = {}) {}
+    private readonly options: { maxPlayers?: number; clock?: () => Date; headToHead?: HeadToHeadLedger | null } = {}) {}
 
   status() { return { scheduled: !!this.timer, running: this.running, statApi: !!this.source, last: this.last }; }
   start(intervalMs = 60 * 60_000) {
@@ -176,12 +187,16 @@ export class EdgeResultsWorker {
   }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
 
-  private async gradeFromHistory(picks: readonly TrackedEdgePick[]) {
-    if (!picks.length) return 0;
-    const players = new Map(picks.map((pick) => [playerKey(pick.sport, pick.playerName),
+  private async gradeFromHistory(picks: readonly GradableItem[]) {
+    const headToHead = this.options.headToHead ? await this.options.headToHead.awaitingResults(4) : [];
+    const items = [...picks, ...headToHead];
+    if (!items.length) return 0;
+    const players = new Map(items.map((pick) => [playerKey(pick.sport, pick.playerName),
       { key: playerKey(pick.sport, pick.playerName), sport: pick.sport, playerId: pick.playerId, playerName: pick.playerName }]));
     const rows = await this.history.rowsForPlayers([...players.values()], 15);
-    return (await this.ledger.gradeFromRows((pick) => dedupeRows(rows.get(playerKey(pick.sport, pick.playerName)) ?? []))).graded;
+    const rowsFor = (pick: GradableItem) => dedupeRows(rows.get(playerKey(pick.sport, pick.playerName)) ?? []);
+    await this.options.headToHead?.gradeFromRows(rowsFor);
+    return (await this.ledger.gradeFromRows(rowsFor)).graded;
   }
 
   async runOnce() {
@@ -190,12 +205,13 @@ export class EdgeResultsWorker {
     const now = (this.options.clock ?? (() => new Date()))();
     let graded = 0, fetchedPlayers = 0, error: string | null = null;
     try {
-      const supported = (pick: TrackedEdgePick) => historySports.has(pick.sport) && !!profileFor(pick.sport, pick.market).stat;
+      const supported = (pick: GradableItem) => historySports.has(pick.sport) && !!profileFor(pick.sport, pick.market).stat;
       graded += await this.gradeFromHistory((await this.ledger.awaitingResults(4)).filter(supported));
       if (this.source) {
-        const remaining = (await this.ledger.awaitingResults(4)).filter((pick) => supported(pick) &&
+        const remaining = [...await this.ledger.awaitingResults(4),
+          ...await this.options.headToHead?.awaitingResults(4) ?? []].filter((pick) => supported(pick) &&
           Date.parse(pick.eventStartTime) > now.getTime() - 4 * 86400_000);
-        const groups = new Map<string, TrackedEdgePick[]>();
+        const groups = new Map<string, GradableItem[]>();
         for (const pick of remaining) {
           const key = playerKey(pick.sport, pick.playerName);
           groups.set(key, [...(groups.get(key) ?? []), pick]);

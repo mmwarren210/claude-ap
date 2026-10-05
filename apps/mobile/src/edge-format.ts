@@ -53,3 +53,18 @@ export function toggleSlipLeg(legs: readonly EdgePick[], pick: EdgePick, max = 6
   const others = legs.filter((leg) => leg.playerId !== pick.playerId);
   return others.length >= max ? [...others] : [...others, pick];
 }
+
+export type VerdictTone = 'agree' | 'disagree' | 'pass' | 'none';
+
+/** GKR's call on the same line, phrased against Edge's side. */
+export function gkrVerdict(pick: EdgePick): { label: string; tone: VerdictTone } {
+  const gkr = pick.gkr;
+  if (!gkr) return { label: 'GKR: not scored', tone: 'none' };
+  if (gkr.direction === 'PASS') return { label: 'GKR: PASS', tone: 'pass' };
+  const call = `GKR: ${gkr.direction} ${formatLine(pick.threshold)}${gkr.score === null ? '' : ` · ${gkr.score}`}`;
+  return gkr.direction === pick.side ? { label: call + ' · agrees', tone: 'agree' } : { label: call + ' · disagrees', tone: 'disagree' };
+}
+
+export function signedUnits(value: number): string {
+  return (value >= 0 ? '+' : '−') + Math.abs(value).toFixed(1) + 'u';
+}

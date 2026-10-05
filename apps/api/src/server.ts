@@ -25,6 +25,7 @@ import type { ProductGradingStatus } from './background-grading.js';
 import { backtestHistory, customSlip, EdgeService, pickForLine, viewPicks } from './edge-service.js';
 import type { EdgeResultsWorker } from './edge-service.js';
 import type { EdgeLedger } from './edge-ledger.js';
+import type { HeadToHeadLedger } from './head-to-head.js';
 import type { EntryDefinition } from '@crowniq/edge';
 import { buildSlips } from '@crowniq/edge';
 
@@ -57,6 +58,7 @@ export interface ServerOptions {
   allowedWebOrigins?: readonly string[];
   /** CrownIQ Edge: probability engine that runs beside GKR and never changes GKR output. */
   edge?: { enabled?: boolean; ledger?: EdgeLedger | null; worker?: EdgeResultsWorker | null;
+    headToHead?: HeadToHeadLedger | null;
     entries?: readonly EntryDefinition[]; alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>> };
 }
 
@@ -75,8 +77,10 @@ export function buildServer(options: ServerOptions = {}) {
     options.models ?? new ModelRegistry(), options.clock, options.boardCache,
     options.secondLookResearch ?? null,options.startupResearch ?? null);
   const now=()=>options.clock?.()??new Date();
+  let edgeTimer:ReturnType<typeof setInterval>|null=null;
   const edge=options.edge?.enabled===false?null:new EdgeService({board:()=>service.getBoard(),
-    history:options.internalHistory??null,ledger:options.edge?.ledger??null,entries:options.edge?.entries,
+    history:options.internalHistory??null,ledger:options.edge?.ledger??null,headToHead:options.edge?.headToHead??null,
+    entries:options.edge?.entries,
     alternateFactors:options.edge?.alternateFactors,clock:options.clock});
   const bearer=(request:FastifyRequest)=>request.headers.authorization?.startsWith('Bearer ')
     ? request.headers.authorization.slice(7):'';
@@ -109,6 +113,8 @@ export function buildServer(options: ServerOptions = {}) {
     // History reconstruction runs after restore without blocking Fastify startup.
     void service.recoverStartupEvidence();
     void edge?.snapshot();
+    // Reprice on a timer so Edge and GKR calls are snapshotted for the head-to-head even with no app traffic.
+    if(edge && !options.clock){edgeTimer=setInterval(()=>{void edge.snapshot();},5*60_000);edgeTimer.unref?.();}
     if(options.ownerNotebook && options.ownerPublicId){
       await options.ownerNotebook.load();options.ownerNotebook.start();
     }
@@ -117,7 +123,8 @@ export function buildServer(options: ServerOptions = {}) {
     options.clock,options.product ? async()=>{const board=service.getBoard();
       if(board){await service.persist();await options.product!.track(board,service.getEvidence());}} :
       async()=>service.persist()) : null;
-  app.addHook('onClose', async () => { webBuild?.cancel();options.ownerNotebook?.stop(); });
+  app.addHook('onClose', async () => { webBuild?.cancel();options.ownerNotebook?.stop();
+    if(edgeTimer)clearInterval(edgeTimer); });
 
   type OwnerBoardRefreshJob = {
     status:'IDLE'|'RUNNING'|'SUCCEEDED'|'FAILED';startedAt:string|null;finishedAt:string|null;
@@ -568,6 +575,12 @@ export function buildServer(options: ServerOptions = {}) {
     const slip=customSlip(snapshot,entry,body.data.lineIds);
     return slip?{slip}:reply.code(422).send({code:'EDGE_LINE_UNPRICED'});
   });
+  app.get('/v1/edge/head-to-head',async(_request,reply)=>{
+    if(!edge)return reply.code(404).send({code:'EDGE_DISABLED'});
+    if(!options.edge?.headToHead)return reply.code(503).send({code:'HEAD_TO_HEAD_UNCONFIGURED'});
+    await edge.snapshot();
+    return options.edge.headToHead.report();
+  });
   app.get('/v1/edge/performance',async(_request,reply)=>{
     if(!edge)return reply.code(404).send({code:'EDGE_DISABLED'});
     if(!options.edge?.ledger)return reply.code(503).send({code:'EDGE_TRACKING_UNCONFIGURED'});
@@ -783,6 +796,7 @@ export function buildServer(options: ServerOptions = {}) {
       const parsed=z.object({results:z.array(resultFactSchema).min(1).max(1000)}).strict().safeParse(request.body);
       if(!parsed.success)return reply.code(400).send({code:'INVALID_RESULTS'});
       await options.edge?.ledger?.grade(parsed.data.results).catch(()=>undefined);
+      await options.edge?.headToHead?.grade(parsed.data.results).catch(()=>undefined);
       try{return await options.product.grade(parsed.data.results);}
       catch{return reply.code(422).send({code:'RESULT_GRADE_REJECTED'});}
     });
@@ -790,6 +804,7 @@ export function buildServer(options: ServerOptions = {}) {
       if(!options.edge?.ledger)return reply.code(503).send({code:'EDGE_TRACKING_UNCONFIGURED'});
       const parsed=z.object({results:z.array(resultFactSchema).min(1).max(1000)}).strict().safeParse(request.body);
       if(!parsed.success)return reply.code(400).send({code:'INVALID_RESULTS'});
+      await options.edge.headToHead?.grade(parsed.data.results).catch(()=>undefined);
       return options.edge.ledger.grade(parsed.data.results);
     });
     admin.get('/selections', async (_request, reply) => options.selections

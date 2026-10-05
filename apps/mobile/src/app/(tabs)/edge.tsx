@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { EdgePickCard } from '../../components/EdgePickCard';
@@ -26,6 +27,10 @@ export default function EdgeScreen() {
   const inSlip = new Set(slip.map((leg) => leg.lineId));
   return <Screen eyebrow="CROWNIQ  /  EDGE ENGINE" title="Edge">
     <Text style={styles.intro}>Hit probabilities priced from sharp sportsbook lines, the stats model and the PrizePicks ladder. Runs beside GKR.</Text>
+    <Pressable accessibilityRole="button" onPress={() => router.push('/edge/versus')} style={styles.versus}>
+      <Text style={styles.versusTitle}>EDGE vs GKR SCOREBOARD →</Text>
+      <Text style={styles.versusDetail}>Both engines on the same lines, graded from the same results.</Text>
+    </Pressable>
     <View style={styles.chips}>{views.map((item) => <Pressable key={item.key} accessibilityRole="button"
       onPress={() => setView(item.key)} style={[styles.chip, view === item.key && styles.chipOn]}>
       <Text style={[styles.chipText, view === item.key && styles.chipTextOn]}>{item.label}</Text></Pressable>)}</View>
@@ -91,4 +96,7 @@ const styles = StyleSheet.create({
   sectionDetail: { color: palette.muted, fontSize: 12, lineHeight: 18 },
   card: { backgroundColor: palette.card, borderWidth: 1, borderColor: palette.border, borderRadius: 18, padding: 16 },
   link: { color: palette.green, fontSize: 13, fontWeight: '800' },
+  versus: { borderWidth: 1, borderColor: palette.green, borderRadius: 14, padding: 12, gap: 2, backgroundColor: palette.greenDim },
+  versusTitle: { color: palette.green, fontSize: 12, fontWeight: '900', letterSpacing: 1.2 },
+  versusDetail: { color: palette.text, fontSize: 12 },
 });
