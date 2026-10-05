@@ -23,6 +23,14 @@ export const colors = {
   goldWash: '#2A220C',
   magenta: '#E24DF2',
   magentaWash: '#2A0E2E',
+  /** Demon lines: lava fire from the GKR art. */
+  fire: '#FF4A1C',
+  fireWash: '#311006',
+  /** Card accents: bright, saturated, each with its own glow. */
+  ember: '#FF7A1A',
+  electric: '#2F8CFF',
+  crimson: '#FF2E4D',
+  royal: '#FFC21F',
   goblin: '#8EFF3C',
   goblinWash: '#132B08',
   blue: '#3C8DFF',
@@ -67,15 +75,15 @@ export const lineStyles: Readonly<Record<LineStyle, { label: string; short: stri
     hint: 'Best balance' },
   GOBLIN: { label: 'Goblin Line', short: 'Goblin', color: colors.goblin, wash: colors.goblinWash,
     icon: 'emoticon-cool', hint: 'Higher hit rate' },
-  DEMON: { label: 'Demon Line', short: 'Demon', color: colors.magenta, wash: colors.magentaWash,
+  DEMON: { label: 'Demon Line', short: 'Demon', color: colors.fire, wash: colors.fireWash,
     icon: 'emoticon-devil', hint: 'Higher payouts' },
   UNKNOWN: { label: 'Unclassified', short: 'Unclassified', color: colors.textMuted, wash: colors.surfaceRaised,
     icon: 'help-circle-outline', hint: 'Line type unknown' },
 };
 
 /** Card accent per rank, echoing the mockups' colored card edges. */
-export const rankAccents = [colors.mint, colors.neon, colors.gold, colors.mintDeep, colors.goblin,
-  colors.gold] as const;
+export const rankAccents = [colors.mint, colors.ember, colors.electric, colors.royal, colors.crimson,
+  colors.goblin] as const;
 
 export function bandLabel(band: ScoreBand | null | undefined): string {
   switch (band) {

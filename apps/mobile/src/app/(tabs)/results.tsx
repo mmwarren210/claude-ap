@@ -32,7 +32,7 @@ type Book = 'GKR' | 'YOURS';
 const DAY = 86_400_000;
 
 const statusStyle: Readonly<Record<CrownStatus, { color: string; label: string }>> = {
-  CASHED: { color: colors.mint, label: 'CASHED' }, SPLIT: { color: colors.magenta, label: 'SPLIT' },
+  CASHED: { color: colors.mint, label: 'CASHED' }, SPLIT: { color: colors.ember, label: 'SPLIT' },
   MISSED: { color: colors.red, label: 'MISSED' }, PENDING: { color: colors.textMuted, label: 'PENDING' },
 };
 

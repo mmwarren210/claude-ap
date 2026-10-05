@@ -14,7 +14,7 @@ export function ScoreRing({ score, band, size = 72, label, tint, who = 'GKR' }: 
   const circumference = 2 * Math.PI * r;
   const filled = score === null ? 0 : Math.max(0, Math.min(1, score / 100)) * circumference;
   const color = tint ?? bandColor(band);
-  const word = label ?? (size < 64 && bandLabel(band) === 'PLAYABLE' ? 'PLAY' : bandLabel(band));
+  const word = label ?? (size <= 64 && bandLabel(band) === 'PLAYABLE' ? 'PLAY' : bandLabel(band));
   return <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
     accessibilityLabel={score === null ? 'No score, PASS' : `${who} score ${Math.round(score)}, ${word}`}>
     <Svg width={size} height={size} style={StyleSheet.absoluteFill}>
