@@ -14,6 +14,7 @@ import type { OddsProvider } from '@crowniq/engine';
 import { buildServer } from './server.js';
 import { FullPrizePicksProvider } from './full-prizepicks-provider.js';
 import { TheOddsApiProvider } from './the-odds-api-provider.js';
+import { probeOddsApiOnce } from './edge/odds-api-probe.js';
 import { NflPassingFileResearch } from './nfl-evidence-file.js';
 import { JsonSelectionLedger } from './selection-ledger.js';
 import { CombinedWebResearch, WebResearchAdapter, WebResearchCatalog } from './web-research.js';
@@ -366,6 +367,8 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, playerHistory, es
   nflverseMappingFile: process.env.NFLVERSE_MAPPING_FILE,
   models });
 autoGrade?.start();
+// Edge 2.0 data check (spec §1.1b), once per data disk.
+setTimeout(()=>{void probeOddsApiOnce(apiKey,`${dataDir}/edge/odds-api-probe.json`).catch(()=>undefined);},20_000).unref();
 // A first grading pass shortly after startup, so a deploy doesn't wait an hour for results.
 if(autoGrade)setTimeout(()=>{void autoGrade.runOnce().catch(()=>undefined);},2*60_000).unref();
 app.addHook('onClose',async()=>autoGrade?.stop());

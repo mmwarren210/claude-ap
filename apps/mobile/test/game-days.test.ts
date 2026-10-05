@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chosenDay, dayKey, dayLabel, gameDays, onDay } from '../src/game-days.ts';
+import { chosenDay, dayKey, dayLabel, gameDays, onDay } from '../src/game-days.js';
 
 const at = (y: number, m: number, d: number, h: number) => new Date(y, m - 1, d, h).toISOString();
 const now = new Date(2026, 9, 5, 10).getTime();

@@ -208,6 +208,10 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
     coverage.marketKeys = [...marketKeys].sort();
     coverage.sportKeysWithLines = [...sportKeys].sort();
     coverage.complete = true;
+    // Edge 2.0 budget report (spec §1.1b, §10): credits per refresh, before and after more bookmakers join this call.
+    console.log(`[odds-api] PrizePicks pull: ${coverage.eventsWithPrizePicks}/${coverage.eventsDiscovered} events, ` +
+      `${coverage.marketsDiscovered} markets, ${coverage.oddsRequests} odds requests, ${selections.length} outcomes, ` +
+      `${coverage.creditsSpent} credits spent, ${coverage.creditsRemaining ?? '?'} left`);
     return selections;
   }
 
