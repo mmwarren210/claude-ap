@@ -32,6 +32,11 @@
   (Apify `solidcode/sleeper-player-props-scraper`, CS2 and tennis, the last ~10 results for each line's exact stat; about a
   cent a run, twice a day, under the scraper cap; `CROWNIQ_SLEEPER_HISTORY=false` turns it off). Scout gets them as facts in every question; the cards'
   game log falls back to them; the games go to the archive. No GKR score uses them (that needs a new opt-in model).
+- **Stat-history set 3** (owner approved 2026-10-05: "if Sleeper is giving all that, use it for scoring"): GKR scores
+  CS2 (kills and headshots, maps 1+2) and tennis (games won, total games, aces, double faults, break points) from player
+  history (`free-history-evidence.ts`: projection, recent form, stability). On with GKR_MODEL_PRESET=stat_history_v2
+  unless GKR_SH3=false. It replaces two unapproved placeholders (CS2 maps_1_2_kills, TENNIS total_games) only when
+  approved; nothing gates these sports on availability (no source exists).
 - **Scout's info pool** (owner, 2026-10-05): every Scout read (both models' picks, confidence, summaries, reasons with
   evidence kind and source, late news) and its grade go to the archive's `scout` stream for good; a result Scout looked
   up (tennis, esports) also joins the `results` stream as a player stat. Saved reads are backfilled at startup.

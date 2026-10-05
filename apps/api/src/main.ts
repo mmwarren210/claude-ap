@@ -1,3 +1,4 @@
+import { FreeHistoryEvidence } from './free-history-evidence.js';
 import { EspnTennisHistory, LeaguepediaHistory, OpenDotaHistory, PlayerHistory, SleeperHistory } from './player-history.js';
 import { FeedbackStore } from './feedback.js';
 import 'dotenv/config';
@@ -6,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegistry, lessAwareVersion, marketDefinitions,
-  statHistoryReadyVersions, statHistoryV2Versions } from '@crowniq/engine';
+  statHistoryReadyVersions, statHistoryV2Versions, statHistoryV3Versions } from '@crowniq/engine';
 import type { OddsProvider } from '@crowniq/engine';
 import { buildServer } from './server.js';
 import { FullPrizePicksProvider } from './full-prizepicks-provider.js';
@@ -101,8 +102,10 @@ const sleeperRunner={async run(){
   return run.status==='SUCCEEDED'?await apify.datasetItems(run.datasetId):null;
 }};
 const playerHistory=process.env.CROWNIQ_FREE_HISTORY==='false'?null
-  :new PlayerHistory([new EspnTennisHistory(),new OpenDotaHistory(),new LeaguepediaHistory(),
-    new SleeperHistory(process.env.CROWNIQ_SLEEPER_HISTORY==='false'?null:sleeperRunner,`${dataDir}/sleeper-history.json`)],historyArchive);
+  :new PlayerHistory([new EspnTennisHistory(),
+    new SleeperHistory(process.env.CROWNIQ_SLEEPER_HISTORY==='false'?null:sleeperRunner,`${dataDir}/sleeper-history.json`),
+    // Slow first load (one request a second), so last.
+    new OpenDotaHistory(),new LeaguepediaHistory()],historyArchive);
 playerHistory?.start();
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
   [{source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9,12,15,18')},
@@ -184,7 +187,9 @@ if(!['custom','stat_history_v1','stat_history_v2'].includes(modelPreset))throw n
 const configuredModelVersions=(process.env.GKR_APPROVED_MODEL_VERSIONS??'')
   .split(',').map((version)=>version.trim()).filter(Boolean);
 const approvedModelVersions=[...new Set(modelPreset==='stat_history_v2'
-  ? [...configuredModelVersions,...statHistoryReadyVersions,...statHistoryV2Versions]
+  ? [...configuredModelVersions,...statHistoryReadyVersions,...statHistoryV2Versions,
+    // Stat-history set 3, CS2 and tennis from player history (owner approved 2026-10-05); GKR_SH3=false leaves it out.
+    ...(process.env.GKR_SH3==='false'?[]:statHistoryV3Versions)]
   : modelPreset==='stat_history_v1' ? [...configuredModelVersions,...statHistoryReadyVersions]
     : configuredModelVersions)];
 const models=createGkrRegistry(approvedModelVersions);
@@ -256,7 +261,8 @@ const gkrResearch=primaryEvidenceAdapters.length===0?null:primaryEvidenceAdapter
   ? primaryEvidenceAdapters[0]:new CompositeResearchAdapter(primaryEvidenceAdapters);
 // NHL, soccer and college football history from ESPN's public game logs (free), for their approved models.
 const espnEvidence=process.env.GKR_ESPN_EVIDENCE==='false'?null:new EspnGkrEvidence(fetch,{allowedKeys:approvedModelKeys,archive:historyArchive});
-const secondLookAdapters=[statEvidence,currentContext,espnEvidence]
+const freeHistoryEvidence=playerHistory?new FreeHistoryEvidence(playerHistory,approvedModelKeys):null;
+const secondLookAdapters=[statEvidence,currentContext,espnEvidence,freeHistoryEvidence]
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const secondLookResearch=secondLookAdapters.length===0?null:secondLookAdapters.length===1
   ? secondLookAdapters[0]:new CompositeResearchAdapter(secondLookAdapters);
@@ -284,7 +290,7 @@ const tickContext=currentContextEnabled?new CurrentContextResearch({
     return statSource.currentAvailability(sport,query);
   }}:undefined,
 }):null;
-const contextAdapters=[internalEvidence,playerIdentity,tickContext,espnEvidence]
+const contextAdapters=[internalEvidence,playerIdentity,tickContext,espnEvidence,freeHistoryEvidence]
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const contextRefresh=contextIntervalMinutes>0?{adapter:new CompositeResearchAdapter(contextAdapters),
   intervalMinutes:contextIntervalMinutes,windowHours:contextWindowHours}:null;

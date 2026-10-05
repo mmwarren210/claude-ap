@@ -126,6 +126,27 @@ const statHistoryV2: readonly MarketDefinition[] = [
 /** The stat-history set 2 versions, approved together by GKR_MODEL_PRESET=stat_history_v2. */
 export const statHistoryV2Versions = statHistoryV2.map((definition) => definition.version);
 
+/**
+ * Stat-history set 3 (owner approved 2026-10-05: "if Sleeper is giving all that, use it for scoring"): CS2 and tennis
+ * scored from each player's recent results for the exact stat (Sleeper's recent performance; ESPN set scores for tennis
+ * games). Projection plus recent form against the larger sample and stability; no availability source exists for these
+ * sports, so nothing gates them beyond the history itself. One model under each market key the apps use.
+ */
+const sh3 = (sport: Sport, markets: readonly string[], factors: readonly WeightedFactor[], highVariance = false) =>
+  markets.map((market) => define(sport, market, factors, { partialCoverageNormalization: true, highVariance,
+    version: `GKR-${sport}-${market.toUpperCase().replace(/_/g, '-')}-SH3-1.0` }));
+const statHistoryV3: readonly MarketDefinition[] = [
+  ...sh3('CS2', ['maps_1_2_kills', 'kills_maps_1_2', 'kills_on_maps_1_plus_2', 'maps_1_2_kills_plus'], [['historical_volume',65],['stability',35]], true),
+  ...sh3('CS2', ['maps_1_2_headshots', 'headshots_maps_1_2', 'headshots_on_maps_1_plus_2'], [['historical_volume',65],['stability',35]], true),
+  ...sh3('TENNIS', ['total_games_won', 'games_won'], [['historical_volume',60],['stability',40]]),
+  ...sh3('TENNIS', ['total_games'], [['historical_volume',60],['stability',40]]),
+  ...sh3('TENNIS', ['aces'], [['historical_volume',60],['stability',40]], true),
+  ...sh3('TENNIS', ['double_faults'], [['historical_volume',60],['stability',40]], true),
+  ...sh3('TENNIS', ['break_points_won', 'breakpoints_won'], [['historical_volume',60],['stability',40]], true),
+];
+/** The stat-history set 3 versions (CS2 and tennis). */
+export const statHistoryV3Versions = statHistoryV3.map((definition) => definition.version);
+
 export const marketDefinitions: readonly MarketDefinition[] = [
   define('NFL','passing_yards', [['expected_attempts',25],['efficiency_environment',20],['protection_pressure',15],['game_script',15],['personnel',10],['historical_current_form',10],['stability',5]], {version:'GKR-NFL-PASSING-YARDS-1.2',criticalKinds:['status:qb_available','status:weather_clear','status:protection_confirmed'],hardCriticalKinds:['status:qb_available'],partialCoverageNormalization:true,blowoutMode:'VOLUME_LOSS'}),
   define('NFL','player_pass_attempts', [['game_script',30],['expected_offensive_plays',20],['pass_rate',20],['qb_role_security',10],['opponent_run_pass_funnel',10],['historical_volume',5],['stability',5]], {version:'GKR-NFL-PLAYER-PASS-ATTEMPTS-1.2',criticalKinds:['status:qb_available'],partialCoverageNormalization:true,blowoutMode:'VOLUME_LOSS'}),
@@ -189,6 +210,8 @@ export const marketDefinitions: readonly MarketDefinition[] = [
     ['TENNIS','player_fantasy_points','player'],['NHL','player_fantasy_points','skater']] as const)
     .map(([sport, market]) => define(sport, market, defaults,
       { criticalKinds: ['status:fantasy_scenarios_confirmed'] })),
+  // Last, so lookups by sport and market find the older definition unless set 3 is approved.
+  ...statHistoryV3,
 ];
 
 

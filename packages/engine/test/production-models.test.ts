@@ -4,7 +4,7 @@ import type { Evidence, PropLine } from '@crowniq/contracts';
 import { boardSchema, evidenceSchema } from '@crowniq/contracts';
 import { auditCrown, buildAutoCrown, createGkrRegistry, evaluateBoard, fantasyDistribution,
   fantasyRules, marketDefinitions, prizepicksFantasyRegistryV1, reviewManualCrown,
-  scoreBand, scoreFantasyStats, snapshotSelection, statHistoryReadyVersions, statHistoryV2Versions, lessAwareDefinition, lessAwareVersion,
+  scoreBand, scoreFantasyStats, snapshotSelection, statHistoryReadyVersions, statHistoryV2Versions, statHistoryV3Versions, lessAwareDefinition, lessAwareVersion,
   flipsForLess, reliabilityFactors } from '../src/index.js';
 import { fixtureAnalysis, fixtureLine, now } from './fixtures.js';
 
@@ -32,14 +32,23 @@ function run(lines: PropLine[], evidence: Evidence[]) {
     evidence, createGkrRegistry(marketDefinitions.map((item) => item.version)), now);
 }
 
-test('126 versioned market definitions have auditable weights and never score missing live inputs', () => {
+test('140 versioned market definitions have auditable weights and never score missing live inputs', () => {
   const registry = createGkrRegistry();
-  assert.equal(marketDefinitions.length, 126);
+  assert.equal(marketDefinitions.length, 140);
+  const seen = new Set<string>();
   for (const definition of marketDefinitions) {
     assert.equal(definition.factors.reduce((sum, [, weight]) => sum + weight, 0), 100);
+    // Unapproved, the first definition under a key stands (set 3 shares two keys with older placeholders).
+    const key = `${definition.sport}:${definition.market}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     assert.equal(registry.resolve({ sport: definition.sport, market: definition.market })?.version,
       definition.version);
   }
+  const approvedSet3 = createGkrRegistry([...statHistoryV3Versions]);
+  assert.equal(approvedSet3.resolve({ sport: 'CS2', market: 'maps_1_2_kills' })?.version, 'GKR-CS2-MAPS-1-2-KILLS-SH3-1.0',
+    'approved, set 3 replaces the placeholder under the same key');
+  assert.equal(approvedSet3.resolve({ sport: 'TENNIS', market: 'total_games' })?.version, 'GKR-TENNIS-TOTAL-GAMES-SH3-1.0');
   const line = fixtureLine();
   const analysis = run([line], []).analyses[0];
   assert.equal(analysis.direction, 'PASS');
