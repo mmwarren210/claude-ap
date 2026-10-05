@@ -30,6 +30,8 @@ export interface ScrapedLine {
   readonly away?: TeamSide | null;
   /** Payout multipliers per side, when the source gives them. */
   readonly multipliers?: Partial<Record<PlayableDirection, number>> | null;
+  /** App promos: a "gimme" pick, and the number before a promo moved it (Pick6 sends both; neither was in use on 2026-10-05). */
+  readonly promo?: { readonly gimme: boolean; readonly originalLine: number | null } | null;
 }
 
 /**

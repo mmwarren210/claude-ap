@@ -28,7 +28,14 @@ type AppLine = { id: string; sport: string; league: string; eventId: string; eve
   availableDirections: Side[]; multipliers: Partial<Record<Side, number>> | null; playerImageUrl: string | null;
   prizePicks: { threshold: number; lineType: string; gkr: { direction: Side; score: number } | null } | null;
   /** GKR on this app line itself (its number and sides), or null when GKR passes or can't read it. */
-  gkr?: { direction: Side; score: number } | null };
+  gkr?: { direction: Side; score: number } | null;
+  /** Pick6 promos: a gimme pick, or the number before a promo moved it. */
+  promo?: { gimme: boolean; originalLine: number | null } | null };
+
+/** The side's boosted payout (Pick6 pays some picks above 1x), or null. */
+export const boostOf = (line: { multipliers: Partial<Record<Side, number>> | null }, side: Side) =>
+  (line.multipliers?.[side] ?? 0) >= 1.1 ? line.multipliers![side]! : null;
+const boosted = (line: AppLine) => line.availableDirections.some((side) => boostOf(line, side)) || !!line.promo;
 
 const sideLabel = (app: PickApp, side: Side) => app === 'underdog' ? side === 'MORE' ? 'Higher' : 'Lower'
   : side === 'MORE' ? 'More' : 'Less';
@@ -57,6 +64,13 @@ function LineCard({ app, line, picked, onPick }: { app: PickApp; line: AppLine; 
       <View style={styles.number}><Text style={styles.threshold}>{formatLine(line.threshold)}</Text>
         <Text style={styles.stat} numberOfLines={2}>{line.stat}</Text></View>
     </View>
+    {(boosted(line)) && <View style={styles.promoRow}>
+      {line.promo?.gimme && <Text style={styles.promoTag}>GIMME</Text>}
+      {line.promo?.originalLine != null && <Text style={styles.promoTag}>PROMO · was {formatLine(line.promo.originalLine)}</Text>}
+      {line.availableDirections.filter((side) => boostOf(line, side)).map((side) => <Text key={side} style={styles.promoTag}>
+        BOOST · {sideLabel(app, side)} pays {boostOf(line, side)}x</Text>)}
+      {line.gkr && boostOf(line, line.gkr.direction) && <Text style={[styles.promoTag, styles.promoBacked]}>GKR’s side is boosted</Text>}
+    </View>}
     {line.gkr && <View style={styles.gkr}>
       <Text style={styles.gkrScore}>GKR {Math.round(line.gkr.score)}</Text>
       <Text style={styles.gkrSide}>{sideLabel(app, line.gkr.direction)} {formatLine(line.threshold)}</Text>
@@ -83,6 +97,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [sport, setSport] = useState('ALL');
   const [gkrOnly, setGkrOnly] = useState(false);
+  const [boostOnly, setBoostOnly] = useState(false);
   const [scored, setScored] = useState(false);
   const [slip, setSlip] = useState<{ line: AppLine; side: Side }[]>([]);
   const [message, setMessage] = useState('');
@@ -102,9 +117,10 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   const sports = useMemo(() => [...new Set(lines.map((line) => line.league))].sort(), [lines]);
   // GKR picks: only lines GKR backs, strongest first.
   const shown = useMemo(() => {
-    const inLeague = lines.filter((line) => sport === 'ALL' || line.league === sport);
+    const inLeague = lines.filter((line) => (sport === 'ALL' || line.league === sport) && (!boostOnly || boosted(line)));
     return gkrOnly ? inLeague.filter((line) => line.gkr).sort((a, b) => b.gkr!.score - a.gkr!.score) : inLeague;
-  }, [lines, sport, gkrOnly]);
+  }, [lines, sport, gkrOnly, boostOnly]);
+  const boostCount = useMemo(() => lines.filter(boosted).length, [lines]);
   const backed = useMemo(() => lines.filter((line) => line.gkr).length, [lines]);
   const picks = new Map(slip.map((item) => [item.line.id, item.side]));
   const pick = (line: AppLine, side: Side) => {
@@ -147,6 +163,8 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
       : `Built ${next.length} picks from GKR’s strongest ${appNames[app]} lines${next.length < slipSize ? ` (only ${next.length} qualify)` : ''}.` +
         (entry ? ` Play ${entryName(next.length, entry.mode)}: each pick needs ${percent1(entry.breakEven)}.` : ''));
   };
+  // Underdog and Pick6 multiply the entry's payout by each pick's own multiplier (a boost above 1x, a cut below).
+  const slipBoost = Math.round(slip.reduce((product, item) => product * (item.line.multipliers?.[item.side] ?? 1), 1) * 100) / 100;
   const age = fetchedAt ? Math.max(0, Math.round((nowMs - Date.parse(fetchedAt)) / 60_000)) : null;
   const header = <View style={styles.header}>
     <AppHeader subtitle={`${appNames[app]} board`} />
@@ -154,6 +172,8 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     {lines.length > 0 && <ChipRow>
       <FilterChip label="All leagues" active={sport === 'ALL'} onPress={() => setSport('ALL')} />
       {sports.map((league) => <FilterChip key={league} label={league} active={sport === league} onPress={() => setSport(league)} />)}
+      {boostCount > 0 && <FilterChip label={`Boosted (${boostCount})`} icon="rocket-launch-outline" active={boostOnly}
+        chevron={false} onPress={() => setBoostOnly(!boostOnly)} />}
     </ChipRow>}
     {scored && backed >= 2 && <View style={styles.builder}>
       <Text style={styles.builderTitle}>Slip builder</Text>
@@ -171,7 +191,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
       ${appNames[app]} lines yet.`} PrizePicks’ line for the same player and stat shows for comparison. Confirm the line in
       {' '}{appNames[app]} before you play it.</Text>
     {easiest && <Text style={styles.breakEven}>{slipEntry ? `Your ${slip.length} picks: play ${entryName(slip.length,
-      slipEntry.mode)} (${slipEntry.fullHit}x). Each pick needs to hit ${percent1(slipEntry.breakEven)} to break even. `
+      slipEntry.mode)} (${slipEntry.fullHit}x${slipBoost !== 1 ? `, and its picks' payouts multiply that by ${slipBoost}` : ''}). Each pick needs to hit ${percent1(slipEntry.breakEven)} to break even. `
       : ''}Easiest ${appNames[app]} entry: {entryName(easiest.legs, easiest.mode)}, {percent1(easiest.breakEven)} per pick.</Text>}
     {!!message && <Text accessibilityRole="alert" style={styles.message}>{message}</Text>}
   </View>;
@@ -204,6 +224,10 @@ const styles = StyleSheet.create({
   header: { gap: 12, marginBottom: 2 },
   status: { color: colors.textMuted, fontSize: 13 },
   breakEven: { color: colors.text, fontSize: 13, lineHeight: 19, fontWeight: '600' },
+  promoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  promoTag: { color: colors.gold, borderColor: colors.gold, borderWidth: 1, borderRadius: radius.sm, paddingHorizontal: 7,
+    paddingVertical: 3, fontSize: 11, fontWeight: '800', letterSpacing: 0.4 },
+  promoBacked: { color: colors.mint, borderColor: colors.mint },
   builder: { gap: 8, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.lg, padding: 12 },
   builderTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
   note: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },

@@ -33,6 +33,8 @@ export interface AppLine {
   readonly market: string; readonly stat: string; readonly threshold: number; readonly lineType: string;
   readonly availableDirections: readonly PlayableDirection[];
   readonly multipliers: Partial<Record<PlayableDirection, number>> | null;
+  /** App promos (Pick6 gimme picks and promo-moved numbers), when the app marks them. */
+  readonly promo: { readonly gimme: boolean; readonly originalLine: number | null } | null;
   readonly playerImageUrl: string | null; readonly fetchedAt: string;
   readonly prizePicks: PrizePicksReference | null;
 }
@@ -51,7 +53,7 @@ function toAppLine(app: OtherApp, line: StoredLine): Omit<AppLine, 'prizePicks'>
     team, opponent, homeTeam: sides.length === 2 ? sides[1] : null, awayTeam: sides.length === 2 ? sides[0] : null,
     market: lineMarket(line), stat: line.stat, threshold: line.line, lineType: line.tier,
     availableDirections: [...line.directions], multipliers: line.multipliers ?? null, playerImageUrl: line.imageUrl,
-    fetchedAt: line.lastSeenAt };
+    promo: line.promo ?? null, fetchedAt: line.lastSeenAt };
 }
 
 /** The standard PrizePicks line for the same player and stat on the same day (the closest number when several). */
@@ -92,7 +94,7 @@ export async function appBoard(store: ScrapedLineStore, app: OtherApp, board: Bo
 export function asBoard(lines: readonly AppLine[], fetchedAt: string,
   scores: ReadonlyMap<string, AppScore> = new Map()): BoardResponse {
   return { board: { provider: 'prizepicks', fetchedAt,
-    lines: lines.map(({ app: _app, stat: _stat, multipliers: _multipliers, prizePicks: _reference, playerImageUrl, ...line }) =>
+    lines: lines.map(({ app: _app, stat: _stat, multipliers: _multipliers, promo: _promo, prizePicks: _reference, playerImageUrl, ...line }) =>
       ({ ...line, provider: 'prizepicks', sourceLineId: line.id.split(':').slice(1).join(':'),
         availableDirections: [...line.availableDirections], ...(playerImageUrl ? { playerImageUrl } : {}) }) as unknown as PropLine) },
   // A leg on the side GKR backs keeps its GKR score on the saved slip.

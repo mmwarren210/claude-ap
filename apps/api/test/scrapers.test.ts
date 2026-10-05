@@ -327,6 +327,13 @@ test('DraftKings Pick6 rows are stored as Pick6 lines with both sides; live and 
   assert.equal(skip(zenPick6.read(row({ status: 'live', is_live: true }), now)), 'LIVE_OR_STARTED');
   assert.equal(skip(zenPick6.read(row({ is_alternate_line: true }), now)), 'ALTERNATE_LINE');
   assert.equal(skip(zenPick6.read(row({ over_multiplier: null, under_multiplier: null }), now)), 'NO_SIDES');
+  // Promos: boosted payouts ride on the multipliers; a gimme or a promo-moved number is kept when Pick6 marks one.
+  const boosted = zenPick6.read(row({ over_multiplier: 1.2, under_multiplier: 0.8 }), now);
+  assert.ok('line' in boosted);
+  assert.deepEqual([boosted.line.multipliers, boosted.line.promo], [{ MORE: 1.2, LESS: 0.8 }, undefined]);
+  const promo = zenPick6.read(row({ is_gimme: true, original_line: 262.5 }), now);
+  assert.ok('line' in promo);
+  assert.deepEqual(promo.line.promo, { gimme: true, originalLine: 262.5 });
 });
 
 test('claims and charges made at the same moment are never lost', async () => {

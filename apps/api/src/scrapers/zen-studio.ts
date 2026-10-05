@@ -99,6 +99,7 @@ const pick6Row = z.object({
   game_start: z.string().min(10), home_team: text, away_team: text, home_team_name: text, away_team_name: text,
   market_type: text, is_alternate_line: z.boolean().nullish(),
   over_multiplier: z.union([z.string(), z.number()]).nullish(), under_multiplier: z.union([z.string(), z.number()]).nullish(),
+  is_gimme: z.boolean().nullish(), original_line: z.number().finite().nullish(),
 }).passthrough();
 
 /** Apify actor `zen-studio/draftkings-pick6-player-props`: DraftKings Pick6's pregame board, stored for its own board. */
@@ -125,6 +126,8 @@ export const zenPick6: ScraperSource = {
       team: row.player_team ?? null, teamName: row.player_team_name ?? null, opponent,
       stat: (row.stat_display ?? row.stat).trim(), line: row.line, tier: 'REGULAR', directions,
       startTime: new Date(start).toISOString(), imageUrl: isHeadshot(row.player_image) ? row.player_image! : null,
-      home, away, multipliers: { ...(more ? { MORE: more } : {}), ...(less ? { LESS: less } : {}) } } };
+      home, away, multipliers: { ...(more ? { MORE: more } : {}), ...(less ? { LESS: less } : {}) },
+      ...(row.is_gimme || (row.original_line != null && row.original_line !== row.line)
+        ? { promo: { gimme: !!row.is_gimme, originalLine: row.original_line ?? null } } : {}) } };
   },
 };
