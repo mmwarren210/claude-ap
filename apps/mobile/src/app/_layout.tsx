@@ -6,6 +6,9 @@ import { AuthProvider, useAuth } from '../auth';
 import { colors } from '../theme';
 import { SetPassword } from '../components/SetPassword';
 import { useAutoUpdate } from '../auto-update';
+import { IntroSplash } from '../components/IntroSplash';
+import { useState } from 'react';
+import { View } from 'react-native';
 
 const crownTheme = {
   ...DarkTheme,
@@ -33,10 +36,17 @@ function ProfileRouter(){
     {navigator}
   </DraftProvider></BoardProvider>:navigator;
 }
+// The opening plays once each time the app opens (not on every screen change).
+let introPlayed = false;
+
 export default function RootLayout() {
   useAutoUpdate();
+  const [intro, setIntro] = useState(!introPlayed);
   return <ThemeProvider value={crownTheme}>
     <StatusBar style="light" />
-    <AuthProvider><ProfileRouter /></AuthProvider>
+    <View style={{ flex: 1 }}>
+      <AuthProvider><ProfileRouter /></AuthProvider>
+      {intro && <IntroSplash onDone={() => { introPlayed = true; setIntro(false); }} />}
+    </View>
   </ThemeProvider>;
 }

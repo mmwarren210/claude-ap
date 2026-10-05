@@ -154,3 +154,6 @@ and confirm it ends with a healthy `/health` (see `docs/DEPLOY.md`).
 - **Payout tables (checked 2026-10-05).** PrizePicks Power 3/6/10/20/37.5x and Flex from 2 picks (2x/0.5x); Underdog
   Standard 3.5/6.5/12/20/35/65/120x and Flex 3–8 picks (3.25x/1.09x … 80x/3x/1x); Pick6 has no public chart (Base Payout
   shown in-app), so its numbers stay estimates. 2-pick Crowns are graded as Power.
+- **Opening animation (2026-10-05).** `IntroSplash.tsx`, mounted in `app/_layout.tsx` once per app open: logo pop,
+  name and tagline roll in, a swirling green wormhole (rotating dashed SVG rings) zooms out to the app. About 3 s; a tap
+  skips; reduced motion gets a short fade.
