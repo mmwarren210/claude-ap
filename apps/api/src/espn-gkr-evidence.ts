@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { HistoryArchive } from './history-archive.js';
 import type { Evidence, PropLine } from '@crowniq/contracts';
 import { evidenceSchema } from '@crowniq/contracts';
 import type { ResearchAdapter, ResearchHealth, ResearchTarget } from '@crowniq/engine';
@@ -111,6 +112,8 @@ export interface EspnGkrEvidenceOptions {
   readonly maxPlayers?: number;
   readonly minSamples?: number;
   readonly recentSamples?: number;
+  /** Every game log fetched goes to CrownIQ's own archive (display and verification only). */
+  readonly archive?: HistoryArchive | null;
 }
 
 export class EspnGkrEvidence implements ResearchAdapter {
@@ -246,6 +249,10 @@ export class EspnGkrEvidence implements ResearchAdapter {
         expiresAt: first.eventStartTime, quality: 'HIGH', confidence: 0.95, numeric: { value: athlete.starter ? 1 : 0 } }));
         try {
           const log = await this.gameLog(first.sport, athlete.id, counters);
+          void this.options.archive?.append('games', log.rows.filter((row) => row.occurredAt).map((row) => ({
+            key: `espn:${first.sport}:${athlete.id}:${row.occurredAt}`,
+            record: { source: 'ESPN game logs', sourceUrl: log.sourceUrl, sport: first.sport, league: first.league,
+              athleteId: athlete.id, playerName: athlete.name, occurredAt: row.occurredAt, metrics: row.metrics } })));
           for (const target of playerTargets) evidence.push(...historyEvidence(target, espnSpecs[target.sport][target.market],
             log, now, { minSamples: this.options.minSamples ?? 5, recentSamples: this.options.recentSamples ?? 10,
               sourceName: 'ESPN game logs', sourceLabel: 'ESPN', sourceType: 'PUBLIC', idPrefix: 'espn:' }));

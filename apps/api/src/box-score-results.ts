@@ -1,4 +1,5 @@
 import type { PropLine } from '@crowniq/contracts';
+import type { HistoryArchive } from './history-archive.js';
 import type { ResultFact } from './product-ledger.js';
 
 // Final results for saved picks from public box scores: MLB's official Stats API for baseball, ESPN's public box
@@ -251,7 +252,9 @@ const easternDate = (time: number) => new Intl.DateTimeFormat('en-CA', { timeZon
   .format(new Date(time));
 
 export class BoxScoreResults {
-  constructor(private readonly fetchFn: typeof fetch = fetch, private readonly clock: () => Date = () => new Date()) {}
+  constructor(private readonly fetchFn: typeof fetch = fetch, private readonly clock: () => Date = () => new Date(),
+    /** Every graded final result goes to CrownIQ's own archive. */
+    private readonly archive: HistoryArchive | null = null) {}
 
   private async json(url: string): Promise<unknown> {
     const response = await this.fetchFn(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
@@ -293,6 +296,14 @@ export class BoxScoreResults {
     }
     const unique = [...new Map(facts.map((fact) => [JSON.stringify([fact.eventId, fact.playerId, fact.market]), fact]))
       .values()];
+    const snapshots = new Map(targets.map((target) => [JSON.stringify([target.eventId, target.playerId, target.lineSnapshot.market]),
+      target.lineSnapshot]));
+    void this.archive?.append('results', unique.map((fact) => {
+      const line = snapshots.get(JSON.stringify([fact.eventId, fact.playerId, fact.market]));
+      return { key: `${fact.eventId}:${fact.playerId}:${fact.market}`, record: { ...fact, sport: line?.sport ?? null,
+        league: line?.league ?? null, playerName: line?.playerName ?? null, eventName: line?.eventName ?? null,
+        eventStartTime: line?.eventStartTime ?? null } };
+    }));
     return { facts: unique, unsupported, waiting };
   }
 

@@ -24,6 +24,7 @@ import { AiPickService } from './ai-picks.js';
 import { ShadowRecord } from './shadow-record.js';
 import { LiveMarkets } from './market-live.js';
 import { MarketRecord } from './market-record.js';
+import { HistoryArchive } from './history-archive.js';
 import { ClaudePickResearcher } from './claude-ai-picks.js';
 import { OpenAiPickResearcher } from './openai-ai-picks.js';
 import { BoardCache } from './board-cache.js';
@@ -51,6 +52,8 @@ import { CurrentContextResearch } from './current-context.js';
 
 // Where the server keeps its data files. On a host, point this at a permanent disk.
 const dataDir=(process.env.CROWNIQ_DATA_DIR ?? 'tmp').replace(/\/$/,'');
+// CrownIQ's own archive: every game log, graded result and line it has seen, kept for verification and evidence.
+const historyArchive=new HistoryArchive(`${dataDir}/archive`);
 const apiKey = process.env.THE_ODDS_API_KEY;
 const providerMode = process.env.ODDS_PROVIDER ?? 'auto';
 if (!['auto', 'none', 'the_odds_api', 'scrapers'].includes(providerMode)) {
@@ -73,7 +76,7 @@ const nonNegativeNumber=(name:string,fallback:number)=>{
   return value;
 };
 const scrapedLines=providerName==='scrapers'
-  ? new ScrapedLineStore(process.env.CROWNIQ_SCRAPED_LINES_FILE ?? `${dataDir}/scraped-lines.json`):null;
+  ? new ScrapedLineStore(process.env.CROWNIQ_SCRAPED_LINES_FILE ?? `${dataDir}/scraped-lines.json`,undefined,historyArchive):null;
 // Each source on its own Eastern-time schedule ("" turns one off), under one shared daily cap.
 const hoursEt=(name:string,fallback:string)=>(process.env[name] ?? fallback).split(',').map((hour)=>hour.trim())
   .filter(Boolean).map(Number).filter((hour)=>Number.isInteger(hour)&&hour>=0&&hour<=23);
@@ -234,7 +237,7 @@ const primaryEvidenceAdapters=[manualEvidence,internalEvidence,publicNflEvidence
 const gkrResearch=primaryEvidenceAdapters.length===0?null:primaryEvidenceAdapters.length===1
   ? primaryEvidenceAdapters[0]:new CompositeResearchAdapter(primaryEvidenceAdapters);
 // NHL, soccer and college football history from ESPN's public game logs (free), for their approved models.
-const espnEvidence=process.env.GKR_ESPN_EVIDENCE==='false'?null:new EspnGkrEvidence(fetch,{allowedKeys:approvedModelKeys});
+const espnEvidence=process.env.GKR_ESPN_EVIDENCE==='false'?null:new EspnGkrEvidence(fetch,{allowedKeys:approvedModelKeys,archive:historyArchive});
 const secondLookAdapters=[statEvidence,currentContext,espnEvidence]
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const secondLookResearch=secondLookAdapters.length===0?null:secondLookAdapters.length===1
@@ -276,7 +279,7 @@ const identityVerifier=googleClients.length||appleClients.length
 const boxScoreGrading=process.env.CROWNIQ_BOX_SCORE_GRADING!=='false';
 const autoGrade=process.env.CROWNIQ_NFLVERSE_AUTO_GRADE==='true'||boxScoreGrading
   ? new ProductGradingWorker(product,process.env.NFLVERSE_MAPPING_FILE||null,undefined,undefined,
-    boxScoreGrading?new BoxScoreResults():null) : null;
+    boxScoreGrading?new BoxScoreResults(fetch,undefined,historyArchive):null) : null;
 // The exported web app (npx expo export -p web), served by this server when present.
 const webAppDir=process.env.CROWNIQ_WEB_DIR ?? fileURLToPath(new URL('../../mobile/dist',import.meta.url));
 // A shared guest link for testers: CROWNIQ_GUEST_PASS_CODE, up to CROWNIQ_GUEST_PASS_MAX devices for
@@ -299,7 +302,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provid
   aiPicks:aiPickers.length?new AiPickService(aiPickers,`${dataDir}/ai-picks.json`,{
     dailyAuto:Number(process.env.CROWNIQ_AI_PICKS_DAILY ?? 120),dailyPerUser:Number(process.env.CROWNIQ_AI_PICKS_USER_DAILY ?? 15),
     perRun:Number(process.env.CROWNIQ_AI_PICKS_PER_RUN ?? 15),
-    dailySecond:Number(process.env.CROWNIQ_SCOUT_SECOND_DAILY ?? 40),secondPerRun:Number(process.env.CROWNIQ_SCOUT_SECOND_PER_RUN ?? 8)},new BoxScoreResults()):null,
+    dailySecond:Number(process.env.CROWNIQ_SCOUT_SECOND_DAILY ?? 40),secondPerRun:Number(process.env.CROWNIQ_SCOUT_SECOND_PER_RUN ?? 8)},new BoxScoreResults(fetch,undefined,historyArchive)):null,
   // The sports list costs no credits and returns the balance headers.
   oddsApiQuota:apiKey?async()=>{
     const response=await fetch(`https://api.the-odds-api.com/v4/sports?apiKey=${encodeURIComponent(apiKey)}`,
@@ -307,10 +310,11 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provid
     const header=(name:string)=>{const value=response.headers.get(name);return value===null?null:Number(value);};
     return {status:response.status,remaining:header('x-requests-remaining'),used:header('x-requests-used')};
   }:null,
+  historyArchive,
   marketRecord:new MarketRecord(`${dataDir}/market-record.json`),
-  shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults()),
+  shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   liveMarkets:process.env.CROWNIQ_LIVE_MARKETS==='false'?null:new LiveMarkets(`${dataDir}/live-markets.json`),
-  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults()}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,payouts,
+  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,payouts,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,

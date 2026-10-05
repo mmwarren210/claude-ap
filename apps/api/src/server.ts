@@ -52,6 +52,7 @@ import { betaFor } from './scout-beta.js';
 import type { BetaRead } from './scout-beta.js';
 import type { LiveMarkets } from './market-live.js';
 import type { MarketRecord } from './market-record.js';
+import type { HistoryArchive } from './history-archive.js';
 import type { ShadowPick, ShadowRecord } from './shadow-record.js';
 import type { MarketPlatform } from './market-picks.js';
 import type { BookPick, Sportsbook } from './book-picks.js';
@@ -119,6 +120,8 @@ export interface ServerOptions {
   shadowRecord?: ShadowRecord | null;
   /** Kalshi and Polymarket picks, graded from final scores. */
   marketRecord?: MarketRecord | null;
+  /** CrownIQ's own archive of game logs, graded results and lines. */
+  historyArchive?: HistoryArchive | null;
   /** Reads The Odds API's credit balance (a free call), for the owner. */
   oddsApiQuota?: (() => Promise<{ status: number; remaining: number | null; used: number | null }>) | null;
   /** Live Kalshi and Polymarket prices from their free public APIs. */
@@ -1237,7 +1240,8 @@ export function buildServer(options: ServerOptions = {}) {
       return {playerHistory:await options.internalHistory?.status()??null,
         trackedDecisions:(await options.product?.listDecisions(0,1))?.total??null,
         activeAppLines:lines.length,booksHistoryRows,
-        shadow:await options.shadowRecord?.status()??null,markets:await options.marketRecord?.status()??null};
+        shadow:await options.shadowRecord?.status()??null,markets:await options.marketRecord?.status()??null,
+        archive:await options.historyArchive?.status()??null};
     });
     admin.get('/members', async (_request, reply) => options.product ? options.product.membership()
       : reply.code(503).send({ code: 'PRODUCT_UNCONFIGURED' }));

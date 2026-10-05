@@ -1,3 +1,4 @@
+import type { HistoryArchive } from '../history-archive.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -42,7 +43,9 @@ const sameLine = sameLineKey;
 export class ScrapedLineStore {
   private lines = new Map<string, StoredLine>();
   private loaded = false;
-  constructor(private readonly file: string | null, private readonly clock: () => Date = () => new Date()) {}
+  constructor(private readonly file: string | null, private readonly clock: () => Date = () => new Date(),
+    /** New lines and number moves also go to CrownIQ's own archive, which keeps them after this store lets them go. */
+    private readonly archive: HistoryArchive | null = null) {}
 
   private async load() {
     if (this.loaded || !this.file) { this.loaded = true; return; }
@@ -72,6 +75,7 @@ export class ScrapedLineStore {
     const now = this.clock(), at = now.toISOString(), started = (line: ScrapedLine) => Date.parse(line.startTime) <= now.getTime();
     let added = 0, moved = 0, unchanged = 0, frozen = 0, removed = 0;
     const seen = new Set<string>();
+    const changed: { line: ScrapedLine; previousLine: number | null }[] = [];
     // Lines other sources already hold, to confirm across sources.
     const bySame = new Map<string, StoredLine[]>();
     for (const line of this.lines.values()) bySame.set(sameLine(line), [...bySame.get(sameLine(line)) ?? [], line]);
@@ -84,10 +88,11 @@ export class ScrapedLineStore {
       if (!existing) {
         this.lines.set(id, { ...line, firstSeenAt: at, lastSeenAt: at, previousLine: null, removedAt: null,
           confirmedBy: [...new Set([source, ...others])] });
+        changed.push({ line, previousLine: null });
         added++; continue;
       }
       const numberMoved = existing.line !== line.line;
-      if (numberMoved) moved++; else unchanged++;
+      if (numberMoved) { moved++; changed.push({ line, previousLine: existing.line }); } else unchanged++;
       this.lines.set(id, { ...fill(existing, line), lastSeenAt: at, removedAt: null,
         previousLine: numberMoved ? existing.line : existing.previousLine,
         // A moved number needs confirming again; otherwise this source adds to the confirmations.
@@ -102,6 +107,11 @@ export class ScrapedLineStore {
         this.lines.set(id, { ...line, confirmedBy, removedAt: at }); removed++;
       }
     }
+    // Every new line and every move goes to CrownIQ's own archive, which keeps them after the store lets them go.
+    void this.archive?.append('lines', changed.map(({ line, previousLine }) => ({
+      key: `${line.app}:${line.appLineId}:${line.line}`,
+      record: { source, app: line.app, appLineId: line.appLineId, league: line.league, gameId: line.gameId, player: line.player,
+        team: line.team, stat: line.stat, line: line.line, previousLine, tier: line.tier, startTime: line.startTime, seenAt: at } })));
     // Keep two days of finished games for reference, then let them go.
     for (const [id, line] of this.lines) if (Date.parse(line.startTime) < now.getTime() - 2 * 86_400_000) this.lines.delete(id);
     await this.save();

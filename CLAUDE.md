@@ -28,6 +28,9 @@
   restart.
 - **Market picks record** (`market-record.ts`): Kalshi and Polymarket picks are saved before their games and graded
   from ESPN final scores (spreads with their handicap), scored per $1 at the price shown; shown on each market tab.
+- **History archive** (`history-archive.ts`, `$CROWNIQ_DATA_DIR/archive/`): every ESPN game log fetched (all sports),
+  every graded box-score result and every line seen with its moves, append-only JSON lines by month, for built-in
+  verification and evidence later. Not read for scoring. `/admin/history` shows it with the other stores.
 - **Members** (owner, 2026-10-05): 20 lifetime family seats plus 100 members, 120 in all (`CROWNIQ_MAX_MEMBERS`).
   A family member signs up normally with the family code as the first password (`CROWNIQ_FAMILY_CODE`, Railway
   Variables only, never in the repo), then must set their own. Member keys for the other 100 come later. Guests and
