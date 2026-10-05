@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { analysisSchema, boardResponseSchema, DEFAULT_PAYOUTS, propLineSchema } from '@crowniq/contracts';
 import { crownOutcome, entryOutlook } from '../src/insights.js';
-import { addLeg, betterSwap, boardLinesForMode, CROWN_LEG_FLOOR, emptyFilters, evidenceExpired, freshness, gkrBacked, shareCrown,
+import { aiPlay, lateNews, scoutVerdict } from '../src/scout.js';
+import { addLeg, betterSwap, boardLinesForMode, isPlay, CROWN_LEG_FLOOR, emptyFilters, evidenceExpired, freshness, gkrBacked, shareCrown,
   visibleLines } from '../src/state.js';
 import { parseDraft, profileDraftKey } from '../src/draft-codec.js';
 
@@ -163,4 +164,18 @@ test('Crown units use the app payouts: Flex where offered, Power otherwise',()=>
   assert.equal(crownOutcome(['WIN','WIN','PUSH']).multiplier,3);
   assert.deepEqual(entryOutlook(DEFAULT_PAYOUTS.pick6,6,'POWER'),{fullHit:40,breakEven:0.5407});
   assert.equal(entryOutlook(DEFAULT_PAYOUTS.pick6,6,'FLEX'),null);
+});
+
+test('a Scout second opinion is a verdict on the GKR pick, never a play by itself',()=>{
+  const second={pick:'LESS' as const,score:66,agreement:'BOTH' as const,researchedAt:'2030-01-01T00:00:00Z',kind:'second' as const,
+    gkr:{direction:'MORE' as const,score:90},providers:[{provider:'claude' as const,pick:'LESS',confidence:66,summary:'',reasons:[],
+      lateNews:'Questionable with a sore wrist.'}]};
+  assert.equal(scoutVerdict(second,'MORE'),'DISAGREES');
+  assert.equal(scoutVerdict(second,'LESS'),'AGREES');
+  assert.equal(scoutVerdict({...second,pick:'PASS',score:null},'MORE'),'NO_EDGE');
+  assert.equal(scoutVerdict({...second,kind:'scout'},'MORE'),null,'a Scout pick is not a second opinion');
+  assert.equal(lateNews(second),'Questionable with a sore wrist.');
+  assert.equal(aiPlay(second),false);
+  assert.equal(isPlay(undefined,second),false);
+  assert.equal(isPlay(undefined,{...second,kind:'scout'}),true);
 });

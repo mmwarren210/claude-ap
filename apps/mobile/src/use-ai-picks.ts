@@ -1,20 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from './auth';
 
-/** An AI read (ChatGPT + Claude) on a line GKR can't score. Its own score, never a GKR score. */
-export type AiRead = {
-  pick: 'MORE' | 'LESS' | 'PASS'; score: number | null; agreement: 'BOTH' | 'ONE' | 'SPLIT' | 'SINGLE'; researchedAt: string;
-  providers: { provider: 'chatgpt' | 'claude'; pick: string; confidence: number; summary: string;
-    reasons: { text: string; url: string | null }[] }[];
-};
-/** An AI read that names a side, so the line is a play. */
-export const aiPlay = (read: AiRead | undefined) => !!read && read.pick !== 'PASS' && read.score !== null && read.score >= 55;
-/** The name the app shows for the ChatGPT + Claude read, so it never reads as plain "AI". */
-export const SCOUT = 'Scout';
-export const providerName = (provider: string) => provider === 'chatgpt' ? 'ChatGPT' : 'Claude';
-export const agreementText = (read: AiRead) => read.agreement === 'BOTH' ? 'ChatGPT and Claude agree'
-  : read.agreement === 'ONE' ? 'One scout picked a side, the other passed' : read.agreement === 'SPLIT'
-    ? 'ChatGPT and Claude disagree' : `${providerName(read.providers[0]?.provider ?? '')} only`;
+import type { AiRead } from './scout';
+
+export * from './scout';
 
 // One shared copy for every screen, reread at most every 5 minutes.
 let cache: { at: number; value: Map<string, AiRead> } | null = null;

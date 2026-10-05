@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { analysisSchema, boardResponseSchema } from '@crowniq/contracts';
-import { fixtureLine } from '../../../packages/engine/test/fixtures.js';
+import { fixtureAnalysis, fixtureLine } from '../../../packages/engine/test/fixtures.js';
 import { aiEligible, AiPickService, combineReads, parsePick } from '../src/ai-picks.js';
 import type { PickQuestion, PickResearcher, ProviderRead } from '../src/ai-picks.js';
 import { ClaudePickResearcher } from '../src/claude-ai-picks.js';
@@ -49,7 +49,7 @@ test('only lines GKR could not score qualify; reads are cached, capped per user 
     ({ provider, read: async () => { calls++; return read(provider, pick, 64); } });
   const service = new AiPickService([fake('chatgpt', 'MORE'), fake('claude', 'MORE')], null,
     { dailyAuto: 1, dailyPerUser: 1 }, null, () => now);
-  assert.deepEqual(await service.runOnce(board, [], () => null), { researched: 1, failed: 0 }, 'daily cap of one');
+  assert.deepEqual(await service.runOnce(board, [], () => null), { researched: 1, failed: 0, seconds: 0 }, 'daily cap of one');
   assert.equal(calls, 2);
   const reads = await service.current(board);
   assert.deepEqual([...reads.keys()], ['line-a'], 'earliest eligible line first');
@@ -87,4 +87,43 @@ test('ChatGPT answers in the strict JSON format with web search', async () => {
   const result = await new OpenAiPickResearcher('key', 'gpt-5.4-mini', fetchFn, () => now).read(question);
   assert.deepEqual([result.provider, result.pick, result.reasons[0].url], ['chatgpt', 'MORE', 'https://espn.com/y']);
   assert.equal((sent.text as { format: { strict: boolean } }).format.strict, true);
+});
+
+test('second opinions: Scout reads GKR Top Picks without being told GKR pick, and GKR is graded by verdict', async () => {
+  const lines = ['top', 'next', 'low'].map((name) => fixtureLine({ id: `line-${name}`, sourceLineId: name, playerId: name,
+    playerName: `Player ${name}`, sport: 'MLB', league: 'MLB', market: 'batter_total_bases', threshold: 1.5,
+    eventStartTime: '2030-09-24T18:00:00Z', availableDirections: ['MORE', 'LESS'] }));
+  const scored = (lineId: string, score: number) => ({ ...fixtureAnalysis(lines.find((line) => line.id === lineId)!, 'MORE', score),
+    scoreBand: score >= 92 ? 'CROWN_ELITE' as const : score >= 86 ? 'CROWN_STRONG' as const : score >= 80 ? 'PLAYABLE' as const
+      : 'LEAN' as const, modelVersion: 'mlb-test-1.0' });
+  const board = boardResponseSchema.parse({ board: { provider: 'prizepicks', fetchedAt: now.toISOString(), lines },
+    analyses: [scored('line-top', 90), scored('line-next', 85), scored('line-low', 60)],
+    rankedLineIds: ['line-top', 'line-next', 'line-low'], builtAt: now.toISOString() });
+  const asked: PickQuestion[] = [];
+  // ChatGPT agrees on the top pick and disagrees on the next; Claude passes on both and flags news on the top pick.
+  const chatgpt: PickResearcher = { provider: 'chatgpt', read: async (q) => { asked.push(q);
+    return read('chatgpt', q.player === 'Player top' ? 'MORE' : 'LESS', 70); } };
+  const claude: PickResearcher = { provider: 'claude', read: async (q) => ({ ...read('claude', 'PASS', 50),
+    lateNews: q.player === 'Player top' ? 'Scratched from the lineup an hour ago.' : '' }) };
+  const boxScores = { results: async () => ({ waiting: [], unsupported: [], facts: lines.map((line) => ({ eventId: line.eventId,
+    playerId: line.playerId, market: line.market, status: 'FINAL', actual: 2 })) }) };
+  const service = new AiPickService([chatgpt, claude], null, { dailyAuto: 5, dailyPerUser: 1, dailySecond: 5 },
+    boxScores as never, () => now);
+  assert.deepEqual(await service.runOnce(board, [], () => null), { researched: 0, failed: 0, seconds: 2 },
+    'only the two Top Picks (score 80+), not the 60');
+  assert.ok(asked.every((q) => !JSON.stringify(q).includes('mlb-test') && !('gkr' in q)), 'GKR pick is not in the question');
+  const reads = await service.current(board);
+  assert.equal(reads.get('line-top')?.kind, 'second');
+  assert.deepEqual(reads.get('line-top')?.gkr, { direction: 'MORE', score: 90, modelVersion: 'mlb-test-1.0' });
+  assert.equal(reads.get('line-top')?.providers[1]?.lateNews, 'Scratched from the lineup an hour ago.');
+  assert.equal(await service.runOnce(board, [], () => null).then((result) => result.seconds), 0, 'researched once per line');
+  assert.equal(await service.grade(), 2);
+  const status = await service.status();
+  assert.equal(status.reads, 0, 'second opinions stay out of the Scout pick record');
+  assert.deepEqual(status.secondOpinions.agree, { reads: 1, graded: 1, gkrWins: 1, gkrHitRate: 1 });
+  assert.deepEqual(status.secondOpinions.disagree, { reads: 1, graded: 1, gkrWins: 1, gkrHitRate: 1 });
+  assert.equal(status.secondOpinions.lateNews, 1);
+  // With second opinions off (the default), none run.
+  const off = new AiPickService([chatgpt], null, { dailyAuto: 5, dailyPerUser: 1 }, null, () => now);
+  assert.equal((await off.runOnce(board, [], () => null)).seconds, 0);
 });

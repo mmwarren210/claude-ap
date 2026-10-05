@@ -748,8 +748,9 @@ export function buildServer(options: ServerOptions = {}) {
     return views;
   }
   const aiView=(read:AiRead)=>({pick:read.pick,score:read.score,agreement:read.agreement,researchedAt:read.researchedAt,
+    kind:read.kind??'scout',gkr:read.gkr?{direction:read.gkr.direction,score:read.gkr.score}:null,
     providers:read.providers.map((item)=>({provider:item.provider,pick:item.pick,confidence:item.confidence,summary:item.summary,
-      reasons:item.reasons}))});
+      reasons:item.reasons,lateNews:item.lateNews??''}))});
   // AI reads for the current board: lines GKR couldn't score that ChatGPT and Claude researched.
   app.get('/v1/ai-picks', async (_request, reply) => {
     const board=service.getBoard();

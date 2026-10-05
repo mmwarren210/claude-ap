@@ -38,17 +38,20 @@ export function visibleLines(data: BoardResponse, filters: Filters, nowMs=Date.n
       (filters.date === 'ALL' || line.eventStartTime.slice(0,10) === filters.date);
   });
 }
-/** A line is a play when GKR scores a side on it, or (where GKR can't score) the AI read picks one. */
-export function isPlay(analysis:Analysis|undefined,ai?:{pick:string;score:number|null}):boolean{
+/**
+ * A line is a play when GKR scores a side on it, or (where GKR can't score) the Scout read picks one. A Scout second
+ * opinion on a GKR pick never makes a line a play by itself.
+ */
+export function isPlay(analysis:Analysis|undefined,ai?:{pick:string;score:number|null;kind?:string}):boolean{
   if(analysis&&analysis.direction!=='PASS'&&analysis.score!==null)return true;
-  return !!ai&&ai.pick!=='PASS'&&ai.score!==null&&ai.score>=55;
+  return !!ai&&ai.kind!=='second'&&ai.pick!=='PASS'&&ai.score!==null&&ai.score>=55;
 }
 /**
  * One card per player per game: the player's strongest play (GKR first by score, then the AI read). Every other line,
  * PASS included, stays on the player's page.
  */
 export function onePerPlayer(lines:readonly PropLine[],analyses:ReadonlyMap<string,Analysis>,
-  ai:ReadonlyMap<string,{pick:string;score:number|null}>=new Map()):PropLine[]{
+  ai:ReadonlyMap<string,{pick:string;score:number|null;kind?:string}>=new Map()):PropLine[]{
   const strength=(line:PropLine)=>{const analysis=analyses.get(line.id);
     return analysis&&analysis.direction!=='PASS'&&analysis.score!==null?1000+analysis.score:ai.get(line.id)?.score??0;};
   const best=new Map<string,PropLine>();
@@ -61,7 +64,7 @@ export function onePerPlayer(lines:readonly PropLine[],analyses:ReadonlyMap<stri
   return lines.filter((line)=>keep.has(line));
 }
 /** How many plays each player has in a game, for the card's "more plays" note. */
-export function playCounts(data:BoardResponse,ai:ReadonlyMap<string,{pick:string;score:number|null}>=new Map(),
+export function playCounts(data:BoardResponse,ai:ReadonlyMap<string,{pick:string;score:number|null;kind?:string}>=new Map(),
   nowMs=Date.now()):Map<string,number>{
   const analyses=new Map(data.analyses.map((analysis)=>[analysis.lineId,analysis]));
   const counts=new Map<string,number>();
@@ -74,7 +77,7 @@ export function playCounts(data:BoardResponse,ai:ReadonlyMap<string,{pick:string
  * card per player; the rest of a player's lines are on their page.
  */
 export function boardLinesForMode(data:BoardResponse,filters:Filters,mode:ViewMode,
-  nowMs=Date.now(),ai:ReadonlyMap<string,{pick:string;score:number|null}>=new Map()):PropLine[]{
+  nowMs=Date.now(),ai:ReadonlyMap<string,{pick:string;score:number|null;kind?:string}>=new Map()):PropLine[]{
   if(mode==='FULL'){
     const analyses=new Map(data.analyses.map((analysis)=>[analysis.lineId,analysis]));
     const strength=(line:PropLine)=>{const analysis=analyses.get(line.id);

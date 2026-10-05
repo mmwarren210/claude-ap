@@ -2,6 +2,7 @@ import { BooksBadge } from './ui/BooksBadge';
 import { useBooks } from '../use-books';
 import { aiPlay, SCOUT } from '../use-ai-picks';
 import type { AiRead } from '../use-ai-picks';
+import { ScoutVerdict } from './ScoutVerdict';
 import type { Analysis, PropLine } from '@crowniq/contracts';
 import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -94,6 +95,8 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, more = 0,
       <View style={styles.evidence}><EvidenceBadge quality={analysis?.evidenceQuality ?? 'NONE'}
         detail={evidenceDetail(analysis)} /></View>
       <BooksBadge view={books?.get(line.id)} side={pass ? null : direction} />
+      {!gkrPass && <ScoutVerdict read={ai} gkrDirection={analysis?.direction} />}
+      {aiPick && <ScoutVerdict read={ai} gkrDirection={undefined} />}
       {aiPick && <Text style={styles.aiNote}>GKR can’t score this stat yet. {SCOUT} (ChatGPT and Claude) researched it;
         this is {SCOUT}’s score, not a GKR score.</Text>}
       {more > 0 && <Text style={styles.more}>+{more} more {more === 1 ? 'play' : 'plays'} on {line.playerName.split(' ')[0]}’s page</Text>}

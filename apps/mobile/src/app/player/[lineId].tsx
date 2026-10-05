@@ -27,7 +27,7 @@ import type { LineStyle } from '../../theme';
 import { useBoard } from '../../use-board';
 import { useDraft } from '../../use-draft';
 import { usePlayerGames } from '../../use-player-games';
-import { agreementText, aiPlay, providerName, SCOUT, useAiPicks } from '../../use-ai-picks';
+import { agreementText, aiPlay, lateNews, providerName, SCOUT, scoutVerdict, useAiPicks, verdictText } from '../../use-ai-picks';
 
 /** GKR couldn't score these (no model for the stat, or its data is missing); ChatGPT and Claude can research them. */
 const AI_ELIGIBLE = new Set(['MODEL_SUPPORT_INCOMPLETE', 'STALE_OR_MISSING_EVIDENCE', 'INSUFFICIENT_MODEL_COVERAGE',
@@ -328,12 +328,15 @@ export default function PlayerResearch() {
             <Text style={{ color: colors.red }}>− </Text>{item}</Text>)}
         </View>
       </View>}
-      {gkrPass && ai && <View style={styles.section}>
-        <Text style={styles.sectionTitle}>{SCOUT} · {ai.pick === 'PASS' ? 'PASS' : `${ai.pick} ${formatLine(line.threshold)}`}
-          {ai.score !== null ? ` · ${ai.score}` : ''}</Text>
+      {ai && (gkrPass ? ai.kind !== 'second' : ai.kind === 'second') && <View style={styles.section}>
+        <Text style={styles.sectionTitle}>{gkrPass ? `${SCOUT} · ${ai.pick === 'PASS' ? 'PASS' : `${ai.pick} ${formatLine(line.threshold)}`}`
+          + (ai.score !== null ? ` · ${ai.score}` : '') : `${SCOUT} second opinion · ${verdictText[scoutVerdict(ai, analysis?.direction)!]}`}</Text>
         <View style={styles.panel}>
-          <Text style={styles.factorDetail}>{agreementText(ai)}. GKR can’t score this stat yet, so {SCOUT} (ChatGPT and Claude)
-            researched it. This is {SCOUT}’s score, not a GKR score.</Text>
+          <Text style={styles.factorDetail}>{agreementText(ai)}. {gkrPass ? `GKR can’t score this stat yet, so ${SCOUT} (ChatGPT ` +
+            `and Claude) researched it. This is ${SCOUT}’s score, not a GKR score.` : `${SCOUT} (ChatGPT and Claude) researched ` +
+            `this line on its own, without seeing GKR’s pick${ai.pick === 'PASS' ? '' : `, and picked ${ai.pick} at ${ai.score}`}. ` +
+            'GKR’s score is unchanged.'}</Text>
+          {!!lateNews(ai) && <Text style={styles.lateNews}>Late news: {lateNews(ai)}</Text>}
           {ai.providers.map((item) => <View key={item.provider} style={styles.aiProvider}>
             <Text style={styles.factorName}>{providerName(item.provider)} · {item.pick}{item.pick !== 'PASS' ? ` · ${item.confidence}` : ''}</Text>
             {!!item.summary && <Text style={styles.factorLine}>{item.summary}</Text>}
@@ -447,6 +450,7 @@ const styles = StyleSheet.create({
   supportValue: { color: colors.text, fontSize: 22, fontWeight: '900' },
   supportSub: { color: colors.textMuted, fontSize: 11 },
   supportStatus: { color: colors.textFaint, fontSize: 11, fontWeight: '800', marginTop: 2 },
+  lateNews: { color: colors.amber, fontSize: 13, lineHeight: 18, fontWeight: '700' },
   aiProvider: { gap: 3, marginTop: 8 },
   groupTitle: { color: colors.textMuted, fontSize: 12, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase' },
   groupGap: { marginTop: 8 },

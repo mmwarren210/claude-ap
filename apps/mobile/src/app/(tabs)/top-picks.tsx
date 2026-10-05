@@ -24,6 +24,9 @@ import { useBoard } from '../../use-board';
 import { useTipFlow } from '../../components/TipSheet';
 import { usePlayerGames } from '../../use-player-games';
 import { useRankings } from '../../use-rankings';
+import { ScoutVerdict } from '../../components/ScoutVerdict';
+import { useAiPicks } from '../../use-ai-picks';
+import type { AiRead } from '../../use-ai-picks';
 
 type Card = RankingCard | SecondLookCard;
 type ListFilter = { sport: string; date: string; lineType: string };
@@ -37,8 +40,8 @@ function insight(card: Card, l10: ReturnType<typeof lineStats>, l5: ReturnType<t
     : evidenceDetail(analysis) };
 }
 
-function PickCard({ card, rank, accent, photoUrl, analysis, onAdd }: { card: Card; rank: number | null;
-  accent: string; photoUrl: string | null | undefined; analysis: Analysis | undefined; onAdd: () => void }) {
+function PickCard({ card, rank, accent, photoUrl, analysis, scout, onAdd }: { card: Card; rank: number | null;
+  accent: string; photoUrl: string | null | undefined; analysis: Analysis | undefined; scout?: AiRead; onAdd: () => void }) {
   const { log } = usePlayerGames(card);
   const l5 = lineStats(log, card.threshold, card.direction, 'L5');
   const l10 = lineStats(log, card.threshold, card.direction, 'L10');
@@ -80,6 +83,7 @@ function PickCard({ card, rank, accent, photoUrl, analysis, onAdd }: { card: Car
       { label: card.opponent ? `vs ${card.opponent}` : 'H2H', value: h2h.average === null ? '—' : h2h.average.toFixed(1) },
     ]} /></View>
     <BooksBadge view={books?.get(card.lineId)} side={card.direction} />
+    <ScoutVerdict read={scout} gkrDirection={card.direction} />
     </Pressable>
     <PrimaryButton label="Add to Crown" icon="plus" onPress={onAdd} />
   </View>;
@@ -120,6 +124,7 @@ function EvCard({ pick, onAdd }: { pick: EvPick; onAdd: () => void }) {
 export default function TopPicksScreen() {
   const { request, demo } = useAuth();
   const [mode, setMode] = useState<'GKR' | 'EV'>('GKR');
+  const { reads: scoutReads } = useAiPicks();
   const [ev, setEv] = useState<{ status: 'idle' | 'loading' | 'ready' | 'error'; value: EvResponse | null }>({ status: 'idle', value: null });
   useEffect(() => {
     if (mode !== 'EV' || demo) return;
@@ -192,7 +197,7 @@ export default function TopPicksScreen() {
         detail={message || 'Checking the saved full-board analysis.'} />
         : rankings.length === 0 ? <Notice title="No top picks right now"
           detail="Nothing on the board scores 80 or higher for these filters. PASS is a valid result." />
-          : rankings.slice(0, size).map((card, index) => <PickCard key={card.lineId} card={card} rank={card.rank}
+          : rankings.slice(0, size).map((card, index) => <PickCard key={card.lineId} card={card} rank={card.rank} scout={scoutReads?.get(card.lineId)}
             accent={rankAccents[index % rankAccents.length]} analysis={analysisById.get(card.lineId)}
             photoUrl={board?.playerMedia?.[card.playerId]?.photoUrl} onAdd={() => addCard(card)} />)}
       {data && rankings.length > size && <Text style={styles.more}>{rankings.length - size} more qualified
