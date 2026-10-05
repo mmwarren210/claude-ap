@@ -190,7 +190,9 @@ if(!Number.isFinite(socialMaxSnapshotMinutes)||socialMaxSnapshotMinutes<0)
 const product=new ProductLedger(process.env.CROWNIQ_PRODUCT_LEDGER_FILE ??
   `${dataDir}/product-ledger.json`,band,()=>new Date(),
   correlationSetting==='conservative'?conservativeCorrelationPolicy:undefined,internalHistory,
-  socialMaxSnapshotMinutes,Number(process.env.CROWNIQ_MAX_MEMBERS ?? 100),process.env.CROWNIQ_FAMILY_CODE?.trim()||null);
+  socialMaxSnapshotMinutes,Number(process.env.CROWNIQ_MAX_MEMBERS ?? 100),process.env.CROWNIQ_FAMILY_CODE?.trim()||null,
+  // Sign-up is closed unless the code unlocks it (owner, 2026-10-05); CROWNIQ_SIGNUP_OPEN=true opens it to anyone.
+  process.env.CROWNIQ_SIGNUP_OPEN==='true');
 const statApiKey=process.env.STAT_API_KEY;
 const ownerPublicId=process.env.CROWNIQ_OWNER_PUBLIC_ID;
 const statDailyLimit=process.env.CROWNIQ_STAT_API_DAILY_RECORD_LIMIT
@@ -293,7 +295,7 @@ if(guestCode&&!guestPass)console.warn('CROWNIQ_GUEST_PASS_CODE must be at least 
 process.on('unhandledRejection', (reason) => {
   console.error('Background task failed:', reason instanceof Error ? reason.message : reason);
 });
-const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provider,
+const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
   webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,
   autoGradingEnabled:!!autoGrade,autoGradingStatus:()=>autoGrade?.status()??null,
   requireProfiles:true,identityVerifier,

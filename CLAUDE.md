@@ -39,6 +39,9 @@
   60 lookups a day, 10 per hourly run (`CROWNIQ_SCOUT_RESULTS_DAILY`, `CROWNIQ_SCOUT_RESULTS_PER_RUN`).
 - **Shared names** (two Max Muncys): grading and ESPN rosters keep only the namesake on the line's team (`sharedName`);
   with no team on the line, nothing is matched. The Stat API adapter already did this.
+- **Sign-up is locked** (owner, 2026-10-05): new accounts need a code. The family code unlocks sign-up (and makes the
+  account lifetime); without it, register and new Google/Apple sign-ins fail with SIGNUP_CLOSED and the screen says to
+  contact the owner for a subscription code (`CROWNIQ_SIGNUP_CONTACT` adds how). `CROWNIQ_SIGNUP_OPEN=true` reopens it.
 - **Revoke access** (owner, 2026-10-05): More → Member access lists every account with Revoke/Restore
   (`/v1/owner/members`, `/v1/owner/members/access`). Revoked accounts are signed out at once, can't sign in or reset,
   and free a member seat; restoring a member needs a free seat. The owner can't revoke themselves.

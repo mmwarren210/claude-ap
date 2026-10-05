@@ -51,6 +51,7 @@ async function parseSession(response:Response):Promise<Session>{
       USERNAME_TAKEN:'That display username is taken.',
       MEMBERS_FULL:'CrownIQ is full right now (100 members). Ask the owner for a spot or a guest link.',
       LIFETIME_FULL:'All 20 lifetime family spots are taken. Ask the owner.',
+      SIGNUP_CLOSED:'Sign-up is invite-only for now. Enter your access code, or contact the owner for one.',
       RESET_INVALID:'That reset code isn’t right or has expired. Ask the owner for a new one.',
       PASSWORD_NOT_NEW:'Choose a password different from the family code.',
       INVALID_RESET:'Enter your email or username, the 8-character code and a password of at least 12 characters.',INVALID_CREDENTIALS:'Email, username or password is incorrect.',

@@ -367,3 +367,18 @@ test('the owner revokes and restores any account: revoked is signed out, blocked
     assert.equal((await ledger.members()).find((item)=>item.username==='Family_one')!.revoked,false,'lifetime restores without a seat');
   }finally{await rm(folder,{recursive:true,force:true});}
 });
+
+test('with sign-up closed, only the family code makes an account; the code check says what it unlocks',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-closed-'));
+  try{
+    const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>start,undefined,undefined,0,100,
+      'Family-Code-For-Tests!',false);
+    assert.equal(ledger.openSignup,false);
+    await assert.rejects(ledger.register('stranger@example.org','long-private-passphrase','Stranger'),/SIGNUP_CLOSED/);
+    await assert.rejects(ledger.loginWithProvider('GOOGLE','sub-9','g9@example.org','Google_nine'),/SIGNUP_CLOSED/);
+    assert.equal(await ledger.checkCode('wrong-code'),null);
+    assert.equal(await ledger.checkCode(' Family-Code-For-Tests! '),'LIFETIME');
+    const family=await ledger.register('fam@example.org','Family-Code-For-Tests!','Fam_one');
+    assert.equal((await ledger.authenticate(family.token))?.plan,'LIFETIME');
+  }finally{await rm(folder,{recursive:true,force:true});}
+});

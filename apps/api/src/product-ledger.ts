@@ -243,7 +243,17 @@ export class ProductLedger {
     /** Members allowed besides the lifetime ones (CROWNIQ_MAX_MEMBERS). */
     private readonly maxMembers=DEFAULT_MAX_MEMBERS,
     /** The family code (CROWNIQ_FAMILY_CODE): as a first password, it makes a lifetime family account. */
-    private readonly familyCode:string|null=null){}
+    private readonly familyCode:string|null=null,
+    /** Whether sign-up is open to anyone (owner, 2026-10-05: closed for now; only a valid code unlocks it). */
+    private readonly signupOpen=true){}
+  /** What a sign-up code unlocks: LIFETIME for the family code (while lifetime seats last), or null. */
+  async checkCode(code:string):Promise<'LIFETIME'|'LIFETIME_FULL'|null>{
+    if(!this.familyCode||!sameSecret(code.trim(),this.familyCode))return null;
+    const data=await this.read();
+    return lifetimeIds(data.accounts).size>=LIFETIME_MEMBERS?'LIFETIME_FULL':'LIFETIME';
+  }
+  /** Whether sign-up without a code is open. */
+  get openSignup(){return this.signupOpen;}
   /** Stamp a person's pick with the odds snapshot it was made from. */
   private fromUser(decision:TrackedDecision,board:BoardResponse):TrackedDecision{
     const fetched=Date.parse(board.board.fetchedAt);
@@ -316,6 +326,7 @@ export class ProductLedger {
     // The family code as the first password makes a lifetime family account (while the 20 seats last).
     const family=!!this.familyCode&&sameSecret(password,this.familyCode);
     if(family&&lifetimeIds(data.accounts).size>=LIFETIME_MEMBERS)throw new Error('LIFETIME_FULL');
+    if(!family&&!this.signupOpen)throw new Error('SIGNUP_CLOSED');
     if(!family)this.assertSeat(data.accounts);
     if(data.accounts.some((item)=>item.email===address))throw new Error('EMAIL_TAKEN');
     if(data.profiles.some((item)=>normalizedName(item.displayName)===normalizedName(name)))
@@ -373,6 +384,7 @@ export class ProductLedger {
         identity.provider===provider && identity.subject===subject));
       if(!account){
         if(!username)throw new Error('USERNAME_REQUIRED');
+        if(!this.signupOpen)throw new Error('SIGNUP_CLOSED');
         this.assertSeat(data.accounts);
         if(email && data.accounts.some((item)=>item.email===normalizedEmail(email)))
           throw new Error('ACCOUNT_LINK_REQUIRED');

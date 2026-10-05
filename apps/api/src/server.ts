@@ -72,6 +72,8 @@ export interface ServerOptions {
   webResearch?: WebResearchService | null;
   models?: ModelRegistry;
   adminToken?: string;
+  /** How someone without a code reaches the owner for one (shown on the locked sign-up screen). */
+  signupContact?: string | null;
   /** A shared guest link (`/?guest=<code>`); unset means no guest link works. */
   guestPass?: GuestPass | null;
   ownerPublicId?: string;
@@ -401,8 +403,19 @@ export function buildServer(options: ServerOptions = {}) {
       input.data.password,input.data.username));}
     catch(error){const code=(error as Error).message;
       if(code==='USERNAME_TAKEN'||code==='EMAIL_TAKEN')return reply.code(409).send({code});
-      if(code==='MEMBERS_FULL'||code==='LIFETIME_FULL')return reply.code(403).send({code});
+      if(code==='MEMBERS_FULL'||code==='LIFETIME_FULL'||code==='SIGNUP_CLOSED')return reply.code(403).send({code});
       return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
+  });
+  // Sign-up is locked until a valid code is entered (owner, 2026-10-05): what sign-up needs, and a code check.
+  app.get('/v1/auth/signup',async()=>({open:options.product?.openSignup??false,contact:options.signupContact??null}));
+  app.post('/v1/auth/signup-code',async(request,reply)=>{
+    if(!options.product)return reply.code(503).send({code:'PROFILES_UNCONFIGURED'});
+    if(limited(`signup-code:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
+    const input=z.object({code:z.string().min(1).max(128)}).strict().safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'CODE_REQUIRED'});
+    const result=await options.product.checkCode(input.data.code);
+    if(result==='LIFETIME')return {valid:true,plan:'LIFETIME'};
+    return reply.code(result==='LIFETIME_FULL'?403:404).send({code:result??'CODE_INVALID'});
   });
   app.post('/v1/auth/login',async(request,reply)=>{
     if(!options.product)return reply.code(503).send({code:'PROFILES_UNCONFIGURED'});
@@ -841,7 +854,7 @@ export function buildServer(options: ServerOptions = {}) {
     }catch(error){const code=(error as Error).message;
       if(['USERNAME_REQUIRED','USERNAME_TAKEN','ACCOUNT_LINK_REQUIRED'].includes(code))
         return reply.code(409).send({code});
-      if(code==='MEMBERS_FULL')return reply.code(403).send({code});
+      if(code==='MEMBERS_FULL'||code==='SIGNUP_CLOSED')return reply.code(403).send({code});
       return reply.code(401).send({code:'PROVIDER_LOGIN_REJECTED'});}
   });
   app.post('/v1/auth/link',async(request,reply)=>{
