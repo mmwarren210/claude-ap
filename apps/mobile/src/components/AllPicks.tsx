@@ -53,7 +53,7 @@ export function AllPicks({ only }: { only?: PickSource } = {}) {
           key: `${pick.playerName}|${pick.market}`, source: book, by: pick.by ?? 'GKR', title: pick.playerName,
           detail: `${marketLabel(pick.market)} · ${pick.side === 'MORE' ? 'Over' : 'Under'} ${formatLine(pick.line)}${odds(pick.american)}`,
           strength: pick.gkr?.score ?? pick.score ?? 0, edge: null, startTime: pick.eventStartTime, lineId: null, note: pick.note ?? null }))])),
-      ...Object.fromEntries((['kalshi', 'polymarket'] as const).map((platform) => [platform, async () =>
+      ...Object.fromEntries((['kalshi'] as const).map((platform) => [platform, async () =>
         ((await json<{ picks: MarketPick[] }>(`/v1/markets/${platform}/picks`))?.picks ?? []).map((pick): AnyPick => ({
           key: pick.id, source: platform, by: 'EDGE', title: pick.game, detail: `${pick.side} · ${Math.round(pick.price * 100)}¢`,
           strength: Math.round(pick.fair * 100), edge: pick.edge, startTime: pick.startTime, lineId: null, note: pick.note ?? null }))])),

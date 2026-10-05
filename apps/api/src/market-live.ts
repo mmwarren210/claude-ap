@@ -3,18 +3,15 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { MarketOdds } from './context/feeds.js';
 
-// Live prediction-market prices from Kalshi's and Polymarket's free public APIs (no key, no Apify cost), read every 10
+// Live prediction-market prices from Kalshi's free public API (no key, no Apify cost), read every 10
 // minutes. Display only. When a read fails, the last good prices stay, and the server falls back to the daily Apify feed
 // once they are more than 30 minutes old.
 
-export type LivePlatform = 'kalshi' | 'polymarket';
+export type LivePlatform = 'kalshi';
 
 const KALSHI = 'https://api.elections.kalshi.com/trade-api/v2';
-const POLYMARKET = 'https://gamma-api.polymarket.com';
 /** Kalshi's game-winner series per league. */
 export const kalshiSeries: readonly string[] = ['KXNFLGAME', 'KXNCAAFGAME', 'KXMLBGAME', 'KXNBAGAME', 'KXWNBAGAME', 'KXNHLGAME'];
-/** Polymarket's sports tags. */
-export const polymarketTags: readonly string[] = ['nfl', 'cfb', 'mlb', 'nba', 'wnba', 'nhl'];
 
 type Row = Record<string, unknown>;
 const asRow = (value: unknown): Row => value && typeof value === 'object' ? value as Row : {};
@@ -51,41 +48,15 @@ export function kalshiOdds(events: readonly unknown[]): MarketOdds[] {
   return out;
 }
 
-/** Polymarket events: each market's outcomes and prices come as JSON strings. Closed and inactive markets are left out. */
-export function polymarketOdds(events: readonly unknown[]): MarketOdds[] {
-  const out: MarketOdds[] = [];
-  const list = (value: unknown): unknown[] => {
-    if (Array.isArray(value)) return value;
-    try { const parsed = JSON.parse(String(value)) as unknown; return Array.isArray(parsed) ? parsed : []; } catch { return []; }
-  };
-  for (const value of events) {
-    const event = asRow(value), title = text(event.title);
-    for (const item of Array.isArray(event.markets) ? event.markets : []) {
-      const market = asRow(item), question = text(market.question);
-      if (!title || !question || market.closed === true || market.active === false) continue;
-      const names = list(market.outcomes), prices = list(market.outcomePrices);
-      const outcomes = names.flatMap((name, index) => {
-        const price = num(prices[index]);
-        return typeof name === 'string' && price !== null ? [{ name, probability: Math.round(price * 10_000) / 100 }] : [];
-      });
-      if (outcomes.length < 2) continue;
-      out.push({ platform: 'polymarket', eventTitle: title, question, outcomes, volume24h: num(market.volume24hr),
-        closeTime: text(market.gameStartTime) ?? text(event.startTime) ?? text(market.endDate),
-        url: text(event.slug) ? `https://polymarket.com/event/${String(event.slug)}` : null });
-    }
-  }
-  return out;
-}
-
 export interface LiveStatus {
   readonly fetchedAt: Record<LivePlatform, string | null>; readonly markets: Record<LivePlatform, number>;
   readonly lastError: Record<LivePlatform, string | null>;
 }
 
-/** Keeps the latest live Kalshi and Polymarket prices, refreshed on an interval and saved to disk. */
+/** Keeps the latest live Kalshi prices, refreshed on an interval and saved to disk. */
 export class LiveMarkets {
   private state: Record<LivePlatform, { fetchedAt: string | null; items: MarketOdds[]; lastError: string | null }> = {
-    kalshi: { fetchedAt: null, items: [], lastError: null }, polymarket: { fetchedAt: null, items: [], lastError: null } };
+    kalshi: { fetchedAt: null, items: [], lastError: null } };
   private loaded = false;
   private timer: NodeJS.Timeout | null = null;
   constructor(private readonly file: string | null, private readonly fetchFn: typeof fetch = fetch,
@@ -95,7 +66,7 @@ export class LiveMarkets {
     if (this.loaded) return;
     this.loaded = true;
     if (!this.file) return;
-    try { Object.assign(this.state, JSON.parse(await readFile(this.file, 'utf8'))); } catch { /* first run */ }
+    try { const saved = JSON.parse(await readFile(this.file, 'utf8')) as Partial<typeof this.state>; if (saved.kalshi) this.state.kalshi = saved.kalshi; } catch { /* first run */ }
   }
 
   private async json(url: string): Promise<unknown> {
@@ -119,21 +90,12 @@ export class LiveMarkets {
     return kalshiOdds(events);
   }
 
-  private async readPolymarket(): Promise<MarketOdds[]> {
-    const events: unknown[] = [];
-    for (const tag of polymarketTags) {
-      const body = await this.json(`${POLYMARKET}/events?tag_slug=${tag}&closed=false&active=true&limit=200`);
-      events.push(...(Array.isArray(body) ? body : []));
-    }
-    return polymarketOdds(events);
-  }
-
-  /** Reads both platforms now. A failed platform keeps its last good prices and reports the error. */
+  /** Reads Kalshi now. A failed platform keeps its last good prices and reports the error. */
   async refresh(): Promise<LiveStatus> {
     await this.load();
-    for (const platform of ['kalshi', 'polymarket'] as const) {
+    for (const platform of ['kalshi'] as const) {
       try {
-        const items = platform === 'kalshi' ? await this.readKalshi() : await this.readPolymarket();
+        const items = await this.readKalshi();
         if (!items.length) throw new Error('NO_MARKETS');
         this.state[platform] = { fetchedAt: this.clock().toISOString(), items, lastError: null };
       } catch (error) {
@@ -159,9 +121,9 @@ export class LiveMarkets {
 
   async status(): Promise<LiveStatus> {
     await this.load();
-    return { fetchedAt: { kalshi: this.state.kalshi.fetchedAt, polymarket: this.state.polymarket.fetchedAt },
-      markets: { kalshi: this.state.kalshi.items.length, polymarket: this.state.polymarket.items.length },
-      lastError: { kalshi: this.state.kalshi.lastError, polymarket: this.state.polymarket.lastError } };
+    return { fetchedAt: { kalshi: this.state.kalshi.fetchedAt },
+      markets: { kalshi: this.state.kalshi.items.length },
+      lastError: { kalshi: this.state.kalshi.lastError } };
   }
 
   start(minutes = 10): void {

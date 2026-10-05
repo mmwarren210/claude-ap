@@ -37,8 +37,7 @@ import type { CrownProvider } from '../../crown-legs';
 
 const crownProviders: readonly { value: CrownProvider | 'prizepicks'; label: string }[] = [
   { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'DK Pick’em' },
-  { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' }, { value: 'kalshi', label: 'Kalshi' },
-  { value: 'polymarket', label: 'Polymarket' }];
+  { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' }, { value: 'kalshi', label: 'Kalshi' }];
 
 /** PrizePicks takes up to 6 picks; Underdog and DK Pick’em up to 8. */
 const sizesFor = (most: number) => Array.from({ length: most - 1 }, (_, index) => index + 2).map((value) => ({ value,

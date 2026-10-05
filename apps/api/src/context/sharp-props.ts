@@ -62,12 +62,55 @@ export interface FairPrice {
   readonly fairOver: number;
   readonly overAmerican: number | null; readonly underAmerican: number | null;
   readonly startTime: string; readonly home: string | null; readonly away: string | null;
+  /** SharpAPI marks a pregame price it hasn't seen move with the market as stale; when it last saw the price. */
+  readonly stale?: boolean; readonly observedAt?: string;
 }
 
 interface Row {
   sportsbook?: unknown; league?: unknown; market_type?: unknown; selection_type?: unknown; line?: unknown;
   odds_probability?: unknown; odds_american?: unknown; player_name?: unknown; event_start_time?: unknown;
   home_team?: unknown; away_team?: unknown; is_live?: unknown; is_active?: unknown; event_id?: unknown;
+  is_pickem?: unknown; is_alternate_line?: unknown; is_stale_pregame_price?: unknown; timestamp?: unknown;
+}
+
+/** Pick'em apps' rows (PrizePicks, PrizePicks Flex): their price is the app's payout, not a market, so they never count as
+ * a sportsbook price. */
+export const isPickemRow = (value: unknown) => {
+  const row = value as Row;
+  return row.is_pickem === true || /^(prizepicks|underdog|pick6|sleeper|dabble|betr)/.test(String(row.sportsbook));
+};
+
+/** One pick'em line from SharpAPI (PrizePicks): the number, which sides are offered, and the app's payout price. */
+export interface PickemLine {
+  readonly book: string; readonly league: string; readonly sport: Sport | null; readonly eventId: string;
+  readonly home: string | null; readonly away: string | null; readonly startTime: string; readonly player: string;
+  /** SharpAPI's market type, and CrownIQ's market key when it maps exactly. */
+  readonly marketType: string; readonly market: string | null; readonly line: number;
+  readonly sides: readonly ('MORE' | 'LESS')[]; readonly american: number | null;
+  readonly alternate: boolean; readonly stale: boolean; readonly observedAt: string | null;
+}
+
+/** SharpAPI's pick'em rows joined into one line per book, player, market and number. */
+export function pickemLines(rows: readonly unknown[]): PickemLine[] {
+  const lines = new Map<string, PickemLine>();
+  for (const value of rows) {
+    const row = value as Row;
+    if (!isPickemRow(row) || row.is_live === true || row.is_active === false || typeof row.line !== 'number' ||
+      typeof row.player_name !== 'string' || (row.selection_type !== 'over' && row.selection_type !== 'under')) continue;
+    const sport = leagueSports[String(row.league)] ?? null;
+    const key = JSON.stringify([row.sportsbook, row.event_id, normalizedName(row.player_name), row.market_type, row.line]);
+    const side = row.selection_type === 'over' ? 'MORE' as const : 'LESS' as const;
+    const existing = lines.get(key);
+    if (existing) { if (!existing.sides.includes(side)) lines.set(key, { ...existing, sides: [...existing.sides, side].sort() }); continue; }
+    lines.set(key, { book: String(row.sportsbook), league: String(row.league), sport, eventId: String(row.event_id),
+      home: typeof row.home_team === 'string' ? row.home_team : null, away: typeof row.away_team === 'string' ? row.away_team : null,
+      startTime: String(row.event_start_time), player: row.player_name, marketType: String(row.market_type),
+      market: sport ? bookMarket(sport, String(row.sportsbook), String(row.market_type)) ?? null : null, line: row.line,
+      sides: [side], american: typeof row.odds_american === 'number' ? row.odds_american : null,
+      alternate: row.is_alternate_line === true, stale: row.is_stale_pregame_price === true,
+      observedAt: typeof row.timestamp === 'string' ? row.timestamp : null });
+  }
+  return [...lines.values()];
 }
 
 /** Pairs each book's Over and Under at the same number and removes the vig: fair over = p(over) / (p(over) + p(under)). */
@@ -93,7 +136,9 @@ export function fairPrices(rows: readonly unknown[]): FairPrice[] {
       overAmerican: typeof over.odds_american === 'number' ? over.odds_american : null,
       underAmerican: typeof under.odds_american === 'number' ? under.odds_american : null,
       startTime: String(over.event_start_time), home: typeof over.home_team === 'string' ? over.home_team : null,
-      away: typeof over.away_team === 'string' ? over.away_team : null });
+      away: typeof over.away_team === 'string' ? over.away_team : null,
+      ...(over.is_stale_pregame_price === true || under.is_stale_pregame_price === true ? { stale: true } : {}),
+      ...(typeof over.timestamp === 'string' ? { observedAt: over.timestamp } : {}) });
   }
   return prices;
 }
@@ -161,7 +206,7 @@ export function gamePrices(rows: readonly unknown[]): GamePrice[] {
 export interface SharpPropsStatus {
   readonly configured: boolean; readonly fetchedAt: string | null; readonly prices: number;
   readonly lastError: string | null; readonly requests: number;
-  readonly overOnly?: number; readonly games?: number;
+  readonly overOnly?: number; readonly games?: number; readonly pickem?: number;
 }
 
 /**
@@ -170,6 +215,7 @@ export interface SharpPropsStatus {
  */
 export class SharpPropsFeed {
   private prices: FairPrice[] = [];
+  private pickem: PickemLine[] = [];
   private overOnly: OverOnlyPrice[] = [];
   private games: GamePrice[] = [];
   private fetchedAt: string | null = null;
@@ -191,8 +237,9 @@ export class SharpPropsFeed {
     if (!this.file) return;
     try {
       const saved = JSON.parse(await readFile(this.file, 'utf8')) as { fetchedAt: string; prices: FairPrice[];
-        overOnly?: OverOnlyPrice[]; games?: GamePrice[] };
+        overOnly?: OverOnlyPrice[]; games?: GamePrice[]; pickem?: PickemLine[] };
       this.prices = saved.prices; this.fetchedAt = saved.fetchedAt; this.overOnly = saved.overOnly ?? []; this.games = saved.games ?? [];
+      this.pickem = saved.pickem ?? [];
     } catch { /* first run */ }
   }
 
@@ -210,10 +257,17 @@ export class SharpPropsFeed {
     return { fetchedAt: this.fetchedAt, overOnly: this.overOnly, games: this.games };
   }
 
+  /** PrizePicks lines from the same refresh (SharpAPI's pick'em books). */
+  async pickemLines(): Promise<{ fetchedAt: string | null; lines: PickemLine[] }> {
+    await this.load();
+    return { fetchedAt: this.fetchedAt, lines: this.pickem };
+  }
+
   async status(): Promise<SharpPropsStatus> {
     await this.load();
     return { configured: !!this.apiKey, fetchedAt: this.fetchedAt, prices: this.prices.length, lastError: this.lastError,
-      requests: this.requests, overOnly: this.overOnly.length, games: this.games.length };
+      requests: this.requests, overOnly: this.overOnly.length, games: this.games.length,
+      pickem: this.pickem.length };
   }
 
   /** One refresh at a time: a second call waits for the running one instead of doubling the requests. */
@@ -256,14 +310,18 @@ export class SharpPropsFeed {
       this.lastError = error instanceof Error ? error.message : 'SHARPAPI_FAILED';
       return this.status();
     }
-    const prices = fairPrices(rows);
+    // Pick'em rows (PrizePicks) are lines, not prices: kept apart so they never count toward a fair price.
+    const bookRows = rows.filter((row) => !isPickemRow(row));
+    const prices = fairPrices(bookRows);
     if (!prices.length) { this.lastError = 'NO_PRICES'; return this.status(); }
-    this.prices = prices; this.overOnly = overOnlyPrices(rows); this.games = gamePrices(gameRows);
+    this.prices = prices; this.overOnly = overOnlyPrices(bookRows); this.games = gamePrices(gameRows.filter((row) => !isPickemRow(row)));
+    this.pickem = pickemLines(rows);
     this.fetchedAt = this.clock().toISOString(); this.lastError = null;
     if (this.file) {
       await mkdir(dirname(this.file), { recursive: true });
       const temporary = `${this.file}.${randomUUID()}.tmp`;
-      await writeFile(temporary, JSON.stringify({ fetchedAt: this.fetchedAt, prices, overOnly: this.overOnly, games: this.games }));
+      await writeFile(temporary, JSON.stringify({ fetchedAt: this.fetchedAt, prices, overOnly: this.overOnly, games: this.games,
+        pickem: this.pickem }));
       await rename(temporary, this.file);
     }
     try { await this.onRefreshed?.(prices, this.clock()); } catch { /* history is best effort */ }

@@ -8,7 +8,7 @@ import { platformFee } from './market-picks.js';
 import type { MarketPick } from './market-picks.js';
 import { sameGame } from './team-match.js';
 
-// More Kalshi and Polymarket picks (owner, 2026-10-05). Kalshi's winner, spread and total markets in every league
+// More Kalshi picks (owner, 2026-10-05). Kalshi's winner, spread and total markets in every league
 // SharpAPI carries, and its player props (Yes on an over), priced below the sportsbooks' no-vig chance of the same side
 // at the same number. Player props also use the same History Read every tab uses: a prop with no book price can still
 // show when the player's history clears it by a wide margin, and a prop is dropped when history points the other way.
@@ -21,7 +21,7 @@ export const HISTORY_EDGE = 0.06;
 /** A bigger edge than this on a game market is almost always a stale price, so it's left out. */
 export const MAX_GAME_EDGE = 0.12;
 
-const exchanges = new Set(['kalshi', 'polymarket']);
+const exchanges = new Set(['kalshi']);
 const round = (value: number) => Math.round(value * 10_000) / 10_000;
 const opposite = { home: 'away', away: 'home', over: 'under', under: 'over' } as const;
 
@@ -64,7 +64,7 @@ export function bookFair(games: readonly GamePrice[], target: Pick<GamePrice, 'h
 }
 
 /** Kalshi's game markets priced below the books' fair chance: one per game and kind, the biggest edge. */
-export function exchangeGamePicks(platform: 'kalshi' | 'polymarket', games: readonly GamePrice[], now: Date): MarketPick[] {
+export function exchangeGamePicks(platform: 'kalshi', games: readonly GamePrice[], now: Date): MarketPick[] {
   const best = new Map<string, MarketPick>();
   for (const game of games) {
     if (game.book !== platform || Date.parse(game.startTime) <= now.getTime() || game.probability < 0.15 || game.probability > 0.85) continue;
@@ -82,7 +82,7 @@ export function exchangeGamePicks(platform: 'kalshi' | 'polymarket', games: read
       league: game.league.toUpperCase(), game: title, startTime: game.startTime, kind, side, question: `${title} · ${side}`,
       home: game.home, away: game.away, team, handicap: kind === 'SPREAD' ? game.line : null,
       ...(kind === 'TOTAL' ? { total: { side: game.side as 'over' | 'under', line: game.line! } } : {}),
-      price: round(game.probability), cost, fair, edge, volume24h: null, url: platform === 'kalshi' ? 'https://kalshi.com/sports' : null,
+      price: round(game.probability), cost, fair, edge, volume24h: null, url: 'https://kalshi.com/sports',
       note: `Sportsbooks’ fair chance ${Math.round(fair * 100)}% vs ${Math.round(cost * 100)}¢ with the fee` };
     const key = `${game.eventId}|${kind}`, current = best.get(key);
     if (!current || pick.edge > current.edge) best.set(key, pick);
@@ -183,7 +183,7 @@ export function exchangePropPicks(offers: readonly OverOnlyPrice[], prices: read
 }
 
 /**
- * The sportsbooks' no-vig game lines in Pinnacle's shape, for Polymarket and Kalshi winner and spread checks when Pinnacle
+ * The sportsbooks' no-vig game lines in Pinnacle's shape, for Kalshi winner and spread checks when Pinnacle
  * is out of date or doesn't carry the game.
  */
 export function consensusGameLines(games: readonly GamePrice[]): GameLine[] {

@@ -20,7 +20,7 @@ import { JsonSelectionLedger } from './selection-ledger.js';
 import { CombinedWebResearch, WebResearchAdapter, WebResearchCatalog } from './web-research.js';
 import { SharpPropsFeed } from './context/sharp-props.js';
 import { SlotLedger } from './scrapers/slot-ledger.js';
-import { ContextFeeds, injuryReports, kalshiMarkets, pinnacleLines, polymarketMarkets } from './context/feeds.js';
+import { ContextFeeds, injuryReports, kalshiMarkets, pinnacleLines } from './context/feeds.js';
 import { ClaudeWebResearchAdapter } from './claude-web-research.js';
 import { ProductLedger } from './product-ledger.js';
 import { ProductGradingWorker } from './background-grading.js';
@@ -120,20 +120,20 @@ const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBud
     ...(apiKey?[{source:oddsApiSource(new FullPrizePicksProvider({apiKey,maxEvents,maxCreditsPerRefresh})),
       hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ODDS_API','')}]:[])],
   {maxRunUsd:nonNegativeNumber('CROWNIQ_SCRAPER_MAX_RUN_USD',5),slots:scraperSlots}):null;
-// Display-only game context (never scored): injuries, Pinnacle game lines, Kalshi and Polymarket odds.
+// Display-only game context (never scored): injuries, Pinnacle game lines, Kalshi odds.
 const contextFeeds=process.env.APIFY_TOKEN?.trim()?new ContextFeeds(apify,scraperBudget,[
   {source:injuryReports,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_INJURIES','8,11,14,17')},
   {source:pinnacleLines,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_PINNACLE','9,15')},
-  {source:kalshiMarkets,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_KALSHI','11')},
-  {source:polymarketMarkets,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_POLYMARKET','11')}],
+  {source:kalshiMarkets,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_KALSHI','11')}],
 process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`,undefined,scraperSlots):null;
 // DraftKings and Hard Rock prop prices from SharpAPI (reference odds and +EV), refreshed hourly.
 // The owner's Railway variable is named `sharp_api`; SHARPAPI_KEY also works.
-// Books per request (SharpAPI's Hobby plan takes up to 5): ones the plan hasn't selected are skipped, so FanDuel and
-// Polymarket start flowing as soon as the owner selects them in SharpAPI. CROWNIQ_SHARP_BOOKS overrides the list.
+// Books per request (SharpAPI's Hobby plan takes up to 5): ones the plan hasn't selected are skipped. PrizePicks comes in
+// as lines for Edge, never as a price (PrizePicks Flex lists the same lines at the Flex payout, so it isn't requested).
+// CROWNIQ_SHARP_BOOKS overrides the list.
 const sharpProps=new SharpPropsFeed((process.env.SHARPAPI_KEY ?? process.env.sharp_api)?.trim()||null,
   process.env.CROWNIQ_SHARP_PROPS_FILE ?? `${dataDir}/sharp-props.json`,
-  {books:(process.env.CROWNIQ_SHARP_BOOKS??'draftkings,hardrock,kalshi,fanduel,polymarket').split(',').map((book)=>book.trim()).filter(Boolean),
+  {books:(process.env.CROWNIQ_SHARP_BOOKS??'draftkings,hardrock,kalshi,fanduel,prizepicks').split(',').map((book)=>book.trim()).filter(Boolean),
     maxPagesPerLeague:100});
 // A bad CROWNIQ_PAYOUTS falls back to the defaults rather than stopping the server.
 const payouts=mergePayouts((()=>{try{return JSON.parse(process.env.CROWNIQ_PAYOUTS??'null');}catch{return null;}})());

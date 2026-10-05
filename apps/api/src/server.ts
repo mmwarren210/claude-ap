@@ -125,7 +125,7 @@ export interface ServerOptions {
   contextLookupBudget?: DailyLookupBudget | null;
   /** Scheduled Apify scraper pulls that feed the provider's line store. */
   scraperPuller?: ScraperPuller | null;
-  /** Display-only game context feeds (injuries, Pinnacle, Kalshi, Polymarket); never scored. */
+  /** Display-only game context feeds (injuries, Pinnacle, Kalshi); never scored. */
   contextFeeds?: ContextFeeds | null;
   /** DraftKings and Hard Rock prop prices (SharpAPI) for reference odds and CrownIQ's own +EV; never scored. */
   sharpProps?: SharpPropsFeed | null;
@@ -137,7 +137,7 @@ export interface ServerOptions {
   shadowRecord?: ShadowRecord | null;
   /** Every standard line graded after its game, for Trends (CrownIQ's own hit rates). */
   baseRates?: BaseRates | null;
-  /** Kalshi and Polymarket picks, graded from final scores. */
+  /** Kalshi picks, graded from final scores. */
   marketRecord?: MarketRecord | null;
   /** Beta feedback: testers' bug reports and suggestions, and the patch notes that answer them. */
   feedback?: FeedbackStore | null;
@@ -149,7 +149,7 @@ export interface ServerOptions {
   historyArchive?: HistoryArchive | null;
   /** Reads The Odds API's credit balance (a free call), for the owner. */
   oddsApiQuota?: (() => Promise<{ status: number; remaining: number | null; used: number | null }>) | null;
-  /** Live Kalshi and Polymarket prices from their free public APIs. */
+  /** Live Kalshi prices from its free public API. */
   liveMarkets?: LiveMarkets | null;
   /** JSON-lines history of the books' view of board lines, one row per line per refresh. */
   booksHistoryFile?: string | null;
@@ -290,7 +290,7 @@ export function buildServer(options: ServerOptions = {}) {
       }
       if(options.contextFeeds){
         const games=(await options.contextFeeds.items<GameLine>('pinnacle')).items;
-        const markets=[...(await marketItems('kalshi')).items,...(await marketItems('polymarket')).items];
+        const markets=(await marketItems('kalshi')).items;
         for(const analysis of board.analyses){
           const line=lines.get(analysis.lineId);
           if(!line||analysis.direction==='PASS'||analysis.score===null||!scriptEligible(line))continue;
@@ -308,9 +308,9 @@ export function buildServer(options: ServerOptions = {}) {
         const line=lines.get(lineId);
         if(line&&trend.direction!=='PASS')picks.push({kind:'trend',line,side:trend.direction,strength:trend.score});
       }
-      // Kalshi and Polymarket picks go to their own record.
+      // Kalshi picks go to their own record.
       if(options.marketRecord){
-        const market=(await Promise.all((['kalshi','polymarket'] as const).map(async(platform)=>(await marketPicksFor(platform))?.picks??[]))).flat();
+        const market=(await Promise.all((['kalshi'] as const).map(async(platform)=>(await marketPicksFor(platform))?.picks??[]))).flat();
         await options.marketRecord.record(market);
       }
       const found:Record<string,number>={};
@@ -336,7 +336,7 @@ export function buildServer(options: ServerOptions = {}) {
       if(!line||seen.has(key)||next.length>=6)continue;
       seen.add(key);next.push({line,gkr:{direction:pick.side,score:pick.gkr!.score,modelVersion:pick.gkr!.modelVersion}});
     }
-    for(const platform of ['kalshi','polymarket'] as const){
+    for(const platform of ['kalshi'] as const){
       const result=await marketPicksFor(platform);
       for(const pick of (result?.picks??[]).slice(0,3)){const line=marketLine(pick,now());
         if(line)next.push({line,gkr:{direction:'MORE',score:null,modelVersion:'market-edge'},question:marketQuestion(pick,line)});}
@@ -988,17 +988,16 @@ export function buildServer(options: ServerOptions = {}) {
     const line=service.getBoard()?.board.lines.find((item)=>item.id===parsed.data.lineId);
     if(!line)return reply.code(404).send({code:'LINE_NOT_FOUND'});
     if(!options.contextFeeds)return {injury:null,teamInjuries:[],game:[],markets:[]};
-    const [injuries,pinnacle,kalshi,polymarket]=await Promise.all([options.contextFeeds.items<InjuryNote>('injuries'),
-      options.contextFeeds.items<GameLine>('pinnacle'),options.contextFeeds.items<MarketOdds>('kalshi'),
-      options.contextFeeds.items<MarketOdds>('polymarket')]);
+    const [injuries,pinnacle,kalshi]=await Promise.all([options.contextFeeds.items<InjuryNote>('injuries'),
+      options.contextFeeds.items<GameLine>('pinnacle'),options.contextFeeds.items<MarketOdds>('kalshi')]);
     const game=gameLinesFor(line,pinnacle.items);
     const team=line.team;
     const teamInjuries=team?injuries.items.filter((item)=>item.league.toUpperCase()===line.league.toUpperCase()&&
       (item.teamAbbreviation?.toUpperCase()===team.toUpperCase()||normalizedName(item.team)===normalizedName(team)))
       .slice(0,8):[];
     return {injury:injuryFor(line,injuries.items),teamInjuries,game,
-      markets:marketsFor(line,[...kalshi.items,...polymarket.items],game),
-      fetchedAt:{injuries:injuries.fetchedAt,pinnacle:pinnacle.fetchedAt,kalshi:kalshi.fetchedAt,polymarket:polymarket.fetchedAt}};
+      markets:marketsFor(line,kalshi.items.filter((item)=>item.platform==='kalshi'),game),
+      fetchedAt:{injuries:injuries.fetchedAt,pinnacle:pinnacle.fetchedAt,kalshi:kalshi.fetchedAt}};
   });
   // Each app's payouts and the per-pick hit rate every entry needs to break even.
   const payouts=options.payouts??DEFAULT_PAYOUTS;
@@ -1433,7 +1432,7 @@ export function buildServer(options: ServerOptions = {}) {
       return {...pick,scout:read?aiView(read):null};}));
     return {book:parsed.data.book,name:sportsbookNames[parsed.data.book],fetchedAt:result.fetchedAt,picks};
   });
-  // Prediction-market picks: Kalshi or Polymarket game markets priced below Pinnacle's no-vig chance. Display only.
+  // Prediction-market picks: Kalshi game markets priced below Pinnacle's no-vig chance. Display only.
   /** A platform's prices: live from its free API when fresh, else the daily Apify feed. */
   async function marketItems(platform:MarketPlatform):Promise<{fetchedAt:string|null;items:MarketOdds[];live:boolean}>{
     const live=await options.liveMarkets?.items(platform);
@@ -1454,7 +1453,7 @@ export function buildServer(options: ServerOptions = {}) {
   }
   // Keep the book and market picks warm so the tabs open fast.
   const warmPicks=()=>{for(const book of sportsbooks)void picksFor(book).catch(()=>undefined);
-    for(const platform of ['kalshi','polymarket'] as const)void marketPicksFor(platform).catch(()=>undefined);};
+    for(const platform of ['kalshi'] as const)void marketPicksFor(platform).catch(()=>undefined);};
   const warmFirst=setTimeout(warmPicks,45_000);warmFirst.unref();
   const warmEvery=setInterval(warmPicks,3*60_000);warmEvery.unref();
   shadowTimers.push(warmFirst,warmEvery);
@@ -1497,12 +1496,12 @@ export function buildServer(options: ServerOptions = {}) {
       picks:picks.sort((a,b)=>b.edge-a.edge)};
   }
   app.get('/v1/markets/:platform/record',async(request,reply)=>{
-    const parsed=z.object({platform:z.enum(['kalshi','polymarket'])}).safeParse(request.params);
+    const parsed=z.object({platform:z.enum(['kalshi'])}).safeParse(request.params);
     if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_PLATFORM'});
     return options.marketRecord?options.marketRecord.status(parsed.data.platform):reply.code(503).send({code:'MARKET_RECORD_UNCONFIGURED'});
   });
   app.get('/v1/markets/:platform/picks',async(request,reply)=>{
-    const parsed=z.object({platform:z.enum(['kalshi','polymarket'])}).safeParse(request.params);
+    const parsed=z.object({platform:z.enum(['kalshi'])}).safeParse(request.params);
     if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_PLATFORM'});
     const result=await marketPicksFor(parsed.data.platform);
     if(!result)return reply.code(503).send({code:'MARKET_PICKS_UNAVAILABLE'});
@@ -1708,7 +1707,7 @@ export function buildServer(options: ServerOptions = {}) {
     admin.post('/shadow/record', async (_request, reply) => options.shadowRecord ? (await recordShadow()) ?? { found: {}, added: 0 }
       : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
     admin.get('/market-record', async (_request, reply) => options.marketRecord
-      ? { kalshi: await options.marketRecord.status('kalshi'), polymarket: await options.marketRecord.status('polymarket') }
+      ? { kalshi: await options.marketRecord.status('kalshi') }
       : reply.code(503).send({ code: 'MARKET_RECORD_UNCONFIGURED' }));
     admin.post('/shadow/grade', async (_request, reply) => options.shadowRecord ? { graded: await options.shadowRecord.grade(),
       markets: await options.marketRecord?.grade() ?? 0 }
@@ -1857,7 +1856,7 @@ export function buildServer(options: ServerOptions = {}) {
       ? { feeds: await options.contextFeeds.status(), sharpProps: await options.sharpProps?.status() ?? null } : reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' }));
     // One context feed's saved items (read-only), for the owner to check what a feed holds.
     admin.get('/context/:id/items', async (request, reply) => {
-      const parsed=z.object({id:z.enum(['injuries','pinnacle','kalshi','polymarket'])}).safeParse(request.params);
+      const parsed=z.object({id:z.enum(['injuries','pinnacle','kalshi'])}).safeParse(request.params);
       if(!parsed.success||!options.contextFeeds)return reply.code(404).send({code:'UNKNOWN_FEED'});
       return options.contextFeeds.items(parsed.data.id);
     });
@@ -1865,7 +1864,7 @@ export function buildServer(options: ServerOptions = {}) {
     admin.post('/context/pull', async (request, reply) => {
       if (!options.contextFeeds) return reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' });
       if (request.headers['x-confirm-provider-cost'] !== 'yes') return reply.code(428).send({ code: 'COST_CONFIRMATION_REQUIRED' });
-      const input = z.object({ source: z.enum(['injuries', 'pinnacle', 'kalshi', 'polymarket']) }).safeParse(request.body);
+      const input = z.object({ source: z.enum(['injuries', 'pinnacle', 'kalshi']) }).safeParse(request.body);
       if (!input.success) return reply.code(400).send({ code: 'INVALID_CONTEXT_SOURCE' });
       return options.contextFeeds.pull(input.data.source);
     });

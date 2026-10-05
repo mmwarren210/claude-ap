@@ -18,10 +18,10 @@ import { DayPicker } from './ui/DayPicker';
 import { chosenDay, gameDays, onDay } from '../game-days';
 import { formatLine, marketLabel } from '../insights';
 
-// Crown generators for the sportsbooks (DraftKings, Hard Rock) and prediction markets (Kalshi, Polymarket), beside the
+// Crown generators for the sportsbooks (DraftKings, Hard Rock) and prediction market (Kalshi), beside the
 // pick'em ones (owner, 2026-10-05). Each builds from its own board, which already carries GKR, the History Read at the
 // book's number and the books' fair prices; picks added on the board show here too. Sizes: DraftKings up to 8, Hard Rock
-// up to 20, Kalshi and Polymarket up to 20 (each contract is bought on its own).
+// up to 20, Kalshi up to 20 (each contract is bought on its own).
 
 function Remove({ onPress }: { onPress: () => void }) {
   return <Pressable accessibilityRole="button" onPress={onPress} style={styles.remove}>

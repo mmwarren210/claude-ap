@@ -1,7 +1,7 @@
 // "Every app" on Top Picks (owner, 2026-10-05): the best picks from every board in one ranking. Pure, so tests load it.
 // Order: GKR first (by score), then Scout's plays, then History plays, then price edges (+EV, Value, market edges).
 
-export type PickSource = 'prizepicks' | 'underdog' | 'pick6' | 'draftkings' | 'hardrock' | 'kalshi' | 'polymarket';
+export type PickSource = 'prizepicks' | 'underdog' | 'pick6' | 'draftkings' | 'hardrock' | 'kalshi';
 export type PickBy = 'GKR' | 'SCOUT' | 'HISTORY' | 'VALUE' | 'EDGE';
 export interface AnyPick {
   readonly key: string; readonly source: PickSource; readonly by: PickBy;
@@ -30,6 +30,6 @@ export function rankAll(picks: readonly AnyPick[], nowMs: number): AnyPick[] {
 }
 
 export const sourceLabels: Readonly<Record<PickSource, string>> = { prizepicks: 'PrizePicks', underdog: 'Underdog',
-  pick6: 'DK Pick’em', draftkings: 'DraftKings', hardrock: 'Hard Rock', kalshi: 'Kalshi', polymarket: 'Polymarket' };
+  pick6: 'DK Pick’em', draftkings: 'DraftKings', hardrock: 'Hard Rock', kalshi: 'Kalshi' };
 export const byLabels: Readonly<Record<PickBy, string>> = { GKR: 'GKR', SCOUT: 'Scout', HISTORY: 'History', VALUE: 'Value',
   EDGE: 'Edge' };

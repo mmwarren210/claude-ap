@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { propLineSchema } from '@crowniq/contracts';
 import { fixtureLine } from '../../../packages/engine/test/fixtures.js';
-import { ContextFeeds, injuryReports, kalshiMarkets, pinnacleLines, polymarketMarkets } from '../src/context/feeds.js';
+import { ContextFeeds, injuryReports, kalshiMarkets, pinnacleLines } from '../src/context/feeds.js';
 import type { ApifyClient } from '../src/scrapers/apify-client.js';
 import type { DailySpendBudget } from '../src/scrapers/spend-budget.js';
 import { gameLinesFor, injuryFor, marketsFor } from '../src/context/match.js';
@@ -19,7 +19,7 @@ const pinnacle = pinnacleLines.read({ league: 'nfl', homeTeam: 'Chicago Bears', 
 const kalshi = kalshiMarkets.read({ status: 'open', question: 'NY Jets vs CHI Bears — Chicago', eventTitle: 'NY Jets vs CHI Bears',
   outcomes: [{ name: 'Yes', probability: 64 }, { name: 'No', probability: 36 }], volume24h: 1000,
   closeTime: '2030-10-04T21:00:00Z', url: 'https://kalshi.com/x' })!;
-const unrelated = polymarketMarkets.read({ status: 'open', question: 'Bitcoin above 100k?', eventTitle: 'Bitcoin',
+const unrelated = kalshiMarkets.read({ status: 'open', question: 'Bitcoin above 100k?', eventTitle: 'Bitcoin',
   outcomes: [{ name: 'Yes', probability: 40 }], closeTime: '2030-10-04T21:00:00Z' })!;
 
 test('context feeds read each scraper row and match it to a board line conservatively', () => {

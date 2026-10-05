@@ -23,7 +23,7 @@ export interface GameLine {
   readonly sourceUrl: string | null;
 }
 export interface MarketOdds {
-  readonly platform: 'kalshi' | 'polymarket'; readonly eventTitle: string; readonly question: string;
+  readonly platform: 'kalshi'; readonly eventTitle: string; readonly question: string;
   readonly outcomes: readonly { name: string; probability: number }[];
   readonly volume24h: number | null; readonly closeTime: string | null; readonly url: string | null;
 }
@@ -71,7 +71,7 @@ export const pinnacleLines: ContextSource<GameLine> = {
   },
 };
 
-const predictionMarket = (platform: 'kalshi' | 'polymarket', actor: string): ContextSource<MarketOdds> => ({
+const predictionMarket = (platform: 'kalshi', actor: string): ContextSource<MarketOdds> => ({
   id: platform, actor, maxRunUsd: 1,
   input: () => ({ mode: 'markets', category: 'Sports', minVolume: 1000, sortBy: 'volume24h', maxMarkets: 300,
     includeClosed: false }),
@@ -87,7 +87,6 @@ const predictionMarket = (platform: 'kalshi' | 'polymarket', actor: string): Con
   },
 });
 export const kalshiMarkets = predictionMarket('kalshi', 'lergassy/kalshi-scraper');
-export const polymarketMarkets = predictionMarket('polymarket', 'lergassy/polymarket-scraper');
 
 export interface ContextScheduled { readonly source: ContextSource; readonly hoursEt: readonly number[] }
 export interface ContextReport {

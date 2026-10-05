@@ -3,12 +3,12 @@ import type { PickQuestion } from './ai-picks.js';
 import type { GameLine, MarketOdds } from './context/feeds.js';
 import { normalizedName } from './context/match.js';
 
-// Prediction-market picks (Kalshi, Polymarket): their game markets (winner, spread) priced below Pinnacle's no-vig chance
+// Prediction-market picks (Kalshi): its game markets (winner, spread) priced below Pinnacle's no-vig chance
 // for the same game and number. Pinnacle is the sharpest public book, so a market that is cheaper than Pinnacle's fair
 // chance is the better buy. GKR doesn't score these (it scores player props); only sides with an edge are kept.
 
-export type MarketPlatform = 'kalshi' | 'polymarket';
-export const marketPlatforms: readonly MarketPlatform[] = ['kalshi', 'polymarket'];
+export type MarketPlatform = 'kalshi';
+export const marketPlatforms: readonly MarketPlatform[] = ['kalshi'];
 
 export interface MarketPick {
   readonly id: string; readonly platform: MarketPlatform; readonly league: string; readonly game: string;
@@ -33,7 +33,7 @@ export interface MarketPick {
 /** The biggest edge believed on a game market; anything above is treated as a mismatch or a stale price. */
 export const MAX_MARKET_EDGE = 0.12;
 
-/** Kalshi's trading fee per contract: 7% of price times (1 - price), rounded up to the cent. Polymarket: none. */
+/** Kalshi's trading fee per contract: 7% of price times (1 - price), rounded up to the cent. */
 export const platformFee = (platform: MarketPlatform, price: number) =>
   platform === 'kalshi' ? Math.ceil(0.07 * price * (1 - price) * 100 - 1e-9) / 100 : 0;
 
@@ -86,7 +86,7 @@ export function marketPicks(platform: MarketPlatform, markets: readonly MarketOd
       const sides: { side: string; team: 'home' | 'away'; price: number; kind: MarketPick['kind']; handicap: number | null }[] = [];
       const spreadMatch = /^Spread: (.+) \((-?\d+(?:\.\d+)?)\)$/.exec(market.question);
       if (spreadMatch) {
-        // Polymarket: "Spread: Bills (-6.5)"; Pinnacle's spread line is the home team's.
+        // "Spread: Bills (-6.5)"; Pinnacle's spread line is the home team's.
         const [, favorite, handicap] = spreadMatch, line = Number(handicap);
         const favoriteTeam = names(favorite!, home) ? 'home' : names(favorite!, away) ? 'away' : null;
         if (!favoriteTeam || !spread || spread.homeFair === null || spread.awayFair === null ||
@@ -100,7 +100,7 @@ export function marketPicks(platform: MarketPlatform, markets: readonly MarketOd
         }
       } else if (!/spread|O\/U|total|yards|points|goals|touchdown|ladder|escalator|\+/i.test(market.question) && moneyline &&
         moneyline.homeFair !== null && moneyline.awayFair !== null && moneyline.homeFair + moneyline.awayFair > 0.98) {
-        // Winner markets. Kalshi: "X vs Y — Dallas" with Yes/No; Polymarket: outcomes named by team, or "Will X win?".
+        // Winner markets: "X vs Y — Dallas" with Yes/No, outcomes named by team, or "Will X win?".
         const subject = /— (.+)$/.exec(market.question)?.[1] ?? /^Will (.+?) win/.exec(market.question)?.[1] ?? null;
         if (subject) {
           // A name that fits both teams ("New York" for the Islanders and the Rangers) can't be priced, so it's skipped.
@@ -159,6 +159,6 @@ export function marketQuestion(pick: MarketPick, line: PropLine): PickQuestion {
     team: null, opponent: null, stat: pick.kind === 'WINNER' ? 'wins the game' : `covers: ${pick.side}`, line: 0.5,
     lineType: 'REGULAR', sides: ['MORE', 'LESS'],
     facts: ['This is a game outcome market, not a player stat. MORE means this side wins (or covers the spread named); ' +
-      'LESS means it does not.', `${pick.platform === 'kalshi' ? 'Kalshi' : 'Polymarket'} price: ${Math.round(pick.price * 100)} cents ` +
+      'LESS means it does not.', `Kalshi price: ${Math.round(pick.price * 100)} cents ` +
       'on the dollar.'] };
 }

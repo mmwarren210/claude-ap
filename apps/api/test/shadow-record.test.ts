@@ -16,13 +16,13 @@ test('game script: the player team margin, total and win chance from Pinnacle, w
   const markets: MarketOdds[] = [
     { platform: 'kalshi', eventTitle: 'Kansas City at Las Vegas', question: 'Kansas City at Las Vegas — Las Vegas',
       outcomes: [{ name: 'Yes', probability: 32 }, { name: 'No', probability: 68 }], volume24h: null, closeTime: start, url: null },
-    { platform: 'polymarket', eventTitle: 'Chiefs vs. Raiders', question: 'Chiefs vs. Raiders',
+    { platform: 'kalshi', eventTitle: 'Chiefs vs. Raiders', question: 'Chiefs vs. Raiders',
       outcomes: [{ name: 'Chiefs', probability: 66 }, { name: 'Raiders', probability: 34 }], volume24h: null, closeTime: start, url: null },
-    { platform: 'polymarket', eventTitle: 'Chiefs vs. Raiders', question: 'Spread: Chiefs (-7.5)',
+    { platform: 'kalshi', eventTitle: 'Chiefs vs. Raiders', question: 'Spread: Chiefs (-7.5)',
       outcomes: [{ name: 'Chiefs', probability: 50 }, { name: 'Raiders', probability: 50 }], volume24h: null, closeTime: start, url: null },
   ];
   assert.deepEqual(gameScriptFor(line, games, markets), { teamMargin: -7.5, total: 48, teamWin: 0.33, marketsWin: 0.33, agree: true },
-    'Raiders (home) are 7.5-point underdogs; Kalshi names teams by city, Polymarket by nickname; spreads are not win markets');
+    'Raiders (home) are 7.5-point underdogs; markets name teams by city or by nickname; spreads are not win markets');
   assert.equal(gameScriptFor({ ...line, team: 'Jets', opponent: 'Bills' }, games, markets), null, 'no Pinnacle game');
   assert.equal(scriptEligible(line), true);
   assert.equal(scriptEligible({ ...line, sport: 'MLB', market: 'batter_hits' }), false);

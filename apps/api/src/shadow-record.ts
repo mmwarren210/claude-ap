@@ -29,7 +29,7 @@ export interface GameScript {
   readonly total: number | null;
   /** Pinnacle's no-vig chance the player's team wins. */
   readonly teamWin: number | null;
-  /** Kalshi and Polymarket's average chance the player's team wins, when they price the game. */
+  /** Kalshi's chance the player's team wins, when they price the game. */
   readonly marketsWin: number | null;
   /** The markets agree with Pinnacle within 5 points (null when no market prices the game). */
   readonly agree: boolean | null;

@@ -30,15 +30,14 @@ export type BookPick = { id: string; league: string; eventName?: string; playerN
   scout?: AiRead | null;
   prizePicks: { line: number; lineType: string; sides: Side[];
     gkr: { direction: string; score: number | null; reasonCode: string | null } | null } | null };
-/** One Kalshi or Polymarket pick: a game market priced below Pinnacle's no-vig chance. */
+/** One Kalshi pick: a game market priced below Pinnacle's no-vig chance. */
 export type MarketPick = { id: string; league: string; game: string; startTime: string; kind: 'WINNER' | 'SPREAD' | 'TOTAL' | 'PROP';
   by?: 'MARKET' | 'HISTORY'; note?: string; side: string;
   price: number; cost: number; fair: number; edge: number; url: string | null; scout?: AiRead | null };
 
 export const bookUrls: Readonly<Record<Sportsbook, string>> = { draftkings: 'https://sportsbook.draftkings.com/',
   hardrock: 'https://app.hardrock.bet/' };
-export const marketUrls: Readonly<Record<MarketPlatform, string>> = { kalshi: 'https://kalshi.com/sports',
-  polymarket: 'https://polymarket.com/sports' };
+export const marketUrls: Readonly<Record<MarketPlatform, string>> = { kalshi: 'https://kalshi.com/sports' };
 export const odds = (american: number | null) => american === null ? '—' : american > 0 ? `+${american}` : `−${-american}`;
 const pct = (value: number | null) => value === null ? '—' : `${Math.round(value * 100)}%`;
 export const cents = (value: number) => `${(value * 100).toFixed(1).replace(/\.0$/, '')}¢`;
@@ -266,7 +265,7 @@ export function BookBoard({ book, onSource }: { book: Sportsbook; onSource: (sou
   </SafeAreaView>;
 }
 
-/** Kalshi or Polymarket: markets priced below the fair chance (Pinnacle's or the sportsbooks'). */
+/** Kalshi: markets priced below the fair chance (Pinnacle's or the sportsbooks'). */
 export function MarketBoard({ platform, onSource }: { platform: MarketPlatform; onSource: (source: BoardSource) => void }) {
   const { picks, fetchedAt, state } = usePicks<MarketPick>(`/v1/markets/${platform}/picks`);
   const record = useRecord(platform);

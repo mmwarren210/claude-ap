@@ -5,7 +5,7 @@ import { normalizedName } from './context/match.js';
 import type { MarketPick, MarketPlatform } from './market-picks.js';
 import { easternDay } from './scrapers/spend-budget.js';
 
-// Kalshi and Polymarket picks' own record: each pick saved once before its game, graded from ESPN's final scores (a
+// Kalshi picks' own record: each pick saved once before its game, graded from ESPN's final scores (a
 // winner pick on the winner, a spread pick with its handicap), and scored per $1 at the price it showed.
 
 const ESPN = 'https://site.api.espn.com/apis/site/v2/sports';

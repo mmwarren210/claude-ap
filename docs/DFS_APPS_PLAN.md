@@ -167,7 +167,7 @@ Display-only, never scored (`apps/api/src/context/`). They share the scraper bud
 | `lergassy/sports-injuries-api` | Injury status, injury, expected return, ESPN note (NFL, NBA, MLB, NHL, WNBA, college football) | 8, 11, 14, 17 | $0.50 |
 | `lergassy/pinnacle-odds-api` | Pinnacle moneyline (no-vig win chance), spread and total for games in the next 3 days | 9, 15 | $1.50 |
 | `lergassy/kalshi-scraper` | Sports prediction markets (top 300 by volume, min $1,000) | 11 | $1.00 |
-| `lergassy/polymarket-scraper` | Same, from Polymarket | 11 | $1.00 |
+| ~~`lergassy/polymarket-scraper`~~ | Removed 2026-10-05 (owner dropped Polymarket) | — | — |
 
 The player screen shows them under **Game news** ("Not part of the GKR score"); `GET /v1/context/line/:lineId` serves
 them, owner diagnostics show each feed's last run and `blankRunsInARow`, and `POST /v1/admin/context/pull` runs one now.
@@ -186,7 +186,7 @@ lines); (2) a platform picker on the Board, one board per pick'em app with its o
 | DraftKings Pick6 | Board, its own section | `zen-studio/draftkings-pick6-player-props` (tested 2026-10-04: real rows, $0.01 for NFL). Not on SharpAPI; `crawloop` returned 0 twice |
 | DraftKings Sportsbook | Reference odds only, its own section | SharpAPI (Hobby) |
 | Hard Rock | Reference odds only | SharpAPI (Hobby) |
-| Kalshi, Polymarket | Reference odds (Game news) | Apify feeds; SharpAPI also carries Kalshi |
+| Kalshi | Reference odds (Game news) | Kalshi public API, Apify backup; SharpAPI also carries Kalshi |
 | Onyx | Wanted | No source found yet: not on SharpAPI or the Apify store |
 
 **+EV (wanted):** SharpAPI's ready-made `/opportunities/ev` needs its Pro plan (the account is Hobby). CrownIQ can

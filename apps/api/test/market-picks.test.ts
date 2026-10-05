@@ -12,27 +12,27 @@ const market = (platform: MarketOdds['platform'], question: string, outcomes: [s
     closeTime: start, url: null });
 const games = [game('moneyline', null, 0.36), game('spread', 4.5, 0.53), game('total', 48, null)];
 
-test('market picks: winner and spread sides cheaper than Pinnacle, after fees; nothing else', () => {
-  const polymarket = marketPicks('polymarket', [
-    market('polymarket', 'Chiefs vs. Raiders', [['Chiefs', 67], ['Raiders', 33]]),
-    market('polymarket', 'Spread: Chiefs (-4.5)', [['Chiefs', 50], ['Raiders', 50]]),
-    market('polymarket', 'Spread: Chiefs (-3.5)', [['Chiefs', 55], ['Raiders', 45]]),
-    market('polymarket', 'Chiefs vs. Raiders: 1H Moneyline', [['Chiefs', 90], ['Raiders', 10]]),
-    market('polymarket', '1H Spread: Chiefs (-2.5)', [['Chiefs', 20], ['Raiders', 80]]),
-    market('polymarket', 'Chiefs vs. Raiders: O/U 48.5', [['Over', 30], ['Under', 70]]),
-  ], games, now);
-  assert.deepEqual(polymarket.map((pick) => [pick.kind, pick.side, pick.price, pick.fair, pick.edge]),
-    [['WINNER', 'Raiders to win', 0.33, 0.36, 0.03], ['SPREAD', 'Raiders +4.5', 0.5, 0.53, 0.03]],
+test('market picks: winner and spread sides cheaper than Pinnacle after the fee, named by team or by question; nothing else', () => {
+  const named = marketPicks('kalshi', [
+    market('kalshi', 'Chiefs vs. Raiders', [['Chiefs', 67], ['Raiders', 33]]),
+    market('kalshi', 'Spread: Chiefs (-4.5)', [['Chiefs', 50], ['Raiders', 50]]),
+    market('kalshi', 'Spread: Chiefs (-3.5)', [['Chiefs', 55], ['Raiders', 45]]),
+    market('kalshi', 'Chiefs vs. Raiders: 1H Moneyline', [['Chiefs', 90], ['Raiders', 10]]),
+    market('kalshi', '1H Spread: Chiefs (-2.5)', [['Chiefs', 20], ['Raiders', 80]]),
+    market('kalshi', 'Chiefs vs. Raiders: O/U 48.5', [['Over', 30], ['Under', 70]]),
+  ], games, now, 0.01);
+  assert.deepEqual(named.map((pick) => [pick.kind, pick.side, pick.price, pick.fair, pick.edge]),
+    [['WINNER', 'Raiders to win', 0.33, 0.36, 0.01], ['SPREAD', 'Raiders +4.5', 0.5, 0.53, 0.01]],
     'the -3.5 spread has no Pinnacle number; half-game and total markets never show');
   // Kalshi: "— Las Vegas" Yes at 33c costs 35c with the fee, so a 3-point gap is 1 point: below the 2-point bar.
   const kalshi = [market('kalshi', 'KC Chiefs vs LV Raiders — Las Vegas', [['Yes', 33], ['No', 67]], 'KC Chiefs vs LV Raiders')];
   assert.equal(platformFee('kalshi', 0.33), 0.02);
   assert.deepEqual(marketPicks('kalshi', kalshi, games, now), []);
   assert.equal(marketPicks('kalshi', kalshi, games, now, 0.01)[0]?.side, 'Las Vegas to win');
-  assert.deepEqual(marketPicks('polymarket', [market('polymarket', 'Chiefs vs. Raiders', [['Chiefs', 65], ['Raiders', 35]])],
-    games, now), [], 'priced at or above Pinnacle: no pick');
-  assert.deepEqual(marketPicks('polymarket', [market('polymarket', 'Chiefs vs. Raiders', [['Chiefs', 67], ['Raiders', 33]])],
-    games, new Date('2030-10-04T21:00:00Z')), [], 'started games drop');
+  assert.deepEqual(marketPicks('kalshi', [market('kalshi', 'Chiefs vs. Raiders', [['Chiefs', 65], ['Raiders', 35]])],
+    games, now, 0.01), [], 'priced at or above Pinnacle: no pick');
+  assert.deepEqual(marketPicks('kalshi', [market('kalshi', 'Chiefs vs. Raiders', [['Chiefs', 67], ['Raiders', 33]])],
+    games, new Date('2030-10-04T21:00:00Z'), 0.01), [], 'started games drop');
 });
 
 test('market picks: a name that fits both teams, a long shot, or an edge too big to be real is left out', async () => {
