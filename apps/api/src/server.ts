@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import Fastify from 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -1229,6 +1229,16 @@ export function buildServer(options: ServerOptions = {}) {
     admin.get('/status', async () => service.getStatus());
     admin.get('/odds-api', async (_request, reply) => options.oddsApiQuota ? options.oddsApiQuota()
       : reply.code(503).send({ code: 'ODDS_API_KEY_MISSING' }));
+    // What CrownIQ has stored for itself: player game history, graded decisions, line history and the side records.
+    admin.get('/history', async () => {
+      const lines=options.scrapedLines?await options.scrapedLines.active():[];
+      let booksHistoryRows=0;
+      try{if(options.booksHistoryFile)booksHistoryRows=(await readFile(options.booksHistoryFile,'utf8')).split('\n').filter(Boolean).length;}catch{/* none yet */}
+      return {playerHistory:await options.internalHistory?.status()??null,
+        trackedDecisions:(await options.product?.listDecisions(0,1))?.total??null,
+        activeAppLines:lines.length,booksHistoryRows,
+        shadow:await options.shadowRecord?.status()??null,markets:await options.marketRecord?.status()??null};
+    });
     admin.get('/members', async (_request, reply) => options.product ? options.product.membership()
       : reply.code(503).send({ code: 'PRODUCT_UNCONFIGURED' }));
     admin.get('/live-markets', async (_request, reply) => options.liveMarkets ? options.liveMarkets.status()
