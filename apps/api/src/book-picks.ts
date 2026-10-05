@@ -34,6 +34,21 @@ export const impliedChance = (american: number | null) => american === null ? nu
   : Math.round((american < 0 ? -american / (-american + 100) : 100 / (american + 100)) * 10_000) / 10_000;
 
 const dayKey = (iso: string) => iso.slice(0, 10);
+const statKey = (price: FairPrice) => JSON.stringify([price.book, price.sport, normalizedName(price.player), price.market,
+  dayKey(price.startTime)]);
+
+/**
+ * Each book's main line per player and stat: the number whose no-vig chance is closest to 50/50. Books that post a ladder
+ * of alternate numbers (Hard Rock) would otherwise put the easiest number of the ladder on the picks tab.
+ */
+export function mainLines(prices: readonly FairPrice[]): FairPrice[] {
+  const best = new Map<string, FairPrice>();
+  for (const price of prices) {
+    const key = statKey(price), current = best.get(key);
+    if (!current || Math.abs(price.fairOver - 0.5) < Math.abs(current.fairOver - 0.5)) best.set(key, price);
+  }
+  return [...best.values()];
+}
 
 /**
  * The best GKR picks on one book: for each player and stat the book prices, GKR's side at the book's number when it
@@ -49,9 +64,10 @@ export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardL
   }
   const others = new Map(prices.filter((price) => price.book !== book).map((price) =>
     [JSON.stringify([price.sport, normalizedName(price.player), price.market, price.line, dayKey(price.startTime)]), price]));
-  const pairs = prices.flatMap((price) => {
+  const main = mainLines(prices.filter((price) => price.book === book));
+  const pairs = main.flatMap((price) => {
     const start = Date.parse(price.startTime);
-    if (price.book !== book || start <= now.getTime()) return [];
+    if (start <= now.getTime()) return [];
     // The PrizePicks line for the same player and stat in the same game (within 6 hours): standard first, then closest.
     const research = (byPlayer.get(JSON.stringify([price.sport, normalizedName(price.player), price.market])) ?? [])
       .filter((line) => Math.abs(Date.parse(line.eventStartTime) - start) <= 6 * 3600_000)
@@ -105,4 +121,51 @@ export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardL
     if (!current || pick.gkr.score > current.gkr.score) best.set(key, pick);
   });
   return [...best.values()].sort((a, b) => b.gkr.score - a.gkr.score);
+}
+
+export interface LadderRow {
+  readonly book: Sportsbook; readonly line: number; readonly american: number | null; readonly needs: number | null;
+  /** The book's no-vig chance of the side at this number. */
+  readonly fairChance: number;
+  /** GKR's score for the side at this number, or null when GKR doesn't back it there. */
+  readonly gkr: number | null;
+  readonly pricey: boolean;
+  /** The book's main line (closest to 50/50) for this player and stat. */
+  readonly main: boolean;
+}
+
+/**
+ * The sportsbooks' numbers for one PrizePicks line's player and stat (Hard Rock posts alternate ladders; DraftKings
+ * comes through with its main line), for GKR's side: the four numbers nearest the PrizePicks line on the easier side
+ * (lower for More, higher for Less), the same number, and the two nearest on the harder side. Each number is scored by
+ * GKR on the same research. Display only.
+ */
+export function bookLadder(line: PropLine, side: PlayableDirection, prices: readonly FairPrice[],
+  scoreLines: (lines: readonly PropLine[]) => Analysis[]): LadderRow[] {
+  const start = Date.parse(line.eventStartTime), name = normalizedName(line.playerName);
+  const mine = prices.filter((price) => price.sport === line.sport && price.market === line.market &&
+    normalizedName(price.player) === name && Math.abs(Date.parse(price.startTime) - start) <= 6 * 3600_000 &&
+    (sportsbooks as readonly string[]).includes(price.book));
+  if (!mine.length) return [];
+  const numbers = [...new Set(mine.map((price) => price.line))];
+  const easier = numbers.filter((value) => side === 'MORE' ? value < line.threshold : value > line.threshold)
+    .sort((a, b) => Math.abs(a - line.threshold) - Math.abs(b - line.threshold)).slice(0, 4);
+  const harder = numbers.filter((value) => side === 'MORE' ? value > line.threshold : value < line.threshold)
+    .sort((a, b) => Math.abs(a - line.threshold) - Math.abs(b - line.threshold)).slice(0, 2);
+  const keep = new Set([...easier, ...harder, ...numbers.filter((value) => value === line.threshold)]);
+  const kept = [...keep];
+  const { payoutMultiplier: _payout, ...base } = line;
+  const scored = scoreLines(kept.map((value) => ({ ...base, id: `${line.id}@${value}`, sourceLineId: `${line.id}@${value}`,
+    threshold: value, availableDirections: ['MORE', 'LESS'], lineType: 'REGULAR' })));
+  const gkrAt = new Map(kept.map((value, index) => {
+    const analysis = scored[index];
+    return [value, analysis && analysis.direction === side && analysis.score !== null ? Math.round(analysis.score) : null];
+  }));
+  const main = new Set(mainLines(mine).map((price) => `${price.book}|${price.line}`));
+  return mine.filter((price) => keep.has(price.line)).map((price) => {
+    const american = side === 'MORE' ? price.overAmerican : price.underAmerican, needs = impliedChance(american);
+    return { book: price.book as Sportsbook, line: price.line, american, needs,
+      fairChance: Math.round((side === 'MORE' ? price.fairOver : 1 - price.fairOver) * 10_000) / 10_000,
+      gkr: gkrAt.get(price.line) ?? null, pricey: (needs ?? 0) >= PRICEY, main: main.has(`${price.book}|${price.line}`) };
+  }).sort((a, b) => (side === 'MORE' ? a.line - b.line : b.line - a.line) || a.book.localeCompare(b.book));
 }

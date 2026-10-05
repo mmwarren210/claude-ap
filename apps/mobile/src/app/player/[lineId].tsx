@@ -11,6 +11,7 @@ import { Sheet } from '../../components/Sheet';
 import { useTipFlow } from '../../components/TipSheet';
 import { BooksBadge } from '../../components/ui/BooksBadge';
 import { useBooks } from '../../use-books';
+import { BookLadder } from '../../components/BookLadder';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { alpha } from '../../components/ui/color';
 import { GhostButton, PrimaryButton, Segmented } from '../../components/ui/Controls';
@@ -354,6 +355,7 @@ export default function PlayerResearch() {
       {!!analysis?.contextEvidenceIds?.length && <Text style={styles.note}>Web context (not scored):{' '}
         {analysis.contextEvidenceIds.length} {analysis.contextEvidenceIds.length === 1 ? 'finding' : 'findings'}.</Text>}
       <BooksBadge view={books?.get(line.id)} side={modelSide} />
+      {!started && <BookLadder line={line} />}
       {context?.lineId === line.id && contextLines(context.value, line.playerName).length > 0 && <View style={styles.section}>
         <Text style={styles.sectionTitle}>Game news</Text>
         <View style={styles.panel}>{contextLines(context.value, line.playerName).map((text, index) =>

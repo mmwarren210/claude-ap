@@ -44,7 +44,7 @@ import type { ContextFeeds, GameLine, InjuryNote, MarketOdds } from './context/f
 import { gameLinesFor, injuryFor, marketsFor, normalizedName } from './context/match.js';
 import type { SharpPropsFeed } from './context/sharp-props.js';
 import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
-import { bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
+import { bookLadder, bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
 import { marketPicks } from './market-picks.js';
 import type { MarketPlatform } from './market-picks.js';
 import type { BookPick, Sportsbook } from './book-picks.js';
@@ -824,6 +824,19 @@ export function buildServer(options: ServerOptions = {}) {
     bookPickCache.set(book,entry);
     return entry;
   }
+  // The sportsbooks' other numbers for one board line's player and stat (Hard Rock's alternate ladder), for GKR's side.
+  app.get('/v1/books/ladder/:lineId',async(request,reply)=>{
+    const {lineId}=request.params as {lineId:string};
+    const board=service.getBoard();
+    if(!board||!options.sharpProps||!options.appGkrScores)return reply.code(503).send({code:'LADDER_UNAVAILABLE'});
+    const line=board.board.lines.find((item)=>item.id===lineId);
+    if(!line)return reply.code(404).send({code:'LINE_NOT_FOUND'});
+    const analysis=board.analyses.find((item)=>item.lineId===lineId);
+    const side=analysis&&analysis.direction!=='PASS'?analysis.direction:null;
+    if(!side||Date.parse(line.eventStartTime)<=now().getTime())return {side,rows:[]};
+    const {fetchedAt,prices}=await options.sharpProps.current();
+    return {side,fetchedAt,rows:bookLadder(line,side,prices,(items)=>service.scoreLines(items))};
+  });
   app.get('/v1/books/:book/picks',async(request,reply)=>{
     const parsed=z.object({book:z.enum(sportsbooks)}).safeParse(request.params);
     if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_BOOK'});
