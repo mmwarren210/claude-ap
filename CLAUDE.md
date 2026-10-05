@@ -40,6 +40,12 @@
 - **Scout's info pool** (owner, 2026-10-05): every Scout read (both models' picks, confidence, summaries, reasons with
   evidence kind and source, late news) and its grade go to the archive's `scout` stream for good; a result Scout looked
   up (tennis, esports) also joins the `results` stream as a player stat. Saved reads are backfilled at startup.
+- **History Read** (owner, 2026-10-05; `history-read.ts`): a free More/Less on every line GKR doesn't play, from the
+  player's last 15 results for the stat (CrownIQ history, then the free public sources): over rate with one game of
+  doubt each way, averaged with the books' no-vig chance when priced; a play needs 60% (Goblin 72%, Demon 55%) and the
+  average on the same side; under 5 games is no read. Labeled "History", never a GKR score; graded as shadow kind
+  `history` (shown in Results' Beta box). Board order where GKR can't score: Scout, History, Books. Scout's scheduled
+  run, its app-line extras and the owner's Scout queue skip lines a History Read already picks.
 - **Scout queue** (owner, 2026-10-05): More → Scout queue shows lines waiting on Scout by board and sport, with Ask
   all / by board / by sport (`/v1/owner/scout-queue`; 300 a day, `CROWNIQ_SCOUT_OWNER_DAILY`; two at a time). Answers
   show on the boards at once. The refresh banner was removed (owner: it popped up too often); `/v1/data-version` stays

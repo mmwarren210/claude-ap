@@ -261,6 +261,9 @@ export class AiPickService {
   /** More lines for Scout's own picks: Underdog and Pick6 lines for players PrizePicks doesn't list. */
   private extraScout: (() => readonly PropLine[]) | null = null;
   setExtraScoutLines(source: () => readonly PropLine[]): void { this.extraScout = source; }
+  /** Lines the scheduled run skips (a free History Read already picks a side on them). */
+  private skipLine: ((line: PropLine) => boolean) | null = null;
+  setSkipLines(skip: (line: PropLine) => boolean): void { this.skipLine = skip; }
   /** Every read whose game hasn't started, for boards outside PrizePicks to look up by line. */
   async upcoming(): Promise<AiRead[]> {
     await this.load();
@@ -428,7 +431,7 @@ export class AiPickService {
     const candidates = [...board.board.lines, ...extra].filter((line) => {
       const start = Date.parse(line.eventStartTime);
       return start > now + 15 * 60_000 && start < now + 12 * 3600_000 && line.lineType === 'REGULAR' &&
-        aiEligible(line, analyses.get(line.id)) && !this.reads.has(this.key(line));
+        aiEligible(line, analyses.get(line.id)) && !this.reads.has(this.key(line)) && !this.skipLine?.(line);
     }).sort((a, b) => worth(a) - worth(b) || Date.parse(a.eventStartTime) - Date.parse(b.eventStartTime) ||
       (marketCounts.get(b.market) ?? 0) - (marketCounts.get(a.market) ?? 0));
     const players = new Set([...this.reads.values()].filter((read) => Date.parse(read.eventStartTime) > now)

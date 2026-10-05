@@ -32,6 +32,8 @@ type AppLine = { id: string; sport: string; league: string; eventId: string; eve
   gkr?: { direction: Side; score: number } | null;
   /** Scout's read on this line (players PrizePicks doesn't list, where GKR has no research), or null. */
   scout?: { pick: Side | 'PASS'; score: number | null; agreement: string } | null;
+  /** The free History Read (recent results against this line), on lines GKR doesn't score. */
+  history?: { direction: Side | 'PASS'; score: number | null; text: string; source: string } | null;
   /** Pick6 promos: a gimme pick, or the number before a promo moved it. */
   promo?: { gimme: boolean; originalLine: number | null } | null };
 
@@ -46,8 +48,11 @@ const sideLabel = (app: PickApp, side: Side) => app === 'underdog' ? side === 'M
 /** Scout's side on a line GKR can't read (55 and up is a play). */
 const scoutSide = (line: AppLine): Side | null => !line.gkr && line.scout && line.scout.pick !== 'PASS' &&
   (line.scout.score ?? 0) >= 55 ? line.scout.pick : null;
-/** The side the card backs: GKR's, or Scout's where GKR can't read the line. */
-const backedSide = (line: AppLine): Side | null => line.gkr?.direction ?? scoutSide(line);
+/** The History Read's side where GKR and Scout have none. */
+const historySide = (line: AppLine): Side | null => !line.gkr && !scoutSide(line) && line.history && line.history.direction !== 'PASS'
+  && line.history.score !== null ? line.history.direction : null;
+/** The side the card backs: GKR's, then Scout's, then the History Read's. */
+const backedSide = (line: AppLine): Side | null => line.gkr?.direction ?? scoutSide(line) ?? historySide(line);
 
 function Reference({ line }: { line: AppLine }) {
   const reference = line.prizePicks;
@@ -86,6 +91,11 @@ function LineCard({ app, line, picked, onPick, asking, onAsk }: { app: PickApp; 
       <Text style={styles.gkrScore}>GKR {Math.round(line.gkr.score)}</Text>
       <Text style={styles.gkrSide}>{sideLabel(app, line.gkr.direction)} {formatLine(line.threshold)}</Text>
     </View>}
+    {historySide(line) && <View style={styles.gkr}>
+      <Text style={[styles.gkrScore, { color: colors.royal }]}>History {Math.round(line.history!.score!)}</Text>
+      <Text style={styles.gkrSide}>{sideLabel(app, historySide(line)!)} {formatLine(line.threshold)}</Text>
+    </View>}
+    {historySide(line) && <Text style={styles.reference}>{line.history!.text} · {line.history!.source}</Text>}
     {!line.gkr && scoutSide(line) && <View style={styles.gkr}>
       <Text style={[styles.gkrScore, styles.scoutScore]}>{SCOUT} {Math.round(line.scout!.score!)}</Text>
       <Text style={styles.gkrSide}>{sideLabel(app, scoutSide(line)!)} {formatLine(line.threshold)}</Text>
@@ -101,7 +111,7 @@ function LineCard({ app, line, picked, onPick, asking, onAsk }: { app: PickApp; 
         style={[styles.side, backedSide(line) === side && styles.sideBacked, picked === side && styles.sideActive]}>
         <Text style={[styles.sideText, picked === side && styles.sideTextActive]}>{sideLabel(app, side)}
           {line.multipliers?.[side] ? ` · ${line.multipliers[side]}x` : ''}{line.gkr?.direction === side ? ' · GKR'
-            : scoutSide(line) === side ? ` · ${SCOUT}` : ''}</Text></Pressable>)}
+            : scoutSide(line) === side ? ` · ${SCOUT}` : historySide(line) === side ? ' · History' : ''}</Text></Pressable>)}
     </View>
   </View>;
 }
@@ -140,7 +150,8 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     const inLeague = lines.filter((line) => (sport === 'ALL' || line.league === sport) && (!boostOnly || boosted(line)));
     // Playable lines first (GKR's, then Scout's, strongest first), then lines not read yet, then Scout's no-edge reads;
     // each group keeps game-time order.
-    const strength = (line: AppLine) => line.gkr ? 1000 + line.gkr.score : scoutSide(line) ? line.scout!.score ?? 0 : 0;
+    const strength = (line: AppLine) => line.gkr ? 1000 + line.gkr.score : scoutSide(line) ? 500 + (line.scout!.score ?? 0)
+      : historySide(line) ? line.history!.score ?? 0 : 0;
     const group = (line: AppLine) => backedSide(line) ? 0 : line.scout ? 2 : 1;
     const ordered = [...inLeague].sort((a, b) => group(a) - group(b) || strength(b) - strength(a));
     return gkrOnly ? ordered.filter(backedSide) : ordered;

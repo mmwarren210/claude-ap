@@ -268,3 +268,13 @@ test('a Crown’s PrizePicks payout drops for Goblins: known multipliers first, 
   const known = slipAdjustment([{ lineType: 'GOBLIN', payoutMultiplier: 0.8 }, { lineType: 'REGULAR' }, { lineType: 'DEMON' }]);
   assert.deepEqual([known.factor, known.estimated, known.unknownDemons], [0.8, 0, 1]);
 });
+
+test('board plays where GKR can’t score: Scout first, then the History Read, then the Books pick', () => {
+  const ai = new Map([['a', { pick: 'MORE', score: 61, kind: 'scout' }], ['s', { pick: 'LESS', score: 60, kind: 'second' }]]);
+  const books = new Map([['b', { side: 'MORE' as const, fair: 0.58 }], ['h', { side: 'LESS' as const, fair: 0.57 }]]);
+  const history = new Map([['a', { direction: 'LESS', score: 70 }], ['h', { direction: 'MORE', score: 72 }],
+    ['s', { direction: 'MORE', score: 66 }], ['p', { direction: 'PASS', score: null }]]);
+  const plays = withBooksPicks(ai, books, history);
+  assert.deepEqual([plays.get('a')?.kind, plays.get('h')?.kind, plays.get('s')?.kind, plays.get('b')?.kind, plays.has('p')],
+    ['scout', 'history', 'history', 'books', false]);
+});

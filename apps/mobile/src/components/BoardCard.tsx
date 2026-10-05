@@ -4,6 +4,8 @@ import { aiPlay, SCOUT } from '../use-ai-picks';
 import type { AiRead } from '../use-ai-picks';
 import { ScoutVerdict } from './ScoutVerdict';
 import type { BooksPick } from '../use-books';
+import type { HistoryRead } from '../use-history-reads';
+import { historyPlay } from '../use-history-reads';
 import type { Analysis, PropLine } from '@crowniq/contracts';
 import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -45,20 +47,24 @@ export function windowStats(stats: ReturnType<typeof lineStats>, l10: ReturnType
   ];
 }
 
-export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick, betaLine = null, more = 0, photoUrl, accent, window, expired = false,
-  onPress }: { line: PropLine; analysis: Analysis | undefined; ai?: AiRead; booksPick?: BooksPick; betaLine?: string | null; more?: number; photoUrl: string | null | undefined;
+export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick, historyRead, betaLine = null, more = 0, photoUrl, accent, window, expired = false,
+  onPress }: { line: PropLine; analysis: Analysis | undefined; ai?: AiRead; booksPick?: BooksPick; historyRead?: HistoryRead;
+  betaLine?: string | null; more?: number; photoUrl: string | null | undefined;
   accent: string; window: Window; expired?: boolean; onPress: () => void }) {
   const gkrPass = !analysis || analysis.direction === 'PASS';
   // Where GKR can't score, the Scout read is the pick, labeled as such.
   const aiPick = gkrPass && aiPlay(ai) ? ai! : null;
-  // Next, where Scout hasn't read the line: the side DraftKings and Hard Rock back (labeled Books, never a GKR score).
-  const booksSide = gkrPass && !aiPick && booksPick && (!ai || ai.kind === 'second') ? booksPick : null;
-  const direction = aiPick ? aiPick.pick as 'MORE' | 'LESS' : booksSide ? booksSide.side
+  // Next, the free History Read: the player's recent results against this line (labeled History, never a GKR score).
+  const historyPick = gkrPass && !aiPick && (!ai || ai.kind === 'second') && historyPlay(historyRead) ? historyRead! : null;
+  // Then the side DraftKings and Hard Rock back (labeled Books, never a GKR score).
+  const booksSide = gkrPass && !aiPick && !historyPick && booksPick && (!ai || ai.kind === 'second') ? booksPick : null;
+  const direction = aiPick ? aiPick.pick as 'MORE' | 'LESS' : historyPick ? historyPick.direction as 'MORE' | 'LESS'
+    : booksSide ? booksSide.side
     : analysis?.direction === 'LESS' ? 'LESS' : 'MORE';
   const { log } = usePlayerGames(line);
   const stats = lineStats(log, line.threshold, direction, window, line.opponent);
   const l10 = lineStats(log, line.threshold, direction, 'L10');
-  const pass = gkrPass && !aiPick && !booksSide;
+  const pass = gkrPass && !aiPick && !historyPick && !booksSide;
   const books = useBooks();
   return <Pressable accessibilityRole="button" onPress={onPress}
     accessibilityLabel={`${line.playerName}, ${marketLabel(line.market)} ${pass ? 'PASS' : direction} ${line.threshold}`}>
@@ -83,10 +89,12 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
           <Text style={[styles.pick, pass && styles.passPick]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
             {pass ? 'PASS' : direction} {formatLine(line.threshold)}</Text>
         </View>
-        <View style={styles.ringBox}><ScoreRing score={aiPick ? aiPick.score : booksSide ? Math.round(booksSide.fair * 100) : analysis?.score ?? null}
-          band={aiPick || booksSide ? undefined : analysis?.scoreBand} size={64}
-          {...aiPick || booksSide ? { label: 'PLAY', tint: colors.mint, who: aiPick ? SCOUT : 'Books' } : {}} />
+        <View style={styles.ringBox}><ScoreRing score={aiPick ? aiPick.score : historyPick ? historyPick.score
+          : booksSide ? Math.round(booksSide.fair * 100) : analysis?.score ?? null}
+          band={aiPick || historyPick || booksSide ? undefined : analysis?.scoreBand} size={64}
+          {...aiPick || historyPick || booksSide ? { label: 'PLAY', tint: colors.mint, who: aiPick ? SCOUT : historyPick ? 'History' : 'Books' } : {}} />
           {aiPick && <Text style={styles.aiTag}>{SCOUT.toUpperCase()}</Text>}
+          {historyPick && <Text style={[styles.aiTag, { color: colors.royal }]}>HISTORY</Text>}
           {booksSide && <Text style={styles.aiTag}>BOOKS</Text>}
 </View>
         <View style={styles.edgeBox}>
@@ -106,6 +114,7 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
       {aiPick && <ScoutVerdict read={ai} gkrDirection={undefined} />}
       {booksSide && <Text style={styles.aiNote}>GKR can’t score this stat yet. DraftKings and Hard Rock give {booksSide.side}{' '}
         {Math.round(booksSide.fair * 100)}% with their cut removed; this is the books’ number, not a GKR score.</Text>}
+      {historyPick && <Text style={styles.aiNote}>History read: {historyPick.text}. From {historyPick.source}; not a GKR score.</Text>}
       {aiPick && <Text style={styles.aiNote}>GKR can’t score this stat yet. {SCOUT} researched it;
         this is {SCOUT}’s score, not a GKR score.</Text>}
       {more > 0 && <Text style={styles.more}>+{more} more {more === 1 ? 'play' : 'plays'} on {line.playerName.split(' ')[0]}’s page</Text>}

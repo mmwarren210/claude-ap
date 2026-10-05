@@ -48,12 +48,17 @@ export function isPlay(analysis:Analysis|undefined,ai?:{pick:string;score:number
 }
 type PlayRead={pick:string;score:number|null;kind?:string};
 /**
- * The plays the board ranks where GKR can't score: the Scout read, else the Books pick (its no-vig chance as 0-100).
+ * The plays the board ranks where GKR can't score: the Scout read, else the History Read, else the Books pick (its
+ * no-vig chance as 0-100).
  * A line with a Scout read keeps it, even a PASS: Scout looked closer than the prices alone.
  */
 export function withBooksPicks(ai:ReadonlyMap<string,PlayRead>|undefined,
-  books:ReadonlyMap<string,{side:'MORE'|'LESS';fair:number}>|undefined):Map<string,PlayRead>{
+  books:ReadonlyMap<string,{side:'MORE'|'LESS';fair:number}>|undefined,
+  history?:ReadonlyMap<string,{direction:string;score:number|null}>):Map<string,PlayRead>{
   const merged=new Map<string,PlayRead>(ai??[]);
+  // Then the free History Read, ahead of the Books pick.
+  for(const [lineId,read] of history??[])if(read.direction!=='PASS'&&read.score!==null&&
+    (!merged.has(lineId)||merged.get(lineId)!.kind==='second'))merged.set(lineId,{pick:read.direction,score:read.score,kind:'history'});
   for(const [lineId,pick] of books??[])if(!merged.has(lineId)||merged.get(lineId)!.kind==='second')
     merged.set(lineId,{pick:pick.side,score:Math.round(pick.fair*100),kind:'books'});
   return merged;

@@ -1,3 +1,6 @@
+import { HistoryReads } from './history-read.js';
+import type { HistoryRead } from './history-read.js';
+import { twoMaps } from './player-history.js';
 import type { PlayerHistory } from './player-history.js';
 import { FeedbackStore } from './feedback.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -279,6 +282,11 @@ export function buildServer(options: ServerOptions = {}) {
           if(script)picks.push({kind:'script',line,side:analysis.direction,strength:analysis.score,script});
         }
       }
+      // Free History Reads on PrizePicks lines GKR doesn't play, graded in their own record.
+      for(const [lineId,read] of Object.entries(await boardHistoryReads(board))){
+        const line=lines.get(lineId);
+        if(line&&read.direction!=='PASS')picks.push({kind:'history',line,side:read.direction,strength:read.score});
+      }
       // Kalshi and Polymarket picks go to their own record.
       if(options.marketRecord){
         const market=(await Promise.all((['kalshi','polymarket'] as const).map(async(platform)=>(await marketPicksFor(platform))?.picks??[]))).flat();
@@ -319,8 +327,10 @@ export function buildServer(options: ServerOptions = {}) {
       for(const app of otherApps){
         const board=await appBoard(options.scrapedLines,app,service.getBoard()),scores=await scoresFor(app);
         // Every app line GKR doesn't score at the app's own number (with or without a PrizePicks twin).
-        const only=board.lines.filter((line)=>!scores.has(line.id));
-        if(only.length)lines.push(...asBoard(only,board.fetchedAt??now().toISOString()).board.lines);
+        const only=asBoard(board.lines.filter((line)=>!scores.has(line.id)),board.fetchedAt??now().toISOString()).board.lines;
+        // A line the free History Read already picks a side on doesn't need Scout's paid research.
+        const read=await historyReads.readsFor(only);
+        lines.push(...only.filter((line)=>read.get(line.id)?.direction!=='MORE'&&read.get(line.id)?.direction!=='LESS'));
       }
       extraScout=lines;
     }
@@ -329,6 +339,8 @@ export function buildServer(options: ServerOptions = {}) {
   if(options.aiPicks?.configured){
     options.aiPicks.setExtraSecondOpinions(()=>extraSeconds);
     options.aiPicks.setExtraScoutLines(()=>extraScout);
+    // Scout skips PrizePicks lines a free History Read already picks a side on.
+    options.aiPicks.setSkipLines((line)=>{const read=historyCache?.reads[line.id];return !!read&&read.direction!=='PASS';});
     const firstExtra=setTimeout(()=>{void refreshExtraSeconds().catch(()=>undefined);},60_000);firstExtra.unref();
     const everyExtra=setInterval(()=>{void refreshExtraSeconds().catch(()=>undefined);},15*60_000);everyExtra.unref();
     shadowTimers.push(firstExtra,everyExtra);
@@ -1045,12 +1057,15 @@ export function buildServer(options: ServerOptions = {}) {
     const out:{board:ScoutBoard;line:PropLine}[]=[];
     const board=service.getBoard();
     if(board){const analyses=new Map(board.analyses.map((item)=>[item.lineId,item]));
-      for(const line of board.board.lines)if(line.lineType==='REGULAR'&&open(line)&&aiEligible(line,analyses.get(line.id)))
-        out.push({board:'prizepicks',line});}
+      const reads=await boardHistoryReads(board);
+      for(const line of board.board.lines)if(line.lineType==='REGULAR'&&open(line)&&aiEligible(line,analyses.get(line.id))&&
+        (!reads[line.id]||reads[line.id].direction==='PASS'))out.push({board:'prizepicks',line});}
     if(options.scrapedLines)for(const app of otherApps){
       const appLines=await appBoard(options.scrapedLines,app,board),scores=await scoresFor(app);
       const only=appLines.lines.filter((line)=>!scores.has(line.id));
-      if(only.length)for(const line of asBoard(only,appLines.fetchedAt??now().toISOString()).board.lines)if(open(line))out.push({board:app,line});
+      const appRows=asBoard(only,appLines.fetchedAt??now().toISOString()).board.lines.filter(open);
+      const read=await historyReads.readsFor(appRows);
+      for(const line of appRows)if(read.get(line.id)?.direction!=='MORE'&&read.get(line.id)?.direction!=='LESS')out.push({board:app,line});
     }
     return out;
   }
@@ -1086,6 +1101,33 @@ export function buildServer(options: ServerOptions = {}) {
     dataVersion={at:time,value:hash.digest('hex').slice(0,16)};
     return {version:dataVersion.value};
   });
+  // History Reads: a free More/Less from each player's recent results (CrownIQ's history, then the free public
+  // sources) on lines GKR doesn't play, with the books' no-vig chance blended in where there is one.
+  const historyReads=new HistoryReads(async(line)=>{
+    const log=options.internalHistory?await options.internalHistory.gameLog(line.sport,line.playerId,line.playerName,line.market,
+      new Date(line.eventStartTime)).catch(()=>null):null;
+    if(log&&log.games.length>=5)return {values:log.games.map((game)=>game.value),source:'CrownIQ history'};
+    const free=options.playerHistory?.supports(line.sport)?await options.playerHistory.values(line.sport,line.playerName,line.market).catch(()=>null):null;
+    if(!free||(free.perMap&&twoMaps(line.market)))return null;
+    return {values:free.values.map((game)=>game.value),source:free.source};
+  },()=>now());
+  let historyCache:{at:number;board:unknown;reads:Record<string,HistoryRead>}|null=null;
+  async function boardHistoryReads(board:BoardResponse):Promise<Record<string,HistoryRead>>{
+    const time=now().getTime();
+    if(historyCache&&historyCache.board===board&&time-historyCache.at<10*60_000)return historyCache.reads;
+    const analyses=new Map(board.analyses.map((item)=>[item.lineId,item]));
+    const lines=board.board.lines.filter((line)=>{const analysis=analyses.get(line.id);
+      return !analysis||analysis.direction==='PASS'||analysis.score===null;});
+    const fair=await fairMoreFor().catch(()=>new Map<string,number>());
+    const reads=Object.fromEntries(await historyReads.readsFor(lines,(id)=>fair.get(id)??null));
+    historyCache={at:time,board,reads};
+    return reads;
+  }
+  app.get('/v1/history-reads',async(_request,reply)=>{
+    const board=service.getBoard();
+    if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    return {reads:await boardHistoryReads(board)};
+  });
   app.get('/v1/books', async (_request, reply) => {
     const board=service.getBoard();
     if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
@@ -1104,9 +1146,12 @@ export function buildServer(options: ServerOptions = {}) {
     // Scout's read on the line, at this number, when it has one (lines GKR can't score).
     const reads=new Map((await options.aiPicks?.upcoming()??[]).map((read)=>[`${read.lineId}|${read.threshold}`,read]));
     return {...board,gkrScored:!!options.appGkrScores,
-      lines:board.lines.map((line)=>{const read=reads.get(`${line.id}|${line.threshold}`);
-        return {...line,gkr:scores.get(line.id)??null,
-          scout:read?{pick:read.pick,score:read.score,agreement:read.agreement}:null};})};
+      lines:await Promise.all(board.lines.map(async(line)=>{const read=reads.get(`${line.id}|${line.threshold}`);
+        const gkr=scores.get(line.id)??null;
+        // A free History Read on lines GKR doesn't score.
+        const history=gkr?null:(await historyReads.readsFor(asBoard([line],board.fetchedAt??now().toISOString()).board.lines)).values().next().value??null;
+        return {...line,gkr,history,
+          scout:read?{pick:read.pick,score:read.score,agreement:read.agreement}:null};}))};
   });
   // App scores are rebuilt at most every 2 minutes, or sooner when the PrizePicks board or its research changes.
   const appScoreCache=new Map<OtherApp,{at:number;key:readonly unknown[];scores:Map<string,AppScore>}>();
@@ -1168,7 +1213,7 @@ export function buildServer(options: ServerOptions = {}) {
     if(user.plan!=='LIFETIME')return reply.code(403).send({code:'BETA_LIFETIME_ONLY'});
     if(!options.shadowRecord)return reply.code(503).send({code:'SHADOW_UNCONFIGURED'});
     const status=await options.shadowRecord.status() as Record<string,unknown>;
-    return {gkr:status.gkr,beta:status.beta,betaPass:status['beta-pass']};
+    return {gkr:status.gkr,beta:status.beta,betaPass:status['beta-pass'],history:status.history};
   });
   app.get('/v1/books/ladder/:lineId',async(request,reply)=>{
     const {lineId}=request.params as {lineId:string};

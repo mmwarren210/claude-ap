@@ -12,7 +12,7 @@ const line = (record: Record | undefined) => !record || !record.graded ? 'no gra
 export function BetaRecord() {
   const { request } = useAuth();
   const { canSeeBeta: canUseBeta } = useBeta();
-  const [value, setValue] = useState<{ gkr?: Record; beta?: Record; betaPass?: Record } | null>(null);
+  const [value, setValue] = useState<{ gkr?: Record; beta?: Record; betaPass?: Record; history?: Record } | null>(null);
   useEffect(() => {
     if (!canUseBeta) return;
     let active = true;
@@ -26,6 +26,7 @@ export function BetaRecord() {
     <Text style={styles.title}>GKR Beta test</Text>
     <Text style={styles.row}>GKR Beta: <Text style={styles.strong}>{line(value.beta)}</Text></Text>
     <Text style={styles.row}>GKR on the same picks: <Text style={styles.strong}>{line(value.gkr)}</Text></Text>
+    <Text style={styles.row}>History Read (free, lines GKR doesn’t play): <Text style={styles.strong}>{line(value.history)}</Text></Text>
     <Text style={styles.note}>{value.betaPass?.graded ? `Beta passed ${value.betaPass.graded} late-news picks; ${saved} of them lost for GKR.`
       : 'Picks are graded after their games. Beta only differs from GKR where Scout has read the line.'}</Text>
   </View>;

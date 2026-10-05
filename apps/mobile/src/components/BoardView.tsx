@@ -6,6 +6,7 @@ import type { Window } from '../insights';
 import { autoCrown, boardLinesForMode, evidenceExpired, playCounts, withBooksPicks } from '../state';
 import { crownMinimumLineScore } from '../insights';
 import { useBooksPicks } from '../use-books';
+import { useHistoryReads } from '../use-history-reads';
 import { useBeta } from '../use-model';
 import { betaNote } from '../beta';
 import { useAiPicks } from '../use-ai-picks';
@@ -84,9 +85,11 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
   const [confirmPull, setConfirmPull] = useState(false);
   const { reads: aiReads } = useAiPicks();
   const booksPicks = useBooksPicks();
+  const historyReads = useHistoryReads();
   const { beta } = useBeta(data?.builtAt ?? null);
   // Where GKR can't score: the Scout read, else the Books pick.
-  const plays = useMemo(() => withBooksPicks(aiReads ?? undefined, booksPicks ?? undefined), [aiReads, booksPicks]);
+  const plays = useMemo(() => withBooksPicks(aiReads ?? undefined, booksPicks ?? undefined, historyReads ?? undefined),
+    [aiReads, booksPicks, historyReads]);
   const lines = useMemo(() => data && ready ? boardLinesForMode(data, filters, viewMode, nowMs, plays) : [],
     [data, filters, viewMode, ready, nowMs, plays]);
   const counts = useMemo(() => data ? playCounts(data, plays, nowMs) : new Map<string, number>(),
@@ -158,7 +161,7 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
     <FlatList data={lines} keyExtractor={(line) => line.id} initialNumToRender={6} maxToRenderPerBatch={8} windowSize={7}
       contentContainerStyle={styles.content} ListHeaderComponent={header}
       renderItem={({ item, index }) => <BoardCard line={item} analysis={analyses.get(item.id)} ai={aiReads?.get(item.id)}
-        booksPick={booksPicks?.get(item.id)} betaLine={betaNote(beta?.get(item.id))}
+        booksPick={booksPicks?.get(item.id)} historyRead={historyReads?.get(item.id)} betaLine={betaNote(beta?.get(item.id))}
         more={(counts.get(item.eventId + '|' + item.playerId) ?? 1) - 1}
         photoUrl={data?.playerMedia?.[item.playerId]?.photoUrl} accent={rankAccents[index % rankAccents.length]}
         window={window} expired={(() => { const analysis = analyses.get(item.id);
