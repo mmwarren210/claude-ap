@@ -1,4 +1,6 @@
 import { Tabs } from 'expo-router';
+import { View } from 'react-native';
+import { NewDataBanner } from '../../components/NewDataBanner';
 import type { ColorValue } from 'react-native';
 import type { IconName } from '../../components/ui/Icon';
 import { Icon } from '../../components/ui/Icon';
@@ -14,7 +16,7 @@ const icon = (name: IconName, active: IconName) => function tabIcon({ color, foc
 
 export default function TabLayout() {
   const { legs } = useDraft();
-  return <Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.mint,
+  return <View style={{ flex: 1 }}><Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.mint,
     tabBarInactiveTintColor: colors.textMuted,
     tabBarStyle: { backgroundColor: colors.background, borderTopColor: colors.border },
     tabBarLabelStyle: { fontSize: 10, fontWeight: '700' },
@@ -26,5 +28,5 @@ export default function TabLayout() {
     <Tabs.Screen name="results" options={{ title: 'Results', tabBarIcon: icon('chart-bar', 'chart-bar') }} />
     <Tabs.Screen name="social" options={{ title: 'Social', tabBarIcon: icon('account-group-outline', 'account-group') }} />
     <Tabs.Screen name="more" options={{ title: 'More', tabBarIcon: icon('menu', 'menu') }} />
-  </Tabs>;
+  </Tabs><NewDataBanner /></View>;
 }

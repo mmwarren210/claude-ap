@@ -29,7 +29,8 @@ import type { AppScore } from './app-boards.js';
 import type { OtherApp } from './app-boards.js';
 import type { ScrapedLineStore } from './scrapers/line-store.js';
 import { AppShadowScorer } from './app-shadow.js';
-import { realNews } from './ai-picks.js';
+import { aiEligible, realNews } from './ai-picks.js';
+import { createHash } from 'node:crypto';
 import type { AiPickService, AiRead } from './ai-picks.js';
 import type { BoxScoreResults } from './box-score-results.js';
 import type { ScraperPuller } from './scrapers/scraper-puller.js';
@@ -1016,6 +1017,57 @@ export function buildServer(options: ServerOptions = {}) {
     if(!result.read)return reply.code(result.error==='DAILY_LIMIT_REACHED'?429:result.error==='AI_UNAVAILABLE'?502:422)
       .send({code:result.error});
     return {scout:{pick:result.read.pick,score:result.read.score,agreement:result.read.agreement}};
+  });
+  // Lines waiting on Scout: GKR can't score them and Scout hasn't read them, on PrizePicks (standard lines) and on
+  // Underdog and Pick6 (players PrizePicks doesn't list). Games not started yet.
+  type ScoutBoard='prizepicks'|OtherApp;
+  async function waitingForScout():Promise<{board:ScoutBoard;line:PropLine}[]>{
+    if(!options.aiPicks)return [];
+    const read=new Set((await options.aiPicks.upcoming()).map((item)=>`${item.lineId}|${item.threshold}`));
+    const time=now().getTime(),open=(line:PropLine)=>Date.parse(line.eventStartTime)>time&&!read.has(`${line.id}|${line.threshold}`);
+    const out:{board:ScoutBoard;line:PropLine}[]=[];
+    const board=service.getBoard();
+    if(board){const analyses=new Map(board.analyses.map((item)=>[item.lineId,item]));
+      for(const line of board.board.lines)if(line.lineType==='REGULAR'&&open(line)&&aiEligible(line,analyses.get(line.id)))
+        out.push({board:'prizepicks',line});}
+    if(options.scrapedLines)for(const app of otherApps){
+      const appLines=await appBoard(options.scrapedLines,app,board),scores=await scoresFor(app);
+      const only=appLines.lines.filter((line)=>!line.prizePicks&&!scores.has(line.id));
+      if(only.length)for(const line of asBoard(only,appLines.fetchedAt??now().toISOString()).board.lines)if(open(line))out.push({board:app,line});
+    }
+    return out;
+  }
+  // Owner: how many lines wait on Scout (by board and sport), and Ask all or by board and sport. Answers go straight to
+  // the boards; the owner's allowance is separate from the scheduled run's.
+  app.get('/v1/owner/scout-queue',async(request,reply)=>{
+    if(!options.aiPicks||!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    const waiting=await waitingForScout(),boards:Record<string,{total:number;sports:Record<string,number>}>={};
+    for(const {board,line} of waiting){const entry=boards[board]??={total:0,sports:{}};
+      entry.total++;entry.sports[line.league]=(entry.sports[line.league]??0)+1;}
+    return {total:waiting.length,boards,status:await options.aiPicks.ownerStatus()};
+  });
+  app.post('/v1/owner/scout-queue',async(request,reply)=>{
+    if(!options.aiPicks||!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    const input=z.object({board:z.enum(['all','prizepicks',...otherApps] as [string,...string[]]).default('all'),
+      sport:z.string().trim().max(40).optional()}).strict().safeParse(request.body??{});
+    if(!input.success)return reply.code(400).send({code:'QUEUE_INVALID'});
+    const lines=(await waitingForScout()).filter((item)=>(input.data.board==='all'||item.board===input.data.board)&&
+      (!input.data.sport||item.line.league===input.data.sport)).map((item)=>item.line);
+    const fair=await fairMoreFor().catch(()=>new Map<string,number>());
+    const queued=await options.aiPicks.enqueueOwner(lines,()=>service.getEvidence(),(lineId)=>fair.get(lineId)??null);
+    return {matched:lines.length,queued,status:await options.aiPicks.ownerStatus()};
+  });
+  // A stamp that changes when a new GKR play or a new Scout read lands, so open apps can say "new data, refresh".
+  let dataVersion:{at:number;value:string}|null=null;
+  app.get('/v1/data-version',async()=>{
+    const time=now().getTime();
+    if(dataVersion&&time-dataVersion.at<30_000)return {version:dataVersion.value};
+    const hash=createHash('sha256'),board=service.getBoard();
+    for(const analysis of board?.analyses??[])if(analysis.direction!=='PASS'&&analysis.score!==null)hash.update(`g:${analysis.lineId}:${analysis.direction}|`);
+    for(const read of (await options.aiPicks?.upcoming())??[])hash.update(`s:${read.lineId}:${read.threshold}:${read.pick}|`);
+    for(const app of otherApps)for(const [id,score] of await scoresFor(app))hash.update(`a:${id}:${score.direction}|`);
+    dataVersion={at:time,value:hash.digest('hex').slice(0,16)};
+    return {version:dataVersion.value};
   });
   app.get('/v1/books', async (_request, reply) => {
     const board=service.getBoard();

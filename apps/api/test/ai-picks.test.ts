@@ -240,3 +240,19 @@ test('Scout also reads Underdog and Pick6 lines for players PrizePicks does not 
   const upcoming = await service.upcoming();
   assert.deepEqual(upcoming.map((item) => [item.lineId, item.threshold, item.pick, item.score]), [['ud:abc', 8.5, 'LESS', 61]]);
 });
+
+test('the owner queue reads waiting lines soonest first, skips held reads and started games, within its own allowance', async () => {
+  const line = (id: string, start: string) => fixtureLine({ id, playerId: id, playerName: id, sport: 'LOL', league: 'LOL',
+    eventId: `g-${id}`, market: 'kills', threshold: 4.5, eventStartTime: start, availableDirections: ['MORE', 'LESS'] });
+  const lines = [line('late', '2030-09-24T20:00:00Z'), line('soon', '2030-09-24T14:00:00Z'), line('gone', '2030-09-24T11:00:00Z'),
+    line('mid', '2030-09-24T16:00:00Z')];
+  const asked: string[] = [];
+  const researcher: PickResearcher = { provider: 'claude', read: async (q) => { asked.push(q.player); return read('claude', 'MORE', 60); } };
+  const service = new AiPickService([researcher], null, { dailyAuto: 0, dailyPerUser: 1, dailyOwner: 2 }, null, () => now);
+  assert.equal(await service.enqueueOwner(lines, () => [], () => null), 2, 'the allowance of two; the started game is skipped');
+  for (let tries = 0; tries < 50 && (await service.ownerStatus()).running; tries++) await new Promise((done) => setTimeout(done, 5));
+  assert.deepEqual(asked.sort(), ['mid', 'soon'], 'soonest games first');
+  const status = await service.ownerStatus();
+  assert.deepEqual([status.done, status.failed, status.usedToday, status.waiting], [2, 0, 2, 0]);
+  assert.equal(await service.enqueueOwner(lines, () => [], () => null), 0, 'today’s allowance is used; held reads are skipped');
+});

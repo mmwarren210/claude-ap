@@ -17,6 +17,7 @@ import { entryName, percent1 } from '../../insights';
 import { usePayouts } from '../../use-payouts';
 import { ChangePassword, DeleteAccount, MemberAccess, MemberResetCode } from '../../components/AccountSecurity';
 import { BetaFeedback, FeedbackReview, PatchNotes } from '../../components/Feedback';
+import { ScoutQueue } from '../../components/ScoutQueue';
 import { colors, radius } from '../../theme';
 import { useDraft } from '../../use-draft';
 
@@ -40,7 +41,7 @@ export default function MoreScreen() {
   const [owner, setOwner] = useState(false);
   const [stats, setStats] = useState<{ picks: number; crowns: number; rate: number | null } | null>(null);
   const { feedback: openFeedback } = useLocalSearchParams<{ feedback?: string }>();
-  const [sheet, setSheet] = useState<'account' | 'payouts' | 'feedback' | 'updates' | 'review' | null>(null);
+  const [sheet, setSheet] = useState<'account' | 'payouts' | 'feedback' | 'updates' | 'review' | 'scout' | null>(null);
   // A "report it" nudge elsewhere in the app opens Beta feedback here.
   const [lastOpen, setLastOpen] = useState<string | undefined>(undefined);
   if (openFeedback && openFeedback !== lastOpen && !demo) { setLastOpen(openFeedback); setSheet('feedback'); }
@@ -126,6 +127,7 @@ export default function MoreScreen() {
         <Row icon="database-outline" title="Data health" detail="Board diagnostics" locked={!owner} onPress={() => go('/owner/board')} />
         <Row icon="refresh" title="Refresh boards" detail="Pull or reanalyze" locked={!owner} onPress={() => go('/owner/board')} />
         <Row icon="magnify" title="Research desk" detail="Private stat research" locked={!owner} onPress={() => go('/owner/research')} />
+        <Row icon="binoculars" title="Scout queue" detail="Lines waiting · Ask all" locked={!owner} onPress={() => setSheet('scout')} />
         <Row icon="pulse" title="Learning" detail="Tracked outcomes" locked={!owner} last onPress={() => go('/owner/learning')} />
       </View>
 
@@ -150,6 +152,7 @@ export default function MoreScreen() {
     </Sheet>
     <Sheet visible={sheet === 'feedback'} title="Beta feedback" onClose={() => { setSheet(null); router.setParams({ feedback: undefined }); }}><BetaFeedback /></Sheet>
     <Sheet visible={sheet === 'updates'} title="Updates" onClose={() => setSheet(null)}><PatchNotes /></Sheet>
+    <Sheet visible={sheet === 'scout'} title="Scout queue" onClose={() => setSheet(null)}>{sheet === 'scout' && <ScoutQueue />}</Sheet>
     <Sheet visible={sheet === 'review'} title="Review feedback" onClose={() => setSheet(null)}><FeedbackReview /></Sheet>
     <Sheet visible={sheet === 'payouts'} title="Payout estimates" onClose={() => setSheet(null)}>
       <Segmented label="Pick'em app" options={pickApps} value={payoutApp} onChange={setPayoutApp} />

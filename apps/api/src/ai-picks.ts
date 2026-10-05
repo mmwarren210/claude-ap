@@ -220,6 +220,8 @@ export interface AiPickOptions {
   readonly perRun?: number;
   /** Result lookups (finished tennis and esports lines no box score carries) per Eastern day, and per hourly run. */
   readonly dailyResults?: number;
+  /** Lines the owner may send to Scout by hand (Ask all / by sport) per Eastern day. */
+  readonly dailyOwner?: number;
   readonly resultsPerRun?: number;
   /** Second opinions on GKR Top Picks per Eastern day (0 turns them off). */
   readonly dailySecond?: number;
@@ -346,6 +348,45 @@ export class AiPickService {
   }
 
   /** A user's Ask AI tap, within their daily allowance. */
+  /** The owner's Ask Scout queue: lines waiting, how many were answered or failed, and the day's remaining allowance. */
+  private ownerQueue: PropLine[] = [];
+  private ownerProgress = { queued: 0, done: 0, failed: 0, running: false };
+  /** Whether Scout already has a read on this line at its number. */
+  async hasRead(line: PropLine): Promise<boolean> { await this.load(); return this.reads.has(this.key(line)); }
+  async ownerStatus() {
+    await this.load();
+    return { ...this.ownerProgress, waiting: this.ownerQueue.length, usedToday: this.used('owner'),
+      dailyOwner: this.options.dailyOwner ?? 300 };
+  }
+  /**
+   * Queues lines for Scout now (owner's Ask all / by sport), soonest games first, up to what's left of the owner's daily
+   * allowance; reads already held and games already started are skipped. Two at a time, in the background. Each answer
+   * is saved like any read, so it shows on the boards at once. Returns how many were queued.
+   */
+  async enqueueOwner(lines: readonly PropLine[], evidence: () => readonly Evidence[], fairMore: (lineId: string) => number | null) {
+    await this.load();
+    if (!this.configured) return 0;
+    const now = this.clock().getTime(), queued = new Set(this.ownerQueue.map((line) => this.key(line)));
+    const room = Math.max(0, (this.options.dailyOwner ?? 300) - this.used('owner') - this.ownerQueue.length);
+    const fresh = lines.filter((line) => Date.parse(line.eventStartTime) > now && !this.reads.has(this.key(line)) &&
+      !queued.has(this.key(line))).sort((a, b) => a.eventStartTime.localeCompare(b.eventStartTime)).slice(0, room);
+    this.ownerQueue.push(...fresh);
+    this.ownerProgress.queued += fresh.length;
+    if (!this.ownerProgress.running && this.ownerQueue.length) void this.drainOwner(evidence, fairMore);
+    return fresh.length;
+  }
+  private async drainOwner(evidence: () => readonly Evidence[], fairMore: (lineId: string) => number | null) {
+    this.ownerProgress.running = true;
+    const worker = async () => {
+      for (let line = this.ownerQueue.shift(); line; line = this.ownerQueue.shift()) {
+        if (Date.parse(line.eventStartTime) <= this.clock().getTime()) { this.ownerProgress.failed++; continue; }
+        const read = await this.research(line, evidence(), fairMore(line.id), 'user').catch(() => null);
+        if (read) { this.ownerProgress.done++; this.spend('owner'); } else this.ownerProgress.failed++;
+      }
+    };
+    try { await Promise.all([worker(), worker()]); } finally { this.ownerProgress.running = false; }
+  }
+
   async ask(accountId: string, line: PropLine, analysis: Analysis | undefined, evidence: readonly Evidence[],
     fairMore: number | null): Promise<{ read: AiRead | null; error: string | null }> {
     await this.load();
