@@ -3,7 +3,7 @@ import type { CorrelationPolicy, CrownBuildResult } from './interfaces.js';
 
 export type CrownSize = 2 | 3 | 4 | 5 | 6;
 export const crownMinimumLineScore: Readonly<Record<CrownSize, number>> = {
-  2: 88, 3: 86, 4: 84, 5: 82, 6: 80,
+  2: 80, 3: 80, 4: 80, 5: 80, 6: 80,
 };
 
 export function auditCrown(picks: readonly CrownCandidate[], size: CrownSize,

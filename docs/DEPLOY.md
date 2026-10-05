@@ -27,9 +27,9 @@ for a long-running server, so it is not used here (it could hold the data later 
    - Optional schedule and spend settings from `.env.example` (`CROWNIQ_SCRAPER_*`, `CROWNIQ_CONTEXT_*`)
 4. **Settings → Networking → Generate domain.** That gives a URL like `https://crowniq-api.up.railway.app`.
 5. Check `https://<your-domain>/health` shows `{"status":"ok", ...}`. The live server is
-   `https://claude-ap-production.up.railway.app`.
+   `https://crowniq.up.railway.app`.
 6. Open the app: the server also hosts the web version of the app at its own address
-   (`https://claude-ap-production.up.railway.app`). On a phone, open it in the browser and use **Share → Add to Home
+   (`https://crowniq.up.railway.app`). On a phone, open it in the browser and use **Share → Add to Home
    Screen**. The Docker build exports it with `npx expo export -p web`; with `EXPO_PUBLIC_API_URL` unset, the web app
    calls the server it was loaded from.
 7. For the phone app (Expo Go or a store build): set `EXPO_PUBLIC_API_URL=https://<your-domain>` in `apps/mobile/.env` (and in the app's build

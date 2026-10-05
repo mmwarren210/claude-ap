@@ -7,7 +7,7 @@ set -euo pipefail
 API=https://backboard.railway.app/graphql/v2
 SERVICE_ID=6e3355d4-5663-4ac1-920d-e4b5020756b2
 ENVIRONMENT_ID=dd8a8b68-9cdf-4c08-9b53-40a782d3bd47
-APP_URL=https://claude-ap-production.up.railway.app
+APP_URL=https://crowniq.up.railway.app
 
 if [[ $# -gt 0 ]]; then
   sha=$(git rev-parse "$1")

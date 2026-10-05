@@ -117,7 +117,7 @@ export const entryName = (legs: number, mode: EntryMode) => `${legs}-pick ${mode
 export const percent1 = (value: number) => `${(value * 100).toFixed(1)}%`;
 
 /** Same minimum leg scores the server's Crown audit applies (packages/engine/src/crowns.ts). */
-export const crownMinimumLineScore: Readonly<Record<number, number>> = { 2: 88, 3: 86, 4: 84, 5: 82, 6: 80 };
+export const crownMinimumLineScore: Readonly<Record<number, number>> = { 2: 80, 3: 80, 4: 80, 5: 80, 6: 80 };
 
 /** Plain reasons for the server's Crown rule codes. */
 const crownIssueTexts: Readonly<Record<string, string>> = {

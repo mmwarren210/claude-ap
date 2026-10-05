@@ -250,3 +250,8 @@ test('an event name that is a feed id shows as a plain match label', async () =>
   assert.equal(matchup({ opponent: null, eventName: 'NAVI vs FaZe', league: 'CS2' }), 'NAVI vs FaZe');
   assert.equal(matchup({ opponent: 'Carlos Alcaraz', eventName: 'x', league: 'TENNIS' }), 'vs Carlos Alcaraz');
 });
+
+test('GKR 80 and up is good enough for a Crown leg at every size (owner, 2026-10-05)', async () => {
+  const { crownMinimumLineScore } = await import('../src/insights.js');
+  assert.deepEqual(Object.values(crownMinimumLineScore), [80, 80, 80, 80, 80]);
+});

@@ -160,7 +160,7 @@ if (['openai_web', 'both'].includes(researchProvider) && !openAiResearch) {
 if (['claude_web', 'both'].includes(researchProvider) && !claudeResearch) {
   console.warn('Claude web research selected but ANTHROPIC_API_KEY is absent from this server runtime.');
 }
-const band=process.env.CROWNIQ_AUTO_TRACK_MIN_BAND ?? 'CROWN_STRONG';
+const band=process.env.CROWNIQ_AUTO_TRACK_MIN_BAND ?? 'PLAYABLE';
 if(band!=='CROWN_STRONG' && band!=='PLAYABLE')throw new Error('Invalid CROWNIQ_AUTO_TRACK_MIN_BAND');
 const modelPreset=process.env.GKR_MODEL_PRESET??'custom';
 // stat_history_v2 = v1 plus every other Stat API stat the board offers (owner approved 2026-10-04).
