@@ -1146,6 +1146,16 @@ export function buildServer(options: ServerOptions = {}) {
     const fair=await fairMoreFor().catch(()=>new Map<string,number>());
     const reads=Object.fromEntries(await historyReads.readsFor(lines,(id)=>fair.get(id)??null));
     historyCache={at:time,board,reads};
+    // Why GKR passes: reason codes, and the score spread of lines it did score, by sport.
+    const why:Record<string,number>={},scored:Record<string,number>={};
+    for(const analysis of board.analyses){
+      const line=board.board.lines.find((item)=>item.id===analysis.lineId);
+      const sport=line?.sport??'?';
+      if(analysis.score!==null){const bucket=analysis.score>=80?'80+':analysis.score>=74?'74-79':analysis.score>=68?'68-73':'<68';
+        scored[`${sport} ${bucket}`]=(scored[`${sport} ${bucket}`]??0)+1;}
+      else why[`${sport} ${analysis.reasonCode??'NONE'}`]=(why[`${sport} ${analysis.reasonCode??'NONE'}`]??0)+1;
+    }
+    console.log(`[gkr-coverage] ${board.analyses.length} analyses | scored ${JSON.stringify(scored)} | unscored ${JSON.stringify(Object.entries(why).sort((a,b)=>b[1]-a[1]).slice(0,40))}`);
     const plays=Object.values(reads).filter((read)=>read.direction!=='PASS'&&!read.lean).length;
     const leans=Object.values(reads).filter((read)=>read.lean).length;
     const bySport:Record<string,[number,number,number]>={};
