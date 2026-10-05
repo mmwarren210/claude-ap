@@ -222,11 +222,12 @@ export function buildServer(options: ServerOptions = {}) {
   // Shadow records: Books picks, the sportsbook tabs' picks and game-script snapshots, saved every 15 minutes and graded
   // hourly in their own record (never GKR's).
   const shadowTimers:NodeJS.Timeout[]=[];
+  let recordShadow:()=>Promise<{found:Record<string,number>;added:number}|null>=async()=>null;
   if(options.shadowRecord){
     const shadow=options.shadowRecord;
-    const recordShadow=async()=>{
+    recordShadow=async()=>{
       const board=service.getBoard();
-      if(!board)return;
+      if(!board)return null;
       const picks:ShadowPick[]=[];
       const lines=new Map(board.board.lines.map((line)=>[line.id,line]));
       if(options.sharpProps){
@@ -249,7 +250,9 @@ export function buildServer(options: ServerOptions = {}) {
           if(script)picks.push({kind:'script',line,side:analysis.direction,strength:analysis.score,script});
         }
       }
-      await shadow.record(picks);
+      const found:Record<string,number>={};
+      for(const pick of picks)found[pick.kind]=(found[pick.kind]??0)+1;
+      return {found,added:await shadow.record(picks)};
     };
     const first=setTimeout(()=>{void recordShadow().catch(()=>undefined);},90_000);first.unref();
     const every=setInterval(()=>{void recordShadow().catch(()=>undefined);},15*60_000);every.unref();
@@ -1122,6 +1125,8 @@ export function buildServer(options: ServerOptions = {}) {
     admin.post('/live-markets/refresh', async (_request, reply) => options.liveMarkets ? options.liveMarkets.refresh()
       : reply.code(503).send({ code: 'LIVE_MARKETS_UNCONFIGURED' }));
     admin.get('/shadow', async (_request, reply) => options.shadowRecord ? options.shadowRecord.status()
+      : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
+    admin.post('/shadow/record', async (_request, reply) => options.shadowRecord ? (await recordShadow()) ?? { found: {}, added: 0 }
       : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
     admin.post('/shadow/grade', async (_request, reply) => options.shadowRecord ? { graded: await options.shadowRecord.grade() }
       : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
