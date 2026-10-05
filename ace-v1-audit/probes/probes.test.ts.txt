@@ -1,0 +1,176 @@
+// Independent audit probes. A passing probe == the finding reproduces at commit 636c9b0.
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { expect, it } from 'vitest';
+import { evidenceSchema, newId, now, platformConnectionSchema, type Evidence } from '@ace/shared';
+import { MemoryRepository } from '@ace/database';
+import { ensureChannel, evaluateAutoMode, recommendTopics } from '@ace/channel-brain';
+import { DiscoveryService } from '@ace/discovery';
+import { ResearchService, verifyEvidence } from '@ace/research';
+import { ProviderRegistry } from '@ace/providers';
+import { rssDiscoveryProvider, rssResearchProvider } from '@ace/providers/live';
+import { ProductionService, type RenderEngine, type VisualProvider, type VoiceProvider } from '@ace/production';
+import { PublishService } from '@ace/publisher';
+import { TokenVault, ConnectionService } from '@ace/publisher/auth';
+import { buildApp } from '../apps/api/src/app.js';
+import { createSystem } from '../apps/api/src/system.js';
+
+const ev = (reference: string, claim: string, extra: Partial<Evidence> = {}) => evidenceSchema.parse({
+  id: newId(), channelId: newId(), topicId: newId(), researchRunId: newId(), claim,
+  source: 'probe', sourceReference: reference, sourceType: 'official', publishedAt: now(), retrievedAt: now(),
+  confidence: .9, freshness: 'current', supportingSummary: 'Audit probe synthetic evidence item.',
+  contradictions: [], entityReferences: [], important: true,
+  sourceQuality: { score: .9, factors: [], corroborationCount: 1, directness: 'direct' }, ...extra });
+
+it('P1 (F3) short numerically conflicting claims both verify', () => {
+  const a = 'Acme raised 5 billion dollars', b = 'Acme raised 7 billion dollars';
+  expect(verifyEvidence([ev('https://a-one.org/x', a), ev('https://b-two.net/x', a),
+    ev('https://c-three.com/x', b), ev('https://d-four.io/x', b)]).status).toBe('verified');
+});
+it('P2 (F4) sibling domains of one publisher count as independent corroboration', () => {
+  const claim = 'The ministry published the annual budget figures today';
+  expect(verifyEvidence([ev('https://www.bbc.co.uk/news/1', claim), ev('https://www.bbc.com/news/1', claim)]).status).toBe('verified');
+  expect(verifyEvidence([ev('https://www.theguardian.com/a', claim), ev('https://www.guardian.co.uk/a', claim)]).status).toBe('verified');
+});
+
+const fakeDims = new Map<string, { width: number; height: number }>();
+const renderer: RenderEngine = {
+  async inspect(path) { return { durationSeconds: 6, ...(fakeDims.get(path) ?? { width: 0, height: 0 }), hasAudio: true, hasVideo: path.endsWith('.mp4') }; },
+  async render(input) { fakeDims.set(input.outputPath, { width: input.width, height: input.height }); await writeFile(input.outputPath, 'probe video ' + newId()); },
+};
+const visuals: VisualProvider = { id: 'probe-card', estimatedCostUsd: 0, async generate({ script, outputPaths }) {
+  for (const path of outputPaths) await writeFile(path, 'probe');
+  return outputPaths.map((_, i) => ({ source: 'probe', license: 'probe', reference: script.id + ':' + i, generated: true })); } };
+const voice: VoiceProvider = { id: 'probe-voice', estimatedCostUsd: 0, async synthesize() {
+  return { audio: Buffer.alloc(4000, 1), mimeType: 'audio/wav' as const, estimatedCostUsd: 0, actualCostUsd: 0 }; } };
+
+async function pipeline(title: string, findings: (topicTitle: string) => Array<Record<string, unknown>>) {
+  const repository = new MemoryRepository(); const channelId = newId(); await ensureChannel(repository, channelId);
+  const xml = `<rss><channel><item><title>${title}</title><description>Probe feed description text.</description>` +
+    `<link>https://news.example.org/p</link><pubDate>${new Date().toUTCString()}</pubDate></item></channel></rss>`;
+  const registry = new ProviderRegistry();
+  registry.addDiscovery(rssDiscoveryProvider({ id: 'probe-feed', name: 'Probe', url: 'https://news.example.org/rss' }, async () => new Response(xml)));
+  registry.addResearch({ id: 'probe-research', estimatedCostUsd: 0, async research({ topic }) {
+    return { usage: { units: 1, actualCostUsd: 0 }, data: findings(topic.workingTitle) as never }; } });
+  const cycle = await new DiscoveryService(repository, registry).run(channelId);
+  const topicId = cycle.candidateIds[0]!;
+  const run = await new ResearchService(repository, registry).run(channelId, topicId);
+  const dir = await mkdtemp(join(tmpdir(), 'ace-probe-'));
+  return { repository, channelId, topicId, run, production: new ProductionService(repository, dir, renderer, undefined, visuals) };
+}
+const official = (url: string, claim: string) => ({ claim, source: 'Official', sourceReference: url,
+  sourceType: 'official', publishedAt: now(), confidence: .95, freshness: 'current', supportingSummary: 'Direct official record states it.',
+  contradictions: [], entityReferences: [], important: true,
+  sourceQuality: { score: .95, factors: [], corroborationCount: 1, directness: 'direct' } });
+
+it('P3 (F1) non-important, low-confidence, stale evidence is narrated and passes QC, approval and publish', async () => {
+  const smear = 'The mayor was secretly convicted of fraud in 1998';
+  const { repository, channelId, topicId, run, production } = await pipeline('City council approves new park', () => [
+    official('https://city.example.gov/a', 'The council approved the park plan'),
+    official('https://records.example.net/a', 'The council approved the park plan'),
+    { claim: smear, source: 'Anonymous blog', sourceReference: 'https://rumor.example.com/x', sourceType: 'other',
+      publishedAt: '2001-01-01T00:00:00.000Z', confidence: .05, freshness: 'stale', supportingSummary: 'Unsourced rumor post.',
+      contradictions: [], entityReferences: [], important: false },
+  ]);
+  expect(run.verificationStatus).toBe('verified');
+  const project = await production.create(channelId, topicId, 'youtube_shorts', 30);
+  const script = await production.draftScript(channelId, project.id);
+  expect(script.beats.some(beat => beat.text === smear)).toBe(true);
+  await production.synthesizeVoice(channelId, project.id, voice);
+  await production.generateVisuals(channelId, project.id);
+  await production.render(channelId, project.id);
+  expect((await production.runQc(channelId, project.id)).passed).toBe(true);
+  expect((await production.decision(channelId, project.id, 'approve')).state).toBe('approved');
+  const vault = new TokenVault(Buffer.alloc(32, 3));
+  await repository.put('platform_connections', platformConnectionSchema.parse({ id: newId(), channelId, destination: 'youtube_long',
+    externalAccountId: 'acct', displayName: 'acct', scopes: [], connectedAt: now(), expiresAt: null,
+    encryptedCredentials: vault.seal({ accessToken: 't', refreshToken: null, expiresAt: null, scopes: [] }) }));
+  let uploads = 0;
+  const publisher = new PublishService(repository, new ConnectionService(repository, vault), async (_u, o) =>
+    o?.method === 'POST' ? new Response('', { headers: { location: 'https://www.googleapis.com/upload/x' } }) :
+      new Response(JSON.stringify({ id: 'vid' + (++uploads) })));
+  expect((await publisher.publish(channelId, project.id, { title: 'Park', description: '', privacy: 'private', aiGenerated: true })).state).toBe('succeeded');
+  expect(uploads).toBe(1);
+});
+
+it('P4 (F2, G4) templates narrate the unverified headline; 60 s target -> 6 s output still passes', async () => {
+  const headline = 'Senator arrested in bribery sting';
+  const { channelId, topicId, run, production } = await pipeline(headline, () => [
+    official('https://agency.example.gov/r', 'The agency scheduled a press briefing for Monday'),
+    official('https://wire.example.net/r', 'The agency scheduled a press briefing for Monday'),
+  ]);
+  expect(run.verificationStatus).toBe('verified');
+  const project = await production.create(channelId, topicId, 'youtube_long', 60);
+  const script = await production.draftScript(channelId, project.id);
+  expect(script.beats.filter(b => b.text.includes(headline)).map(b => b.kind)).toEqual(['cold_open', 'context']);
+  await production.synthesizeVoice(channelId, project.id, voice);
+  await production.generateVisuals(channelId, project.id);
+  await production.render(channelId, project.id);
+  const qc = await production.runQc(channelId, project.id);
+  expect(qc.checks.find(c => c.name === 'claim_consistency')!.passed).toBe(true);
+  expect(qc.passed).toBe(true);
+  expect(qc.warnings!.some(w => w.includes('30%'))).toBe(true);
+});
+
+it('P5 (G2) Auto Mode can never approve an awaiting_approval project', async () => {
+  const { repository, channelId, topicId, production } = await pipeline('Probe agency publishes report', () => [
+    official('https://agency.example.gov/r', 'The agency published its annual report'),
+    official('https://wire.example.net/r', 'The agency published its annual report'),
+  ]);
+  const channel = (await repository.get('channels', channelId))!;
+  await repository.updateChannel(channelId, { dailyCostLimitUsd: 1, autoMode: { ...channel.autoMode!, enabled: true, killSwitch: false,
+    minimumScore: 0, dailyCostLimitUsd: 1, dailyPostLimit: 5 } });
+  const project = await production.create(channelId, topicId, 'youtube_shorts', 6);
+  await production.draftScript(channelId, project.id); await production.synthesizeVoice(channelId, project.id, voice);
+  await production.generateVisuals(channelId, project.id); await production.render(channelId, project.id);
+  await production.runQc(channelId, project.id);
+  await production.updatePublishSettings(channelId, project.id, { title: 'Probe', description: '', privacy: 'private', aiGenerated: true });
+  await repository.put('platform_connections', platformConnectionSchema.parse({ id: newId(), channelId, destination: 'youtube_long',
+    externalAccountId: 'acct', displayName: 'acct', scopes: [], connectedAt: now(), expiresAt: null, encryptedCredentials: 'x' }));
+  const topic = (await repository.get('candidate_topics', topicId))!; const score = (await repository.get('topic_scores', topic.scoreId))!;
+  const gate = await evaluateAutoMode(repository, channelId, topic, score, project.id, true);
+  expect(gate.checks.projectState).toBe(true);
+  expect(gate.checks.quality).toBe(false);
+  expect(gate.allowed).toBe(false);
+});
+
+it('P6 (G1) live RSS: zero platform candidates, constant priors, research never verifies', async () => {
+  const items = ['Storm closes coastal roads', 'Central bank holds interest rates', 'Team wins championship final']
+    .map((t, i) => `<item><title>${t}</title><description>Feed summary text ${i}.</description><link>https://feeds.example.org/${i}</link>` +
+      `<pubDate>${new Date(Date.now() - i * 3600_000).toUTCString()}</pubDate></item>`).join('');
+  const fetcher = async () => new Response(`<rss><channel>${items}</channel></rss>`);
+  const repository = new MemoryRepository(); const channelId = newId(); await ensureChannel(repository, channelId);
+  const feed = { id: 'f', name: 'Probe Feed', url: 'https://feeds.example.org/rss', sourceType: 'reporting' as const };
+  const registry = new ProviderRegistry();
+  registry.addDiscovery(rssDiscoveryProvider(feed, fetcher)); registry.addResearch(rssResearchProvider([feed], fetcher));
+  const cycle = await new DiscoveryService(repository, registry).run(channelId);
+  const topics = await repository.list('candidate_topics', channelId);
+  expect(topics).toHaveLength(3);
+  expect(topics.every(t => t.platformCandidates.length === 0)).toBe(true);
+  const scores = await Promise.all(topics.map(t => repository.get('topic_scores', t.scoreId)));
+  expect(new Set(scores.map(s => (s!.total - s!.components.freshness.contribution).toFixed(2))).size).toBe(1);
+  expect(Math.max(...scores.map(s => s!.total))).toBeLessThan(50);
+  const run = await new ResearchService(repository, registry).run(channelId, cycle.candidateIds[0]!);
+  expect(run.verificationStatus).toBe('needs_review'); expect(run.evidenceIds.length).toBeGreaterThan(0);
+});
+
+it('P7 (G3) creative dimensions are constants; recommendations are advisory only', async () => {
+  const { repository, channelId, topicId, production } = await pipeline('Probe science agency maps reef', () => [
+    official('https://agency.example.gov/r', 'The agency mapped the reef'), official('https://wire.example.net/r', 'The agency mapped the reef')]);
+  const a = await production.create(channelId, topicId, 'youtube_long', 60);
+  const b = await production.create(channelId, topicId, 'tiktok', 30);
+  const sa = await production.draftScript(channelId, a.id), sb = await production.draftScript(channelId, b.id);
+  expect([sa.beats[0]!.kind, sa.tone, sb.beats[0]!.kind, sb.tone]).toEqual(['cold_open', 'clear', 'hook', 'clear']);
+  expect((await recommendTopics(repository, channelId)).items.length).toBeGreaterThan(0);
+});
+
+it('P8 (F8) unauthenticated localhost API accepts body-less cross-site POSTs with any Host', async () => {
+  delete process.env.ACE_CREDENTIAL_ENCRYPTION_KEY;
+  const system = await createSystem({ mode: 'mock' });
+  const app = await buildApp({ system });
+  const response = await app.inject({ method: 'POST', url: '/v1/discovery/cycles',
+    headers: { origin: 'https://evil.example', host: 'rebind.evil.example', 'content-type': 'text/plain' } });
+  expect(response.statusCode).toBe(202);
+  await app.close();
+});
