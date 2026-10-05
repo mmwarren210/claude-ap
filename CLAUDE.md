@@ -104,3 +104,9 @@ Run from the repo root: `npm run typecheck`, `npm test`, `npm run lint`. Tests u
 
 Railway does not deploy pushes on its own. After pushing to `claude/crowniq-redesign`, run `scripts/railway-deploy.sh`
 and confirm it ends with a healthy `/health` (see `docs/DEPLOY.md`).
+- **Research reach (2026-10-05).** The paid Stat API also runs in the 15-minute research loop (`stat-api-context.ts`):
+  games starting within 36 hours, soonest first, at most 300 players per run, each player at most every 6 hours
+  (`CROWNIQ_STAT_CONTEXT*` variables; `CROWNIQ_STAT_CONTEXT=false` turns it off). Its daily record count is saved to
+  `stat-api-usage.json`, so restarts don't reset it. ESPN research goes soonest game first, up to 1500 players
+  (`GKR_ESPN_MAX_PLAYERS`). The `[gkr-coverage]` log splits missing-evidence passes into "no projection" and "has
+  projection, waiting on status". None of this changes model math; lineup and injury gates stay.

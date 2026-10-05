@@ -1,3 +1,4 @@
+import { StatApiContextResearch } from './stat-api-context.js';
 import { FreeHistoryEvidence } from './free-history-evidence.js';
 import { EspnTennisHistory, LeaguepediaHistory, OpenDotaHistory, PlayerHistory, SleeperHistory } from './player-history.js';
 import { FeedbackStore } from './feedback.js';
@@ -217,7 +218,8 @@ const statApiKey=process.env.STAT_API_KEY;
 const ownerPublicId=process.env.CROWNIQ_OWNER_PUBLIC_ID;
 const statDailyLimit=process.env.CROWNIQ_STAT_API_DAILY_RECORD_LIMIT
   ? Number(process.env.CROWNIQ_STAT_API_DAILY_RECORD_LIMIT):100_000;
-const statSource=statApiKey ? new StatApiOwnerResearch(statApiKey,fetch,()=>new Date(),statDailyLimit):null;
+const statSource=statApiKey ? new StatApiOwnerResearch(statApiKey,fetch,()=>new Date(),statDailyLimit,
+  `${dataDir}/stat-api-usage.json`):null;
 const ownerResearch=statSource && ownerPublicId ? statSource:null;
 const historyBackfill=statSource?new HistoryBackfillService(statSource,internalHistory):null;
 const ownerNotebook=ownerResearch ? new OwnerResearchNotebook(
@@ -268,8 +270,8 @@ const secondLookAdapters=[statEvidence,currentContext,espnEvidence,freeHistoryEv
 const secondLookResearch=secondLookAdapters.length===0?null:secondLookAdapters.length===1
   ? secondLookAdapters[0]:new CompositeResearchAdapter(secondLookAdapters);
 // Free scheduled context refresh: local history, player identity and the free NFL/MLB status
-// feeds, every CROWNIQ_CONTEXT_REFRESH_MINUTES. Never the odds provider, web research or
-// StatApiGkrEvidence. NBA status (Stat API) joins only under its own daily lookup cap.
+// feeds, every CROWNIQ_CONTEXT_REFRESH_MINUTES. Never the odds provider or web research; Stat API history only
+// through statContext below. NBA status (Stat API) joins only under its own daily lookup cap.
 const nonNegative=(name:string,fallback:number)=>{
   const value=Number(process.env[name]??fallback);
   if(!Number.isFinite(value)||value<0)throw new Error(`Invalid ${name}`);
@@ -291,7 +293,13 @@ const tickContext=currentContextEnabled?new CurrentContextResearch({
     return statSource.currentAvailability(sport,query);
   }}:undefined,
 }):null;
-const contextAdapters=[internalEvidence,playerIdentity,tickContext,espnEvidence,freeHistoryEvidence]
+// The paid Stat API feeds the 15-minute loop too (soonest games first, each player at most every 6 hours), so its
+// history reaches GKR between board pulls. CROWNIQ_STAT_CONTEXT=false turns it off.
+const statContext=statEvidence&&process.env.CROWNIQ_STAT_CONTEXT!=='false'?new StatApiContextResearch(statEvidence,{
+  windowHours:nonNegative('CROWNIQ_STAT_CONTEXT_WINDOW_HOURS',36),
+  cooldownHours:nonNegative('CROWNIQ_STAT_CONTEXT_COOLDOWN_HOURS',6),
+  maxPlayers:Math.max(1,Math.floor(nonNegative('CROWNIQ_STAT_CONTEXT_MAX_PLAYERS',300)))}):null;
+const contextAdapters=[internalEvidence,playerIdentity,tickContext,statContext,espnEvidence,freeHistoryEvidence]
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const contextRefresh=contextIntervalMinutes>0?{adapter:new CompositeResearchAdapter(contextAdapters),
   intervalMinutes:contextIntervalMinutes,windowHours:contextWindowHours}:null;

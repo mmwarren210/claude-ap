@@ -1,3 +1,5 @@
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 /** Personal, owner-only stat-api research. This module never creates GKR evidence or result facts. */
 export type StatApiSport = 'NFL' | 'NBA' | 'MLB' | 'PGA';
 export type StatApiPlayer = { id: number; name: string; teamId: number | null };
@@ -90,9 +92,26 @@ export class StatApiOwnerResearch {
 
   constructor(private readonly key: string, private readonly fetchFn: typeof fetch = fetch,
     private readonly clock: () => Date = () => new Date(),
-    private readonly dailyLimit = 100_000) {
+    private readonly dailyLimit = 100_000,
+    /** Where today's record count is kept, so a restart doesn't reset it (and the daily cap) to zero. */
+    private readonly usageFile: string | null = null) {
     if (!key.trim() || !Number.isSafeInteger(dailyLimit) || dailyLimit < 1 || dailyLimit > 500_000)
       throw new Error('INVALID_STAT_API_CONFIGURATION');
+    this.loaded = usageFile ? readFile(usageFile, 'utf8').then((text) => {
+      const saved = JSON.parse(text) as { day?: unknown; rows?: unknown };
+      if (typeof saved.day === 'string' && typeof saved.rows === 'number' && Number.isSafeInteger(saved.rows) &&
+        saved.day === this.clock().toISOString().slice(0, 10)) { this.usageDay = saved.day; this.todayRows += saved.rows; }
+    }).catch(() => undefined) : Promise.resolve();
+  }
+  private readonly loaded: Promise<void>;
+  private saving: Promise<void> = Promise.resolve();
+  private saveUsage() {
+    const file = this.usageFile;
+    if (!file) return;
+    this.saving = this.saving.then(async () => {
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, JSON.stringify({ day: this.usageDay, rows: this.todayRows }));
+    }).catch(() => undefined);
   }
 
   status() {
@@ -122,6 +141,7 @@ export class StatApiOwnerResearch {
     const inFlight = this.pending.get(address);
     if (inFlight) return inFlight;
     const task = (async () => {
+      await this.loaded;
       this.resetDay();
       if (this.todayRows + this.reservedRows + maxRows > this.dailyLimit ||
         this.quotaRemaining !== null && this.quotaRemaining < maxRows)
@@ -160,6 +180,7 @@ export class StatApiOwnerResearch {
       const page: ApiPage = { rows: rows.map(object), nextFromId, url: address,
         retrievedAt: this.clock().toISOString() };
       this.todayRows += rows.length;
+      this.saveUsage();
       for (const [header, set] of [
         ['x-quota-used', (n: number) => { this.quotaUsed = n; }],
         ['x-quota-remaining', (n: number) => { this.quotaRemaining = n; }],
