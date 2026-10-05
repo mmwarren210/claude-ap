@@ -255,3 +255,16 @@ test('GKR 80 and up is good enough for a Crown leg at every size (owner, 2026-10
   const { crownMinimumLineScore } = await import('../src/insights.js');
   assert.deepEqual(Object.values(crownMinimumLineScore), [80, 80, 80, 80, 80]);
 });
+
+test('a Crown’s PrizePicks payout drops for Goblins: known multipliers first, else the typical Goblin cut', async () => {
+  const { adjustedOutlook, slipAdjustment, TYPICAL_GOBLIN_MULTIPLIER } = await import('../src/insights.js');
+  const goblins = Array.from({ length: 6 }, () => ({ lineType: 'GOBLIN' }));
+  const estimated = slipAdjustment(goblins);
+  assert.deepEqual([estimated.special, estimated.estimated], [6, 6]);
+  const power = adjustedOutlook(DEFAULT_PAYOUTS.prizepicks, 6, 'POWER', estimated.factor)!;
+  assert.ok(Math.abs(power.fullHit - 37.5 * TYPICAL_GOBLIN_MULTIPLIER ** 6) < 0.01);
+  assert.ok(power.fullHit > 5 && power.fullHit < 6.5, `about the 5.75x PrizePicks paid on six Goblins (${power.fullHit})`);
+  assert.ok(power.breakEven > 0.7, 'each Goblin leg must hit far more often to break even');
+  const known = slipAdjustment([{ lineType: 'GOBLIN', payoutMultiplier: 0.8 }, { lineType: 'REGULAR' }, { lineType: 'DEMON' }]);
+  assert.deepEqual([known.factor, known.estimated, known.unknownDemons], [0.8, 0, 1]);
+});

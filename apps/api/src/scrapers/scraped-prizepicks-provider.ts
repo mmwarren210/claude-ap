@@ -78,6 +78,9 @@ export class ScrapedPrizePicksProvider implements OddsProvider<PropLine> {
         market: lineMarket(line), threshold: line.line, availableDirections: prizePicksSides(line.tier, line.directions),
         lineType: line.tier, fetchedAt: line.lastSeenAt,
         ...(line.imageUrl ? { playerImageUrl: line.imageUrl } : {}),
+        // A Goblin's or Demon's payout multiplier, when a source gave one (the Crown's payout estimate uses it).
+        ...(line.tier !== 'REGULAR' && (line.multipliers?.MORE ?? line.multipliers?.LESS)
+          ? { payoutMultiplier: line.multipliers?.MORE ?? line.multipliers?.LESS } : {}),
       });
     });
   }

@@ -112,6 +112,33 @@ export function entryOutlook(payouts: AppPayouts, legs: number, mode: EntryMode)
   return table && value !== null ? { fullHit: table[legs] ?? 0, breakEven: value } : null;
 }
 
+/**
+ * How Goblins and Demons change a PrizePicks entry's payout: each one carries its own multiplier on the standard payout.
+ * A Goblin without a known multiplier counts at the typical cut seen on real PrizePicks entries (six Goblins took a
+ * 6-pick Power from 37.5x to 5.75x, about 0.73 a leg) and is marked as estimated; a Demon without one is left out
+ * (Demons pay more, by an amount only PrizePicks shows).
+ */
+export const TYPICAL_GOBLIN_MULTIPLIER = 0.73;
+export function slipAdjustment(legs: readonly { lineType: string; payoutMultiplier?: number }[]) {
+  let factor = 1, estimated = 0, unknownDemons = 0, special = 0;
+  for (const leg of legs) {
+    if (leg.lineType !== 'GOBLIN' && leg.lineType !== 'DEMON') continue;
+    special++;
+    if (leg.payoutMultiplier) factor *= leg.payoutMultiplier;
+    else if (leg.lineType === 'GOBLIN') { factor *= TYPICAL_GOBLIN_MULTIPLIER; estimated++; }
+    else unknownDemons++;
+  }
+  return { factor, estimated, unknownDemons, special };
+}
+/** The entry's payout and break-even with every tier scaled by the slip's Goblin/Demon factor. */
+export function adjustedOutlook(payouts: AppPayouts, legs: number, mode: EntryMode, factor: number) {
+  const table = payouts[mode][legs];
+  if (!table) return null;
+  const scaled = Object.fromEntries(Object.entries(table).map(([hits, pays]) => [hits, pays * factor]));
+  const value = breakEven(scaled, legs);
+  return value === null ? null : { fullHit: Math.round((table[legs] ?? 0) * factor * 100) / 100, breakEven: value };
+}
+
 /** "6-pick Flex" */
 export const entryName = (legs: number, mode: EntryMode) => `${legs}-pick ${mode === 'FLEX' ? 'Flex' : 'Power'}`;
 export const percent1 = (value: number) => `${(value * 100).toFixed(1)}%`;

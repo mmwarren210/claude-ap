@@ -14,7 +14,7 @@ import { Icon } from '../../components/ui/Icon';
 import { LineBadge } from '../../components/ui/LineBadge';
 import { PlayerAvatar } from '../../components/ui/PlayerAvatar';
 import { ScoreRing } from '../../components/ui/ScoreRing';
-import { crownIssueMessage, crownMinimumLineScore, formatLine, entryName, entryOutlook, gameTime, lineStats, marketLabel, percent1, signed } from '../../insights';
+import { adjustedOutlook, crownIssueMessage, slipAdjustment, crownMinimumLineScore, formatLine, entryName, entryOutlook, gameTime, lineStats, marketLabel, percent1, signed } from '../../insights';
 import { usePayouts } from '../../use-payouts';
 import { pickApps } from '../../components/AppBoard';
 import { autoCrown, betterSwap, checkLeg, gkrBacked, shareCrown } from '../../state';
@@ -115,7 +115,11 @@ export default function CrownScreen() {
   const confidence = average === null ? '—' : average >= 90 ? 'High' : average >= 85 ? 'Strong' : average >= 80 ? 'Solid' : 'Low';
   const payouts = usePayouts();
   const entryLegs = legs.length || size;
-  const power = entryOutlook(payouts[playApp], entryLegs, 'POWER'), flex = entryOutlook(payouts[playApp], entryLegs, 'FLEX');
+  // PrizePicks pays less on Goblins and more on Demons: adjust the standard payout for this slip's legs.
+  const slip = playApp === 'prizepicks' ? slipAdjustment(legs.map((leg) => leg.line)) : { factor: 1, estimated: 0, unknownDemons: 0, special: 0 };
+  const adjusted = slip.special > 0 && slip.factor !== 1;
+  const power = adjusted ? adjustedOutlook(payouts[playApp], entryLegs, 'POWER', slip.factor) : entryOutlook(payouts[playApp], entryLegs, 'POWER');
+  const flex = adjusted ? adjustedOutlook(payouts[playApp], entryLegs, 'FLEX', slip.factor) : entryOutlook(payouts[playApp], entryLegs, 'FLEX');
   // The entry that needs the lowest hit rate per pick, which is the one to play when both exist.
   const easier = flex && (!power || flex.breakEven <= power.breakEven) ? { mode: 'FLEX' as const, ...flex }
     : power ? { mode: 'POWER' as const, ...power } : null;
@@ -232,9 +236,9 @@ export default function CrownScreen() {
             <Text style={styles.legMeta}>Estimated payout if every leg hits, by app</Text></View></View>
         <View style={styles.appPicker}><Segmented label="Pick'em app" options={pickApps} value={playApp} onChange={setPlayApp} /></View>
         <View style={styles.metrics}>
-          <View style={styles.metric}><Text style={styles.metricValue}>{power ? `${power.fullHit}x` : '—'}</Text>
+          <View style={styles.metric}><Text style={styles.metricValue}>{power ? `${adjusted ? '≈' : ''}${power.fullHit}x` : '—'}</Text>
             <Text style={styles.metricLabel}>Power</Text></View>
-          <View style={[styles.metric, styles.metricDivider]}><Text style={styles.metricValue}>{flex ? `${flex.fullHit}x` : '—'}</Text>
+          <View style={[styles.metric, styles.metricDivider]}><Text style={styles.metricValue}>{flex ? `${adjusted ? '≈' : ''}${flex.fullHit}x` : '—'}</Text>
             <Text style={styles.metricLabel}>Flex</Text></View>
           <View style={[styles.metric, styles.metricDivider]}><Text style={styles.metricValue}>{confidence}</Text>
             <Text style={styles.metricLabel}>Confidence</Text></View>
@@ -243,6 +247,9 @@ export default function CrownScreen() {
           `${percent1(easier.breakEven)} of the time to break even.` : `${appNames[playApp]} has no ${entryLegs}-pick entry.`}
           {easier && power && flex ? ` (${easier.mode === 'FLEX' ? 'Power' : 'Flex'} needs ` +
             `${percent1(easier.mode === 'FLEX' ? power.breakEven : flex.breakEven)}.)` : ''}</Text>
+        {slip.special > 0 && <Text style={styles.slipNote}>{adjusted ? `Adjusted for ${slip.special} Goblin/Demon ${slip.special === 1 ? 'leg' : 'legs'}` +
+          `${slip.estimated ? ` (${slip.estimated} at the typical Goblin cut, an estimate)` : ''}. ` : ''}{slip.unknownDemons
+          ? `${slip.unknownDemons} Demon ${slip.unknownDemons === 1 ? 'leg pays' : 'legs pay'} more than shown. ` : ''}PrizePicks shows the exact payout before you submit.</Text>}
         <Text style={styles.disclaimer}>No win probability is shown: CrownIQ’s model is not calibrated yet. Payouts are
           estimates; {appNames[playApp]} sets the real multipliers, which change on Goblins, Demons and some lines.</Text>
         <View style={styles.actions}>
@@ -275,6 +282,7 @@ export default function CrownScreen() {
 }
 
 const styles = StyleSheet.create({
+  slipNote: { color: colors.gold, fontSize: 13, fontWeight: '700', lineHeight: 19 },
   safe: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 32, gap: 14 },
   summary: { flexDirection: 'row', gap: 12, alignItems: 'center' },
