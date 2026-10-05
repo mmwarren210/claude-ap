@@ -84,6 +84,7 @@ test('Sleeper: each line’s recent performance for that exact stat; matched acr
   assert.equal(statKind('kills_maps_1_2'), statKind('maps_1_2_kills'));
   assert.equal(statKind('Kills on Maps 1+2'), statKind('kills_maps_1_2'));
   assert.notEqual(statKind('kills_maps_1_2'), statKind('kills'));
+  assert.equal(statKind('games_played'), statKind('total_games'), 'Sleeper says games played for total games');
   const rows = [{ playerName: 'Mason Sanderson', stat: 'headshots_maps_1_2', recentPerformance: [
     { date: '2030-09-26', opponent: 'Voca', value: 19 }, { date: '2030-10-04', opponent: 'BB Team', value: 17 },
     { date: '2030-10-03', opponent: 'MOUZ', value: 11 }] },

@@ -260,7 +260,7 @@ export class LeaguepediaHistory extends CachedSource {
 
 /** A stat's kind and scope, so "kills_maps_1_2", "maps_1_2_kills" and "Kills on Maps 1+2" match each other. */
 export function statKind(stat: string) {
-  const m = stat.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/breakpoints/g, 'break_points');
+  const m = stat.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/breakpoints/g, 'break_points').replace(/games_played/g, 'total_games');
   const kind = ['headshots', 'kills', 'deaths', 'assists', 'double_faults', 'aces', 'break_points', 'games_won', 'games_lost',
     'total_games', 'sets_won', 'total_sets', 'fantasy'].find((name) => m.includes(name)) ?? m;
   return `${kind}|${twoMaps(m) ? 'maps12' : /1st_set|first_set|set_1/.test(m) ? 'set1' : 'all'}`;
