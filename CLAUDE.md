@@ -42,8 +42,8 @@
   up (tennis, esports) also joins the `results` stream as a player stat. Saved reads are backfilled at startup.
 - **Scout queue** (owner, 2026-10-05): More → Scout queue shows lines waiting on Scout by board and sport, with Ask
   all / by board / by sport (`/v1/owner/scout-queue`; 300 a day, `CROWNIQ_SCOUT_OWNER_DAILY`; two at a time). Answers
-  show on the boards at once. Open apps poll `/v1/data-version` each minute and show "New picks and Scout reads are in ·
-  Tap to refresh" when a GKR play or Scout read lands.
+  show on the boards at once. The refresh banner was removed (owner: it popped up too often); `/v1/data-version` stays
+  for later use.
 - **Scout reads app-only lines** (owner, 2026-10-05): Underdog and Pick6 lines for players PrizePicks doesn't list
   (no GKR research) go to Scout's scheduled run after the PrizePicks lines, under the same caps. The app boards show
   Scout's side and score ("Scout 61 · Less"), and the Picks filter includes them after GKR's.
