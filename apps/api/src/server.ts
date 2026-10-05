@@ -1258,6 +1258,14 @@ export function buildServer(options: ServerOptions = {}) {
         trackingStatus:ownerBoardRefresh.trackingStatus,creditsSpent:ownerBoardRefresh.creditsSpent,
         creditsRemaining:ownerBoardRefresh.creditsRemaining};
     };
+    // One source pull now (an Apify scraper spends Apify credit, The Odds API its own credits); waits for the result.
+    admin.post('/scrapers/pull', async (request, reply) => {
+      if(!options.scraperPuller)return reply.code(503).send({code:'SCRAPERS_UNCONFIGURED'});
+      if(request.headers['x-confirm-provider-cost']!=='yes')return reply.code(428).send({code:'PROVIDER_CREDITS_CONFIRMATION_REQUIRED'});
+      const input=z.object({source:z.string().min(1)}).strict().safeParse(request.body);
+      if(!input.success)return reply.code(400).send({code:'SOURCE_REQUIRED'});
+      return options.scraperPuller.pull(input.data.source);
+    });
     admin.get('/scrapers', async (_request, reply) => options.scraperPuller
       ? options.scraperPuller.status() : reply.code(503).send({ code: 'SCRAPERS_UNCONFIGURED' }));
     admin.post('/sharp-props/refresh', async (_request, reply) => options.sharpProps
