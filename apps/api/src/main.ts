@@ -248,7 +248,9 @@ const nonNegative=(name:string,fallback:number)=>{
 };
 const boardCacheFile=process.env.CROWNIQ_BOARD_CACHE_FILE ?? `${dataDir}/board-cache.json`;
 const contextIntervalMinutes=nonNegative('CROWNIQ_CONTEXT_REFRESH_MINUTES',15);
-const contextWindowHours=nonNegative('CROWNIQ_CONTEXT_WINDOW_HOURS',8);
+// Every game on the board: player-status findings last 30 minutes, so a game outside this window loses its status (and
+// every GKR play on it) half an hour after a full refresh, or right after a restart.
+const contextWindowHours=nonNegative('CROWNIQ_CONTEXT_WINDOW_HOURS',72);
 const nbaDailyLookups=Math.floor(nonNegative('CROWNIQ_CONTEXT_NBA_DAILY_LOOKUPS',0));
 const contextLookupBudget=statSource&&nbaDailyLookups>0
   ? new DailyLookupBudget(join(dirname(boardCacheFile),'context-lookup-budget.json'),nbaDailyLookups):null;

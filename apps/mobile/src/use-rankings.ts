@@ -1,9 +1,7 @@
 import { rankingsResponseSchema } from '@crowniq/contracts';
 import type { RankingsResponse } from '@crowniq/contracts';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { applyBetaRankings } from './beta';
-import { useModel } from './use-model';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from './auth';
 import { useBoard } from './use-board';
 import { reportMobileFailure } from './diagnostics';
@@ -47,9 +45,6 @@ export function useRankings():RankingsState & {retry:()=>void} {
     return ()=>{active=false;controller.abort();};
   },[request,requestKey,focused]);
   const visible=state.requestKey===requestKey?state:{status:'loading' as const,data:null,message:''};
-  // GKR Beta re-ranks Top Picks by Beta's scores.
-  const {model,beta}=useModel(board?.builtAt??null);
-  const data=useMemo(()=>visible.data&&model==='BETA'&&beta?applyBetaRankings(visible.data,beta):visible.data,[visible.data,model,beta]);
-  return {status:visible.status,data,message:visible.message,
+  return {status:visible.status,data:visible.data,message:visible.message,
     retry:()=>setAttempt((value)=>value+1)};
 }

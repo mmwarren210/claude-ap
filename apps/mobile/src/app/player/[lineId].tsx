@@ -12,7 +12,7 @@ import { useTipFlow } from '../../components/TipSheet';
 import { BooksBadge } from '../../components/ui/BooksBadge';
 import { useBooks } from '../../use-books';
 import { BookLadder } from '../../components/BookLadder';
-import { useModel } from '../../use-model';
+import { useBeta } from '../../use-model';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { alpha } from '../../components/ui/color';
 import { GhostButton, PrimaryButton, Segmented } from '../../components/ui/Controls';
@@ -129,7 +129,7 @@ export default function PlayerResearch() {
     return [...best.values()];
   }, [related]);
   const { reads: aiReads, ask } = useAiPicks();
-  const { model, beta } = useModel(data?.builtAt ?? null);
+  const { beta } = useBeta(data?.builtAt ?? null);
   const betaRead = line ? beta?.get(line.id) : undefined;
   const ai = line ? aiReads?.get(line.id) : undefined;
   const [asking, setAsking] = useState(false);
@@ -356,7 +356,7 @@ export default function PlayerResearch() {
       </View>}
       {canAsk && <GhostButton label={asking ? `${SCOUT} is researching…` : `Ask ${SCOUT} (ChatGPT + Claude)`} icon="binoculars"
         onPress={() => void askAi()} disabled={asking} />}
-      {model === 'BETA' && betaRead && betaRead.change !== 'SAME' && <Notice title={betaRead.change === 'LATE_NEWS_PASS'
+      {betaRead && betaRead.change !== 'SAME' && <Notice title={betaRead.change === 'LATE_NEWS_PASS'
         ? `GKR Beta passes (GKR ${Math.round(betaRead.gkr.score)} ${betaRead.gkr.direction})`
         : `GKR Beta ${Math.round(betaRead.score!)} · GKR ${Math.round(betaRead.gkr.score)}`} detail={betaRead.why} />}
       {pass && analysis && <Notice title="PASS" detail={analysis.rationale} />}

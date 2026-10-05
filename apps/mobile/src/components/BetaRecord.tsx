@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../auth';
 import { colors, radius } from '../theme';
-import { useModel } from '../use-model';
+import { useBeta } from '../use-model';
 
 type Record = { picks: number; graded: number; wins: number; hitRate: number | null };
 const line = (record: Record | undefined) => !record || !record.graded ? 'no graded picks yet'
@@ -11,7 +11,7 @@ const line = (record: Record | undefined) => !record || !record.graded ? 'no gra
 /** GKR Beta against GKR on the same graded picks, for lifetime members. */
 export function BetaRecord() {
   const { request } = useAuth();
-  const { canUseBeta } = useModel();
+  const { canSeeBeta: canUseBeta } = useBeta();
   const [value, setValue] = useState<{ gkr?: Record; beta?: Record; betaPass?: Record } | null>(null);
   useEffect(() => {
     if (!canUseBeta) return;

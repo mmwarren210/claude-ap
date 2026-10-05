@@ -3,7 +3,7 @@ import test from 'node:test';
 import { analysisSchema, boardResponseSchema, DEFAULT_PAYOUTS, propLineSchema } from '@crowniq/contracts';
 import { crownOutcome, entryOutlook } from '../src/insights.js';
 import { aiPlay, lateNews, scoutVerdict } from '../src/scout.js';
-import { applyBeta, bandOf, betaNote } from '../src/beta.js';
+import { bandOf, betaNote } from '../src/beta.js';
 import { addLeg, betterSwap, boardLinesForMode, isPlay, withBooksPicks, CROWN_LEG_FLOOR, emptyFilters, evidenceExpired, freshness, gkrBacked, shareCrown,
   visibleLines } from '../src/state.js';
 import { parseDraft, profileDraftKey } from '../src/draft-codec.js';
@@ -191,21 +191,11 @@ test('Books picks fill in only where Scout has no read, and count as plays at th
   assert.equal(isPlay(undefined,merged.get('c')),true);
 });
 
-test('GKR Beta re-scores GKR plays, passes late-news lines and re-ranks the board',()=>{
-  const lines=['a','b','c'].map((id)=>propLineSchema.parse({...line,id,sourceLineId:id,playerId:id,lineType:'REGULAR'}));
-  const scored=(id:string,score:number)=>analysisSchema.parse({lineId:id,direction:'MORE',score,scoreBand:bandOf(score),
-    scoreBreakdown:[],assessments:[],evidenceIds:[],evidenceQuality:'HIGH',dangerZone:false,ruleChecks:[],supportingFactors:[],
-    opposingFactors:[],rationale:'x',reasonCode:null,modelVersion:'GKR-1.0'});
-  const board=boardResponseSchema.parse({board:{provider:'prizepicks',fetchedAt:'2030-01-01T12:00:00Z',lines},
-    analyses:[scored('a',90),scored('b',84),scored('c',82)],rankedLineIds:['a','b','c'],builtAt:'2030-01-01T12:00:00Z'});
+test('GKR Beta shows beside GKR only where they differ, and says why it passes',()=>{
   const read=(direction:'MORE'|'PASS',score:number|null,gkr:number,change:'UP'|'LATE_NEWS_PASS'|'SAME')=>({direction,score,
     gkr:{direction:'MORE' as const,score:gkr},change,scouted:true,shift:0,why:'Late news: benched.',modelVersion:'GKR-1.0+SCOUT-BETA-0.1'});
-  const beta=new Map([['a',read('PASS',null,90,'LATE_NEWS_PASS')],['c',read('MORE',90,82,'UP')]]);
-  const shown=applyBeta(board,beta);
-  assert.deepEqual(shown.rankedLineIds,['c','b'],'a passes on late news; c moves above b');
-  assert.equal(shown.analyses.find((item)=>item.lineId==='a')!.direction,'PASS');
-  assert.equal(shown.analyses.find((item)=>item.lineId==='c')!.scoreBand,'CROWN_STRONG');
-  assert.equal(betaNote(beta.get('c')),'GKR 82 → Beta 90');
-  assert.equal(betaNote(beta.get('a')),'Beta passes: benched.');
-  assert.equal(board.rankedLineIds.length,3,'the GKR board itself is untouched');
+  assert.equal(betaNote(read('MORE',90,82,'UP')),'GKR 82 · Beta 90');
+  assert.equal(betaNote(read('PASS',null,90,'LATE_NEWS_PASS')),'Beta passes: benched.');
+  assert.equal(betaNote(read('MORE',86,86,'SAME')),null,'same score: only GKR shows');
+  assert.equal(bandOf(90),'CROWN_STRONG');
 });

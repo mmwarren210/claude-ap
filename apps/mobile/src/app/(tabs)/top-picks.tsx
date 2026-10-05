@@ -25,7 +25,8 @@ import { useTipFlow } from '../../components/TipSheet';
 import { usePlayerGames } from '../../use-player-games';
 import { useRankings } from '../../use-rankings';
 import { ScoutVerdict } from '../../components/ScoutVerdict';
-import { ModelSwitch } from '../../components/ModelSwitch';
+import { useBeta } from '../../use-model';
+import { betaNote } from '../../beta';
 import { useAiPicks } from '../../use-ai-picks';
 import type { AiRead } from '../../use-ai-picks';
 
@@ -41,8 +42,9 @@ function insight(card: Card, l10: ReturnType<typeof lineStats>, l5: ReturnType<t
     : evidenceDetail(analysis) };
 }
 
-function PickCard({ card, rank, accent, photoUrl, analysis, scout, onAdd }: { card: Card; rank: number | null;
-  accent: string; photoUrl: string | null | undefined; analysis: Analysis | undefined; scout?: AiRead; onAdd: () => void }) {
+function PickCard({ card, rank, accent, photoUrl, analysis, scout, betaLine = null, onAdd }: { card: Card; rank: number | null;
+  accent: string; photoUrl: string | null | undefined; analysis: Analysis | undefined; scout?: AiRead; betaLine?: string | null;
+  onAdd: () => void }) {
   const { log } = usePlayerGames(card);
   const l5 = lineStats(log, card.threshold, card.direction, 'L5');
   const l10 = lineStats(log, card.threshold, card.direction, 'L10');
@@ -84,6 +86,7 @@ function PickCard({ card, rank, accent, photoUrl, analysis, scout, onAdd }: { ca
       { label: card.opponent ? `vs ${card.opponent}` : 'H2H', value: h2h.average === null ? '—' : h2h.average.toFixed(1) },
     ]} /></View>
     <BooksBadge view={books?.get(card.lineId)} side={card.direction} />
+    {!!betaLine && <Text style={styles.betaLine}>{betaLine}</Text>}
     <ScoutVerdict read={scout} gkrDirection={card.direction} />
     </Pressable>
     <PrimaryButton label="Add to Crown" icon="plus" onPress={onAdd} />
@@ -137,6 +140,7 @@ export default function TopPicksScreen() {
     return () => { active = false; };
   }, [mode, demo, request]);
   const { data: board, nowMs, freshness } = useBoard();
+  const { beta } = useBeta(board?.builtAt ?? null);
   const { status, data, message, retry } = useRankings();
   const [size, setSize] = useState(5);
   const [filter, setFilter] = useState<ListFilter>({ sport: 'ALL', date: 'ALL', lineType: 'ALL' });
@@ -164,7 +168,6 @@ export default function TopPicksScreen() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Top Picks" />
-      <ModelSwitch />
       <Segmented label="Pick list" options={[{ value: 'GKR' as const, label: 'GKR picks' }, { value: 'EV' as const, label: '+EV' }]}
         value={mode} onChange={setMode} />
       {mode === 'EV' ? <>
@@ -200,6 +203,7 @@ export default function TopPicksScreen() {
         : rankings.length === 0 ? <Notice title="No top picks right now"
           detail="Nothing on the board scores 80 or higher for these filters. PASS is a valid result." />
           : rankings.slice(0, size).map((card, index) => <PickCard key={card.lineId} card={card} rank={card.rank} scout={scoutReads?.get(card.lineId)}
+            betaLine={betaNote(beta?.get(card.lineId))}
             accent={rankAccents[index % rankAccents.length]} analysis={analysisById.get(card.lineId)}
             photoUrl={board?.playerMedia?.[card.playerId]?.photoUrl} onAdd={() => addCard(card)} />)}
       {data && rankings.length > size && <Text style={styles.more}>{rankings.length - size} more qualified
@@ -227,6 +231,7 @@ export default function TopPicksScreen() {
 }
 
 const styles = StyleSheet.create({
+  betaLine: { color: colors.gold, fontSize: 12.5, fontWeight: '700', marginTop: 6 },
   safe: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 32, gap: 14 },
   note: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },

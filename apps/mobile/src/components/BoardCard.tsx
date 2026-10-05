@@ -88,8 +88,7 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
           band={aiPick || booksSide ? undefined : analysis?.scoreBand} size={64} />
           {aiPick && <Text style={styles.aiTag}>{SCOUT.toUpperCase()}</Text>}
           {booksSide && <Text style={styles.aiTag}>BOOKS</Text>}
-          {!aiPick && !booksSide && !gkrPass && analysis?.modelVersion?.includes('SCOUT-BETA') &&
-            <Text style={[styles.aiTag, { color: colors.gold }]}>BETA</Text>}</View>
+</View>
         <View style={styles.edgeBox}>
           <Text style={[styles.edge, (stats.edge ?? 0) < 0 && styles.edgeBad]}>
             {stats.edge === null ? '—' : `${signed(stats.edge * 100)}%`}</Text>
