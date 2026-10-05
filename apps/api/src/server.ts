@@ -59,6 +59,7 @@ import type { ContextFeeds, GameLine, InjuryNote, MarketOdds } from './context/f
 import { gameLinesFor, injuryFor, marketsFor, normalizedName } from './context/match.js';
 import type { SharpPropsFeed } from './context/sharp-props.js';
 import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
+import type { EvPick } from './context/ev.js';
 import { bookLadder, bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
 import { marketLine, marketPicks, marketQuestion } from './market-picks.js';
 import { gameScriptFor, scriptEligible } from './shadow-record.js';
@@ -1004,15 +1005,37 @@ export function buildServer(options: ServerOptions = {}) {
   app.get('/v1/payouts', async () => ({payouts,breakEvens:Object.fromEntries(pickAppSchema.options.map((name)=>
     [name,entryBreakEvens(payouts[name])]))}));
   // CrownIQ's own +EV: sportsbook no-vig chances against the pick'em break-even. Separate from GKR; never scored.
-  app.get('/v1/ev', async (_request, reply) => {
+  // +EV on every pick'em app: the books' no-vig chance (same number, or estimated from nearby numbers) against each app's
+  // easiest break-even, with the History Read on the same line alongside. ?app=prizepicks|underdog|pick6 narrows it.
+  let evCache:{at:number;key:readonly unknown[];value:{fetchedAt:string|null;breakEvens:Record<string,number>;picks:EvPick[]}}|null=null;
+  app.get('/v1/ev', async (request, reply) => {
     const board=service.getBoard();
     if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
     if(!options.sharpProps)return reply.code(503).send({code:'EV_UNCONFIGURED'});
+    const only=z.object({app:z.enum(['prizepicks','underdog','pick6']).optional()}).parse(request.query).app;
     const {fetchedAt,prices}=await options.sharpProps.current();
-    const breakEven=options.evBreakEven??bestBreakEven(payouts.prizepicks)?.breakEven??DEFAULT_BREAK_EVEN;
-    const picks=evPicks(board,prices,now(),breakEven);
-    return {app:'prizepicks',fetchedAt,breakEven,matched:picks.length,
-      picks:picks.filter((pick)=>pick.edge>0).slice(0,150)};
+    const time=now().getTime();
+    if(!evCache||evCache.key[0]!==board||evCache.key[1]!==prices||time-evCache.at>5*60_000){
+      const breakEvens:Record<string,number>={prizepicks:options.evBreakEven??bestBreakEven(payouts.prizepicks)?.breakEven??DEFAULT_BREAK_EVEN};
+      const ppHistory=new Map(Object.entries(await boardHistoryReads(board).catch(()=>({}))));
+      const picks=evPicks(board,prices,now(),breakEvens.prizepicks,{nearby:true,app:'prizepicks',history:ppHistory});
+      for(const appName of options.scrapedLines?otherApps:[]){
+        const appLines=(await appBoard(options.scrapedLines!,appName,null)).lines.filter((line)=>line.lineType==='REGULAR');
+        const appBoardView=asBoard(appLines,fetchedAt??now().toISOString(),await scoresFor(appName));
+        const breakEven=bestBreakEven(payouts[appName])?.breakEven;
+        if(!breakEven)continue;
+        breakEvens[appName]=breakEven;
+        const reads=await historyReads.readsFor(appBoardView.board.lines).catch(()=>new Map<string,HistoryRead>());
+        const multipliers=new Map(appLines.map((line)=>[line.id,line.multipliers]));
+        picks.push(...evPicks(appBoardView,prices,now(),breakEven,{nearby:true,app:appName,history:reads,
+          multiplier:(lineId,side)=>multipliers.get(lineId)?.[side]??null}));
+      }
+      evCache={at:time,key:[board,prices],value:{fetchedAt,breakEvens,picks:picks.filter((pick)=>pick.edge>0).sort((a,b)=>b.edge-a.edge)}};
+    }
+    const {breakEvens,picks}=evCache.value;
+    const shown=only?picks.filter((pick)=>pick.app===only):picks;
+    return {app:only??'all',fetchedAt,breakEven:breakEvens[only??'prizepicks']??DEFAULT_BREAK_EVEN,breakEvens,matched:shown.length,
+      picks:shown.slice(0,250)};
   });
   // The sportsbooks' no-vig chance for each standard board line they price (for "Books agree" badges). Never scored.
   // The books' no-vig chance of MORE per board line, for the AI reads (refreshed with the SharpAPI prices).

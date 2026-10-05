@@ -29,6 +29,7 @@ import { useBeta } from '../../use-model';
 import { betaNote } from '../../beta';
 import { useAiPicks } from '../../use-ai-picks';
 import type { AiRead } from '../../use-ai-picks';
+import { AllPicks } from '../../components/AllPicks';
 
 type Card = RankingCard | SecondLookCard;
 type ListFilter = { sport: string; date: string; lineType: string };
@@ -96,38 +97,47 @@ function PickCard({ card, rank, accent, photoUrl, analysis, scout, betaLine = nu
 /** One +EV pick from the server: sportsbooks' no-vig chance at the same number against the break-even. */
 type EvPick = { lineId: string; playerName: string; market: string; threshold: number; side: 'MORE' | 'LESS';
   eventStartTime: string; fairProbability: number; edge: number;
-  books: { book: string; fair: number }[]; gkr: { direction: string; score: number | null } | null };
-type EvResponse = { fetchedAt: string | null; breakEven: number; picks: EvPick[] };
-const bookNames: Readonly<Record<string, string>> = { draftkings: 'DraftKings', hardrock: 'Hard Rock' };
+  books: { book: string; fair: number }[]; gkr: { direction: string; score: number | null } | null;
+  app?: 'prizepicks' | 'underdog' | 'pick6'; how?: 'EXACT' | 'BETWEEN' | 'FLOOR'; breakEven?: number;
+  history?: { direction: string; score: number | null; text: string } | null };
+type EvResponse = { fetchedAt: string | null; breakEven: number; breakEvens?: Record<string, number>; picks: EvPick[] };
+const bookNames: Readonly<Record<string, string>> = { draftkings: 'DraftKings', hardrock: 'Hard Rock', fanduel: 'FanDuel' };
+const evApps = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'DK Pick’em' } as const;
 
 function EvCard({ pick, onAdd }: { pick: EvPick; onAdd: () => void }) {
   const agrees = pick.gkr && pick.gkr.direction === pick.side && pick.gkr.score !== null;
   const gkrText = !pick.gkr ? 'Not on the GKR board' : pick.gkr.direction === 'PASS' ? 'GKR: PASS on this line'
     : agrees ? `GKR agrees: ${pick.gkr.direction} · ${Math.round(pick.gkr.score!)}` : `GKR leans ${pick.gkr.direction}`;
-  return <Pressable accessibilityRole="button" style={styles.evCard}
+  return <Pressable accessibilityRole="button" style={styles.evCard} disabled={(pick.app ?? 'prizepicks') !== 'prizepicks'}
     onPress={() => router.push({ pathname: '/player/[lineId]', params: { lineId: pick.lineId } })}>
     <View style={styles.evTop}>
       <View style={styles.evBody}>
         <Text style={styles.evName} numberOfLines={1}>{pick.playerName}</Text>
         <Text style={styles.evPick}>{marketLabel(pick.market)} · {pick.side} {formatLine(pick.threshold)}</Text>
-        <Text style={styles.note}>{gameTime(pick.eventStartTime)}</Text>
+        <Text style={styles.note}>{evApps[pick.app ?? 'prizepicks']} · {gameTime(pick.eventStartTime)}
+          {pick.breakEven ? ` · needs ${(pick.breakEven * 100).toFixed(1)}%` : ''}</Text>
       </View>
       <View style={styles.evNumbers}>
         <Text style={styles.evEdge}>+{(pick.edge * 100).toFixed(1)}%</Text>
         <Text style={styles.note}>fair {(pick.fairProbability * 100).toFixed(1)}%</Text>
       </View>
     </View>
-    <Text style={styles.note}>{pick.books.map((book) => `${bookNames[book.book] ?? book.book} ${(book.fair * 100).toFixed(1)}%`).join(' · ')}</Text>
+    <Text style={styles.note}>{pick.books.map((book) => `${bookNames[book.book] ?? book.book} ${(book.fair * 100).toFixed(1)}%`).join(' · ')}
+      {pick.how === 'BETWEEN' ? ' · estimated from the books’ nearby numbers' : pick.how === 'FLOOR' ? ' · at least this (books’ harder number)' : ''}</Text>
+    {!!pick.history && <Text style={[styles.note, pick.history.direction === pick.side ? styles.evAgree : styles.evDisagree]}>
+      {pick.history.direction === pick.side ? 'History agrees' : 'History disagrees'}: {pick.history.text}</Text>}
     <View style={styles.evTop}>
       <Text style={[styles.note, agrees && styles.evAgree]}>{gkrText}</Text>
-      <Pressable accessibilityRole="button" onPress={onAdd} hitSlop={8}><Text style={styles.link}>Add to Crown</Text></Pressable>
+      {(pick.app ?? 'prizepicks') === 'prizepicks' && <Pressable accessibilityRole="button" onPress={onAdd} hitSlop={8}>
+        <Text style={styles.link}>Add to Crown</Text></Pressable>}
     </View>
   </Pressable>;
 }
 
 export default function TopPicksScreen() {
   const { request, demo } = useAuth();
-  const [mode, setMode] = useState<'GKR' | 'EV'>('GKR');
+  const [mode, setMode] = useState<'ALL' | 'GKR' | 'EV'>('ALL');
+  const [evApp, setEvApp] = useState<'ALL' | keyof typeof evApps>('ALL');
   const { reads: scoutReads } = useAiPicks();
   const [ev, setEv] = useState<{ status: 'idle' | 'loading' | 'ready' | 'error'; value: EvResponse | null }>({ status: 'idle', value: null });
   useEffect(() => {
@@ -168,18 +178,25 @@ export default function TopPicksScreen() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Top Picks" />
-      <Segmented label="Pick list" options={[{ value: 'GKR' as const, label: 'GKR picks' }, { value: 'EV' as const, label: '+EV' }]}
-        value={mode} onChange={setMode} />
-      {mode === 'EV' ? <>
-        <Text style={styles.sectionText}>Sportsbooks’ no-vig chance for the same player, stat and number, against the
-          {` ${((ev.value?.breakEven ?? 0.5421) * 100).toFixed(1)}%`} PrizePicks’ easiest entry needs per pick. Standard lines only.
-          Separate from GKR scores.</Text>
+      <Segmented label="Pick list" options={[{ value: 'ALL' as const, label: 'Every app' }, { value: 'GKR' as const, label: 'GKR' },
+        { value: 'EV' as const, label: '+EV' }]} value={mode} onChange={setMode} />
+      {mode === 'ALL' ? <AllPicks /> : mode === 'EV' ? <>
+        <Text style={styles.sectionText}>The sportsbooks’ no-vig chance for the same player and stat (at the same number, or
+          estimated from their nearby numbers) against what each app’s easiest entry needs per pick
+          (PrizePicks {((ev.value?.breakEvens?.prizepicks ?? ev.value?.breakEven ?? 0.5421) * 100).toFixed(1)}%). History’s read on
+          the same line shows beside it. Standard lines only; separate from GKR scores.</Text>
+        <ChipRow>
+          <FilterChip label="All apps" active={evApp === 'ALL'} chevron={false} onPress={() => setEvApp('ALL')} />
+          {(Object.keys(evApps) as (keyof typeof evApps)[]).map((app) => <FilterChip key={app} label={evApps[app]}
+            active={evApp === app} chevron={false} onPress={() => setEvApp(app)} />)}
+        </ChipRow>
         {demo ? <Notice title="+EV needs a profile" detail="Sign in to see live +EV picks." />
           : ev.status !== 'ready' ? <Notice title={ev.status === 'error' ? '+EV unavailable' : 'Loading +EV picks'}
             detail={ev.status === 'error' ? 'Sportsbook prices are not connected yet. Try again later.' : 'Comparing sportsbook prices.'} />
             : !ev.value?.picks.length ? <Notice title="No +EV picks right now"
               detail="No standard line beats the break-even at the sportsbooks' prices. Check back after the next update." />
-              : ev.value.picks.slice(0, 50).map((pick) => <EvCard key={pick.lineId} pick={pick} onAdd={() => {
+              : ev.value.picks.filter((pick) => evApp === 'ALL' || (pick.app ?? 'prizepicks') === evApp).slice(0, 60)
+                .map((pick) => <EvCard key={`${pick.app}|${pick.lineId}`} pick={pick} onAdd={() => {
                 const line = lineById.get(pick.lineId);
                 if (!line) { setNotice('That line is no longer on the board.'); return; }
                 tips.attempt(line, analysisById.get(pick.lineId), pick.side, `Added ${pick.playerName} to your Crown.`);
@@ -244,6 +261,7 @@ const styles = StyleSheet.create({
   evNumbers: { alignItems: 'flex-end' },
   evEdge: { color: colors.mint, fontSize: 22, fontWeight: '900' },
   evAgree: { color: colors.gold, fontWeight: '700' },
+  evDisagree: { color: colors.amber, fontWeight: '700' },
   card: { backgroundColor: colors.surface, borderWidth: 1.5, borderRadius: radius.lg, padding: 14, gap: 12,
     shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 0 } },
   top: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },

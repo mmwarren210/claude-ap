@@ -87,3 +87,16 @@ test('Books picks: the books side on lines GKR could not score, at 56% or more, 
   assert.deepEqual([...picks.entries()], [['a', { side: 'LESS', fair: 0.58, books: 1 }], ['d', { side: 'MORE', fair: 0.6, books: 1 }],
     ['e', { side: 'MORE', fair: 0.6, books: 1 }]], 'b: GKR passed on the merits; c: under 56%; e: no analysis yet');
 });
+
+test('+EV from nearby numbers: between two numbers a book prices, or a one-sided floor from a harder number', async () => {
+  const { chanceAt } = await import('../src/context/ev.js');
+  const p = (line: number, fairOver: number) => ({ book: 'hardrock', sport: 'NFL', player: 'A', market: 'm', line, fairOver,
+    overAmerican: null, underAmerican: null, startTime: '2030-10-05T20:00:00Z', home: null, away: null }) as const;
+  assert.deepEqual(chanceAt([p(23.5, 0.6), p(25.5, 0.4)], 24.5)!.fairMore, 0.5, 'halfway between');
+  assert.equal(chanceAt([p(23.5, 0.6), p(25.5, 0.4)], 24.5)!.how, 'BETWEEN');
+  assert.deepEqual({ ...chanceAt([p(25.5, 0.58)], 24.5)!, price: undefined }, { fairMore: 0.58, how: 'FLOOR', side: 'MORE', price: undefined },
+    'Over 25.5 at 58% means Over 24.5 is at least 58%');
+  assert.equal(chanceAt([p(23.5, 0.42)], 24.5)!.side, 'LESS', 'Under 23.5 is harder than Under 24.5');
+  assert.equal(chanceAt([p(30.5, 0.5)], 24.5), null, 'too far away');
+  assert.equal(chanceAt([p(20.5, 0.8), p(28.5, 0.2)], 24.5)?.how, undefined, 'numbers more than 3 apart are not bridged');
+});

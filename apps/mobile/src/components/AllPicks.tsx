@@ -1,0 +1,126 @@
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useAuth } from '../auth';
+import { byLabels, rankAll, sourceLabels } from '../all-picks';
+import type { AnyPick, PickSource } from '../all-picks';
+import { backing, sideLabel } from '../app-lines';
+import type { AppLine } from '../app-lines';
+import { formatLine, gameTime, marketLabel } from '../insights';
+import { SCOUT } from '../scout';
+import { colors, radius } from '../theme';
+import { useAiPicks } from '../use-ai-picks';
+import { useBoard } from '../use-board';
+import { useHistoryReads } from '../use-history-reads';
+import { useRankings } from '../use-rankings';
+import { Notice } from './Screen';
+import { ChipRow, FilterChip } from './ui/Controls';
+
+type BookPick = { id: string; playerName: string; market: string; line: number; side: 'MORE' | 'LESS'; eventStartTime: string;
+  by?: 'GKR' | 'HISTORY' | 'VALUE'; score?: number; gkr: { score: number } | null; note?: string | null; american: number | null };
+type MarketPick = { id: string; game: string; side: string; kind: string; startTime: string; fair: number; edge: number;
+  price: number; note?: string };
+const word = (side: 'MORE' | 'LESS') => side === 'MORE' ? 'More' : 'Less';
+const odds = (american: number | null) => american === null ? '' : ` (${american > 0 ? '+' : ''}${american})`;
+
+/** The best picks on every board, ranked together; chips narrow it to one board. */
+export function AllPicks() {
+  const { request, demo } = useAuth();
+  const { data: board, nowMs } = useBoard();
+  const { data: ranked } = useRankings();
+  const { reads: scout } = useAiPicks();
+  const history = useHistoryReads();
+  const [others, setOthers] = useState<AnyPick[] | null>(null);
+  const [source, setSource] = useState<PickSource | 'ALL'>('ALL');
+  useFocusEffect(useCallback(() => {
+    if (demo) { setOthers([]); return; }
+    let active = true;
+    const json = async <T,>(path: string): Promise<T | null> => {
+      const response = await request(path).catch(() => null);
+      return response?.ok ? await response.json() as T : null;
+    };
+    void Promise.all([
+      ...(['underdog', 'pick6'] as const).map(async (app) => ((await json<{ lines: AppLine[] }>(`/v1/apps/${app}/board`))?.lines ?? [])
+        .flatMap((line): AnyPick[] => {
+          const back = backing(line);
+          return back ? [{ key: `${line.playerId}|${line.market ?? line.stat}`, source: app, by: back.by, title: line.playerName,
+            detail: `${line.stat} · ${sideLabel(app, back.side)} ${formatLine(line.threshold)}`, strength: back.score, edge: null,
+            startTime: line.eventStartTime, lineId: null, note: back.by === 'HISTORY' ? line.history?.text ?? null : null }] : [];
+        })),
+      ...(['draftkings', 'hardrock'] as const).map(async (book) => ((await json<{ picks: BookPick[] }>(`/v1/books/${book}/picks`))?.picks ?? [])
+        .map((pick): AnyPick => ({ key: `${pick.playerName}|${pick.market}`, source: book, by: pick.by ?? 'GKR', title: pick.playerName,
+          detail: `${marketLabel(pick.market)} · ${pick.side === 'MORE' ? 'Over' : 'Under'} ${formatLine(pick.line)}${odds(pick.american)}`,
+          strength: pick.gkr?.score ?? pick.score ?? 0, edge: null, startTime: pick.eventStartTime, lineId: null, note: pick.note ?? null }))),
+      ...(['kalshi', 'polymarket'] as const).map(async (platform) => ((await json<{ picks: MarketPick[] }>(`/v1/markets/${platform}/picks`))?.picks ?? [])
+        .map((pick): AnyPick => ({ key: pick.id, source: platform, by: 'EDGE', title: pick.game, detail: `${pick.side} · ${Math.round(pick.price * 100)}¢`,
+          strength: Math.round(pick.fair * 100), edge: pick.edge, startTime: pick.startTime, lineId: null, note: pick.note ?? null }))),
+    ]).then((groups) => { if (active) setOthers(groups.flat()); });
+    return () => { active = false; };
+  }, [request, demo]));
+  const prizePicks = useMemo(() => {
+    const lines = new Map(board?.board.lines.map((line) => [line.id, line]));
+    const out: AnyPick[] = [];
+    for (const card of ranked?.rankings ?? []) out.push({ key: `${card.playerId}|${card.market}`, source: 'prizepicks', by: 'GKR',
+      title: card.playerName, detail: `${marketLabel(card.market)} · ${word(card.direction as 'MORE' | 'LESS')} ${formatLine(card.threshold)}`,
+      strength: card.score, edge: null, startTime: card.eventStartTime, lineId: card.lineId, note: null });
+    for (const [lineId, read] of scout ?? []) {
+      const line = lines.get(lineId);
+      if (line && read.kind !== 'second' && read.pick !== 'PASS' && (read.score ?? 0) >= 55) out.push({ key: `${line.playerId}|${line.market}`,
+        source: 'prizepicks', by: 'SCOUT', title: line.playerName, detail: `${marketLabel(line.market)} · ${word(read.pick)} ${formatLine(line.threshold)}`,
+        strength: read.score ?? 0, edge: null, startTime: line.eventStartTime, lineId, note: null });
+    }
+    for (const [lineId, read] of history ?? []) {
+      const line = lines.get(lineId);
+      if (line && read.direction !== 'PASS' && !read.lean && !read.trend && read.score !== null) out.push({ key: `${line.playerId}|${line.market}`,
+        source: 'prizepicks', by: 'HISTORY', title: line.playerName,
+        detail: `${marketLabel(line.market)} · ${word(read.direction)} ${formatLine(line.threshold)}`, strength: read.score, edge: null,
+        startTime: line.eventStartTime, lineId, note: read.text });
+    }
+    return out;
+  }, [board, ranked, scout, history]);
+  const all = useMemo(() => rankAll([...prizePicks, ...others ?? []], nowMs), [prizePicks, others, nowMs]);
+  const shown = (source === 'ALL' ? all : all.filter((pick) => pick.source === source)).slice(0, 60);
+  const counts = new Map<string, number>();
+  for (const pick of all) counts.set(pick.source, (counts.get(pick.source) ?? 0) + 1);
+  return <View style={styles.wrap}>
+    <Text style={styles.explain}>The best picks from every board in one list: GKR first, then {SCOUT}, then History (the
+      player’s recent games against that number), then price edges. Each shows where to play it.</Text>
+    <ChipRow>
+      <FilterChip label={`All (${all.length})`} active={source === 'ALL'} chevron={false} onPress={() => setSource('ALL')} />
+      {(Object.keys(sourceLabels) as PickSource[]).filter((item) => counts.get(item)).map((item) => <FilterChip key={item}
+        label={`${sourceLabels[item]} (${counts.get(item)})`} active={source === item} chevron={false} onPress={() => setSource(item)} />)}
+    </ChipRow>
+    {others === null && <Notice title="Loading every board" detail="Gathering picks from each app, book and market." />}
+    {others !== null && !shown.length && <Notice title="No picks right now" detail="Check back after the next update." />}
+    {shown.map((pick, index) => <Pressable key={`${pick.source}|${pick.key}|${pick.by}`} accessibilityRole="button" disabled={!pick.lineId}
+      onPress={() => pick.lineId && router.push({ pathname: '/player/[lineId]', params: { lineId: pick.lineId } })} style={styles.card}>
+      <Text style={styles.rank}>#{index + 1}</Text>
+      <View style={styles.grow}>
+        <Text style={styles.title} numberOfLines={1}>{pick.title}</Text>
+        <Text style={styles.detail} numberOfLines={2}>{pick.detail}</Text>
+        <Text style={styles.meta} numberOfLines={1}>{sourceLabels[pick.source]} · {gameTime(pick.startTime)}</Text>
+        {!!pick.note && <Text style={styles.meta} numberOfLines={2}>{pick.note}</Text>}
+      </View>
+      <View style={styles.badge}>
+        <Text style={[styles.by, { color: pick.by === 'GKR' ? colors.mint : pick.by === 'SCOUT' ? colors.electric
+          : pick.by === 'HISTORY' ? colors.royal : colors.gold }]}>{byLabels[pick.by]}</Text>
+        <Text style={styles.value}>{pick.edge !== null ? `+${(pick.edge * 100).toFixed(1)}` : Math.round(pick.strength)}</Text>
+      </View>
+    </Pressable>)}
+  </View>;
+}
+
+const styles = StyleSheet.create({
+  wrap: { gap: 10 },
+  explain: { color: colors.textMuted, fontSize: 12.5, lineHeight: 18 },
+  card: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.lg, padding: 12 },
+  rank: { color: colors.textMuted, fontSize: 15, fontWeight: '900', width: 34 },
+  grow: { flex: 1, minWidth: 0, gap: 2 },
+  title: { color: colors.text, fontSize: 16, fontWeight: '800' },
+  detail: { color: colors.mint, fontSize: 14, fontWeight: '800' },
+  meta: { color: colors.textMuted, fontSize: 12 },
+  badge: { alignItems: 'center', minWidth: 56 },
+  by: { fontSize: 11, fontWeight: '900' },
+  value: { color: colors.text, fontSize: 20, fontWeight: '900' },
+});

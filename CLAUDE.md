@@ -130,3 +130,10 @@ and confirm it ends with a healthy `/health` (see `docs/DEPLOY.md`).
   next game because Kalshi stamps props with the close date; 20–85¢), and the books' consensus fills in for Pinnacle when
   it's stale or lacks the game. Totals are graded from final scores; props stay out of the market record. Soccer winners
   are skipped (draws). Team names match via `team-match.ts`. Display only; no GKR score changes.
+- **+EV everywhere and Top Picks "Every app" (2026-10-05).** `/v1/ev` covers PrizePicks, Underdog and DK Pick'em at each
+  app's own easiest break-even (a boosted pick's own payout lowers its bar; cut picks under 0.95x are left out). Books'
+  chance: the same number, else estimated between two numbers a book prices (≤3 apart), else a one-sided floor from a
+  harder number (≤2 away) (`chanceAt` in `context/ev.ts`; `bookViews(..., nearby)` stays exact for Books picks). Each
+  +EV pick carries the History Read on the same line ("History agrees/disagrees"). Top Picks opens on **Every app**
+  (`AllPicks.tsx`, `all-picks.ts` `rankAll`): PrizePicks GKR/Scout/History, Underdog and DK Pick'em backed lines,
+  DraftKings/Hard Rock GKR/History/Value picks, and Kalshi/Polymarket edges in one list with board chips.

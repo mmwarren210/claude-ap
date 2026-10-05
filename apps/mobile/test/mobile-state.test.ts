@@ -311,3 +311,13 @@ test('our record: the sport and stat first, then the sport, only with 10+ graded
   assert.equal(recordText(rates,'history','NFL','player_rush_yds'),'History in NFL: 55% of 40 graded');
   assert.equal(recordText(rates,'scout','MLB','batter_hits'),null,'too few graded');
 });
+
+test('every app: GKR, then Scout, then History, then the biggest edges; started games and repeats drop', async () => {
+  const { rankAll } = await import('../src/all-picks.js');
+  const now = Date.parse('2030-01-01T12:00:00Z'), later = '2030-01-01T20:00:00Z';
+  const pick = (key: string, by: 'GKR' | 'SCOUT' | 'HISTORY' | 'VALUE' | 'EDGE', strength: number, edge: number | null = null,
+    startTime = later) => ({ key, source: 'prizepicks' as const, by, title: key, detail: '', strength, edge, startTime, lineId: null, note: null });
+  assert.deepEqual(rankAll([pick('h', 'HISTORY', 70), pick('e1', 'EDGE', 55, 0.02), pick('g', 'GKR', 81), pick('s', 'SCOUT', 60),
+    pick('e2', 'VALUE', 52, 0.05), pick('old', 'GKR', 99, null, '2030-01-01T11:00:00Z'), pick('g', 'GKR', 80)], now).map((item) => item.key),
+  ['g', 's', 'h', 'e2', 'e1']);
+});
