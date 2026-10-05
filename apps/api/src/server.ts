@@ -313,12 +313,13 @@ export function buildServer(options: ServerOptions = {}) {
         if(line)next.push({line,gkr:{direction:'MORE',score:null,modelVersion:'market-edge'},question:marketQuestion(pick,line)});}
     }
     extraSeconds=next;
-    // Scout's own picks on Underdog and Pick6 lines for players PrizePicks doesn't list (GKR has no research for them).
+    // Scout's own picks on Underdog and Pick6 lines GKR doesn't score at the app's number.
     if(options.scrapedLines){
       const lines:PropLine[]=[];
       for(const app of otherApps){
         const board=await appBoard(options.scrapedLines,app,service.getBoard()),scores=await scoresFor(app);
-        const only=board.lines.filter((line)=>!line.prizePicks&&!scores.has(line.id));
+        // Every app line GKR doesn't score at the app's own number (with or without a PrizePicks twin).
+        const only=board.lines.filter((line)=>!scores.has(line.id));
         if(only.length)lines.push(...asBoard(only,board.fetchedAt??now().toISOString()).board.lines);
       }
       extraScout=lines;
@@ -1035,7 +1036,7 @@ export function buildServer(options: ServerOptions = {}) {
     return {scout:{pick:result.read.pick,score:result.read.score,agreement:result.read.agreement}};
   });
   // Lines waiting on Scout: GKR can't score them and Scout hasn't read them, on PrizePicks (standard lines) and on
-  // Underdog and Pick6 (players PrizePicks doesn't list). Games not started yet.
+  // Underdog and Pick6 (any line GKR doesn't score at the app's number). Games not started yet.
   type ScoutBoard='prizepicks'|OtherApp;
   async function waitingForScout():Promise<{board:ScoutBoard;line:PropLine}[]>{
     if(!options.aiPicks)return [];
@@ -1048,7 +1049,7 @@ export function buildServer(options: ServerOptions = {}) {
         out.push({board:'prizepicks',line});}
     if(options.scrapedLines)for(const app of otherApps){
       const appLines=await appBoard(options.scrapedLines,app,board),scores=await scoresFor(app);
-      const only=appLines.lines.filter((line)=>!line.prizePicks&&!scores.has(line.id));
+      const only=appLines.lines.filter((line)=>!scores.has(line.id));
       if(only.length)for(const line of asBoard(only,appLines.fetchedAt??now().toISOString()).board.lines)if(open(line))out.push({board:app,line});
     }
     return out;

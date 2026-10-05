@@ -57,6 +57,7 @@ function Reference({ line }: { line: AppLine }) {
   return <Text style={[styles.reference, reference.gkr && styles.referenceStrong]}>
     PrizePicks {formatLine(reference.threshold)}{same ? ' (same line)' : ''} · {reference.gkr
       ? `GKR ${Math.round(reference.gkr.score)} ${reference.gkr.direction === 'MORE' ? 'More' : 'Less'}` : 'GKR passes'}
+    {!line.gkr ? ` · ${line.scout ? scoutSide(line) ? `${SCOUT} researched it` : `${SCOUT} sees no edge` : `${SCOUT} hasn’t read it yet`}` : ''}
   </Text>;
 }
 
