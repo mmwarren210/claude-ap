@@ -8,6 +8,8 @@ The [full-board web research guide](docs/WEB_RESEARCH.md) explains owner-trigger
 
 The [product tracking and Social V1 guide](docs/PRODUCT_TRACKING_SOCIAL.md) explains credit-free app refresh, saved boards after restart, immutable auto-tracked decisions, sourced result grading, verified recent history and public Top 10 rules. The [profile sign-in guide](docs/PROFILE_SIGNIN.md) describes account creation, private picks, Lite/Full views, sessions, mobile setup and limits.
 
+The [CrownIQ Edge guide](docs/EDGE_ENGINE.md) describes the probability engine that runs beside GKR: sharp sportsbook prices captured in the same Odds API call, count-aware distributions, a stats projection, Goblin/Demon pricing, break-even ranking, slip EV, self-grading and calibration. It adds the app's **Edge** tab and never changes GKR output.
+
 The [private stat-api Research Desk guide](docs/OWNER_STAT_API_RESEARCH.md) explains NFL/NBA/MLB/PGA personal research for one signed-in owner, watched-player auto refresh, an editable private JSON notebook, and server-only key setup. It is disconnected from public board scoring and grading.
 
 ## Requirements
@@ -82,6 +84,9 @@ After normalizing the complete board, CrownIQ compares each `_alternate` thresho
 | `CROWNIQ_ALLOWED_WEB_ORIGINS` | Server only | Comma-separated allowed browser origins for the web/PWA client. |
 | `CROWNIQ_GOOGLE_CLIENT_IDS`, `CROWNIQ_APPLE_CLIENT_IDS` | Server only | Optional allowed OIDC ID-token audiences. Native client activation needs separate owner setup. |
 | `CROWNIQ_NFLVERSE_AUTO_GRADE` | Server only | `true` enables hourly verified nflverse grading for mapped NFL passing/completion, rushing, reception and target markets when `NFLVERSE_MAPPING_FILE` is set; default `false`. |
+| `EDGE_ENGINE`, `EDGE_CONSENSUS_BOOKS` | Server only | Edge engine on by default. Up to nine sportsbooks ride along in the PrizePicks odds request; Under The Odds API's published pricing each group of up to ten bookmakers counts as one region, so the default list should cost no extra credits; confirm with `creditsSpent` in owner status after the first pull. `none` disables book capture. |
+| `EDGE_PAYOUTS`, `EDGE_GOBLIN_FACTOR`, `EDGE_DEMON_FACTOR` | Server only | Payout tables for break-evens and slip EV (defaults in the Edge guide), plus optional owner-verified alternate payout factors. Without a factor, Goblin/Demon lines show probability and the minimum factor needed, not an edge. |
+| `CROWNIQ_EDGE_LEDGER_FILE`, `EDGE_AUTO_GRADE`, `EDGE_AUTO_GRADE_MAX_PLAYERS` | Server only | Durable Edge pick ledger (default `tmp/edge-ledger.json`) and hourly grading. With `STAT_API_KEY`, grading fetches up to 40 players' finals per run from Stat API (uses Stat API quota, never Odds API credits). |
 | `EXPO_PUBLIC_API_URL` | `apps/mobile/.env` | Public API address; never put credentials here. |
 
 ## Verify

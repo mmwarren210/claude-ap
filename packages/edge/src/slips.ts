@@ -21,7 +21,7 @@ export function evaluateSlip(entry: EdgeEntry, legs: readonly EdgePick[]): EdgeS
   if (legs.length !== entry.size) warnings.push(`Entry needs ${entry.size} legs; ${legs.length} supplied.`);
   if (new Set(legs.map((leg) => leg.playerId)).size !== legs.length) warnings.push('The same player appears twice.');
   if (events.size < 2) warnings.push('PrizePicks requires players from at least two teams; legs come from one game.');
-  if (sameGameLegs) warnings.push(`${sameGameLegs} legs share a game; outcomes are correlated, so treat the EV as approximate.`);
+  if (sameGameLegs) warnings.push(`${sameGameLegs} legs share a game with another leg; correlated outcomes make the EV approximate.`);
   if (legs.some((leg) => leg.edge === null)) warnings.push('Includes a non-standard line whose payout factor is unknown; EV assumes standard payout.');
   return {
     entry,

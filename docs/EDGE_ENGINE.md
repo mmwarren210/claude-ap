@@ -1,0 +1,123 @@
+# CrownIQ Edge engine
+
+Edge is a second scoring engine that runs **beside GKR**. It reads the same saved board and never changes GKR analyses, rankings, Crowns or tracked decisions. Where GKR produces a 0–100 rank index and PASSes most of the board, Edge prices every line it can as a **hit probability**. It then compares that probability with what a PrizePicks entry needs to break even.
+
+Code: `packages/edge` (pure engine), `apps/api/src/edge-service.ts`, `apps/api/src/edge-ledger.ts`, and the app's **Edge** tab (`apps/mobile/src/app/(tabs)/edge.tsx`, `apps/mobile/src/app/edge/[lineId].tsx`).
+
+## Why a second engine
+
+GKR scores mostly from "last 5 games vs last 10 games" factor ratios. The distance between projection and line moves the score by at most ±12. It assumes a normal distribution even for 0.5-line count stats, and it cannot say whether a pick beats a payout. Edge is built around the one question that decides whether a pick is worth playing: *what is the probability it hits, and is that above break-even?*
+
+## Inputs
+
+| Source | What it gives | Weight |
+| --- | --- | --- |
+| **Sportsbook prices** | The same Odds API odds request that fetches PrizePicks also asks for up to nine sportsbooks (default: Pinnacle, FanDuel, DraftKings, BetMGM, Caesars, ESPN BET, BetOnline, BetRivers, Hard Rock). Each book's margin is removed with the **power method**, and the fair price is converted into a full distribution for that player. | Highest. Books are weighted by sharpness (Pinnacle 1.0, FanDuel 0.8, …), quotes far from the PrizePicks line count less, and precision is capped because books copy each other. |
+| **Stats projection** | Internal-history game rows (Stat API archive, backfill, graded results) for NFL/NBA/MLB. Projection = opportunity (minutes, snaps, attempts, PA, batters faced; recency-weighted) × per-opportunity rate (longer window). DNP rows are removed, not averaged in as zeros. | Lower. Its standard error is inflated 1.5× because opponent, pace and role are not modelled. |
+| **PrizePicks ladder** | The regular PrizePicks line for the same player and market, treated as a 50/50 anchor. | Small when books exist and moderate otherwise. It also lets Goblin/Demon rungs be priced from the regular line when no book quotes exist. |
+
+The three estimates of the mean are combined by inverse-variance weighting. The predictive distribution adds the estimate's own uncertainty to the game-to-game variance, which pulls probabilities toward 50% when evidence is thin.
+
+**Captured but not used for pricing:** PrizePicks' own indicative prices and multipliers.
+
+## Distributions
+
+Each market has a profile (`packages/edge/src/markets.ts`) with a variance function V(μ) = φμ + ψμ²:
+
+- **Poisson**: walks, home runs, NHL goals.
+- **Negative binomial** (variance > mean): points, rebounds, assists, receptions, targets, strikeouts, hits, shots and so on.
+- **Discretized normal**: yards, saves, pitching outs. Integer lines get a real exact-hit probability.
+- **Continuous normal**: fantasy points.
+
+An exact hit removes the pick on PrizePicks, so every probability is conditional on not landing exactly on the line, and the exact-hit chance is shown separately.
+
+## Output per line
+
+Each priced line is returned as an `edgePickSchema` record in `packages/contracts`:
+
+- **Probability:** hit probability for the better offered side and for the opposite side.
+- **Edge:** probability − break-even for standard lines. The break-even comes from the best configured entry, 54.2% for 6-pick Flex with the default tables.
+- **Rating:** ELITE ≥ 7 points, STRONG ≥ 4.5, VALUE ≥ 2, THIN > 0. The edge is first multiplied by a source factor: Sharp 1.0, Market 0.85, Model 0.6, Ladder 0.5.
+- **Required payout factor:** break-even ÷ probability, the minimum PrizePicks payout factor at which the leg is worth playing. This is the decision number for Goblins and Demons.
+- **Audit detail:** projection (mean, median, SD, family), every book quote with its fair over-probability, stats sample and hit rate at the line, source weights, plain-language reasons and warnings.
+
+### Tiers
+
+| Tier | Meaning |
+| --- | --- |
+| SHARP | At least two books, including a two-sided sharp book. |
+| MARKET | Any sportsbook quote. |
+| MODEL | Stats projection without books. |
+| LADDER | Priced only from the PrizePicks regular line, so it applies to alternates only. A regular line with no independent information is left unpriced. |
+
+### Goblins and Demons
+
+The Odds API feed carries no PrizePicks payout factor for Goblin and Demon lines (see `docs/LIVE_ODDS_PULL_2026-09-24.md`). Edge therefore does not invent one:
+
+- Every alternate rung gets a real probability from the same distribution.
+- `edge` stays `null`, and the app shows "worth it only if its payout factor is at least X×".
+- An owner who verifies the factors can set `EDGE_GOBLIN_FACTOR` / `EDGE_DEMON_FACTOR` to rank those lines as edges.
+
+## Payouts, break-evens and slips
+
+Default standard-line tables, overridable with `EDGE_PAYOUTS`. Confirm the current tables in the PrizePicks app.
+
+| Entry | Pays | Per-leg break-even |
+| --- | --- | --- |
+| Power 2 | 3× | 57.7% |
+| Power 3 | 6× | 55.0% |
+| Power 4 | 10× | 56.2% |
+| Power 5 | 20× | 54.9% |
+| Power 6 | 37.5× | 54.7% |
+| Flex 3 | 3× / 1× | 57.7% |
+| Flex 4 | 6× / 1.5× | 55.0% |
+| Flex 5 | 10× / 2× / 0.4× | 54.2% |
+| Flex 6 | 25× / 2× / 0.4× | 54.2% |
+
+**Slip EV.** Slip EV is exact for independent legs: the code computes the full Poisson-binomial distribution of how many legs hit and applies the payout for each outcome.
+
+**Best entries.** The optimizer builds the best entry of each type from positive-edge standard lines, with one leg per player, at most two legs per game and at least two games. Same-game legs are correlated, so their EV is flagged as approximate.
+
+**Your own slip.** In the app, any lines can be added to a slip and priced with `POST /v1/edge/slip`.
+
+## Learning from results
+
+1. **Tracking.** Every refresh records rated standard picks, plus alternates at ≥ 62%, in `CROWNIQ_EDGE_LEDGER_FILE`. Each record keeps the first and the latest pre-start probability.
+2. **Grading.** Picks are graded from:
+   - result facts posted to `/v1/admin/tracked-results` or `/v1/admin/edge/results`;
+   - internal-history rows dated near the event;
+   - with `STAT_API_KEY`, an hourly worker that fetches finals for up to `EDGE_AUTO_GRADE_MAX_PLAYERS` players per run. This uses Stat API quota, never Odds API credits.
+3. **Calibration.** Once 150 picks are graded, a Platt recalibration p' = σ(a + b·logit p) is fitted (per sport once a sport has 150), with a prior toward the identity map. Every new pricing applies it. Until then, picks are labelled *uncalibrated*.
+4. **Performance.** `GET /v1/edge/performance` reports:
+   - Brier score, Brier skill, log loss and a reliability table;
+   - hit rate on standard lines compared with their average break-even;
+   - breakdowns by tier, rating and sport.
+5. **Backtest.** `GET /v1/owner/edge/backtest` replays the stats projection walk-forward over all internal history. For each game it predicts only from earlier games and compares against the original GKR projection (mean/SD of the last 10 games as a normal), reporting log score, MAE and Brier per market.
+
+## API
+
+All routes require a signed-in profile; owner routes return 404 to anyone else.
+
+| Route | Purpose |
+| --- | --- |
+| `GET /v1/edge?view=edges\|alternates\|all&sport=&market=&limit=&minProbability=` | Ranked picks, counts, calibration status, entries and best slips. |
+| `GET /v1/edge/line/:lineId` | One line. The opposite side of a pick is returned flipped. |
+| `GET /v1/edge/player/:playerId` | Every priced line for a player. |
+| `POST /v1/edge/slip` `{type, lineIds}` | Exact EV for a custom 2–6 leg entry. |
+| `GET /v1/edge/performance` | Graded track record. |
+| `GET /v1/owner/edge/status`, `POST /v1/owner/edge/grade`, `GET /v1/owner/edge/backtest` | Owner diagnostics. |
+| `POST /v1/admin/edge/results` | Admin result facts. |
+
+`/v1/board` strips sportsbook quotes from its payload so the mobile board stays the same size.
+
+## Limits
+
+These are estimates, not guarantees.
+
+- **Opponents and injuries:** the stats model has no opponent, pace or injury inputs. Sportsbook prices usually already reflect them, which is why the market weight is high.
+- **Correlation:** treated as independence inside a slip.
+- **Payout tables:** defaults that can drift from PrizePicks' live tables.
+- **Calibration:** none until results accumulate.
+- **Book prices:** missing for markets the configured books do not offer, in which case Edge falls back to model or ladder pricing at lower confidence.
+
+Hit rate against break-even on graded picks is the measure that settles whether Edge is beating PrizePicks.
