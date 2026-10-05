@@ -118,6 +118,9 @@ and confirm it ends with a healthy `/health` (see `docs/DEPLOY.md`).
   after its game; a side that hit 57%+ over 60+ lines at that number (or 150+ across the stat) shows as a **Trend**
   (amber, never auto-picked, recorded as shadow kind `trend`). `/v1/hit-rates` gives each source's graded record by
   sport and stat; cards show "Our record" once 10+ picks are graded. All display only; no score changes.
+- **Pricey picks (2026-10-05).** A DK/HR pick whose price needs 60%+ shows CHECK HIGHER LINE (Over) or CHECK LOWER LINE
+  (Under) instead of PRICEY when either book has a harder number for that side priced under 60% (`fairerLine`); with
+  none, PRICEY stays. The break-even note always shows.
 - **Sportsbook and prediction-market expansion (2026-10-05).** SharpAPI (`context/sharp-props.ts`, hourly) now pulls
   tennis (ATP/WTA) and eight soccer leagues besides the US leagues, more MLB/NHL stats, Kalshi's over-only player props
   (`overOnly`) and every book's full-game winner/spread/total lines (`games`; NCAAB and UFC game lines too). Books default

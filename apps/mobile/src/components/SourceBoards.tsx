@@ -25,6 +25,7 @@ type BookPick = { id: string; league: string; playerName: string; team: string |
   impliedChance: number | null; pricey: boolean; fairChance: number;
   otherBook: { book: Sportsbook; american: number | null } | null;
   altLine: { book: Sportsbook; line: number; american: number | null } | null;
+  fairerLine?: { book: Sportsbook; line: number; american: number | null } | null;
   scout?: AiRead | null;
   prizePicks: { line: number; lineType: string; sides: Side[];
     gkr: { direction: string; score: number | null; reasonCode: string | null } | null } | null };
@@ -92,7 +93,8 @@ function BookCard({ book, pick }: { book: Sportsbook; pick: BookPick }) {
         <Text style={styles.meta}>{gameTime(pick.eventStartTime)}</Text>
       </View>
       <View style={styles.tags}>
-        {pick.pricey && <Text style={styles.pricey}>PRICEY</Text>}
+        {pick.pricey && (pick.fairerLine ? <Text style={styles.altTag}>{pick.side === 'MORE' ? 'CHECK HIGHER LINE' : 'CHECK LOWER LINE'}</Text>
+          : <Text style={styles.pricey}>PRICEY</Text>)}
         {pick.altLine && <Text style={styles.altTag}>{pick.side === 'MORE' ? 'CHECK LOWER LINE' : 'CHECK HIGHER LINE'}</Text>}
       </View>
     </View>
@@ -125,6 +127,9 @@ function BookCard({ book, pick }: { book: Sportsbook; pick: BookPick }) {
       {book === 'draftkings' ? ' DraftKings usually offers alternate lines too: check its app for a ' +
         `${pick.side === 'MORE' ? 'lower' : 'higher'} number.` : ''}</Text>}
     <ScoutVerdict read={pick.scout ?? undefined} gkrDirection={pick.side} />
+    {pick.pricey && pick.fairerLine && <Text style={styles.altNote}>{sourceNames[pick.fairerLine.book]} has
+      {' '}{pick.side === 'MORE' ? 'Over' : 'Under'} {formatLine(pick.fairerLine.line)} at {odds(pick.fairerLine.american)}: a
+      {' '}{pick.side === 'MORE' ? 'higher' : 'lower'} number at a fairer price.</Text>}
     {pick.pricey && <Text style={styles.pricyNote}>This price needs {pct(pick.impliedChance)} to break even.{pick.gkr ? ' GKR’s score is a strength rating, not a win chance, so weigh the price before betting.' : ''}</Text>}
   </View>;
 }

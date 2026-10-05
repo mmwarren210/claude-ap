@@ -38,6 +38,11 @@ export interface BookPick {
    * through the feed, so its cards point to Hard Rock's.
    */
   readonly altLine: { readonly book: Sportsbook; readonly line: number; readonly american: number | null } | null;
+  /**
+   * For a pricey pick: a harder number for the same side priced under 60% (higher for Over, lower for Under), the
+   * nearest one. Replaces the PRICEY tag with "check higher/lower line" when there is one.
+   */
+  readonly fairerLine?: { readonly book: Sportsbook; readonly line: number; readonly american: number | null } | null;
   /** The PrizePicks line for the same player and stat, for comparison. */
   readonly prizePicks: { readonly line: number; readonly lineType: string; readonly sides: readonly PlayableDirection[];
     readonly gkr: { readonly direction: string; readonly score: number | null; readonly reasonCode: string | null } | null } | null;
@@ -182,13 +187,21 @@ export function bookPicks(book: Sportsbook, prices: readonly FairPrice[], boardL
         (impliedChance(side === 'MORE' ? item.overAmerican : item.underAmerican) ?? 1) < PRICEY)
       .sort((a, b) => side === 'MORE' ? a.line - b.line : b.line - a.line);
     const alt = alternates[0];
+    const pricey = (impliedChance(american) ?? 0) >= PRICEY;
+    const fairer = pricey ? (ladders.get(JSON.stringify([price.sport, normalizedName(price.player), price.market, dayKey(price.startTime)])) ?? [])
+      .filter((item) => (side === 'MORE' ? item.line > price.line : item.line < price.line) &&
+        (impliedChance(side === 'MORE' ? item.overAmerican : item.underAmerican) ?? 1) < PRICEY)
+      .sort((a, b) => Math.abs(a.line - price.line) - Math.abs(b.line - price.line) ||
+        Number(b.book === book) - Number(a.book === book))[0] : undefined;
     const pick: BookPick = { id: line.id, book, sport: source.sport, league: source.league, playerName: source.playerName,
       team: source.team ?? null, opponent: source.opponent ?? null, eventName: source.eventName,
       eventStartTime: source.eventStartTime, market: price.market, line: price.line, side,
       by: backing.by, score: Math.round(backing.score), note: backing.note, gkr: backing.gkr,
       american, impliedChance: impliedChance(american),
-      pricey: (impliedChance(american) ?? 0) >= PRICEY,
+      pricey,
       fairChance: Math.round((side === 'MORE' ? price.fairOver : 1 - price.fairOver) * 10_000) / 10_000,
+      fairerLine: fairer ? { book: fairer.book as Sportsbook, line: fairer.line,
+        american: side === 'MORE' ? fairer.overAmerican : fairer.underAmerican } : null,
       altLine: alt ? { book: alt.book as Sportsbook, line: alt.line, american: side === 'MORE' ? alt.overAmerican : alt.underAmerican } : null,
       otherBook: other ? { book: other.book as Sportsbook, american: side === 'MORE' ? other.overAmerican : other.underAmerican } : null,
       // PrizePicks' own line can PASS for a reason the book's line doesn't have: a Goblin or Demon offers only More.

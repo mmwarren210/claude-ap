@@ -88,3 +88,15 @@ test('book picks without GKR: the History Read at the book number, then Value ag
   assert.ok(!picks.some((pick) => pick.playerName === 'Even Steven'), 'no edge, no history: no pick');
   assert.deepEqual(picks.map((pick) => pick.by), ['HISTORY', 'VALUE'], 'History before Value');
 });
+
+test('a pricey pick points to a harder number at a fairer price: higher for Over, lower for Under', () => {
+  const board = [fixtureLine({ id: 'pp-a', playerId: 'a', playerName: 'Jose Allen', threshold: 240.5 })];
+  const prices = [price('draftkings', 'Jose Allen', 240.5, 0.5, -170, 135), price('hardrock', 'Jose Allen', 245.5, 0.47, -115, -105),
+    price('hardrock', 'Jose Allen', 260.5, 0.3, 140, -170)];
+  const more = (lines: readonly PropLine[]): Analysis[] => lines.map((line) => fixtureAnalysis(line, 'MORE', 85));
+  const [pick] = bookPicks('draftkings', prices, board, new Map(), more, now);
+  assert.equal(pick!.pricey, true, '-170 needs 63%');
+  assert.deepEqual(pick!.fairerLine, { book: 'hardrock', line: 245.5, american: -115 }, 'the nearest higher number under 60%');
+  const cheap = bookPicks('draftkings', [price('draftkings', 'Jose Allen', 240.5, 0.5, -110, -110)], board, new Map(), more, now);
+  assert.equal(cheap[0]!.fairerLine, null, 'not pricey: nothing to point to');
+});
