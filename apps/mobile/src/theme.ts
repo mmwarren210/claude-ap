@@ -2,28 +2,29 @@ import type { PropLine, ScoreBand } from '@crowniq/contracts';
 
 type LineType = PropLine['lineType'];
 
-/** CrownIQ design tokens: near-black green surfaces, mint actions, line-style accents. */
+/** CrownIQ design tokens: near-pure black with green-tinted surfaces, neon green actions and glows (the GKR art's
+ * colors), line-style accents. */
 export const colors = {
-  background: '#050908',
-  surface: '#0A110F',
-  surfaceRaised: '#0E1714',
-  surfaceSunken: '#070D0B',
-  border: '#1A2823',
-  borderStrong: '#26392F',
-  text: '#F2F6F4',
-  textMuted: '#8E9D96',
-  textFaint: '#5F6E67',
-  mint: '#3DF29C',
-  mintDeep: '#22C97A',
-  mintInk: '#03140B',
-  mintWash: '#0E2A1D',
-  neon: '#45E27F',
+  background: '#010401',
+  surface: '#041007',
+  surfaceRaised: '#08190C',
+  surfaceSunken: '#020802',
+  border: '#0F3317',
+  borderStrong: '#18502A',
+  text: '#F3FFF4',
+  textMuted: '#8EAA93',
+  textFaint: '#5A725E',
+  mint: '#3BFF4E',
+  mintDeep: '#14C42C',
+  mintInk: '#011203',
+  mintWash: '#082C10',
+  neon: '#6DFF2E',
   gold: '#F3C54E',
   goldWash: '#2A220C',
   magenta: '#E24DF2',
   magentaWash: '#2A0E2E',
-  goblin: '#6BE26F',
-  goblinWash: '#12280F',
+  goblin: '#8EFF3C',
+  goblinWash: '#132B08',
   blue: '#3C8DFF',
   orange: '#FF7B31',
   red: '#FF5B61',
@@ -73,7 +74,7 @@ export const lineStyles: Readonly<Record<LineStyle, { label: string; short: stri
 };
 
 /** Card accent per rank, echoing the mockups' colored card edges. */
-export const rankAccents = [colors.mint, colors.magenta, colors.blue, colors.orange, colors.mint,
+export const rankAccents = [colors.mint, colors.neon, colors.gold, colors.mintDeep, colors.goblin,
   colors.gold] as const;
 
 export function bandLabel(band: ScoreBand | null | undefined): string {
