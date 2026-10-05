@@ -60,8 +60,8 @@ function Reference({ line }: { line: AppLine }) {
   </Text>;
 }
 
-function LineCard({ app, line, picked, onPick }: { app: PickApp; line: AppLine; picked: Side | null;
-  onPick: (side: Side) => void }) {
+function LineCard({ app, line, picked, onPick, asking, onAsk }: { app: PickApp; line: AppLine; picked: Side | null;
+  onPick: (side: Side) => void; asking: boolean; onAsk?: () => void }) {
   return <View style={[styles.card, picked && styles.cardPicked]}>
     <View style={styles.cardHead}>
       <PlayerAvatar name={line.playerName} photoUrl={line.playerImageUrl} size={48} ring={picked ? colors.mint : colors.borderStrong} />
@@ -90,6 +90,10 @@ function LineCard({ app, line, picked, onPick }: { app: PickApp; line: AppLine; 
       <Text style={styles.gkrSide}>{sideLabel(app, scoutSide(line)!)} {formatLine(line.threshold)}</Text>
     </View>}
     <Reference line={line} />
+    {onAsk && !line.gkr && !line.scout && <Pressable accessibilityRole="button" disabled={asking} onPress={onAsk}
+      style={[styles.ask, asking && styles.askBusy]}>
+      <Text style={styles.askText}>{asking ? `${SCOUT} is researching… (up to a minute)` : `Ask ${SCOUT} for a More/Less`}</Text>
+    </Pressable>}
     <View style={styles.sides}>
       {line.availableDirections.map((side) => <Pressable key={side} accessibilityRole="button"
         accessibilityState={{ selected: picked === side }} onPress={() => onPick(side)}
@@ -152,6 +156,21 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     }
     if (!picks.has(line.id) && slip.length >= 6) { setMessage('A slip holds up to 6 picks.'); return; }
     setSlip([...slip.filter((item) => item.line.id !== line.id), { line, side }]);
+  };
+  // Ask Scout on one line now (same daily allowance as Ask Scout on the PrizePicks board).
+  const [asking, setAsking] = useState<Set<string>>(new Set());
+  const askScout = async (line: AppLine) => {
+    setMessage(''); setAsking((current) => new Set(current).add(line.id));
+    const response = await request(`/v1/apps/${app}/ask/${encodeURIComponent(line.id)}`, { method: 'POST' }).catch(() => null);
+    setAsking((current) => { const next = new Set(current); next.delete(line.id); return next; });
+    const body = response ? await response.json().catch(() => ({})) as { scout?: AppLine['scout']; code?: string } : {};
+    if (response?.ok && body.scout) {
+      setLines((current) => current.map((item) => item.id === line.id ? { ...item, scout: body.scout } : item));
+      if (body.scout.pick === 'PASS') setMessage(`${SCOUT} sees no edge on ${line.playerName}.`);
+      return;
+    }
+    setMessage(body.code === 'DAILY_LIMIT_REACHED' ? `You’ve used today’s Ask ${SCOUT} picks. More tomorrow.`
+      : body.code === 'EVENT_STARTED' ? 'That game has started.' : `${SCOUT} couldn’t answer right now. Try again soon.`);
   };
   const save = async () => {
     try {
@@ -220,7 +239,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     <FlatList data={shown} keyExtractor={(line) => line.id} initialNumToRender={8} maxToRenderPerBatch={10} windowSize={7}
       contentContainerStyle={styles.content} ListHeaderComponent={header}
       renderItem={({ item }) => <LineCard app={app} line={item} picked={picks.get(item.id) ?? null}
-        onPick={(side) => pick(item, side)} />}
+        onPick={(side) => pick(item, side)} asking={asking.has(item.id)} onAsk={demo ? undefined : () => void askScout(item)} />}
       ListEmptyComponent={<Notice title={demo ? 'Sign in to see this board' : state === 'loading' ? 'Loading board'
         : state === 'error' ? 'Board unavailable' : 'No lines right now'}
         detail={demo ? `The demo shows PrizePicks only. Sign in to see ${appNames[app]} lines.`
@@ -275,6 +294,9 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.mint },
   gkrScore: { color: colors.mint, fontSize: 14, fontWeight: '900' },
   scoutScore: { color: colors.electric },
+  ask: { borderWidth: 1, borderColor: colors.electric, borderRadius: radius.md, paddingVertical: 10, alignItems: 'center' },
+  askBusy: { opacity: 0.6 },
+  askText: { color: colors.electric, fontSize: 14, fontWeight: '800' },
   gkrSide: { color: colors.text, fontSize: 13, fontWeight: '700' },
   tray: { position: 'absolute', left: 16, right: 16, bottom: 12, gap: 8, padding: 12, borderRadius: radius.lg,
     borderWidth: 1, borderColor: colors.mint, backgroundColor: colors.surface },

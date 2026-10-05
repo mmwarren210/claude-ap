@@ -1000,6 +1000,23 @@ export function buildServer(options: ServerOptions = {}) {
       .send({code:result.error});
     return {read:aiView(result.read)};
   });
+  // Ask Scout on an Underdog or Pick6 line GKR can't score, within the same daily allowance as the PrizePicks board.
+  app.post('/v1/apps/:app/ask/:lineId', async (request, reply) => {
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    const parsed=z.object({app:z.enum(otherApps as [OtherApp,...OtherApp[]]),lineId:z.string().min(1).max(300)}).safeParse(request.params);
+    if(!parsed.success)return reply.code(400).send({code:'INVALID_LINE'});
+    if(!options.aiPicks)return reply.code(503).send({code:'AI_UNCONFIGURED'});
+    if(!options.scrapedLines)return reply.code(503).send({code:'APP_LINES_UNAVAILABLE'});
+    const board=await appBoard(options.scrapedLines,parsed.data.app,null);
+    const appLine=board.lines.find((item)=>item.id===parsed.data.lineId);
+    if(!appLine)return reply.code(404).send({code:'LINE_NOT_FOUND'});
+    if((await scoresFor(parsed.data.app)).has(appLine.id))return reply.code(422).send({code:'GKR_SCORES_THIS_LINE'});
+    const line=asBoard([appLine],board.fetchedAt??now().toISOString()).board.lines[0];
+    const result=await options.aiPicks.ask(user.accountId,line,undefined,service.getEvidence(),null);
+    if(!result.read)return reply.code(result.error==='DAILY_LIMIT_REACHED'?429:result.error==='AI_UNAVAILABLE'?502:422)
+      .send({code:result.error});
+    return {scout:{pick:result.read.pick,score:result.read.score,agreement:result.read.agreement}};
+  });
   app.get('/v1/books', async (_request, reply) => {
     const board=service.getBoard();
     if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
