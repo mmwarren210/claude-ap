@@ -155,6 +155,22 @@ function MarketCard({ platform, pick }: { platform: MarketPlatform; pick: Market
   </View>;
 }
 
+type MarketRecordStatus = { graded: number; wins: number; losses: number; pushes: number; hitRate: number | null;
+  perDollar: number | null };
+/** A market tab's graded record. */
+function useRecord(platform: MarketPlatform): MarketRecordStatus | null {
+  const { request, demo } = useAuth();
+  const [value, setValue] = useState<{ platform: MarketPlatform; record: MarketRecordStatus } | null>(null);
+  useFocusEffect(useCallback(() => {
+    if (demo) return;
+    let active = true;
+    void request(`/v1/markets/${platform}/record`).then(async (response) => response.ok ? response.json() : null)
+      .then((body) => { if (active && body) setValue({ platform, record: body as MarketRecordStatus }); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [request, demo, platform]));
+  return value?.platform === platform ? value.record : null;
+}
+
 function useLeagueFilter<T extends { league: string }>(picks: T[]) {
   const [league, setLeague] = useState('ALL');
   const leagues = useMemo(() => [...new Set(picks.map((pick) => pick.league))].sort(), [picks]);
@@ -195,12 +211,16 @@ export function BookBoard({ book, onSource }: { book: Sportsbook; onSource: (sou
 /** Kalshi or Polymarket: game markets priced below Pinnacle's fair odds. No PASS lines. */
 export function MarketBoard({ platform, onSource }: { platform: MarketPlatform; onSource: (source: BoardSource) => void }) {
   const { picks, fetchedAt, state } = usePicks<MarketPick>(`/v1/markets/${platform}/picks`);
+  const record = useRecord(platform);
   const { shown, chips } = useLeagueFilter(picks);
   const header = <View style={styles.header}>
     <AppHeader subtitle={`${sourceNames[platform]} picks`} />
     <BoardPicker value={platform} onChange={onSource} />
     {chips}
     {state === 'ready' && <Text style={styles.status}>{shown.length} {shown.length === 1 ? 'pick' : 'picks'}{ago(fetchedAt)}</Text>}
+    {record && record.graded > 0 && <Text style={styles.record}>Record: {record.wins}-{record.losses}
+      {record.pushes ? `-${record.pushes}` : ''} ({Math.round((record.hitRate ?? 0) * 100)}%) · {record.perDollar! >= 0 ? '+' : '−'}
+      {Math.abs(Math.round(record.perDollar! * 100))}¢ per $1</Text>}
     <Text style={styles.explain}>{sourceNames[platform]} sells game outcomes, not player stats, so GKR doesn’t score these. A
       pick shows when {sourceNames[platform]}’s price{platform === 'kalshi' ? ', with its fee,' : ''} is at least 2 cents per $1
       below Pinnacle’s fair odds for the same game.</Text>
@@ -224,6 +244,7 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 16, paddingBottom: 120, gap: 12 },
   header: { gap: 12, marginBottom: 2 },
   status: { color: colors.textMuted, fontSize: 13 },
+  record: { color: colors.mint, fontSize: 13, fontWeight: '700' },
   explain: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
   card: { borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radius.lg, backgroundColor: colors.surface,
     padding: 14, gap: 12 },

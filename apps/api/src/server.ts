@@ -51,6 +51,7 @@ import { gameScriptFor, scriptEligible } from './shadow-record.js';
 import { betaFor } from './scout-beta.js';
 import type { BetaRead } from './scout-beta.js';
 import type { LiveMarkets } from './market-live.js';
+import type { MarketRecord } from './market-record.js';
 import type { ShadowPick, ShadowRecord } from './shadow-record.js';
 import type { MarketPlatform } from './market-picks.js';
 import type { BookPick, Sportsbook } from './book-picks.js';
@@ -116,6 +117,8 @@ export interface ServerOptions {
   payouts?: Payouts;
   /** Shadow records: Books picks, sportsbook-tab picks and game-script snapshots, graded in their own record. */
   shadowRecord?: ShadowRecord | null;
+  /** Kalshi and Polymarket picks, graded from final scores. */
+  marketRecord?: MarketRecord | null;
   /** Reads The Odds API's credit balance (a free call), for the owner. */
   oddsApiQuota?: (() => Promise<{ status: number; remaining: number | null; used: number | null }>) | null;
   /** Live Kalshi and Polymarket prices from their free public APIs. */
@@ -264,13 +267,19 @@ export function buildServer(options: ServerOptions = {}) {
           if(script)picks.push({kind:'script',line,side:analysis.direction,strength:analysis.score,script});
         }
       }
+      // Kalshi and Polymarket picks go to their own record.
+      if(options.marketRecord){
+        const market=(await Promise.all((['kalshi','polymarket'] as const).map(async(platform)=>(await marketPicksFor(platform))?.picks??[]))).flat();
+        await options.marketRecord.record(market);
+      }
       const found:Record<string,number>={};
       for(const pick of picks)found[pick.kind]=(found[pick.kind]??0)+1;
       return {found,added:await shadow.record(picks)};
     };
     const first=setTimeout(()=>{void recordShadow().catch(()=>undefined);},90_000);first.unref();
     const every=setInterval(()=>{void recordShadow().catch(()=>undefined);},15*60_000);every.unref();
-    const grading=setInterval(()=>{void shadow.grade().catch(()=>undefined);},60*60_000);grading.unref();
+    const grading=setInterval(()=>{void shadow.grade().catch(()=>undefined);
+      void options.marketRecord?.grade().catch(()=>undefined);},60*60_000);grading.unref();
     shadowTimers.push(first,every,grading);
   }
   // Scout second opinions on the new tabs: the sportsbooks' strongest GKR picks (one per player and stat across both
@@ -1033,6 +1042,11 @@ export function buildServer(options: ServerOptions = {}) {
     return {fetchedAt:markets.fetchedAt,live:markets.live,pinnacleAt:games.fetchedAt,pinnacleStale,
       picks:pinnacleStale?[]:marketPicks(platform,markets.items,games.items,now())};
   }
+  app.get('/v1/markets/:platform/record',async(request,reply)=>{
+    const parsed=z.object({platform:z.enum(['kalshi','polymarket'])}).safeParse(request.params);
+    if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_PLATFORM'});
+    return options.marketRecord?options.marketRecord.status(parsed.data.platform):reply.code(503).send({code:'MARKET_RECORD_UNCONFIGURED'});
+  });
   app.get('/v1/markets/:platform/picks',async(request,reply)=>{
     const parsed=z.object({platform:z.enum(['kalshi','polymarket'])}).safeParse(request.params);
     if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_PLATFORM'});
@@ -1225,7 +1239,11 @@ export function buildServer(options: ServerOptions = {}) {
       : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
     admin.post('/shadow/record', async (_request, reply) => options.shadowRecord ? (await recordShadow()) ?? { found: {}, added: 0 }
       : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
-    admin.post('/shadow/grade', async (_request, reply) => options.shadowRecord ? { graded: await options.shadowRecord.grade() }
+    admin.get('/market-record', async (_request, reply) => options.marketRecord
+      ? { kalshi: await options.marketRecord.status('kalshi'), polymarket: await options.marketRecord.status('polymarket') }
+      : reply.code(503).send({ code: 'MARKET_RECORD_UNCONFIGURED' }));
+    admin.post('/shadow/grade', async (_request, reply) => options.shadowRecord ? { graded: await options.shadowRecord.grade(),
+      markets: await options.marketRecord?.grade() ?? 0 }
       : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
     admin.get('/book-picks/:book', async (request, reply) => {
       const parsed=z.object({book:z.enum(sportsbooks)}).safeParse(request.params);

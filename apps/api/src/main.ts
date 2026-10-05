@@ -23,6 +23,7 @@ import { EspnGkrEvidence } from './espn-gkr-evidence.js';
 import { AiPickService } from './ai-picks.js';
 import { ShadowRecord } from './shadow-record.js';
 import { LiveMarkets } from './market-live.js';
+import { MarketRecord } from './market-record.js';
 import { ClaudePickResearcher } from './claude-ai-picks.js';
 import { OpenAiPickResearcher } from './openai-ai-picks.js';
 import { BoardCache } from './board-cache.js';
@@ -306,6 +307,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, guestPass, provid
     const header=(name:string)=>{const value=response.headers.get(name);return value===null?null:Number(value);};
     return {status:response.status,remaining:header('x-requests-remaining'),used:header('x-requests-used')};
   }:null,
+  marketRecord:new MarketRecord(`${dataDir}/market-record.json`),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults()),
   liveMarkets:process.env.CROWNIQ_LIVE_MARKETS==='false'?null:new LiveMarkets(`${dataDir}/live-markets.json`),
   scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults()}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,payouts,

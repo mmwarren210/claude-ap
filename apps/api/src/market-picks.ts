@@ -13,6 +13,8 @@ export const marketPlatforms: readonly MarketPlatform[] = ['kalshi', 'polymarket
 export interface MarketPick {
   readonly id: string; readonly platform: MarketPlatform; readonly league: string; readonly game: string;
   readonly startTime: string; readonly kind: 'WINNER' | 'SPREAD'; readonly side: string; readonly question: string;
+  /** Pinnacle's names for the two teams, which team the side is, and its spread (null for a winner pick), for grading. */
+  readonly home: string; readonly away: string; readonly team: 'home' | 'away'; readonly handicap: number | null;
   /** The market's price for this side, 0-1 (cents on the dollar), and the cost per $1 contract with the platform fee. */
   readonly price: number; readonly cost: number;
   /** Pinnacle's no-vig chance of the same side. */
@@ -72,7 +74,7 @@ export function marketPicks(platform: MarketPlatform, markets: readonly MarketOd
     for (const market of mine) {
       // Full-game markets only: no first half, quarter, period or inning markets.
       if (/\b(1H|2H|1Q|2Q|3Q|4Q|half|quarter|period|inning|innings|set \d|map \d)\b/i.test(market.question)) continue;
-      const sides: { side: string; team: 'home' | 'away'; price: number; kind: MarketPick['kind'] }[] = [];
+      const sides: { side: string; team: 'home' | 'away'; price: number; kind: MarketPick['kind']; handicap: number | null }[] = [];
       const spreadMatch = /^Spread: (.+) \((-?\d+(?:\.\d+)?)\)$/.exec(market.question);
       if (spreadMatch) {
         // Polymarket: "Spread: Bills (-6.5)"; Pinnacle's spread line is the home team's.
@@ -84,7 +86,8 @@ export function marketPicks(platform: MarketPlatform, markets: readonly MarketOd
           const team = names(outcome.name, home) ? 'home' : names(outcome.name, away) ? 'away' : null;
           if (!team) continue;
           const teamLine = team === favoriteTeam ? line : -line;
-          sides.push({ side: `${outcome.name} ${teamLine > 0 ? '+' : ''}${teamLine}`, team, price: outcome.probability / 100, kind: 'SPREAD' });
+          sides.push({ side: `${outcome.name} ${teamLine > 0 ? '+' : ''}${teamLine}`, team, price: outcome.probability / 100, kind: 'SPREAD',
+            handicap: teamLine });
         }
       } else if (!/spread|O\/U|total|yards|points|goals|touchdown|ladder|escalator|\+/i.test(market.question) && moneyline &&
         moneyline.homeFair !== null && moneyline.awayFair !== null && moneyline.homeFair + moneyline.awayFair > 0.98) {
@@ -93,20 +96,20 @@ export function marketPicks(platform: MarketPlatform, markets: readonly MarketOd
         if (subject) {
           const team = names(subject, home) ? 'home' : names(subject, away) ? 'away' : null;
           const yes = market.outcomes.find((outcome) => outcome.name === 'Yes');
-          if (team && yes) sides.push({ side: `${subject} to win`, team, price: yes.probability / 100, kind: 'WINNER' });
+          if (team && yes) sides.push({ side: `${subject} to win`, team, price: yes.probability / 100, kind: 'WINNER', handicap: null });
         } else for (const outcome of market.outcomes) {
           const team = names(outcome.name, home) ? 'home' : names(outcome.name, away) ? 'away' : null;
-          if (team) sides.push({ side: `${outcome.name} to win`, team, price: outcome.probability / 100, kind: 'WINNER' });
+          if (team) sides.push({ side: `${outcome.name} to win`, team, price: outcome.probability / 100, kind: 'WINNER', handicap: null });
         }
       }
-      for (const { side, team, price, kind } of sides) {
+      for (const { side, team, price, kind, handicap } of sides) {
         const source = kind === 'SPREAD' ? spread! : moneyline!;
         const fair = team === 'home' ? source.homeFair! : source.awayFair!;
         if (price <= 0.02 || price >= 0.98) continue;
         const cost = round(price + platformFee(platform, price)), edge = round(fair - cost);
         if (edge < minEdge) continue;
         picks.push({ id: `${platform}:${league}:${title}:${market.question}:${side}`, platform, league, game: title,
-          startTime, kind, side, question: market.question, price: round(price), cost, fair: round(fair), edge,
+          startTime, kind, side, question: market.question, home, away, team, handicap, price: round(price), cost, fair: round(fair), edge,
           volume24h: market.volume24h, url: market.url });
       }
     }
