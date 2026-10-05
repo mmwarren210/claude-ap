@@ -28,6 +28,7 @@ import type { AppScore } from './app-boards.js';
 import type { OtherApp } from './app-boards.js';
 import type { ScrapedLineStore } from './scrapers/line-store.js';
 import { AppShadowScorer } from './app-shadow.js';
+import { realNews } from './ai-picks.js';
 import type { AiPickService, AiRead } from './ai-picks.js';
 import type { BoxScoreResults } from './box-score-results.js';
 import type { ScraperPuller } from './scrapers/scraper-puller.js';
@@ -842,7 +843,7 @@ export function buildServer(options: ServerOptions = {}) {
   const aiView=(read:AiRead)=>({pick:read.pick,score:read.score,agreement:read.agreement,researchedAt:read.researchedAt,
     kind:read.kind??'scout',gkr:read.gkr?{direction:read.gkr.direction,score:read.gkr.score}:null,
     providers:read.providers.map((item)=>({provider:item.provider,pick:item.pick,confidence:item.confidence,summary:item.summary,
-      reasons:item.reasons,lateNews:item.lateNews??''}))});
+      reasons:item.reasons,lateNews:realNews(item.lateNews??'')}))});
   // AI reads for the current board: lines GKR couldn't score that ChatGPT and Claude researched.
   app.get('/v1/ai-picks', async (_request, reply) => {
     const board=service.getBoard();

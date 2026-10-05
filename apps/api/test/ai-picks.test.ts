@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { analysisSchema, boardResponseSchema } from '@crowniq/contracts';
 import { fixtureAnalysis, fixtureLine } from '../../../packages/engine/test/fixtures.js';
-import { aiEligible, AiPickService, combineReads, parsePick } from '../src/ai-picks.js';
+import { aiEligible, AiPickService, combineReads, parsePick, realNews } from '../src/ai-picks.js';
 import type { PickQuestion, PickResearcher, ProviderRead } from '../src/ai-picks.js';
 import { ClaudePickResearcher } from '../src/claude-ai-picks.js';
 import { OpenAiPickResearcher } from '../src/openai-ai-picks.js';
@@ -153,4 +153,11 @@ test('Scout second opinions reach the sportsbook and market tabs within the same
   assert.equal(await service.readFor(bookLine), null, 'over the cap');
   await service.grade();
   assert.equal(graded, 0, 'market reads are never sent to the box-score grader');
+});
+
+test('late news that only says there is none is empty; real news stays', () => {
+  for (const text of ['No injury designation is currently listed for Dotson.', 'I did not find a fresh role change.',
+    'No last-24-hour injury or weather note surfaced.', 'Nothing new on his status.', '']) assert.equal(realNews(text), '', text);
+  for (const text of ['Ruled out with a hamstring injury this morning.',
+    'No injury news, but the posted lineup leaves Rojo out of the starting XI.']) assert.equal(realNews(text), text, text);
 });
