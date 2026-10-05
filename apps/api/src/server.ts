@@ -1074,7 +1074,7 @@ export function buildServer(options: ServerOptions = {}) {
     admin.post('/sharp-props/refresh', async (_request, reply) => options.sharpProps
       ? options.sharpProps.refresh() : reply.code(503).send({ code: 'EV_UNCONFIGURED' }));
     admin.get('/context', async (_request, reply) => options.contextFeeds
-      ? { feeds: await options.contextFeeds.status() } : reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' }));
+      ? { feeds: await options.contextFeeds.status(), sharpProps: await options.sharpProps?.status() ?? null } : reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' }));
     // Pulls one context feed now; it spends from the shared daily scraper budget.
     admin.post('/context/pull', async (request, reply) => {
       if (!options.contextFeeds) return reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' });
