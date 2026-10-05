@@ -26,6 +26,10 @@
   Fixes that change model scores still need the owner's approval.
 - **Logo**: the CrownIQ icon (gold crown, dripping CrownIQ, POWERED BY GKR) is the home-screen icon, favicon, sign-in
   logo and link preview (`public/og.png`); the header uses its crown (`assets/images/crown.png`).
+- **Free public history** (owner, 2026-10-05; `player-history.ts`): each player's last 15-20 matches from ESPN tennis
+  scoreboards (games won, total games, sets, first set; refreshed every 12 h), OpenDota (Dota 2 tournament maps: kills,
+  deaths, assists, last hits) and Leaguepedia (LoL pro games). Scout gets them as facts in every question; the cards'
+  game log falls back to them; the games go to the archive. No GKR score uses them (that needs a new opt-in model).
 - **Scout's info pool** (owner, 2026-10-05): every Scout read (both models' picks, confidence, summaries, reasons with
   evidence kind and source, late news) and its grade go to the archive's `scout` stream for good; a result Scout looked
   up (tennis, esports) also joins the `results` stream as a player stat. Saved reads are backfilled at startup.

@@ -225,6 +225,8 @@ export interface AiPickOptions {
   readonly dailyOwner?: number;
   /** Every read, its grade and any result Scout looked up go to CrownIQ's own archive (kept for good). */
   readonly archive?: HistoryArchive | null;
+  /** More facts for a line's question (free public history for tennis and esports: the last 15-20 matches). */
+  readonly extraFacts?: (line: PropLine) => Promise<readonly string[]>;
   readonly resultsPerRun?: number;
   /** Second opinions on GKR Top Picks per Eastern day (0 turns them off). */
   readonly dailySecond?: number;
@@ -331,7 +333,11 @@ export class AiPickService {
     const pending = this.inFlight.get(key);
     if (pending) return pending;
     const task = (async () => {
-      const question = asked ?? questionFor(line, evidence, fairMore);
+      let question = asked ?? questionFor(line, evidence, fairMore);
+      if (!asked && this.options.extraFacts) {
+        const more = await this.options.extraFacts(line).catch(() => [] as readonly string[]);
+        if (more.length) question = { ...question, facts: [...question.facts, ...more] };
+      }
       const settled = await Promise.allSettled(this.researchers.map((researcher) => researcher.read(question,
         AbortSignal.timeout(150_000))));
       settled.forEach((result, index) => {

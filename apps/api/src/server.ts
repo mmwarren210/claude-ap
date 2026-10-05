@@ -1,3 +1,4 @@
+import type { PlayerHistory } from './player-history.js';
 import { FeedbackStore } from './feedback.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
@@ -126,6 +127,8 @@ export interface ServerOptions {
   marketRecord?: MarketRecord | null;
   /** Beta feedback: testers' bug reports and suggestions, and the patch notes that answer them. */
   feedback?: FeedbackStore | null;
+  /** Free public history (ESPN tennis, OpenDota, Leaguepedia) for the cards' game logs. */
+  playerHistory?: PlayerHistory | null;
   /** CrownIQ's own archive of game logs, graded results and lines. */
   historyArchive?: HistoryArchive | null;
   /** Reads The Odds API's credit balance (a free call), for the owner. */
@@ -330,7 +333,7 @@ export function buildServer(options: ServerOptions = {}) {
     shadowTimers.push(firstExtra,everyExtra);
   }
   options.liveMarkets?.start();
-  app.addHook('onClose', async () => {for(const timer of shadowTimers)clearTimeout(timer);options.liveMarkets?.stop();appShadow?.stop();options.aiPicks?.stop(); webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
+  app.addHook('onClose', async () => {for(const timer of shadowTimers)clearTimeout(timer);options.playerHistory?.stop();options.liveMarkets?.stop();appShadow?.stop();options.aiPicks?.stop(); webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
     options.scraperPuller?.stop();options.contextFeeds?.stop();options.sharpProps?.stop(); });
 
   // Every paid provider pull runs through this one job, so two pulls can never overlap or
@@ -1285,12 +1288,15 @@ export function buildServer(options: ServerOptions = {}) {
     const parsed=z.object({sport:z.string().min(1).max(20),playerId:z.string().min(1).max(200),
       market:z.string().min(1).max(80)}).safeParse(request.params);
     if(!parsed.success)return reply.code(400).send({code:'INVALID_GAME_LOG_REQUEST'});
-    if(!options.internalHistory)return reply.code(404).send({code:'NO_HISTORY'});
     const line=service.getBoard()?.board.lines.find((item)=>item.playerId===parsed.data.playerId&&
       item.sport===parsed.data.sport);
-    const log=await options.internalHistory.gameLog(parsed.data.sport,parsed.data.playerId,
-      line?.playerName??null,parsed.data.market,now());
-    return log&&log.games.length?log:reply.code(404).send({code:'NO_HISTORY'});
+    const log=options.internalHistory?await options.internalHistory.gameLog(parsed.data.sport,parsed.data.playerId,
+      line?.playerName??null,parsed.data.market,now()):null;
+    if(log&&log.games.length)return log;
+    // Tennis and esports: the last matches from free public history.
+    const free=line&&options.playerHistory?.supports(parsed.data.sport)
+      ?await options.playerHistory.gameLog(parsed.data.sport,parsed.data.playerId,line.playerName,parsed.data.market).catch(()=>null):null;
+    return free&&free.games.length?free:reply.code(404).send({code:'NO_HISTORY'});
   };
   app.get('/v1/players/:sport/:playerId/:market/games', gameLog);
   app.get('/v1/demo/players/:sport/:playerId/:market/games', gameLog);
@@ -1397,7 +1403,7 @@ export function buildServer(options: ServerOptions = {}) {
       const lines=options.scrapedLines?await options.scrapedLines.active():[];
       let booksHistoryRows=0;
       try{if(options.booksHistoryFile)booksHistoryRows=(await readFile(options.booksHistoryFile,'utf8')).split('\n').filter(Boolean).length;}catch{/* none yet */}
-      return {playerHistory:await options.internalHistory?.status()??null,
+      return {playerHistory:await options.internalHistory?.status()??null,freeHistory:options.playerHistory?.lastRefresh??null,
         trackedDecisions:(await options.product?.listDecisions(0,1))?.total??null,
         activeAppLines:lines.length,booksHistoryRows,
         shadow:await options.shadowRecord?.status()??null,markets:await options.marketRecord?.status()??null,

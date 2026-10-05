@@ -1,3 +1,4 @@
+import { EspnTennisHistory, LeaguepediaHistory, OpenDotaHistory, PlayerHistory } from './player-history.js';
 import { FeedbackStore } from './feedback.js';
 import 'dotenv/config';
 import { mergePayouts } from '@crowniq/contracts';
@@ -55,6 +56,10 @@ import { CurrentContextResearch } from './current-context.js';
 const dataDir=(process.env.CROWNIQ_DATA_DIR ?? 'tmp').replace(/\/$/,'');
 // CrownIQ's own archive: every game log, graded result and line it has seen, kept for verification and evidence.
 const historyArchive=new HistoryArchive(`${dataDir}/archive`);
+// Free public history for tennis and esports (ESPN, OpenDota, Leaguepedia): Scout facts, card game logs and the archive.
+const playerHistory=process.env.CROWNIQ_FREE_HISTORY==='false'?null
+  :new PlayerHistory([new EspnTennisHistory(),new OpenDotaHistory(),new LeaguepediaHistory()],historyArchive);
+playerHistory?.start();
 const apiKey = process.env.THE_ODDS_API_KEY;
 const providerMode = process.env.ODDS_PROVIDER ?? 'auto';
 if (!['auto', 'none', 'the_odds_api', 'scrapers'].includes(providerMode)) {
@@ -295,7 +300,7 @@ if(guestCode&&!guestPass)console.warn('CROWNIQ_GUEST_PASS_CODE must be at least 
 process.on('unhandledRejection', (reason) => {
   console.error('Background task failed:', reason instanceof Error ? reason.message : reason);
 });
-const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
+const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, playerHistory, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
   webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,
   autoGradingEnabled:!!autoGrade,autoGradingStatus:()=>autoGrade?.status()??null,
   requireProfiles:true,identityVerifier,
@@ -307,7 +312,8 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, signupContact: pr
     perRun:Number(process.env.CROWNIQ_AI_PICKS_PER_RUN ?? 15),
     dailySecond:Number(process.env.CROWNIQ_SCOUT_SECOND_DAILY ?? 40),secondPerRun:Number(process.env.CROWNIQ_SCOUT_SECOND_PER_RUN ?? 8),
     dailyResults:Number(process.env.CROWNIQ_SCOUT_RESULTS_DAILY ?? 60),resultsPerRun:Number(process.env.CROWNIQ_SCOUT_RESULTS_PER_RUN ?? 10),
-    dailyOwner:Number(process.env.CROWNIQ_SCOUT_OWNER_DAILY ?? 300),archive:historyArchive},new BoxScoreResults(fetch,undefined,historyArchive)):null,
+    dailyOwner:Number(process.env.CROWNIQ_SCOUT_OWNER_DAILY ?? 300),archive:historyArchive,
+    extraFacts:playerHistory?(line)=>playerHistory.factsFor(line):undefined},new BoxScoreResults(fetch,undefined,historyArchive)):null,
   // The sports list costs no credits and returns the balance headers.
   oddsApiQuota:apiKey?async()=>{
     const response=await fetch(`https://api.the-odds-api.com/v4/sports?apiKey=${encodeURIComponent(apiKey)}`,

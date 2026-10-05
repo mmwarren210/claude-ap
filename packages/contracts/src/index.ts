@@ -251,7 +251,7 @@ export const playerGameLogSchema = z.object({
   playerId: identifier,
   playerName: identifier,
   market: identifier,
-  source: z.enum(['CROWNIQ_INTERNAL_HISTORY', 'DEMO']),
+  source: z.enum(['CROWNIQ_INTERNAL_HISTORY', 'DEMO', 'FREE_PUBLIC_HISTORY']),
   unit: z.string().nullable(),
   games: z.array(z.object({
     date: z.string().min(10),
