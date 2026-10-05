@@ -181,7 +181,7 @@ test('a Scout second opinion is a verdict on the GKR pick, never a play by itsel
 });
 
 test('Books picks fill in only where Scout has no read, and count as plays at their no-vig chance',()=>{
-  const scout={pick:'PASS',score:null,kind:'scout'};
+  const scout:{pick:string;score:number|null;kind?:string}={pick:'PASS',score:null,kind:'scout'};
   const merged=withBooksPicks(new Map([['a',scout],['b',{pick:'LESS',score:66,kind:'second'}]]),
     new Map([['a',{side:'MORE' as const,fair:0.6}],['b',{side:'MORE' as const,fair:0.58}],['c',{side:'LESS' as const,fair:0.57}]]));
   assert.equal(merged.get('a'),scout,'Scout looked closer: its PASS stands');
