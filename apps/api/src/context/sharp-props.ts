@@ -282,6 +282,10 @@ export function scorerFairPrices(rows: readonly unknown[], games: readonly GameP
     if (list.length < 10) { scorerSkips.few++; continue; }
     const target = goals * 0.97, implied = list.map((row) => Number(row.odds_probability));
     const sum = (k: number) => implied.reduce((total, p) => total - Math.log(1 - Math.min(p / k, 0.99)), 0);
+    if (scorerSkips.samples.length < 8 && String(list[0]!.league) === 'nhl') {
+      const top = [...list].sort((a, b) => Number(b.odds_probability) - Number(a.odds_probability)).slice(0, 3);
+      scorerSkips.samples.push(`top ${String(list[0]!.sportsbook)}: ${top.map((row) => `${String(row.player_name)} ${String(row.odds_american)} p=${String(row.odds_probability)} line=${String(row.line)}`).join(' | ')}`);
+    }
     if (sum(1) < target || sum(1.6) > target) {
       if (sum(1) < target) scorerSkips.low++; else scorerSkips.high++;
       if (scorerSkips.samples.length < 6) scorerSkips.samples.push(`${String(list[0]!.sportsbook)} ${String(list[0]!.league)} n=${list.length} sum=${sum(1).toFixed(2)} goals=${goals.toFixed(2)}`);
