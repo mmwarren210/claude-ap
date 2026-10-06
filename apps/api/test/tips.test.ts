@@ -56,9 +56,10 @@ test('tips routes: upload a screenshot, see it under its service, mark and remov
   };
   const store = new TipStore(join(folder, 'tips.json'), () => clock);
   const product = new ProductLedger(join(folder, 'product.json'));
-  const app = buildServer({ product, clock: () => clock, tips: { store, reader, grader: null } });
+  const owner = await product.register('tips@example.org', 'long-private-passphrase', 'Tipper_1');
+  const app = buildServer({ product, clock: () => clock, ownerPublicId: owner.profile.publicId, tips: { store, reader, grader: null } });
   try {
-    const { token } = await product.register('tips@example.org', 'long-private-passphrase', 'Tipper_1');
+    const { token } = owner;
     const auth = { authorization: `Bearer ${token}` };
     assert.equal((await app.inject('/v1/tips')).statusCode, 401);
     const upload = await app.inject({ method: 'POST', url: '/v1/tips/upload', headers: auth,
@@ -86,7 +87,9 @@ test('tips routes: upload a screenshot, see it under its service, mark and remov
     assert.deepEqual([after.sources.Bandit.won, after.sources.Bandit.lost, after.sources.Bandit.pending], [1, 1, 0]);
     assert.equal((await app.inject({ method: 'DELETE', url: `/v1/tips/${kaz.id}`, headers: auth })).statusCode, 200);
     const other = await product.register('other@example.org', 'another-private-password', 'Other_2');
-    assert.equal((await app.inject({ url: '/v1/tips', headers: { authorization: `Bearer ${other.token}` } })).json().tips.length, 0, 'tips are private');
+    const outsider = { authorization: `Bearer ${other.token}` };
+    assert.equal((await app.inject({ url: '/v1/tips', headers: outsider })).statusCode, 404, 'owner-only for now');
+    assert.equal((await app.inject({ method: 'POST', url: '/v1/tips/upload', headers: outsider, payload: { text: 'Spain ML' } })).statusCode, 404);
   } finally { await app.close(); await rm(folder, { recursive: true, force: true, maxRetries: 5 }); }
 });
 

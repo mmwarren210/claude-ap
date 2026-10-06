@@ -111,7 +111,7 @@
   to the owner's screenshots (Goblins 0.67–0.83x, Demons 1.08–5.4x seen); Power only, never in PrizePicks Flex.
   DK Pick'em payouts are the owner-set minimum floors (edges on; `EDGE_PICK6_PAYOUTS_CONFIRMED=false` turns them off).
   Owner diagnostics: `/v1/owner/edge/status|health|backtest|stale`.
-- **Tips** (`apps/api/src/tips.ts`, `claude-tips.ts`, the app's Tips tab): members upload a screenshot or paste picks from paid
+- **Tips** (`apps/api/src/tips.ts`, `claude-tips.ts`, the app's Tips tab), owner-only for now: the owner uploads a screenshot or paste picks from paid
   tip services. Claude reads them (`CROWNIQ_TIPS_MODEL`, default claude-sonnet-5-5), then analyzes each in the background with a
   web search (odds, news, form). CrownIQ's verdict (PLAY/LEAN/PASS/FADE) is computed from the EV at the best known price, using
   Pinnacle's no-vig chance when the game is on the board and Claude's estimate otherwise. Picks are playable from a slip (singles

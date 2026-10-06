@@ -538,15 +538,17 @@ export function buildServer(options: ServerOptions = {}) {
     catch(error){return (error as Error).message==='DAILY_LIMIT'?reply.code(429).send({code:'DAILY_LIMIT'})
       :reply.code(503).send({code:'FEEDBACK_UNAVAILABLE'});}
   });
-  // Tips: picks from the services a member pays for, uploaded as a screenshot or text, in their own section (display-only).
+  // Tips (owner-only for now): picks from the services the owner pays for, uploaded as a screenshot or text, in their own section (display-only).
   const tipStatus=z.enum(['PENDING','WON','LOST','PUSH','VOID']);
   app.get('/v1/tips',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
     if(!options.tips)return reply.code(503).send({code:'TIPS_UNAVAILABLE'});
     return {...await options.tips.store.mine(user.accountId),reading:!!options.tips.reader};
   });
   app.post('/v1/tips/upload',{bodyLimit:8_000_000},async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
     if(!options.tips?.reader)return reply.code(503).send({code:'TIPS_READER_UNAVAILABLE'});
     const input=z.object({image:z.object({data:z.string().min(100).max(7_500_000).regex(/^[A-Za-z0-9+/=]+$/),
       mediaType:z.enum(['image/png','image/jpeg','image/webp','image/gif'])}).optional(),
@@ -572,6 +574,7 @@ export function buildServer(options: ServerOptions = {}) {
   });
   app.post('/v1/tips/recheck',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
     if(!options.tips?.reader)return reply.code(503).send({code:'TIPS_READER_UNAVAILABLE'});
     const input=z.object({ids:z.array(z.string().uuid()).min(1).max(40)}).strict().safeParse(request.body);
     if(!input.success)return reply.code(400).send({code:'INVALID_TIPS_RECHECK'});
@@ -581,6 +584,7 @@ export function buildServer(options: ServerOptions = {}) {
   });
   app.patch('/v1/tips/:id',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
     if(!options.tips)return reply.code(503).send({code:'TIPS_UNAVAILABLE'});
     const id=z.string().uuid().safeParse((request.params as {id?:string}).id);
     const input=z.object({status:tipStatus.optional(),source:z.string().trim().min(1).max(60).optional()}).strict().safeParse(request.body);
@@ -589,6 +593,7 @@ export function buildServer(options: ServerOptions = {}) {
   });
   app.delete('/v1/tips/:id',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
     if(!options.tips)return reply.code(503).send({code:'TIPS_UNAVAILABLE'});
     const id=z.string().uuid().safeParse((request.params as {id?:string}).id);
     if(!id.success)return reply.code(400).send({code:'INVALID_TIP_ID'});
