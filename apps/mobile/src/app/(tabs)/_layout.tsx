@@ -25,7 +25,9 @@ export default function TabLayout() {
       tabBarBadge: legs.length ? legs.length : undefined }} />
     <Tabs.Screen name="edge" options={{ title: 'Edge', tabBarIcon: icon('diamond-outline', 'diamond') }} />
     <Tabs.Screen name="results" options={{ title: 'Results', tabBarIcon: icon('chart-bar', 'chart-bar') }} />
-    <Tabs.Screen name="social" options={{ title: 'Social', tabBarIcon: icon('account-group-outline', 'account-group') }} />
+    <Tabs.Screen name="tips" options={{ title: 'Tips', tabBarIcon: icon('lightbulb-outline', 'lightbulb') }} />
+    {/* Social stays reachable from More. */}
+    <Tabs.Screen name="social" options={{ href: null, title: 'Social' }} />
     <Tabs.Screen name="more" options={{ title: 'More', tabBarIcon: icon('menu', 'menu') }} />
   </Tabs>;
 }

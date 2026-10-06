@@ -107,10 +107,13 @@
   (edge null until `EDGE_PICK6_PAYOUTS_CONFIRMED`), DraftKings and Hard Rock, each against its own payout (leave-one-out). Snapshot store
   in `node:sqlite`. `EDGE_ENGINE=false` turns it off. P3–P6 (movement/stale, evaluation, projection 2.0, correlated slips) and the
   spec audit are live. Learned files in `${CROWNIQ_DATA_DIR}/edge/`: `edge-dispersion-v1.json`, `edge-book-weights-v1.json`, refit
-  daily. Owner diagnostics: `/v1/owner/edge/status|health|backtest|stale`.
-- **Tips** (`apps/api/src/tips.ts`, `claude-tips.ts`, app `tips.tsx`): members upload a screenshot or paste picks from paid
-  tip services. Claude reads them (`CROWNIQ_TIPS_MODEL`, default claude-sonnet-5-5) and saves them per account and service,
-  with Pinnacle's chance when the game is on the board. They're graded every 2 hours by Claude web search, or marked by hand.
+  daily. DK Pick'em payouts are the owner-set minimum floors (edges on; `EDGE_PICK6_PAYOUTS_CONFIRMED=false` turns them off).
+  Owner diagnostics: `/v1/owner/edge/status|health|backtest|stale`.
+- **Tips** (`apps/api/src/tips.ts`, `claude-tips.ts`, the app's Tips tab): members upload a screenshot or paste picks from paid
+  tip services. Claude reads them (`CROWNIQ_TIPS_MODEL`, default claude-sonnet-5-5), then analyzes each in the background with a
+  web search (odds, news, form). CrownIQ's verdict (PLAY/LEAN/PASS/FADE) is computed from the EV at the best known price, using
+  Pinnacle's no-vig chance when the game is on the board and Claude's estimate otherwise. Picks are playable from a slip (singles
+  or a parlay, copy, open a book). They're graded every 2 hours by Claude web search, or marked by hand.
   Uploads are capped at 30/day. Display-only: tips never feed GKR or Edge. Stored in `${CROWNIQ_DATA_DIR}/tips.json`.
 - **Memory:** the API needs more than Node's default 2 GB heap. The Dockerfile sets `NODE_OPTIONS=--max-old-space-size=6144`
   (the service has 8 GB). Avoid `[...list, item]` growth inside loops over whole datasets.

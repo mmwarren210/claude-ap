@@ -24,15 +24,49 @@ export interface TipDraft {
 /** Pinnacle's no-vig chance for the tip, when its game is on the board. */
 export interface TipMarketRead { readonly chance: number; readonly event: string; readonly start: string; readonly book: 'Pinnacle' }
 
+/** Claude's opinion of one pick after a web search (odds, news, form). */
+export interface TipOpinion {
+  readonly id: string; readonly chance: number; readonly verdict: TipVerdict; readonly marketOdds: number | null;
+  readonly oddsSource: string | null; readonly event: string | null; readonly start: string | null; readonly reasons: string[];
+}
+export type TipVerdict = 'PLAY' | 'LEAN' | 'PASS' | 'FADE';
+
+/** CrownIQ's read on a tip: its chance (Pinnacle's no-vig price when the game is on the board, else Claude's estimate), the
+ * best price known (the post's odds, else the odds Claude found), the EV at that price and a verdict. */
+export interface TipAnalysis {
+  readonly verdict: TipVerdict; readonly chance: number; readonly chanceSource: 'Pinnacle' | 'Claude';
+  readonly price: number | null; readonly priceSource: string | null; readonly ev: number | null; readonly fairOdds: number;
+  readonly reasons: string[]; readonly event: string | null; readonly start: string | null; readonly analyzedAt: string;
+}
+
 export interface Tip extends TipDraft {
   readonly id: string; readonly accountId: string; readonly batchId: string; readonly source: string; readonly createdAt: string;
   status: TipStatus; gradedAt: string | null; gradedBy: 'AI' | 'USER' | null; result: string | null;
   market_read: TipMarketRead | null;
+  analysis?: TipAnalysis | null;
+  /** The analysis is running (set at upload, cleared when it lands or fails). */
+  analyzing?: boolean;
+}
+
+export const decimalFromAmerican = (odds: number) => odds > 0 ? 1 + odds / 100 : 1 + 100 / -odds;
+export const americanFromChance = (chance: number) => chance >= .5 ? -Math.round(chance / (1 - chance) * 100) : Math.round((1 - chance) / chance * 100);
+
+/** Turns Claude's opinion and the market into CrownIQ's verdict: by EV when a price is known, else Claude's own verdict. */
+export function analysisFor(tip: Pick<Tip, 'odds' | 'market_read'>, opinion: TipOpinion, at: string): TipAnalysis {
+  const pinnacle = tip.market_read?.chance ?? null, chance = pinnacle ?? opinion.chance;
+  const price = tip.odds ?? opinion.marketOdds, priceSource = tip.odds !== null ? 'the post' : opinion.marketOdds !== null ? opinion.oddsSource ?? 'a sportsbook' : null;
+  const ev = price === null ? null : Math.round((chance * decimalFromAmerican(price) - 1) * 1000) / 1000;
+  const verdict: TipVerdict = ev === null ? opinion.verdict : ev >= .03 ? 'PLAY' : ev >= 0 ? 'LEAN' : ev > -.05 ? 'PASS' : 'FADE';
+  return { verdict, chance: Math.round(chance * 1000) / 1000, chanceSource: pinnacle !== null ? 'Pinnacle' : 'Claude', price, priceSource, ev,
+    fairOdds: americanFromChance(chance), reasons: opinion.reasons, event: tip.market_read?.event ?? opinion.event,
+    start: tip.market_read?.start ?? opinion.start, analyzedAt: at };
 }
 
 export interface TipReader {
   /** Reads the picks (and the service's name when it shows) from a screenshot or pasted text. */
   read(input: { image?: { data: string; mediaType: string }; text?: string; today: string }): Promise<{ source: string | null; tips: TipDraft[] }>;
+  /** CrownIQ's second opinion on each pick (web search for odds, news and form). */
+  analyze(tips: readonly (TipDraft & { id: string; market_read: TipMarketRead | null })[], today: string): Promise<TipOpinion[]>;
   /** Looks up final results; returns one entry per tip it could settle. */
   grade(tips: readonly Tip[], today: string): Promise<{ id: string; status: Exclude<TipStatus, 'PENDING'>; result: string }[]>;
 }
@@ -118,7 +152,7 @@ export class TipStore {
     return this.exclusive(async () => {
       const data = await this.load(), now = this.clock().toISOString(), batchId = randomUUID();
       const tips = drafts.map((draft, index): Tip => ({ ...draft, id: randomUUID(), accountId, batchId, source, createdAt: now,
-        status: 'PENDING', gradedAt: null, gradedBy: null, result: null, market_read: reads[index] ?? null }));
+        status: 'PENDING', gradedAt: null, gradedBy: null, result: null, market_read: reads[index] ?? null, analysis: null, analyzing: true }));
       data.tips.push(...tips);
       await this.save();
       return tips;
@@ -155,12 +189,33 @@ export class TipStore {
     });
   }
 
+  /** Saves the analyses for these tips and clears their analyzing flag (also when the analysis failed). */
+  setAnalyses(ids: readonly string[], analyses: ReadonlyMap<string, TipAnalysis>): Promise<void> {
+    return this.exclusive(async () => {
+      const data = await this.load();
+      for (const tip of data.tips) if (ids.includes(tip.id)) Object.assign(tip, { analyzing: false, ...analyses.has(tip.id) ? { analysis: analyses.get(tip.id) } : {} });
+      await this.save();
+    });
+  }
+  /** Marks an account's tips as being re-analyzed; returns them (only ones not analyzed in the last 30 minutes). */
+  startRecheck(accountId: string, ids: readonly string[]): Promise<Tip[]> {
+    return this.exclusive(async () => {
+      const data = await this.load(), now = this.clock().getTime();
+      const tips = data.tips.filter((tip) => tip.accountId === accountId && ids.includes(tip.id) && tip.status === 'PENDING' && !tip.analyzing &&
+        (!tip.analysis || now - Date.parse(tip.analysis.analyzedAt) > 30 * 60_000));
+      for (const tip of tips) tip.analyzing = true;
+      if (tips.length) await this.save();
+      return tips.map((tip) => ({ ...tip }));
+    });
+  }
+
   /** Pending tips whose game should be over (4h after the known start, else a day after posting), up to 10 days old. */
   async gradable(limit = 60): Promise<Tip[]> {
     const now = this.clock().getTime();
     return (await this.load()).tips.filter((tip) => {
       if (tip.status !== 'PENDING' || Date.parse(tip.createdAt) < now - 10 * DAY) return false;
-      const start = tip.market_read ? Date.parse(tip.market_read.start) : tip.eventDate ? Date.parse(tip.eventDate) + 20 * 3600_000 : Date.parse(tip.createdAt) + 20 * 3600_000;
+      const known = tip.market_read?.start ?? tip.analysis?.start ?? null;
+      const start = known && Number.isFinite(Date.parse(known)) ? Date.parse(known) : tip.eventDate ? Date.parse(tip.eventDate) + 20 * 3600_000 : Date.parse(tip.createdAt) + 20 * 3600_000;
       return start + 4 * 3600_000 < now;
     }).slice(0, limit);
   }
@@ -180,6 +235,21 @@ export class TipStore {
       return count;
     });
   }
+}
+
+/** Runs CrownIQ's analysis for a set of tips and saves it; never throws (a failure just clears the analyzing flag). */
+export async function analyzeTips(store: TipStore, reader: TipReader, tips: readonly Tip[], clock: () => Date = () => new Date()): Promise<number> {
+  const analyses = new Map<string, TipAnalysis>();
+  try {
+    for (let index = 0; index < tips.length; index += 15) {
+      const batch = tips.slice(index, index + 15);
+      const opinions = await reader.analyze(batch, clock().toISOString().slice(0, 10));
+      const at = clock().toISOString();
+      for (const opinion of opinions) { const tip = batch.find((item) => item.id === opinion.id); if (tip) analyses.set(tip.id, analysisFor(tip, opinion, at)); }
+    }
+  } catch (error) { console.warn('[tips] analysis failed', error instanceof Error ? error.message : error); }
+  await store.setAnalyses(tips.map((tip) => tip.id), analyses);
+  return analyses.size;
 }
 
 /** Grades pending tips every two hours, a batch of 15 per Claude call, at most 4 calls a run. */

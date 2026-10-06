@@ -25,6 +25,16 @@ test('tips: Pinnacle chance for moneyline, team-or-draw, and a spread at Pinnacl
   assert.equal(marketRead(draft('Iceland', 'MONEYLINE'), lines, from), null);
 });
 
+test('tips: verdict by EV at the best known price; Pinnacle’s chance wins over Claude’s estimate', async () => {
+  const { analysisFor } = await import('../src/tips.js');
+  const opinion = { id: 'x', chance: .6, verdict: 'LEAN' as const, marketOdds: 120, oddsSource: 'FanDuel', event: null, start: null, reasons: [] };
+  const withPinnacle = analysisFor({ odds: null, market_read: { chance: .4, event: 'A @ B', start, book: 'Pinnacle' } }, opinion, start);
+  assert.deepEqual([withPinnacle.chance, withPinnacle.chanceSource, withPinnacle.ev, withPinnacle.verdict], [.4, 'Pinnacle', -.12, 'FADE']);
+  const posted = analysisFor({ odds: -110, market_read: null }, opinion, start);
+  assert.deepEqual([posted.priceSource, posted.ev, posted.verdict, posted.fairOdds], ['the post', .145, 'PLAY', -150]);
+  assert.equal(analysisFor({ odds: null, market_read: null }, { ...opinion, marketOdds: null }, start).verdict, 'LEAN', 'no price: Claude’s verdict');
+});
+
 test('tips: a service’s record counts wins, units at the posted odds, and wins over what the market expected', () => {
   const tip = (status: Tip['status'], odds: number | null, chance: number | null) => ({ ...draft('X', 'MONEYLINE', null, odds), status,
     market_read: chance === null ? null : { chance, event: 'A @ B', start, book: 'Pinnacle' as const } }) as Tip;
@@ -39,6 +49,9 @@ test('tips routes: upload a screenshot, see it under its service, mark and remov
   let clock = new Date('2030-10-07T12:00:00Z');
   const reader: TipReader = {
     read: async () => ({ source: 'bookie___bandit', tips: [draft('Kazakhstan', 'SPREAD', 1.5), draft('England', 'MONEYLINE')] }),
+    analyze: async (tips) => tips.map((item) => ({ id: item.id, chance: item.selection === 'England' ? .8 : .5, verdict: 'PASS' as const,
+      marketOdds: item.selection === 'England' ? -200 : null, oddsSource: 'DraftKings', event: 'England vs Latvia', start: '2030-10-07T18:45:00Z',
+      reasons: ['Strong home form'] })),
     grade: async (tips) => tips.filter((item) => item.selection === 'England').map((item) => ({ id: item.id, status: 'WON' as const, result: 'England 3–0 Latvia' })),
   };
   const store = new TipStore(join(folder, 'tips.json'), () => clock);
@@ -52,7 +65,16 @@ test('tips routes: upload a screenshot, see it under its service, mark and remov
       payload: { image: { data: 'A'.repeat(200), mediaType: 'image/png' } } });
     assert.equal(upload.statusCode, 201);
     assert.equal(upload.json().source, 'bookie___bandit');
-    const mine = (await app.inject({ url: '/v1/tips', headers: auth })).json();
+    // The analysis runs in the background; wait for it to land.
+    let mine = (await app.inject({ url: '/v1/tips', headers: auth })).json();
+    for (let tries = 0; tries < 50 && mine.tips.some((item: Tip) => item.analyzing); tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 20)); mine = (await app.inject({ url: '/v1/tips', headers: auth })).json();
+    }
+    const england = mine.tips.find((item: Tip) => item.selection === 'England');
+    // 80% at -200 (1.5 decimal): EV +20% → PLAY; Kazakhstan has no price → Claude's own verdict.
+    assert.deepEqual([england.analysis.verdict, england.analysis.ev, england.analysis.chanceSource, england.analysis.priceSource], ['PLAY', .2, 'Claude', 'DraftKings']);
+    assert.equal(mine.tips.find((item: Tip) => item.selection === 'Kazakhstan').analysis.verdict, 'PASS');
+    assert.equal((await app.inject({ method: 'POST', url: '/v1/tips/recheck', headers: auth, payload: { ids: [england.id] } })).json().rechecking, 0, 'analyzed under 30 minutes ago');
     assert.equal(mine.tips.length, 2);
     assert.equal(mine.sources.bookie___bandit.pending, 2);
     assert.equal((await app.inject({ method: 'POST', url: '/v1/tips/upload', headers: auth, payload: {} })).statusCode, 400);

@@ -517,8 +517,11 @@ export const DEFAULT_PAYOUTS: Payouts = {
     FLEX: { 3: { 3: 3.25, 2: 1.09 }, 4: { 4: 6, 3: 1.4 }, 5: { 5: 10, 4: 2.5 }, 6: { 6: 25, 5: 2.6, 4: 0.25 },
       7: { 7: 40, 6: 2.75, 5: 0.5 }, 8: { 8: 80, 7: 3, 6: 1 } },
   },
+  // DK Pick'em (owner, 2026-10-06): the published minimum base payouts are used as floors (3: 6x, 4: 10x, 5: 12x, 7: 40x,
+  // 8: 80x, with 5/6 = 1.5x, 6/7 = 2x, 7/8 = 3x and 6/8 = 1x). Pick'em lists 2 and 6 picks as "varies", so those use the
+  // PrizePicks numbers. Pool winnings on top of the base are not counted, so Edge's Pick'em EV is a lower bound.
   pick6: {
-    POWER: { 2: { 2: 3 }, 3: { 3: 5 }, 4: { 4: 10 }, 5: { 5: 20 }, 6: { 6: 40 } },
+    POWER: { 2: { 2: 3 }, 3: { 3: 6 }, 4: { 4: 10 }, 5: { 5: 12 }, 6: { 6: 37.5, 5: 1.5 }, 7: { 7: 40, 6: 2 }, 8: { 8: 80, 7: 3, 6: 1 } },
     FLEX: {},
   },
 };

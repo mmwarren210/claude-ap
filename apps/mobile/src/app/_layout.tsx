@@ -23,7 +23,6 @@ function ProfileRouter(){
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="player/[lineId]" />
         <Stack.Screen name="edge/[lineId]" />
-        <Stack.Screen name="tips" />
         <Stack.Screen name="social/[publicId]" />
         <Stack.Screen name="social/crown/[id]" />
         <Stack.Screen name="owner/board" />

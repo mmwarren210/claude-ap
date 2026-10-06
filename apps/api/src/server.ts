@@ -72,7 +72,7 @@ import type { EdgeLedger } from './edge/ledger.js';
 import type { SnapshotStore } from './edge/snapshots.js';
 import type { BookWeightStore } from './edge/book-weights.js';
 import type { DispersionStore } from './edge/dispersion-store.js';
-import { DAILY_TIP_UPLOADS, marketRead } from './tips.js';
+import { analyzeTips, DAILY_TIP_UPLOADS, marketRead } from './tips.js';
 import type { TipGrader, TipReader, TipStore } from './tips.js';
 import { registerEdgeRoutes } from './edge/routes.js';
 import { MovementTracker } from './edge/movement.js';
@@ -562,9 +562,20 @@ export function buildServer(options: ServerOptions = {}) {
       const from=now().getTime();
       const tips=await options.tips.store.add(user.accountId,input.data.source??read.source??'Unnamed service',read.tips,
         read.tips.map((tip)=>marketRead(tip,lines,tip.eventDate?Date.parse(tip.eventDate):from)));
+      // CrownIQ's opinion runs in the background (a web search per batch); the app refreshes until it lands.
+      void analyzeTips(options.tips.store,options.tips.reader,tips,now);
       return reply.code(201).send({source:tips[0]!.source,tips:tips.map(({accountId:_account,...tip})=>tip)});
     }catch(error){console.warn('[tips] read failed',error instanceof Error?error.message:error);
       return reply.code(502).send({code:'TIPS_READ_FAILED'});}
+  });
+  app.post('/v1/tips/recheck',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!options.tips?.reader)return reply.code(503).send({code:'TIPS_READER_UNAVAILABLE'});
+    const input=z.object({ids:z.array(z.string().uuid()).min(1).max(40)}).strict().safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'INVALID_TIPS_RECHECK'});
+    const tips=await options.tips.store.startRecheck(user.accountId,input.data.ids);
+    if(tips.length)void analyzeTips(options.tips.store,options.tips.reader,tips,now);
+    return {rechecking:tips.length};
   });
   app.patch('/v1/tips/:id',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});

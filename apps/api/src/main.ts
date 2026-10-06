@@ -357,8 +357,8 @@ const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',dispersion:edgeDisp
   snapshots:edgeSnapshots,alternateFactors:edgeAlternateFactors,
   boxScores:new BoxScoreResults(fetch,undefined,historyArchive),
   valuesCacheFile:`${dataDir}/edge/history-values.json`,
-  // DK Pick'em publishes no payout chart; its Edge edges stay null until the owner confirms the tables in CROWNIQ_PAYOUTS.
-  pick6PayoutsConfirmed:process.env.EDGE_PICK6_PAYOUTS_CONFIRMED==='true',
+  // DK Pick'em: the owner set the published minimums as floors (2026-10-06); EDGE_PICK6_PAYOUTS_CONFIRMED=false turns edges off.
+  pick6PayoutsConfirmed:process.env.EDGE_PICK6_PAYOUTS_CONFIRMED!=='false',
   alertsFile:`${dataDir}/edge/alerts.json`,staleLogFile:`${dataDir}/edge/stale-events.jsonl`};
 
 const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, playerHistory, espnHistory: espnEvidence, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,

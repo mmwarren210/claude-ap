@@ -31,7 +31,7 @@ test('each app lists its entries easiest first; Pick6 has no Flex', () => {
 
 test('a payout override changes only the entries it names, and a bad one is ignored', () => {
   const merged = mergePayouts({ pick6: { POWER: { 3: { 3: 6 }, 2: {} } } });
-  assert.deepEqual(merged.pick6.POWER, { 3: { 3: 6 }, 4: { 4: 10 }, 5: { 5: 20 }, 6: { 6: 40 } });
+  assert.deepEqual(merged.pick6.POWER, { 3: { 3: 6 }, 4: { 4: 10 }, 5: { 5: 12 }, 6: { 6: 37.5, 5: 1.5 }, 7: { 7: 40, 6: 2 }, 8: { 8: 80, 7: 3, 6: 1 } });
   assert.deepEqual(merged.pick6.FLEX, DEFAULT_PAYOUTS.pick6.FLEX);
   assert.deepEqual(merged.underdog, DEFAULT_PAYOUTS.underdog);
   assert.equal(mergePayouts({ pick6: { POWER: { 3: { 3: -1 } } } }), DEFAULT_PAYOUTS);
@@ -41,7 +41,7 @@ test('a payout override changes only the entries it names, and a bad one is igno
 
 test('/v1/payouts serves each app table and break-evens', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'crowniq-payouts-'));
-  const payouts = mergePayouts({ pick6: { POWER: { 2: { 2: 3.5 }, 3: {}, 4: {}, 5: {}, 6: {} } } });
+  const payouts = mergePayouts({ pick6: { POWER: { 2: { 2: 3.5 }, 3: {}, 4: {}, 5: {}, 6: {}, 7: {}, 8: {} } } });
   const app = buildServer({ product: new ProductLedger(join(folder, 'ledger.json')), payouts });
   try {
     const response = await app.inject('/v1/payouts');
