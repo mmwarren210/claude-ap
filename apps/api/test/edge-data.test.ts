@@ -46,7 +46,10 @@ test('identity: one market table, events within 6 hours with a matching team, am
   assert.equal(twin.report.ambiguous, 1);
   assert.equal(twin.quotes.length, 0);
   // Another team, or a day later: no event.
-  assert.equal(matchBookPrices([line('l1')], [price({ home: 'Seattle Mariners', away: 'Houston Astros' })], start).report.noEvent, 1);
+  assert.equal(matchBookPrices([line('l1')], [price({ home: 'Seattle Mariners', away: 'Houston Astros', startTime: '2030-01-11T02:00:00Z' })],
+    start).report.noEvent, 1, 'other teams two hours away');
+  assert.equal(matchBookPrices([line('l1', { homeTeam: 'Trojans', awayTeam: 'Golden Eagles' })],
+    [price({ home: 'Troy', away: 'Southern Miss' })], start).quotes.length, 1, 'same start: nicknames vs school names');
   assert.equal(matchBookPrices([line('l1')], [price({ startTime: '2030-01-12T00:00:00Z' })], start).report.noEvent, 1);
   // A book line far from the board's number is a different stat, not an edge.
   const far = matchBookPrices([line('l1')], [price({ line: 9.5 })], start);

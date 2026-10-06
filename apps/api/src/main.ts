@@ -347,7 +347,8 @@ const edgeSnapshots=process.env.EDGE_ENGINE==='false'?null:(()=>{
 const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',
   ledger:new EdgeLedger(process.env.CROWNIQ_EDGE_LEDGER_FILE ?? `${dataDir}/edge/ledger.json`),
   snapshots:edgeSnapshots,alternateFactors:edgeAlternateFactors,
-  boxScores:new BoxScoreResults(fetch,undefined,historyArchive)};
+  boxScores:new BoxScoreResults(fetch,undefined,historyArchive),
+  valuesCacheFile:`${dataDir}/edge/history-values.json`};
 
 const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, playerHistory, espnHistory: espnEvidence, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
   webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,

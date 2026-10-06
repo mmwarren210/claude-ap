@@ -89,8 +89,12 @@ export function matchBookPrices(lines: readonly PropLine[], prices: readonly Fai
     // within three hours of the book's start is the same game; anything wider or with two games stays unmatched.
     // Full team names that disagree are a different game, so they never fall back.
     const comparable = (line: PropLine) => [line.homeTeam, line.awayTeam].some((team) => team && team.trim().includes(' '));
+    // A player plays one game at a time: one board game for this player starting within 30 minutes of the book's start is
+    // the same game, whatever each source calls the teams (college nicknames vs school names: "Golden Eagles" = "Southern Miss").
     if (!near.length) {
-      const close = window.filter((line) => Math.abs(Date.parse(line.eventStartTime) - start) <= THREE_HOURS && !comparable(line));
+      const sameTime = window.filter((line) => Math.abs(Date.parse(line.eventStartTime) - start) <= 30 * 60_000);
+      const close = sameTime.length ? sameTime
+        : window.filter((line) => Math.abs(Date.parse(line.eventStartTime) - start) <= THREE_HOURS && !comparable(line));
       if (new Set(close.map((line) => line.eventId)).size === 1) near = close;
     }
     const events = [...new Set(near.map((line) => line.eventId))];

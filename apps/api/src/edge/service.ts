@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import type { BoardResponse, EdgeBoardPage, EdgeBoardResponse, EdgeBoardRow, EdgeEntry, EdgePick, EdgeSlip, Payouts,
   PropLine } from '@crowniq/contracts';
 import { backtestProjection, buildSlips, describeEntry, EDGE_MODEL_VERSION, entriesFromTables, evaluateSlip, fitCalibration,
@@ -34,6 +37,8 @@ export interface EdgeServiceOptions {
   readonly ttlMs?: number;
   /** How long one pricing pass may spend gathering History values (the rest arrive on the next pass, cached). */
   readonly valuesBudgetMs?: number;
+  /** Where the History values cache is kept, so a restart doesn't start Edge with no history. */
+  readonly valuesCacheFile?: string | null;
 }
 
 export interface EdgeSnapshot {
@@ -121,6 +126,13 @@ export class EdgeService {
   constructor(private readonly options: EdgeServiceOptions) {
     this.entries = entriesFromTables(options.payouts.prizepicks);
     this.clock = options.clock ?? (() => new Date());
+    if (options.valuesCacheFile) {
+      try {
+        const saved = JSON.parse(readFileSync(options.valuesCacheFile, 'utf8')) as [string, { until: number; values: number[] | null }][];
+        const nowMs = Date.now();
+        for (const [key, value] of saved) if (value.until > nowMs) this.valuesCache.set(key, value);
+      } catch { /* first run */ }
+    }
   }
 
   status() {
@@ -174,6 +186,11 @@ export class EdgeService {
     };
     await Promise.all(Array.from({ length: 8 }, worker));
     if (this.valuesCache.size > 50_000) for (const [key, value] of this.valuesCache) if (value.until <= nowMs) this.valuesCache.delete(key);
+    if (this.options.valuesCacheFile) {
+      const file = this.options.valuesCacheFile, temporary = `${file}.tmp`;
+      await mkdir(dirname(file), { recursive: true }).then(() => writeFile(temporary, JSON.stringify([...this.valuesCache])))
+        .then(() => rename(temporary, file)).catch(() => undefined);
+    }
     return { found, asked: groups.size };
   }
 

@@ -149,7 +149,8 @@ export interface ServerOptions {
   oddsApiQuota?: (() => Promise<{ status: number; remaining: number | null; used: number | null }>) | null;
   /** CrownIQ Edge: a standalone probability engine with its own Top Picks, Board and Gen; never reads or changes GKR. */
   edge?: { enabled?: boolean; ledger?: EdgeLedger | null; snapshots?: SnapshotStore | null;
-    alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>; boxScores?: BoxScoreResults | null } | null;
+    alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>; boxScores?: BoxScoreResults | null;
+    valuesCacheFile?: string | null } | null;
   /** JSON-lines history of the books' view of board lines, one row per line per refresh. */
   booksHistoryFile?: string | null;
 }
@@ -1160,6 +1161,7 @@ export function buildServer(options: ServerOptions = {}) {
       pickem:async()=>(await options.sharpProps!.pickemLines()).lines}:null,
     history:options.internalHistory??null,values:(line)=>historyReads.valuesFor(line),ledger:options.edge.ledger??null,
     payouts:options.payouts??DEFAULT_PAYOUTS,...(options.edge.alternateFactors?{alternateFactors:options.edge.alternateFactors}:{}),
+    valuesCacheFile:options.edge.valuesCacheFile??null,
     clock:()=>now()}):null;
   const edgeWorker=edge&&options.edge?.ledger?new EdgeResultsWorker(options.edge.ledger,options.internalHistory??null,
     options.edge.boxScores??null,()=>now()):null;
