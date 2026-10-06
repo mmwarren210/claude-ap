@@ -127,12 +127,12 @@ const contextFeeds=process.env.APIFY_TOKEN?.trim()?new ContextFeeds(apify,scrape
 process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`,undefined,scraperSlots):null;
 // DraftKings, Hard Rock, FanDuel and BetRivers prop prices from SharpAPI (reference odds, +EV and Edge), refreshed hourly.
 // The owner's Railway variable is named `sharp_api`; SHARPAPI_KEY also works.
-// Books per request (SharpAPI's Hobby plan takes up to 5): ones the plan hasn't selected are skipped. PrizePicks comes in
-// as lines for Edge, never as a price (PrizePicks Flex lists the same lines at the Flex payout, so it isn't requested).
+// Books per request: ones the plan hasn't selected are skipped (the Hobby plan selects 5). PrizePicks and PrizePicks Flex
+// list the same lines (only the payout price differs), so whichever the owner selects feeds Edge as lines, never a price.
 // CROWNIQ_SHARP_BOOKS overrides the list.
 const sharpProps=new SharpPropsFeed((process.env.SHARPAPI_KEY ?? process.env.sharp_api)?.trim()||null,
   process.env.CROWNIQ_SHARP_PROPS_FILE ?? `${dataDir}/sharp-props.json`,
-  {books:(process.env.CROWNIQ_SHARP_BOOKS??'draftkings,hardrock,fanduel,betrivers,prizepicks').split(',').map((book)=>book.trim()).filter(Boolean),
+  {books:(process.env.CROWNIQ_SHARP_BOOKS??'draftkings,hardrock,fanduel,betrivers,prizepicks,prizepicks_flex').split(',').map((book)=>book.trim()).filter(Boolean),
     maxPagesPerLeague:100});
 // A bad CROWNIQ_PAYOUTS falls back to the defaults rather than stopping the server.
 const payouts=mergePayouts((()=>{try{return JSON.parse(process.env.CROWNIQ_PAYOUTS??'null');}catch{return null;}})());

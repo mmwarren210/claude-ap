@@ -87,15 +87,19 @@ export function sharpPrizePicksLines(board: readonly PropLine[], pickem: readonl
   const players = new Set(board.map((line) => `${line.sport}|${normalizedName(line.playerName)}|${canonicalMarket(line.sport, line.market)}`));
   const added: PropLine[] = [];
   let confirmed = 0, total = 0;
+  const seen = new Set<string>();
   for (const line of pickem) {
-    if (line.book !== 'prizepicks' || !line.sport || line.stale) continue;
+    if ((line.book !== 'prizepicks' && line.book !== 'prizepicks_flex') || !line.sport || line.stale) continue;
+    const id = `sharpapi:pp:${line.eventId}:${normalizedName(line.player).replace(/ /g, '-')}:${line.market ?? line.marketType.replace(/^player_/, '')}:${line.line}`;
+    // Both PrizePicks books list the same line once each.
+    if (seen.has(id)) continue;
+    seen.add(id);
     total++;
     const market = line.market ?? line.marketType.replace(/^player_/, '');
     if (onBoard.has(lineKey(line.sport, line.player, market, line.line))) { confirmed++; continue; }
     // A different number for a player and stat the board already lists is a moved line or an alternate the scrapers will
     // carry; only lines for a player and stat the board lacks are added.
     if (players.has(`${line.sport}|${normalizedName(line.player)}|${canonicalMarket(line.sport, market)}`)) continue;
-    const id = `sharpapi:pp:${line.eventId}:${normalizedName(line.player).replace(/ /g, '-')}:${market}:${line.line}`;
     added.push({ id, provider: 'prizepicks', sourceLineId: id, sourceLineIdIsSynthetic: true, sport: line.sport,
       league: leagueLabel(line.sport), eventId: `sharpapi:${line.eventId}`, eventName: line.home && line.away
         ? `${line.away} @ ${line.home}` : line.eventId, eventStartTime: new Date(line.startTime).toISOString(),

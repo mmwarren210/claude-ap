@@ -292,7 +292,7 @@ export class SharpPropsFeed {
         let cursor: string | null = null;
         for (let page = 0; page < (props ? this.options.maxPagesPerLeague ?? 60 : 10); page++) {
           const url = new URL(`${API}/odds`);
-          url.searchParams.set('sportsbooks', books.slice(0, 5).join(','));
+          url.searchParams.set('sportsbooks', books.join(','));
           url.searchParams.set('league', league);
           if (props) url.searchParams.set('is_player_prop', 'true');
           else url.searchParams.set('market_type', gameMarketTypes.join(','));
