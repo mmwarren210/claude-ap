@@ -9,6 +9,7 @@ import { Notice } from '../../components/Screen';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { alpha } from '../../components/ui/color';
 import { ChipRow, Segmented } from '../../components/ui/Controls';
+import { EdgeResults } from '../../components/EdgeResults';
 import type { IconName } from '../../components/ui/Icon';
 import { Icon } from '../../components/ui/Icon';
 import { PlayerAvatar } from '../../components/ui/PlayerAvatar';
@@ -29,7 +30,7 @@ type Crown = { id: string; savedAt: string; name?: string; personal?: boolean; a
 const appLabels = { underdog: 'Underdog', pick6: 'DK Pick’em' } as const;
 type Range = 7 | 30 | 0;
 /** GKR Picks: Crowns GKR fully backs (its tracked record). Your Picks: Crowns with your own calls, graded separately. */
-type Book = 'GKR' | 'YOURS';
+type Book = 'GKR' | 'YOURS' | 'EDGE';
 const DAY = 86_400_000;
 
 const statusStyle: Readonly<Record<CrownStatus, { color: string; label: string }>> = {
@@ -139,9 +140,11 @@ export default function ResultsScreen() {
         <Icon name="calendar-blank-outline" size={18} color={colors.mint} /><Text style={styles.rangeText}>{rangeLabel}</Text>
         <Icon name="chevron-down" size={16} color={colors.text} /></Pressable>
       <Segmented label="Which picks" value={book} onChange={setBook}
-        options={[{ value: 'GKR' as Book, label: 'GKR Picks' }, { value: 'YOURS' as Book, label: 'Your Picks' }]} />
+        options={[{ value: 'GKR' as Book, label: 'GKR Picks' }, { value: 'YOURS' as Book, label: 'Your Picks' }, { value: 'EDGE' as Book, label: 'Edge Picks' }]} />
       <Text style={styles.footnote}>{book === 'GKR' ? 'Crowns GKR fully backs. This is GKR’s tracked record.'
+        : book === 'EDGE' ? 'Every rated Edge pick, saved before its game and graded from box scores. Edge’s own record, on its own terms.'
         : 'Crowns with your own calls, including picks under GKR’s bar. Graded the same way, kept separate from GKR’s record.'}</Text>
+      {book === 'EDGE' ? <EdgeResults days={range} nowMs={nowMs} /> : <>
 
       <View style={styles.summary}>
         <View style={styles.cell}><Text style={styles.cellLabel}>Win Rate</Text>
@@ -231,6 +234,7 @@ export default function ResultsScreen() {
             onPress={() => void remove(`/v1/me/picks/${pick.id}`)}><Icon name="close" size={18} color={colors.textFaint} /></Pressable>
         </View>)}
       </View>}
+      </>}
       <Pressable accessibilityRole="button" onPress={() => router.push('/(tabs)/top-picks')}><Text style={styles.link}>Find today’s top picks</Text></Pressable>
       <ReportNudge where="results" />
     </ScrollView>
