@@ -191,3 +191,11 @@ test('market audit: PrizePicks short labels reach their real models, and odd sta
   assert.ok(Math.sqrt(varianceAt(profileFor('NHL', 'player_time_on_ice').variance, 21)) < 3.5);
   assert.ok(Math.sqrt(varianceAt(profileFor('NFL', 'player_completion_percentage').variance, 65)) < 10);
 });
+
+test('plus/minus is priced and shown but never ranked', () => {
+  const values = [2, 1, 0, 3, 1, 2, 0, 1, 2, 1];
+  const pick = priceBoard({ lines: [line('pm', .5, { sport: 'NHL', league: 'NHL', market: 'plus_minus', lineType: 'DEMON', availableDirections: ['MORE'] })],
+    now, values: () => values, alternateFactors: { DEMON: 1.05 } }).picks[0]!;
+  assert.equal(pick.rating, 'NONE');
+  assert.ok(pick.warnings.some((warning) => warning.startsWith('Plus/minus isn’t ranked')));
+});

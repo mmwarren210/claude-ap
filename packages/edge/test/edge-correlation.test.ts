@@ -113,3 +113,10 @@ test('PrizePicks Goblins and Demons only go into Power entries, never Flex', () 
   assert.ok(evaluateSlip(flex, [goblin, picks[1]!]).warnings.some((warning) => warning.includes('Play them in Power')));
 });
 const power2 = () => ({ type: 'POWER' as const, size: 2, payouts: { 2: 3 }, label: '2-pick Power', breakEven: Math.sqrt(1 / 3) });
+
+test('Gen builds only from sportsbook-backed legs; stats-only reads stay out', () => {
+  const picks = [leg('m1', .67, { eventId: 'g1', tier: 'MODEL' }), leg('m2', .66, { eventId: 'g2', tier: 'MODEL' }),
+    leg('a', .6, { eventId: 'g3' }), leg('b', .59, { eventId: 'g4', tier: 'SHARP' })];
+  const [built] = generateEntries(picks, power2(), { count: 1, nowMs: Date.parse(start) - 3600_000 });
+  assert.deepEqual(built!.legs.map((item) => item.lineId).sort(), ['a', 'b']);
+});

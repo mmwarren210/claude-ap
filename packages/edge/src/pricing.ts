@@ -322,7 +322,9 @@ export function priceBoard(input: PricingInput): PricingResult {
       const skewed = best.payout.kind === 'ODDS' && profile.family === 'NORMAL' && /yds|yards/.test(first.market) && nearestQuote > .75 * sd;
       const tail = best.payout.kind === 'ODDS' && (Math.abs(threshold - dist.mean) > 1.5 * sd || skewed);
       const edge = best.edge;
-      const adjusted = edge === null || review || unbacked || tail ? null : edge * tierFactor[tier];
+      // Plus/minus piles up at 0 and swings on the whole team; no model here reads it well enough to rank.
+      const unrankable = /plus_minus/.test(first.market);
+      const adjusted = edge === null || review || unbacked || tail || unrankable ? null : edge * tierFactor[tier];
       const rating = adjusted === null ? 'NONE' : adjusted >= .07 ? 'ELITE' : adjusted >= .045 ? 'STRONG'
         : adjusted >= .02 ? 'VALUE' : adjusted > 0 ? 'THIN' : 'NONE';
       const edgeScore = adjusted === null ? 0 : round(clamp(50 + 600 * adjusted, 0, 100), 1);
@@ -364,6 +366,7 @@ export function priceBoard(input: PricingInput): PricingResult {
       if (unbacked) warnings.push('No other sportsbook prices this player and stat: a stats-only read against the book’s odds is shown but not ranked.');
       if (review) warnings.push(`Held for review: a ${pct(edge!)} edge is bigger than real edges get; usually the sources disagree on the stat or game.`);
       if (best.payout.kind === 'ENTRY' && best.payout.blocked) warnings.push(best.payout.blocked);
+      if (unrankable) warnings.push('Plus/minus isn’t ranked: it swings on the whole team and no model reads it reliably.');
       if (factor !== null && best.payout.kind === 'ENTRY' && (best.line.lineType === 'GOBLIN' || best.line.lineType === 'DEMON') && !input.sidePayout)
         warnings.push(`Payout ${factor}× is Edge's estimate (the app often pays a bit more); worth it at ${round(reference / p, 2)}× or better. Power only.`);
       if (factor === null && best.line.lineType !== 'REGULAR') warnings.push(

@@ -28,6 +28,13 @@ const pct = (value: number) => `${value >= 0 ? '+' : ''}${(value * 100).toFixed(
 export const legAllowed = (entry: Pick<EdgeEntry, 'type'>, leg: Pick<EdgePick, 'platform' | 'lineType'>) =>
   !(entry.type === 'FLEX' && leg.platform === 'prizepicks' && (leg.lineType === 'GOBLIN' || leg.lineType === 'DEMON'));
 
+/**
+ * Built entries use only legs the sportsbooks back (SHARP or MARKET tier). Stats-only reads (MODEL) and ladder reads are
+ * still shown and tracked, but they stay out of generated entries until their graded track record earns it (owner,
+ * 2026-10-06: a 6-leg NHL entry of 64–67% stats reads showed an unbelievable expected return).
+ */
+export const backedLeg = (pick: Pick<EdgePick, 'tier'>) => pick.tier === 'SHARP' || pick.tier === 'MARKET';
+
 export function evaluateSlip(entry: EdgeEntry, legs: readonly EdgePick[], options: EvaluateOptions = {}): EdgeSlip {
   const probabilities = legs.map((leg) => leg.probability);
   // Same-game pairs get CrownIQ's prior correlations (spec §7); without any, this is the exact independent closed form.
@@ -115,7 +122,7 @@ function improve(entry: EdgeEntry, legs: EdgePick[], pool: readonly EdgePick[], 
 export function buildSlips(picks: readonly EdgePick[], entries: readonly EdgeEntry[], options: SlipOptions = {}): EdgeSlip[] {
   const maxPerEvent = options.maxPerEvent ?? 2, perEntry = options.slipsPerEntry ?? 2;
   const minEvents = options.minEvents ?? 2;
-  const pool = picks.filter((pick) => pick.edge !== null && pick.edge > (options.minEdge ?? 0) && pick.rating !== 'NONE')
+  const pool = picks.filter((pick) => pick.edge !== null && pick.edge > (options.minEdge ?? 0) && pick.rating !== 'NONE' && backedLeg(pick) && backedLeg(pick))
     .sort((a, b) => legValue(b) - legValue(a));
   const slips: EdgeSlip[] = [];
   for (const entry of entries) {
@@ -163,7 +170,7 @@ export interface GenerateOptions {
 export function generateEntries(picks: readonly EdgePick[], entry: EdgeEntry, options: GenerateOptions = {}): EdgeSlip[] {
   const count = options.count ?? 3, maxPerEvent = options.maxPerEvent ?? 2, maxUses = options.maxLegUses ?? 1;
   const now = options.nowMs ?? Date.now(), minEvents = options.minEvents ?? 2, objective = options.objective ?? 'ev';
-  const pool = picks.filter((pick) => pick.edge !== null && pick.edge > (options.minEdge ?? 0) && pick.rating !== 'NONE' &&
+  const pool = picks.filter((pick) => pick.edge !== null && pick.edge > (options.minEdge ?? 0) && pick.rating !== 'NONE' && backedLeg(pick) &&
     Date.parse(pick.eventStartTime) > now && (!options.sport || pick.sport === options.sport) &&
     (options.from === undefined || Date.parse(pick.eventStartTime) >= options.from) &&
     (options.to === undefined || Date.parse(pick.eventStartTime) < options.to))
@@ -197,7 +204,7 @@ export function suggestSwap(entry: EdgeEntry, legs: readonly EdgePick[], picks: 
   options: { minEvents?: number; maxPerEvent?: number; nowMs?: number } = {}): EdgeSlip['suggestion'] | null {
   const limits = { maxPerEvent: options.maxPerEvent ?? entry.size, minEvents: options.minEvents ?? 2 }, now = options.nowMs ?? Date.now();
   const base = evaluateSlip(entry, legs, { minEvents: limits.minEvents, draws: 4000 }).expectedReturn;
-  const pool = picks.filter((pick) => pick.edge !== null && pick.edge > 0 && pick.rating !== 'NONE' && Date.parse(pick.eventStartTime) > now && legAllowed(entry, pick))
+  const pool = picks.filter((pick) => pick.edge !== null && pick.edge > 0 && pick.rating !== 'NONE' && Date.parse(pick.eventStartTime) > now && legAllowed(entry, pick) && backedLeg(pick))
     .sort((a, b) => legValue(b) - legValue(a)).slice(0, 40);
   let best: NonNullable<EdgeSlip['suggestion']> | null = null;
   for (let index = 0; index < legs.length; index++) for (const candidate of pool) {
