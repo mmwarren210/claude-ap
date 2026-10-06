@@ -84,6 +84,13 @@ export class SnapshotStore {
     return changed;
   }
 
+  /** When a platform's line for a player and stat last changed (its newest row), or null if never seen. */
+  lastChange(platform: string, playerKey: string, market: string): number | null {
+    const row = this.db.prepare('SELECT MAX(observedAt) AS at FROM snapshots WHERE playerKey = ? AND market = ? AND platform = ?')
+      .get(playerKey, market, platform) as { at: string | null } | undefined;
+    return row?.at ? Date.parse(row.at) : null;
+  }
+
   /** A player and market's history, oldest first (for movement and line detail). */
   history(playerKey: string, market: string, sinceIso?: string): SnapshotRow[] {
     return this.db.prepare(`SELECT * FROM snapshots WHERE playerKey = ? AND market = ? AND observedAt >= ? ORDER BY observedAt`)

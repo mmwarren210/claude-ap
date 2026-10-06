@@ -21,6 +21,10 @@ export interface TrackedEdgePick {
   firstProbability: number; probability: number; breakEven: number; edge: number | null;
   firstSeenAt: string; lastSeenAt: string; modelVersion: string;
   outcome: EdgeOutcome; actual: number | null; gradedAt: string | null; resultSource: string | null;
+  /** Flagged STALE (books moved past the app's number) at any point before the start. */
+  stale?: boolean;
+  /** Sportsbook bets: decimal odds at the first and last sighting (for CLV and ROI). */
+  firstDecimal?: number; decimal?: number;
 }
 
 /** The result fact shape shared with GKR's product tracking (box scores, admin posts). */
@@ -101,7 +105,8 @@ export class EdgeLedger {
         if (existing) {
           if (existing.outcome !== 'PENDING') continue;
           Object.assign(existing, { probability: pick.probability, edge: pick.edge, rating: pick.rating,
-            tier: pick.tier, breakEven: pick.breakEven, lastSeenAt: iso, lineId: pick.lineId });
+            tier: pick.tier, breakEven: pick.breakEven, lastSeenAt: iso, lineId: pick.lineId,
+            ...(pick.stale ? { stale: true } : {}), ...(pick.decimalOdds ? { decimal: pick.decimalOdds } : {}) });
           updated++; continue;
         }
         const side = teams(pick.lineId);
@@ -112,7 +117,8 @@ export class EdgeLedger {
           lineType: pick.lineType, side: pick.side, tier: pick.tier, rating: pick.rating,
           firstProbability: pick.probability, probability: pick.probability, breakEven: pick.breakEven,
           edge: pick.edge, firstSeenAt: iso, lastSeenAt: iso, modelVersion: pick.modelVersion,
-          outcome: 'PENDING', actual: null, gradedAt: null, resultSource: null };
+          outcome: 'PENDING', actual: null, gradedAt: null, resultSource: null,
+          ...(pick.stale ? { stale: true } : {}), ...(pick.decimalOdds ? { firstDecimal: pick.decimalOdds, decimal: pick.decimalOdds } : {}) };
         data.picks.push(tracked); byId.set(id, tracked); added++;
       }
       // Retention: graded picks for 180 days; picks that never get a result expire as VOID after 5 days.
@@ -142,6 +148,14 @@ export class EdgeLedger {
       }
       if (graded) await this.write(data);
       return { graded };
+    });
+  }
+
+  /** Tracked picks by id (platform|key|side). */
+  async byIds(ids: readonly string[]): Promise<Map<string, TrackedEdgePick>> {
+    return this.exclusive(async () => {
+      const wanted = new Set(ids);
+      return new Map((await this.read()).picks.filter((pick) => wanted.has(pick.id)).map((pick) => [pick.id, { ...pick }]));
     });
   }
 

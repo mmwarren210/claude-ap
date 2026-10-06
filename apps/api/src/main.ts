@@ -350,7 +350,8 @@ const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',
   boxScores:new BoxScoreResults(fetch,undefined,historyArchive),
   valuesCacheFile:`${dataDir}/edge/history-values.json`,
   // DK Pick'em publishes no payout chart; its Edge edges stay null until the owner confirms the tables in CROWNIQ_PAYOUTS.
-  pick6PayoutsConfirmed:process.env.EDGE_PICK6_PAYOUTS_CONFIRMED==='true'};
+  pick6PayoutsConfirmed:process.env.EDGE_PICK6_PAYOUTS_CONFIRMED==='true',
+  alertsFile:`${dataDir}/edge/alerts.json`,staleLogFile:`${dataDir}/edge/stale-events.jsonl`};
 
 const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, playerHistory, espnHistory: espnEvidence, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
   webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,

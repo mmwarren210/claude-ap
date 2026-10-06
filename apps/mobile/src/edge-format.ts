@@ -81,6 +81,20 @@ export function dayRange(choice: DayChoice, nowMs: number): { from?: string; to?
   return { from: start.toISOString(), to: end.toISOString() };
 }
 
+/** STALE / STEAM badge text: "STALE · 14m", "STEAM". */
+export function moveBadges(pick: EdgePick): string[] {
+  return [...(pick.stale ? [`STALE · ${pick.stale.minutesAgo}m`] : []), ...(pick.steam ? ['STEAM'] : [])];
+}
+
+/** "Also: UD 24.5 · 61% · +6.1 pts", the same player and stat on the other platforms, best first. */
+export function elsewhereText(pick: EdgePick): string | null {
+  if (!pick.elsewhere?.length) return null;
+  return 'Also: ' + pick.elsewhere.slice(0, 3).map((other) => `${shortNames[other.platform] ?? other.platform} ${formatLine(other.threshold)}` +
+    (other.payoutMultiplier && !other.ev && other.payoutMultiplier !== 1 ? ` at ${other.payoutMultiplier}×` : '') +
+    ` · ${pct(other.probability, 0)}` + (other.ev !== undefined ? ` · EV ${other.ev >= 0 ? '+' : '−'}${Math.abs(other.ev * 100).toFixed(1)}%`
+      : other.edge !== null ? ` · ${signedPoints(other.edge)} pts` : '')).join('  |  ');
+}
+
 const shortNames: Readonly<Record<string, string>> = { prizepicks: 'PP', underdog: 'UD', pick6: 'P6', draftkings: 'DK', hardrock: 'HR' };
 /** "PP 24.5 · Edge line 26.5": the platform's number beside the number Edge would set. */
 export function lineComparison(pick: EdgePick): string {

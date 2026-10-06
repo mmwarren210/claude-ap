@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { BoardResponse, EdgeBoardPage, EdgeBoardResponse, EdgeBoardRow, EdgeEntry, EdgePick, EdgePlatform, EdgeSlip, Payouts,
   PlayableDirection, PropLine } from '@crowniq/contracts';
 import { backtestProjection, buildSlips, describeEntry, EDGE_MODEL_VERSION, entriesFromTables, evaluateSlip, fitCalibration,
   forecastReport, marketProfiles, parlayEntries, priceBoard, profileFor } from '@crowniq/edge';
+import { rankScore } from '@crowniq/edge';
 import type { CalibrationModel, EntryDefinition, SidePayout, StatRow, UnpricedLine } from '@crowniq/edge';
 import type { BoxScoreResults } from '../box-score-results.js';
 import type { FairPrice, PickemLine } from '../context/sharp-props.js';
@@ -13,6 +14,8 @@ import type { InternalHistoryRow, InternalHistoryStore } from '../internal-histo
 import type { StoredLine } from '../scrapers/line-store.js';
 import { leagueLabel } from '../scrapers/markets.js';
 import { appLines, bookLines } from './platform-lines.js';
+import type { MovementTracker } from './movement.js';
+import type { SnapshotStore } from './snapshots.js';
 import type { PayoutBook } from './platform-lines.js';
 import type { EdgeLedger, TrackedEdgePick } from './ledger.js';
 import { gradeTarget } from './ledger.js';
@@ -47,6 +50,31 @@ export interface EdgeServiceOptions {
   readonly valuesBudgetMs?: number;
   /** Where the History values cache is kept, so a restart doesn't start Edge with no history. */
   readonly valuesCacheFile?: string | null;
+  /** Book moves across SharpAPI refreshes (spec §3.1) and the odds snapshots, for stale-line checks (§3.2). */
+  readonly movement?: MovementTracker | null;
+  readonly snapshots?: Pick<SnapshotStore, 'lastChange'> | null;
+  /** Players on the injury report (display feed); OUT/DOUBTFUL players are never ranked (§3.3). */
+  readonly injuries?: (() => Promise<readonly { player: string; team: string; status: string; league: string }[]>) | null;
+  /** Where in-app alerts are kept (§8). */
+  readonly alertsFile?: string | null;
+  /** Edge (in points) a stale pick needs to raise an alert. */
+  readonly alertMinEdge?: number;
+  /** Every STALE flag as it's first seen, for the replay report (spec §3 acceptance). */
+  readonly staleLogFile?: string | null;
+}
+
+/** One STALE flag when first seen: the app's number and the books' consensus at that moment. */
+export interface StaleEvent {
+  readonly at: string; readonly platform: EdgePlatform; readonly key: string; readonly side: PlayableDirection;
+  readonly playerName: string; readonly market: string; readonly number: number; readonly consensusMean: number;
+  readonly probability: number; readonly minutesAfterMove: number; readonly books: number; readonly eventStartTime: string;
+}
+
+/** An in-app alert: a stale or steamed line Edge rates, at most one per player per hour (spec §8). */
+export interface EdgeAlert {
+  readonly id: string; readonly at: string; readonly platform: EdgePlatform; readonly lineId: string;
+  readonly playerName: string; readonly market: string; readonly threshold: number; readonly side: PlayableDirection;
+  readonly probability: number; readonly edge: number; readonly ev?: number; readonly text: string; readonly eventStartTime: string;
 }
 
 export interface EdgeSnapshot {
@@ -74,6 +102,8 @@ export interface EdgeReport {
   readonly byTier: Readonly<Record<string, number>>;
   /** +EV reads by rating (THIN is under 2 points). */
   readonly byRating: Readonly<Record<string, number>>;
+  /** Picks flagged STALE / with steam, and players not ranked because of the injury report. */
+  readonly stale: number; readonly steam: number; readonly injured: number;
   readonly sharpApi?: { readonly lines: number; readonly confirmed: number; readonly added: number };
   readonly match: MatchReport | null;
   readonly historyValues: { readonly asked: number; readonly found: number };
@@ -146,6 +176,9 @@ interface PlatformSet {
 }
 
 export class EdgeService {
+  private alerts: EdgeAlert[] = [];
+  private staleSeen = new Set<string>();
+  private lastAlertFor = new Map<string, number>();
   private current = new Map<EdgePlatform, EdgeSnapshot>();
   private computedAt = 0;
   private key: string | null = null;
@@ -155,6 +188,9 @@ export class EdgeService {
 
   constructor(private readonly options: EdgeServiceOptions) {
     this.clock = options.clock ?? (() => new Date());
+    if (options.alertsFile) {
+      try { this.alerts = JSON.parse(readFileSync(options.alertsFile, 'utf8')) as EdgeAlert[]; } catch { /* first run */ }
+    }
     if (options.valuesCacheFile) {
       try {
         const saved = JSON.parse(readFileSync(options.valuesCacheFile, 'utf8')) as [string, { until: number; values: number[] | null }][];
@@ -272,14 +308,27 @@ export class EdgeService {
       const calibrationRows = await this.options.ledger?.calibrationRows().catch(() => []) ?? [];
       const calibration = fitCalibration(calibrationRows);
       const forecast = forecastReport(calibrationRows);
-      for (const set of sets) {
-        const snapshot = this.priceSet(set, board, prices, now, calibration, forecast, rows, values, startedAt);
-        this.current.set(set.platform, snapshot);
+      const injured = new Map<string, string>();
+      for (const note of await this.options.injuries?.().catch(() => []) ?? [])
+        if (/^(out|doubtful|suspended|inactive)/i.test(note.status)) injured.set(normalizedName(note.player), `${note.status}${note.team ? ` (${note.team})` : ''}`);
+      const fresh: EdgeAlert[] = [];
+      const priced = crossPlatform(sets.map((set) =>
+        this.priceSet(set, board, prices, now, calibration, forecast, rows, values, startedAt, injured, fresh)));
+      for (const snapshot of priced) {
+        this.current.set(snapshot.platform, snapshot);
         this.log(snapshot);
         void this.options.ledger?.record(snapshot.response.picks, (lineId) => {
           const line = snapshot.lines.get(lineId);
           return { team: line?.team ?? null, home: line?.homeTeam ?? null, away: line?.awayTeam ?? null };
         }).catch(() => undefined);
+      }
+      if (fresh.length) {
+        this.alerts = [...fresh, ...this.alerts].slice(0, 200);
+        if (this.options.alertsFile) {
+          const file = this.options.alertsFile, temporary = `${file}.tmp`;
+          await mkdir(dirname(file), { recursive: true }).then(() => writeFile(temporary, JSON.stringify(this.alerts)))
+            .then(() => rename(temporary, file)).catch(() => undefined);
+        }
       }
       this.computedAt = now.getTime(); this.key = key; this.lastError = null;
     } catch (error) {
@@ -290,7 +339,8 @@ export class EdgeService {
 
   private priceSet(set: PlatformSet, board: BoardResponse, prices: readonly FairPrice[], now: Date,
     calibration: CalibrationModel, forecast: ReturnType<typeof forecastReport>, rows: Map<string, InternalHistoryRow[]>,
-    values: { found: Map<string, number[]>; asked: number }, startedAt: number): EdgeSnapshot {
+    values: { found: Map<string, number[]>; asked: number }, startedAt: number, injured: ReadonlyMap<string, string> = new Map(),
+    alerts: EdgeAlert[] = []): EdgeSnapshot {
     // A platform's own book never prices it, and pick'em apps' rows are payouts, never prices.
     const nowIso = now.toISOString(), own = [...new Set([...ownBooks[set.platform], 'prizepicks', 'prizepicks_flex', 'underdog', 'pick6'])];
     const matched = prices.length && set.lines.length ? matchBookPrices(set.lines, prices, nowIso, own) : null;
@@ -305,21 +355,22 @@ export class EdgeService {
       ...(this.options.alternateFactors ? { alternateFactors: this.options.alternateFactors } : {}),
       history: (player) => { const list = rows.get(playerKey(player.sport, player.playerName)); return list ? dedupeRows(list) : undefined; },
       values: (line) => values.found.get(`${line.sport}|${line.playerId}|${line.market}`) });
-    const slips = buildSlips(priced.picks, priced.entries, { minEvents: set.minEvents });
+    const picks = this.enrich(set, priced.picks, now, injured, alerts);
+    const slips = buildSlips(picks, priced.entries, { minEvents: set.minEvents });
     const count = (tier: string) => priced.picks.filter((pick) => pick.tier === tier).length;
     const response: EdgeBoardResponse = {
       modelVersion: EDGE_MODEL_VERSION, builtAt: nowIso, boardFetchedAt: board.board.fetchedAt,
       referenceEntry: priced.referenceEntry, entries: priced.entries,
       counts: { linesPriced: priced.picks.length, linesUnpriced: priced.unpriced, sharp: count('SHARP'),
         market: count('MARKET'), model: count('MODEL'), ladder: count('LADDER'),
-        positiveEdge: priced.picks.filter((pick) => pick.edge !== null && pick.edge > 0 && pick.rating !== 'NONE').length,
+        positiveEdge: picks.filter((pick) => pick.edge !== null && pick.edge > 0 && pick.rating !== 'NONE').length,
         quotes: matched?.quotes.length ?? 0 },
       calibration: { status: calibration.global ? 'CALIBRATED' : 'UNCALIBRATED', graded: forecast.graded,
         brier: forecast.brier, hitRate: forecast.hitRate },
-      picks: priced.picks, slips,
+      picks, slips,
     };
     const byLine = new Map<string, EdgePick>();
-    for (const pick of priced.picks) {
+    for (const pick of picks) {
       byLine.set(pick.lineId, pick);
       if (pick.oppositeLineId && !byLine.has(pick.oppositeLineId)) byLine.set(pick.oppositeLineId, pick);
     }
@@ -332,23 +383,132 @@ export class EdgeService {
       edgeNull: priced.picks.filter((pick) => pick.edge === null).length,
       byTier: { SHARP: count('SHARP'), MARKET: count('MARKET'), MODEL: count('MODEL'), LADDER: count('LADDER') },
       byRating: Object.fromEntries((['ELITE', 'STRONG', 'VALUE', 'THIN'] as const).map((rating) =>
-        [rating, priced.picks.filter((pick) => pick.rating === rating).length])),
+        [rating, picks.filter((pick) => pick.rating === rating).length])),
+      stale: picks.filter((pick) => pick.stale).length, steam: picks.filter((pick) => pick.steam).length,
+      injured: picks.filter((pick) => pick.injury).length,
       ...(set.sharpApi ? { sharpApi: set.sharpApi } : {}),
       match: matched?.report ?? null, historyValues: { asked: values.asked, found: values.found.size } };
     return { platform: set.platform, response, byLine, unpriced: priced.unpricedLines, lines: new Map(set.lines.map((line) => [line.id, line])),
       computedAt: now.getTime(), durationMs: Date.now() - startedAt, report, minEvents: set.minEvents };
   }
 
+  /**
+   * Movement, injuries and ranking on top of the prices: a pick'em line the books moved past after the app last changed
+   * it, toward the pick's side, is STALE (spec §3.2); OUT/DOUBTFUL players are never ranked (§3.3); every pick gets its
+   * rank (§6) and picks are sorted by it; fresh STALE picks with a real edge raise an alert, one per player per hour (§8).
+   */
+  private enrich(set: PlatformSet, picks: readonly EdgePick[], now: Date, injured: ReadonlyMap<string, string>,
+    alerts: EdgeAlert[]): EdgePick[] {
+    const nowMs = now.getTime(), dfs = set.platform === 'prizepicks' || set.platform === 'underdog' || set.platform === 'pick6';
+    const out = picks.map((source) => {
+      let pick: EdgePick = source;
+      const status = injured.get(normalizedName(pick.playerName));
+      if (status) pick = { ...pick, injury: status, rating: 'NONE', edgeScore: 0,
+        warnings: [...pick.warnings, `On the injury report: ${status}. Not ranked.`] };
+      const moved = this.options.movement?.summary(pick.sport, pick.playerName, pick.market, nowMs);
+      if (moved?.steam) pick = { ...pick, steam: true };
+      if (dfs && moved && pick.sources.market) {
+        const appChanged = this.options.snapshots?.lastChange(set.platform, playerKey(pick.sport, pick.playerName), pick.market);
+        const gap = pick.sources.market.mean - pick.threshold;
+        const favors = (moved.direction === 'UP' && pick.side === 'MORE' && gap > 0) || (moved.direction === 'DOWN' && pick.side === 'LESS' && gap < 0);
+        if (favors && appChanged !== null && appChanged !== undefined && appChanged < moved.lastMoveAt &&
+          Math.abs(gap) >= .5 * pick.projection.sd) {
+          const minutesAgo = Math.max(0, Math.round((nowMs - moved.lastMoveAt) / 60_000));
+          const name = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'DK Pick’em' }[set.platform as 'prizepicks'];
+          pick = { ...pick, stale: { minutesAgo, books: moved.books, direction: moved.direction },
+            reasons: [`Books moved ${moved.direction === 'UP' ? 'up' : 'down'} ${minutesAgo} min ago (${moved.books} book${moved.books === 1 ? '' : 's'}, first ${moved.firstMover}); ${name} hasn’t.`, ...pick.reasons] };
+        }
+      }
+      const rank = rankScore(pick);
+      return rank === null ? pick : { ...pick, rank };
+    });
+    out.sort((a, b) => (b.rank ?? -1) - (a.rank ?? -1) || b.probability - a.probability);
+    const events: StaleEvent[] = [];
+    for (const pick of out) {
+      if (!pick.stale || !pick.sources.market) continue;
+      const id = `${set.platform}|${pick.key}|${pick.side}`;
+      if (this.staleSeen.has(id)) continue;
+      this.staleSeen.add(id);
+      events.push({ at: now.toISOString(), platform: set.platform, key: pick.key, side: pick.side, playerName: pick.playerName,
+        market: pick.market, number: pick.threshold, consensusMean: pick.sources.market.mean, probability: pick.probability,
+        minutesAfterMove: pick.stale.minutesAgo, books: pick.stale.books, eventStartTime: pick.eventStartTime });
+    }
+    if (this.staleSeen.size > 100_000) this.staleSeen.clear();
+    if (events.length && this.options.staleLogFile) {
+      const file = this.options.staleLogFile;
+      void mkdir(dirname(file), { recursive: true }).then(() => appendFile(file, events.map((event) => JSON.stringify(event)).join('\n') + '\n'))
+        .catch(() => undefined);
+    }
+    const minEdge = this.options.alertMinEdge ?? .04;
+    for (const pick of out) {
+      if (!pick.stale || pick.stale.minutesAgo > 30 || pick.edge === null || pick.edge < minEdge || pick.rating === 'NONE') continue;
+      const player = `${set.platform}|${pick.playerId}`;
+      if (nowMs - (this.lastAlertFor.get(player) ?? 0) < 3600_000) continue;
+      this.lastAlertFor.set(player, nowMs);
+      alerts.push({ id: `${pick.key}|${pick.side}|${nowMs}`, at: now.toISOString(), platform: set.platform, lineId: pick.lineId,
+        playerName: pick.playerName, market: pick.market, threshold: pick.threshold, side: pick.side, probability: pick.probability,
+        edge: pick.edge, ...(pick.ev !== undefined ? { ev: pick.ev } : {}), eventStartTime: pick.eventStartTime,
+        text: pick.reasons[0] ?? 'Books moved; the app hasn’t.' });
+    }
+    return out;
+  }
+
+  /** STALE events from the last `days` days, each with Edge's view at the close and the result once graded. */
+  async staleReplay(days = 7): Promise<{ events: (StaleEvent & { closeProbability: number | null; outcome: string | null })[] }> {
+    if (!this.options.staleLogFile) return { events: [] };
+    const cutoff = this.clock().getTime() - days * 86_400_000;
+    let text = '';
+    try { text = await readFile(this.options.staleLogFile, 'utf8'); } catch { return { events: [] }; }
+    const events = text.split('\n').filter(Boolean).flatMap((row) => { try { return [JSON.parse(row) as StaleEvent]; } catch { return []; } })
+      .filter((event) => Date.parse(event.at) >= cutoff);
+    const tracked = await this.options.ledger?.byIds(events.map((event) => `${event.platform}|${event.key}|${event.side}`)) ?? new Map();
+    return { events: events.map((event) => {
+      const pick = tracked.get(`${event.platform}|${event.key}|${event.side}`);
+      return { ...event, closeProbability: pick?.probability ?? null, outcome: pick?.outcome ?? null };
+    }) };
+  }
+
+  /** Recent alerts, newest first, for games that haven't started. */
+  alertList(platform: EdgePlatform | null, nowMs = this.clock().getTime()): EdgeAlert[] {
+    return this.alerts.filter((alert) => (!platform || alert.platform === platform) && Date.parse(alert.eventStartTime) > nowMs);
+  }
+
   private log(snapshot: EdgeSnapshot) {
     const report = snapshot.report;
     console.log(`[edge] ${report.platform} ${report.lines} lines: ${report.read} read, ${report.noRead} no read ` +
-      `${JSON.stringify(report.noReadByReason)}, ${report.plusEv} +EV ${JSON.stringify(report.byRating)}, ${report.edgeNull} edge null, tiers ${JSON.stringify(report.byTier)}, ` +
+      `${JSON.stringify(report.noReadByReason)}, ${report.plusEv} +EV ${JSON.stringify(report.byRating)}, ${report.stale} stale, ${report.steam} steam, ${report.injured} injured, ${report.edgeNull} edge null, tiers ${JSON.stringify(report.byTier)}, ` +
       `${report.sharpApi ? `sharpapi ${JSON.stringify(report.sharpApi)}, ` : ''}match ${report.match ? `${report.match.linesMatched}/${report.match.linesWithBookPrice} ` +
         `lines, ${report.match.matched} quotes, ${report.match.ambiguous} ambiguous, ${report.match.noEvent} no event, ` +
         `${report.match.mismatches} MARKET_MISMATCH` : 'none'}, history values ${report.historyValues.found}/${report.historyValues.asked}, ${snapshot.durationMs}ms`);
     if (report.platform === 'prizepicks' && report.match?.noEventSamples.length)
       console.log(`[edge-match] no game for: ${JSON.stringify(report.match.noEventSamples)}`);
   }
+}
+
+/**
+ * Each pick gets the same player and stat on the other platforms (their numbers, Edge's chance for this side there and
+ * their edge), so the user sees where the number is best ("Underdog 24.5 at 1.04× beats PrizePicks 25.5").
+ */
+export function crossPlatform(snapshots: readonly EdgeSnapshot[]): EdgeSnapshot[] {
+  const key = (pick: EdgePick) => `${pick.sport}|${normalizedName(pick.playerName)}|${canonicalMarket(pick.sport, pick.market)}|${pick.side}`;
+  const index = new Map<string, EdgePick[]>();
+  for (const snapshot of snapshots) for (const pick of snapshot.response.picks) index.set(key(pick), [...index.get(key(pick)) ?? [], pick]);
+  return snapshots.map((snapshot) => {
+    const picks = snapshot.response.picks.map((pick) => {
+      const others = (index.get(key(pick)) ?? []).filter((other) => other.platform !== pick.platform && other.eventStartTime.slice(0, 10) === pick.eventStartTime.slice(0, 10))
+        .sort((a, b) => (b.edge ?? -9) - (a.edge ?? -9)).slice(0, 6)
+        .map((other) => ({ platform: other.platform, lineId: other.lineId, threshold: other.threshold, side: other.side,
+          probability: other.probability, edge: other.edge, ...(other.payoutMultiplier ? { payoutMultiplier: other.payoutMultiplier } : {}),
+          ...(other.ev !== undefined ? { ev: other.ev } : {}) }));
+      return others.length ? { ...pick, elsewhere: others } : pick;
+    });
+    const byLine = new Map<string, EdgePick>();
+    for (const pick of picks) {
+      byLine.set(pick.lineId, pick);
+      if (pick.oppositeLineId && !byLine.has(pick.oppositeLineId)) byLine.set(pick.oppositeLineId, pick);
+    }
+    return { ...snapshot, response: { ...snapshot.response, picks }, byLine };
+  });
 }
 
 /** The pick for a specific line, flipped to the opposite side when that line was asked for. */
@@ -369,7 +529,8 @@ export function viewPicks(snapshot: EdgeSnapshot, view: EdgeView, filters: { spo
   const inView = (pick: EdgePick) => view === 'all' ? true
     : view === 'edges' ? pick.edge !== null && pick.rating !== 'NONE'
       : pick.edge === null; // alternates: Goblin/Demon lines with no confirmed payout factor, ranked by hit probability
-  const picks = snapshot.response.picks.filter((pick) => Date.parse(pick.eventStartTime) > filters.nowMs &&
+  // Never show a pick that starts in under 5 minutes (spec §6).
+  const picks = snapshot.response.picks.filter((pick) => Date.parse(pick.eventStartTime) > filters.nowMs + 5 * 60_000 &&
     (!filters.sport || pick.sport === filters.sport) && (!filters.market || pick.market === filters.market) &&
     (filters.minProbability === undefined || pick.probability >= filters.minProbability) && inView(pick));
   if (view === 'alternates') picks.sort((a, b) => b.probability - a.probability);
@@ -383,7 +544,7 @@ export function customSlip(snapshot: EdgeSnapshot, entry: EdgeEntry, lineIds: re
 }
 
 export type EdgeBoardFilter = 'all' | 'picks' | 'no_read';
-export type EdgeBoardSort = 'start' | 'edge' | 'probability';
+export type EdgeBoardSort = 'start' | 'edge' | 'probability' | 'rank';
 
 /** Every line on the board with Edge's read: priced picks (any rating) and the lines it could not read. */
 export function boardPage(snapshot: EdgeSnapshot, query: { sport?: string; market?: string; q?: string;
@@ -403,7 +564,8 @@ export function boardPage(snapshot: EdgeSnapshot, query: { sport?: string; marke
   const start = (row: EdgeBoardRow) => row.kind === 'PICK' ? row.pick.eventStartTime : row.line.eventStartTime;
   const name = (row: EdgeBoardRow) => row.kind === 'PICK' ? row.pick.playerName : row.line.playerName;
   const strength = (row: EdgeBoardRow) => row.kind === 'PICK'
-    ? query.sort === 'probability' ? row.pick.probability : row.pick.edge ?? -1 : -2;
+    ? query.sort === 'probability' ? row.pick.probability : query.sort === 'rank' ? row.pick.rank ?? (row.pick.edge === null ? -1.5 : -1)
+      : row.pick.ev ?? row.pick.edge ?? -1 : -2;
   const rows = [...picks, ...unread].sort(query.sort === 'start'
     ? (a, b) => start(a).localeCompare(start(b)) || name(a).localeCompare(name(b))
     : (a, b) => strength(b) - strength(a));

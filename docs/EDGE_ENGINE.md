@@ -189,3 +189,22 @@ platform chip for each:
 - An edge above 15 points is held for review and never ranked (spec §6).
 - Slip EV multiplies the entry's payout by each leg's own multiplier (an app pick's payout, or a parlay leg's odds).
 - `/v1/edge`, `/board`, `/gen`, `/line/:id`, `/player/:id` and `/slip` take `platform` (default `prizepicks`).
+
+### P3 (2026-10-06): movement, stale lines, injuries, ranking, alerts
+
+- **Refresh rate:** SharpAPI every 15 minutes (`CROWNIQ_SHARP_REFRESH_MINUTES`); its Hobby plan limits only requests per
+  minute. The books-history file still appends hourly.
+- **Movement** (`edge/movement.ts`): each book's implied mean per player and stat, compared refresh to refresh. A move is
+  ≥ 0.25 SD; steam is 3+ books moving the same way in one refresh (≤ 10 minutes).
+- **STALE** (pick'em platforms): the books moved after the app's number last changed (snapshot store `lastChange`), toward
+  the pick's side, and the app's number is ≥ 0.5 SD from the books' mean. The card says "Books moved up 14 min ago (3
+  books, first FanDuel); PrizePicks hasn't." Every first STALE flag is logged to `edge/stale-events.jsonl`;
+  `GET /v1/owner/edge/stale` replays the last 7 days with Edge's view at the close and the result once graded.
+- **Injuries:** players listed Out/Doubtful/Suspended/Inactive on the injury feed are never ranked (the line still shows).
+  Teammate repricing needs usage data (P5).
+- **Ranking:** `rank = (EV or edge) × confidence × freshness` (`packages/edge/src/ranking.ts`); Top Picks and the Board's
+  "Best" sort use it. Nothing starting within 5 minutes is shown.
+- **Alerts:** in-app, not push. CrownIQ runs as a web app, where Expo push doesn't reach; native push can follow when the
+  app ships to the stores. `GET /v1/edge/alerts`: STALE picks (≤ 30 minutes old) with ≥ 4 points of edge, one per player
+  per hour, shown at the top of the Edge tab.
+- **Best number across apps:** every pick lists the same player and stat on the other platforms with Edge's chance there.

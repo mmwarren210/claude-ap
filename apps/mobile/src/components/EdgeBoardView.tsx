@@ -4,17 +4,17 @@ import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../auth';
-import { formatLine, marketLabel, pct, ratingColor, ratingLabel, tierLabel } from '../edge-format';
+import { formatLine, marketLabel, moveBadges, pct, ratingColor, ratingLabel, tierLabel } from '../edge-format';
 import { edgeSlip, useEdgeSlip } from '../edge-slip';
 import { platformShort, useEdgePlatform } from '../edge-platform';
 import { palette } from '../theme';
 import { Notice } from './Screen';
 
 type Filter = 'all' | 'picks' | 'no_read';
-type Sort = 'start' | 'edge' | 'probability';
+type Sort = 'rank' | 'start' | 'edge' | 'probability';
 const filters: { key: Filter; label: string }[] = [{ key: 'all', label: 'Every line' }, { key: 'picks', label: 'Edge reads' },
   { key: 'no_read', label: 'No read' }];
-const sorts: { key: Sort; label: string }[] = [{ key: 'start', label: 'Start time' }, { key: 'edge', label: 'Biggest edge' },
+const sorts: { key: Sort; label: string }[] = [{ key: 'rank', label: 'Best' }, { key: 'start', label: 'Start time' }, { key: 'edge', label: 'Biggest edge' },
   { key: 'probability', label: 'Hit %' }];
 const PAGE = 60;
 
@@ -25,7 +25,7 @@ export function EdgeBoardView() {
   const slip = useEdgeSlip();
   const [sport, setSport] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
-  const [sort, setSort] = useState<Sort>('start');
+  const [sort, setSort] = useState<Sort>('rank');
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(PAGE);
   const [state, setState] = useState<{ key: string; rows: EdgeBoardRow[]; total: number; sports: string[]; message: string } | null>(null);
@@ -85,7 +85,7 @@ function PickRow({ row, inSlip }: { row: Extract<EdgeBoardRow, { kind: 'PICK' }>
       onPress={() => router.push({ pathname: '/edge/[lineId]', params: { lineId: pick.lineId, platform: pick.platform } })}>
       <Text style={styles.name}>{pick.playerName}</Text>
       <Text style={styles.line}>{marketLabel(pick.market)} · {platformShort(pick.platform)} {formatLine(pick.threshold)} · Edge {formatLine(pick.fairLine)}</Text>
-      <Text style={styles.muted}>{pick.sport} · {tierLabel[pick.tier]}{pick.lineType !== 'REGULAR' ? ` · ${pick.lineType === 'UNKNOWN_ALTERNATE' ? 'ALT' : pick.lineType}` : ''}</Text>
+      <Text style={styles.muted}>{moveBadges(pick).length ? `${moveBadges(pick).join(' · ')} · ` : ''}{pick.sport} · {tierLabel[pick.tier]}{pick.lineType !== 'REGULAR' ? ` · ${pick.lineType === 'UNKNOWN_ALTERNATE' ? 'ALT' : pick.lineType}` : ''}</Text>
       {pick.reasons[0] && <Text style={styles.muted} numberOfLines={2}>{pick.reasons[0]}</Text>}
     </Pressable>
     <View style={styles.side}>

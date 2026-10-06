@@ -71,6 +71,7 @@ import { EdgeResultsWorker, EdgeService } from './edge/service.js';
 import type { EdgeLedger } from './edge/ledger.js';
 import type { SnapshotStore } from './edge/snapshots.js';
 import { registerEdgeRoutes } from './edge/routes.js';
+import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
 
 /** How far ahead the public demo shows real lines. */
@@ -150,7 +151,8 @@ export interface ServerOptions {
   /** CrownIQ Edge: a standalone probability engine with its own Top Picks, Board and Gen; never reads or changes GKR. */
   edge?: { enabled?: boolean; ledger?: EdgeLedger | null; snapshots?: SnapshotStore | null;
     alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>; boxScores?: BoxScoreResults | null;
-    valuesCacheFile?: string | null; pick6PayoutsConfirmed?: boolean } | null;
+    valuesCacheFile?: string | null; pick6PayoutsConfirmed?: boolean; alertsFile?: string | null;
+    staleLogFile?: string | null } | null;
   /** JSON-lines history of the books' view of board lines, one row per line per refresh. */
   booksHistoryFile?: string | null;
 }
@@ -218,9 +220,13 @@ export function buildServer(options: ServerOptions = {}) {
     options.scraperPuller?.start();
     options.contextFeeds?.start();
     // Keep what the books said about each board line over time, so a "books agree" factor can be measured on graded results.
+    let booksHistoryAt=0;
     options.sharpProps?.whenRefreshed(async(prices,at)=>{
       const board=service.getBoard();
       if(!board||!options.booksHistoryFile)return;
+      // Hourly, whatever the refresh rate, so the file grows as before.
+      if(at.getTime()-booksHistoryAt<55*60_000)return;
+      booksHistoryAt=at.getTime();
       const lines=new Map(board.board.lines.map((line)=>[line.id,line]));
       const rows=[...bookViews(board,prices,at)].map(([lineId,view])=>{const line=lines.get(lineId)!;
         return JSON.stringify({at:at.toISOString(),lineId,sport:line.sport,playerId:line.playerId,playerName:line.playerName,
@@ -229,7 +235,8 @@ export function buildServer(options: ServerOptions = {}) {
       if(rows.length){await mkdir(dirname(options.booksHistoryFile),{recursive:true});
         await appendFile(options.booksHistoryFile,rows.join('\n')+'\n');}
     });
-    options.sharpProps?.start(60);
+    // Every 15 minutes so book moves are caught while the apps lag (Edge §3); SharpAPI limits only requests per minute.
+    options.sharpProps?.start(Number(process.env.CROWNIQ_SHARP_REFRESH_MINUTES??15));
     appShadow?.start();
     // The scheduled AI run reads the books' fair prices through the same cache as the routes.
     let latestFair=new Map<string,number>();
@@ -1155,14 +1162,17 @@ export function buildServer(options: ServerOptions = {}) {
     if(!free||(free.perMap&&twoMaps(line.market)))return null;
     return {values:free.values.map((game)=>game.value),source:free.source};
   },()=>now());
-  // CrownIQ Edge (Edge 2.0): its own reads of every PrizePicks line, warmed in the background like the app boards.
+  // CrownIQ Edge (Edge 2.0): its own reads of every platform, warmed in the background like the app boards.
+  const movement=new MovementTracker();
   const edge=options.edge&&options.edge.enabled!==false?new EdgeService({board:()=>service.getBoard(),
     sharp:options.sharpProps?{prices:async()=>(await options.sharpProps!.current()).prices,
       pickem:async()=>(await options.sharpProps!.pickemLines()).lines}:null,
     appBoards:options.scrapedLines??null,pick6PayoutsConfirmed:options.edge.pick6PayoutsConfirmed===true,
     history:options.internalHistory??null,values:(line)=>historyReads.valuesFor(line),ledger:options.edge.ledger??null,
     payouts:options.payouts??DEFAULT_PAYOUTS,...(options.edge.alternateFactors?{alternateFactors:options.edge.alternateFactors}:{}),
-    valuesCacheFile:options.edge.valuesCacheFile??null,
+    valuesCacheFile:options.edge.valuesCacheFile??null,movement,snapshots:options.edge.snapshots??null,
+    alertsFile:options.edge.alertsFile??null,staleLogFile:options.edge.staleLogFile??null,
+    injuries:options.contextFeeds?async()=>(await options.contextFeeds!.items<InjuryNote>('injuries')).items:null,
     clock:()=>now()}):null;
   const edgeWorker=edge&&options.edge?.ledger?new EdgeResultsWorker(options.edge.ledger,options.internalHistory??null,
     options.edge.boxScores??null,()=>now()):null;
@@ -1182,6 +1192,8 @@ export function buildServer(options: ServerOptions = {}) {
   const snapshots=options.edge?.snapshots??null;
   if(snapshots&&!options.clock){
     options.sharpProps?.whenRefreshed(async(prices,at)=>{
+      const moves=movement.observe(prices,at.getTime());
+      if(moves)console.log(`[edge-movement] ${moves} book moves`);
       const pickem=(await options.sharpProps!.pickemLines()).lines;
       const changed=snapshots.record([...bookRows(prices,at.toISOString()),...pickemRows(pickem,at.toISOString())]);
       console.log(`[edge-snapshots] sharpapi ${prices.length} prices, ${pickem.length} PrizePicks lines, ${changed} changed`);

@@ -51,7 +51,7 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
   app.get('/v1/edge/board', async (request, reply) => {
     const query = z.object({ platform: platformSchema, sport: z.string().trim().min(1).max(20).optional(), market: z.string().trim().min(1).max(80).optional(),
       q: z.string().trim().max(60).optional(), filter: z.enum(['all', 'picks', 'no_read']).default('all'),
-      sort: z.enum(['start', 'edge', 'probability']).default('start'),
+      sort: z.enum(['start', 'edge', 'probability', 'rank']).default('start'),
       offset: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(200).default(100) })
       .strict().safeParse(request.query);
     if (!query.success) return reply.code(400).send({ code: 'INVALID_EDGE_QUERY' });
@@ -127,6 +127,14 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     return slip ? { slip } : reply.code(422).send({ code: 'EDGE_LINE_UNPRICED' });
   });
 
+  // In-app alerts (spec §8): stale lines with a real edge, at most one per player per hour.
+  app.get('/v1/edge/alerts', async (request, reply) => {
+    const query = z.object({ platform: z.enum(EDGE_PLATFORMS as [EdgePlatform, ...EdgePlatform[]]).optional() }).safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ code: 'INVALID_EDGE_QUERY' });
+    await edge.snapshot(query.data.platform ?? 'prizepicks');
+    return { alerts: edge.alertList(query.data.platform ?? null, now().getTime()).slice(0, 50) };
+  });
+
   app.get('/v1/edge/performance', async (_request, reply) => {
     if (!deps.ledger) return reply.code(503).send({ code: 'EDGE_TRACKING_UNCONFIGURED' });
     return { status: edge.status(), grading: deps.worker?.status() ?? null, ...await deps.ledger.report() };
@@ -139,6 +147,7 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     });
     owner.get('/status', async () => ({ status: edge.status(), grading: deps.worker?.status() ?? null,
       snapshots: deps.snapshots?.status() ?? null }));
+    owner.get('/stale', async () => edge.staleReplay(7));
     owner.post('/grade', async (_request, reply) => deps.worker ? deps.worker.runOnce()
       : reply.code(503).send({ code: 'EDGE_GRADING_UNCONFIGURED' }));
     owner.get('/backtest', async (_request, reply) => {

@@ -370,6 +370,18 @@ export const edgePickSchema = z.object({
   decimalOdds: z.number().gt(1).finite().optional(),
   ev: z.number().finite().optional(),
   kelly: z.number().min(0).max(1).optional(),
+  // Movement (spec §3): the books moved after this app's number last changed, toward this side; and steam (3+ books
+  // moving together). `rank` is the sort score (EV × confidence × freshness, spec §6).
+  stale: z.object({ minutesAgo: z.number().nonnegative(), books: z.number().int().nonnegative(),
+    direction: z.enum(['UP', 'DOWN']) }).optional(),
+  steam: z.boolean().optional(),
+  rank: z.number().finite().optional(),
+  injury: z.string().optional(),
+  // The same player and stat on the other platforms (spec §8 "best number across apps"): each one's number, Edge's chance
+  // for this side there, its payout and edge.
+  elsewhere: z.array(z.object({ platform: z.enum(['prizepicks', 'underdog', 'pick6', 'draftkings', 'hardrock']),
+    lineId: identifier, threshold: z.number().finite(), side: playableDirectionSchema, probability, edge: z.number().finite().nullable(),
+    payoutMultiplier: z.number().positive().finite().optional(), ev: z.number().finite().optional() })).optional(),
 });
 export const edgeEntrySchema = z.object({
   type: z.enum(['POWER', 'FLEX', 'PARLAY']), size: z.number().int().min(2).max(20),

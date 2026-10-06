@@ -10,6 +10,7 @@ import { useEdgeSlip } from '../../edge-slip';
 import { palette } from '../../theme';
 import { useBoard } from '../../use-board';
 import { useEdge } from '../../use-edge';
+import { EdgeAlerts } from '../../components/EdgeAlerts';
 import { edgePlatform, EDGE_PLATFORMS, isBook, platformLabel, useEdgePlatform } from '../../edge-platform';
 import type { EdgeView } from '../../use-edge';
 
@@ -73,6 +74,7 @@ export default function EdgeScreen() {
           onPress={() => setSport(item)} style={[styles.chip, sport === item && styles.chipOn]}>
           <Text style={[styles.chipText, sport === item && styles.chipTextOn]}>{item ?? 'All'}</Text></Pressable>)}
       </View>}
+      <EdgeAlerts platform={platform} />
       <EdgeSlipPanel entries={data.entries} />
       {view === 'edges' && data.slips.length > 0 && <View style={styles.section}>
         <Text style={styles.sectionTitle}>BEST ENTRIES</Text>

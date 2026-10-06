@@ -1,7 +1,7 @@
 import type { EdgePick } from '@crowniq/contracts';
 import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { edgeSummary, headline, lineComparison, pct, ratingColor, ratingLabel, tierLabel } from '../edge-format';
+import { edgeSummary, elsewhereText, headline, lineComparison, moveBadges, pct, ratingColor, ratingLabel, tierLabel } from '../edge-format';
 import { edgeSlip } from '../edge-slip';
 import { palette } from '../theme';
 
@@ -15,7 +15,10 @@ export function EdgePickCard({ pick, rank, inSlip }: { pick: EdgePick; rank?: nu
     <View style={styles.row}>
       <Text style={styles.eyebrow}>{rank ? `#${rank} · ` : ''}{pick.sport} · {tierLabel[pick.tier]}
         {pick.lineType !== 'REGULAR' ? ` · ${pick.lineType === 'UNKNOWN_ALTERNATE' ? 'ALT' : pick.lineType}` : ''}</Text>
-      {pick.edge !== null && <Text style={[styles.badge, { color, borderColor: color }]}>{ratingLabel[pick.rating]}</Text>}
+      <View style={styles.badges}>
+        {moveBadges(pick).map((badge) => <Text key={badge} style={[styles.badge, styles.move]}>{badge}</Text>)}
+        {pick.edge !== null && <Text style={[styles.badge, { color, borderColor: color }]}>{ratingLabel[pick.rating]}</Text>}
+      </View>
     </View>
     <View style={styles.row}>
       <View style={styles.main}>
@@ -30,6 +33,9 @@ export function EdgePickCard({ pick, rank, inSlip }: { pick: EdgePick; rank?: nu
     </View>
     <Text style={styles.summary}>{edgeSummary(pick)}</Text>
     <Text style={styles.edgeLine}>{lineComparison(pick)}</Text>
+    {!!pick.stale && <Text style={styles.stale}>{pick.reasons[0]}</Text>}
+    {!!elsewhereText(pick) && <Text style={styles.detail}>{elsewhereText(pick)}</Text>}
+    {!!pick.injury && <Text style={styles.warning}>Injury report: {pick.injury}</Text>}
     {warning && <Text style={styles.warning}>⚠ {warning}</Text>}
     </Pressable>
     <Pressable accessibilityRole="button" onPress={() => edgeSlip.toggle(pick)} style={[styles.slip, inSlip && styles.slipOn]}>
@@ -53,6 +59,9 @@ const styles = StyleSheet.create({
   small: { color: palette.muted, fontSize: 10, fontWeight: '700' },
   summary: { color: palette.text, fontSize: 12 },
   edgeLine: { color: palette.green, fontSize: 12, fontWeight: '800' },
+  badges: { flexDirection: 'row', gap: 4 },
+  move: { color: '#F2B84B', borderColor: '#F2B84B' },
+  stale: { color: '#F2B84B', fontSize: 12, fontWeight: '700' },
   warning: { color: palette.danger, fontSize: 11 },
   slip: { alignSelf: 'flex-start', borderWidth: 1, borderColor: palette.border, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5, marginTop: 2 },
   slipOn: { backgroundColor: palette.greenDim, borderColor: palette.green },
