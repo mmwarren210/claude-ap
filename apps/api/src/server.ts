@@ -610,6 +610,30 @@ export function buildServer(options: ServerOptions = {}) {
     feedbackIds:z.array(z.string().uuid()).max(100).optional()}).strict();
   const isOwner=async(request:FastifyRequest)=>{const user=await currentUser(request);
     return !!options.ownerPublicId&&user?.publicId===options.ownerPublicId;};
+  // "Refresh all now, skip next": every scheduled scraper and context feed pulls now (plus the sportsbook feed), and each one's
+  // next scheduled run is marked done so it is skipped (no paying twice). Runs in the background; the result goes to the log.
+  let refreshAll:{startedAt:string;finishedAt:string|null;skipped:string[];summary:string|null}|null=null;
+  app.post('/v1/owner/refresh-all',async(request,reply)=>{
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    if(refreshAll&&!refreshAll.finishedAt)return reply.code(409).send({code:'REFRESH_RUNNING',...refreshAll});
+    const job:{startedAt:string;finishedAt:string|null;skipped:string[];summary:string|null}={startedAt:now().toISOString(),finishedAt:null,skipped:[],summary:null};
+    refreshAll=job;
+    void (async()=>{
+      try{
+        const [scrapers,feeds]=await Promise.all([options.scraperPuller?.refreshAllSkipNext()??null,options.contextFeeds?.refreshAllSkipNext()??null]);
+        const sharp=options.sharpProps?await options.sharpProps.refresh().catch(()=>null):null;
+        job.skipped=[...scrapers?.skipped??[],...feeds?.skipped??[]];
+        job.summary=JSON.stringify({scrapers:scrapers?.reports.map((report)=>({source:report.source,status:report.status,rows:report.rows}))??[],
+          feeds:feeds?.reports.map((report)=>({source:report.source,status:report.status,rows:report.rows}))??[],sharpPrices:sharp?.prices??null});
+      }catch(error){job.summary=`failed: ${error instanceof Error?error.message:String(error)}`;}
+      finally{job.finishedAt=now().toISOString();console.log(`[refresh-all] skipped next: ${job.skipped.join(', ')||'none'} · ${job.summary}`);}
+    })();
+    return reply.code(202).send({started:true});
+  });
+  app.get('/v1/owner/refresh-all',async(request,reply)=>{
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    return refreshAll??{startedAt:null};
+  });
   app.get('/v1/owner/feedback',async(request,reply)=>{
     if(!options.feedback||!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
     return {items:await options.feedback.all(),summary:await options.feedback.summary()};

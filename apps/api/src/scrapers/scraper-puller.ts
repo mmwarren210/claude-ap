@@ -2,7 +2,7 @@ import type { ApifyClient } from './apify-client.js';
 import type { IngestReport, ScrapedLineStore } from './line-store.js';
 import type { ScraperSource } from './scraped-line.js';
 import type { DailySpendBudget } from './spend-budget.js';
-import { SlotLedger } from './slot-ledger.js';
+import { nextSlot, SlotLedger } from './slot-ledger.js';
 
 export interface PullReport {
   readonly at: string;
@@ -55,6 +55,18 @@ export class ScraperPuller {
 
   /** What to do after a pull changes lines: the server rebuilds the board from the store (free). */
   whenLinesChange(callback: () => unknown): void { this.onLinesChanged = callback; }
+
+  /** Pulls every scheduled source now and marks each one's next scheduled run as done, so it is skipped. */
+  async refreshAllSkipNext(): Promise<{ reports: PullReport[]; skipped: string[] }> {
+    const scheduled = this.sources.filter(({ hoursEt }) => hoursEt.length), now = this.clock(), skipped: string[] = [];
+    for (const { source, hoursEt } of scheduled) {
+      const next = nextSlot(hoursEt, now);
+      if (next && await this.slots.claim(next.day, `${next.hour}|${source.id}`)) skipped.push(`${source.id} ${next.day} ${next.hour}:00 ET`);
+    }
+    const reports: PullReport[] = [];
+    for (const { source } of scheduled) reports.push(await this.pull(source.id));
+    return { reports, skipped };
+  }
 
   hasSource(sourceId: string): boolean { return this.sources.some(({ source }) => source.id === sourceId); }
 

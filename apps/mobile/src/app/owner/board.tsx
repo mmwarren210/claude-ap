@@ -174,6 +174,17 @@ export default function OwnerBoardScreen(){
     }finally{setBusy(false);}
   };
 
+  const refreshAllNow=async()=>{
+    if(busy)return;
+    setBusy(true);setError('');setMessage('');
+    try{
+      const response=await request('/v1/owner/refresh-all',{method:'POST'});
+      setMessage(response.status===202?'Refreshing everything on the server; the next scheduled pull of each source is skipped. Boards update in a few minutes.'
+        :response.status===409?'A refresh-all is already running on the server.':'Refresh all could not start.');
+    }catch{setError('Refresh all could not start.');}
+    finally{setBusy(false);}
+  };
+
   const reanalyze=async()=>{
     if(busy||pulling)return;
     setBusy(true);setError('');setMessage('');
@@ -219,6 +230,12 @@ export default function OwnerBoardScreen(){
     {access==='DENIED'&&<Notice title="Private area"
       detail="Board analysis controls are only available to the owner profile configured on the server."/>}
     {access==='ALLOWED'&&<>
+      <Notice title="Refresh everything now"
+        detail="Pulls the PrizePicks, Underdog and DK Pick'em scrapers, injuries, Pinnacle and the sportsbook feed now, and skips each one's next scheduled pull so you don't pay twice. Takes a few minutes on the server."/>
+      <Pressable accessibilityRole="button" disabled={busy} onPress={()=>void refreshAllNow()}
+        style={[styles.action,busy&&styles.disabled]}>
+        <Text style={styles.actionText}>Refresh all now · skip next scheduled</Text>
+      </Pressable>
       <Notice title="Current PrizePicks snapshot"
         detail="This pull may use Odds API credits. Once started, it continues on the server if you leave or close the app. The prior board stays available if it fails."/>
       <Pressable accessibilityRole="button" disabled={busy||pulling||checkingPull}

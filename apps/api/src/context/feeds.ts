@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ApifyClient } from '../scrapers/apify-client.js';
 import type { DailySpendBudget } from '../scrapers/spend-budget.js';
-import { SlotLedger } from '../scrapers/slot-ledger.js';
+import { nextSlot, SlotLedger } from '../scrapers/slot-ledger.js';
 
 // Display-only game context from Apify scrapers: injury reports and Pinnacle game lines.
 // None of it feeds GKR scoring; using any of it in a score needs the owner's approval and a new opt-in model version.
@@ -153,6 +153,17 @@ export class ContextFeeds {
   }
 
   stop(): void { if (this.timer) clearInterval(this.timer); this.timer = null; }
+
+  /** Pulls every scheduled feed now and marks each one's next scheduled run as done, so it is skipped. */
+  async refreshAllSkipNext(): Promise<{ reports: ContextReport[]; skipped: string[] }> {
+    const now = this.clock(), skipped: string[] = [], reports: ContextReport[] = [];
+    for (const { source, hoursEt } of this.sources) {
+      const next = nextSlot(hoursEt, now);
+      if (next && await this.slots.claim(next.day, `${next.hour}|context:${source.id}`)) skipped.push(`${source.id} ${next.day} ${next.hour}:00 ET`);
+    }
+    for (const { source, hoursEt } of this.sources) if (hoursEt.length) reports.push(await this.pull(source.id));
+    return { reports, skipped };
+  }
 
   /** Runs each feed once per scheduled Eastern-time hour; checks once a minute. */
   start(): void {

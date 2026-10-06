@@ -28,7 +28,9 @@ export class SlotLedger {
     let done: string[] = [];
     try {
       const saved = JSON.parse(await readFile(this.file, 'utf8')) as { day?: unknown; done?: unknown };
-      if (saved.day === day && Array.isArray(saved.done)) done = saved.done.filter((item): item is string => typeof item === 'string');
+      // Keys carry their own day, so slots claimed ahead ("skip the next scheduled pull") survive; three days are kept.
+      const keep = new Date(Date.parse(`${day}T12:00:00Z`) - 3 * 86_400_000).toISOString().slice(0, 10);
+      if (Array.isArray(saved.done)) done = saved.done.filter((item): item is string => typeof item === 'string' && item.slice(0, 10) >= keep);
     } catch { /* first slot of the day */ }
     if (done.includes(key)) return false;
     await mkdir(dirname(this.file), { recursive: true });
@@ -37,4 +39,15 @@ export class SlotLedger {
     await rename(temporary, this.file);
     return true;
   }
+}
+
+const easternParts = (date: Date) => ({ day: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(date),
+  hour: Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' }).format(date)) });
+
+/** The next scheduled run of a source after `now`: today's next Eastern hour on its schedule, else tomorrow's first. */
+export function nextSlot(hoursEt: readonly number[], now: Date): { day: string; hour: number } | null {
+  if (!hoursEt.length) return null;
+  const today = easternParts(now), later = [...hoursEt].sort((a, b) => a - b).find((hour) => hour > today.hour);
+  if (later !== undefined) return { day: today.day, hour: later };
+  return { day: easternParts(new Date(now.getTime() + 24 * 3600_000)).day, hour: Math.min(...hoursEt) };
 }
