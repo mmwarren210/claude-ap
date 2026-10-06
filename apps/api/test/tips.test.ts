@@ -105,5 +105,13 @@ test('Claude tip reader sends the screenshot and reads the strict tool output', 
   assert.deepEqual(read.tips.map((tip) => tip.selection), ['Spain'], 'blank rows dropped');
   assert.equal(sent!.messages[0]!.content[0]!.type, 'image');
   assert.deepEqual(sent!.tool_choice, { type: 'tool', name: 'report_tips' });
+  // Strict tools reject an enum next to a ['string', 'null'] type (a nullable enum must be anyOf): walk the schema.
+  const walk = (node: unknown): void => {
+    if (!node || typeof node !== 'object') return;
+    const item = node as { enum?: unknown; type?: unknown };
+    assert.ok(!(item.enum && Array.isArray(item.type)), `enum with a type array: ${JSON.stringify(node)}`);
+    for (const value of Object.values(node)) walk(value);
+  };
+  walk((sent as unknown as { tools: unknown[] }).tools);
   assert.deepEqual(await reader.grade([], '2030-10-08'), []);
 });

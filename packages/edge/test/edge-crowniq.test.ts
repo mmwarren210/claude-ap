@@ -171,3 +171,10 @@ test('Goblin/Demon factors from distance to the regular line stay at or under th
   }
   assert.equal(alternateFactorFor('GOBLIN', null, .95, .65), .65, 'no regular on the board: the flat fallback');
 });
+
+test('a 1st-period line (sport OTHER) on the same game and stat never takes the full-game book price', () => {
+  const firstPeriod = line('p1', 24.5, { sport: 'OTHER' as PropLine['sport'], league: 'NHL1P', lineType: 'DEMON', availableDirections: ['MORE'] });
+  const result = priceBoard({ lines: [line('full', 24.5), firstPeriod], quotes: [quote('fanduel', 1.6, 2.4), quote('betrivers', 1.62, 2.35)], now });
+  assert.ok(result.picks.some((pick) => pick.lineId === 'full' && pick.sources.market));
+  assert.ok(!result.picks.some((pick) => pick.lineId === 'p1' && pick.sources.market), 'no full-game price on the 1st-period line');
+});

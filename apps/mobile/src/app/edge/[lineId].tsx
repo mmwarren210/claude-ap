@@ -52,8 +52,8 @@ export default function EdgeDetail() {
         <Text style={styles.link}>{inSlip ? '✓ In slip (tap to remove)' : '+ Add to slip'}</Text></Pressable>
     </View>
     <Section title="WHY">{pick.reasons.map((reason) => <Text key={reason} style={styles.text}>• {reason}</Text>)}</Section>
-    {pick.warnings.length > 0 && <Section title="CAUTION">{pick.warnings.map((warning) =>
-      <Text key={warning} style={styles.warning}>⚠ {warning}</Text>)}</Section>}
+    {pick.warnings.length > 0 && <Section title="GOOD TO KNOW">{pick.warnings.map((warning) =>
+      <Text key={warning} style={styles.muted}>• {warning}</Text>)}</Section>}
     <Section title="PROJECTION">
       {current?.distribution?.length ? <DistributionChart points={current.distribution} threshold={pick.threshold} side={pick.side} /> : null}
       <Text style={styles.text}>Mean {formatLine(pick.projection.mean)} · median {formatLine(pick.projection.median)} · SD {formatLine(pick.projection.sd)}</Text>

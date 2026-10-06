@@ -8,8 +8,6 @@ import { palette } from '../theme';
 export function EdgePickCard({ pick, rank, inSlip }: { pick: EdgePick; rank?: number; inSlip: boolean }) {
   const color = ratingColor(pick.rating, palette);
   const start = new Date(pick.eventStartTime);
-  // Payout-factor guidance is already in the summary line for alternates.
-  const warning = pick.warnings.find((item) => !item.includes('payout factor'));
   return <View style={styles.card}><Pressable accessibilityRole="button" accessibilityLabel={`Edge detail for ${pick.playerName}`}
     onPress={() => router.push({ pathname: '/edge/[lineId]', params: { lineId: pick.lineId, platform: pick.platform } })} style={styles.body}>
     <View style={styles.row}>
@@ -35,8 +33,7 @@ export function EdgePickCard({ pick, rank, inSlip }: { pick: EdgePick; rank?: nu
     <Text style={styles.edgeLine}>{lineComparison(pick)}</Text>
     {!!pick.stale && <Text style={styles.stale}>{pick.reasons[0]}</Text>}
     {!!elsewhereText(pick) && <Text style={styles.detail}>{elsewhereText(pick)}</Text>}
-    {!!pick.injury && <Text style={styles.warning}>Injury report: {pick.injury}</Text>}
-    {warning && <Text style={styles.warning}>⚠ {warning}</Text>}
+    {!!pick.injury && <Text style={styles.detail}>Injury report: {pick.injury}</Text>}
     </Pressable>
     <Pressable accessibilityRole="button" onPress={() => edgeSlip.toggle(pick)} style={[styles.slip, inSlip && styles.slipOn]}>
       <Text style={[styles.slipText, inSlip && styles.slipTextOn]}>{inSlip ? '✓ In slip' : '+ Add to slip'}</Text>

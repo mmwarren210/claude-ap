@@ -169,7 +169,9 @@ export function priceBoard(input: PricingInput): PricingResult {
   const excluded = new Set(input.excludeBooks ?? []);
   for (const quote of input.quotes ?? []) {
     if (excluded.has(quote.bookmaker)) continue;
-    const key = [quote.eventId, normalizePlayerName(quote.playerName), quote.market].join('|');
+    // The sport is part of the key: PrizePicks posts 1st-period/half lines (sport OTHER) on the same game id and stat name as
+    // the full-game line, and a full-game book price must never price them.
+    const key = [quote.sport, quote.eventId, normalizePlayerName(quote.playerName), quote.market].join('|');
     const group = quoteGroups.get(key) ?? new Map<string, MarketQuote>();
     const id = quote.bookmaker + '|' + quote.point;
     const existing = group.get(id);
@@ -180,7 +182,7 @@ export function priceBoard(input: PricingInput): PricingResult {
   const playerGroups = new Map<string, PropLine[]>();
   for (const line of input.lines) {
     if (Date.parse(line.eventStartTime) <= now) continue;
-    const key = [line.eventId, normalizePlayerName(line.playerName), line.market].join('|');
+    const key = [line.sport, line.eventId, normalizePlayerName(line.playerName), line.market].join('|');
     playerGroups.set(key, [...(playerGroups.get(key) ?? []), line]);
   }
 
@@ -363,9 +365,7 @@ export function priceBoard(input: PricingInput): PricingResult {
       if (review) warnings.push(`Held for review: a ${pct(edge!)} edge is bigger than real edges get; usually the sources disagree on the stat or game.`);
       if (best.payout.kind === 'ENTRY' && best.payout.blocked) warnings.push(best.payout.blocked);
       if (factor !== null && best.payout.kind === 'ENTRY' && (best.line.lineType === 'GOBLIN' || best.line.lineType === 'DEMON') && !input.sidePayout)
-        warnings.push(`${appName} sets each ${best.line.lineType === 'GOBLIN' ? 'Goblin' : 'Demon'}'s payout separately; Edge estimates ${factor}× ` +
-          `from how far it sits from the regular line, on the low side (${best.line.lineType === 'GOBLIN' ? 'the app may pay a bit more' : 'the app often pays more'}). ` +
-          `Worth it if the app's factor is at least ${round(reference / p, 2)}×. Power entries only.`);
+        warnings.push(`Payout ${factor}× is Edge's estimate (the app often pays a bit more); worth it at ${round(reference / p, 2)}× or better. Power only.`);
       if (factor === null && best.line.lineType !== 'REGULAR') warnings.push(
         `${best.line.lineType === 'UNKNOWN_ALTERNATE' ? 'Alternate' : best.line.lineType} payout factor is unknown: worth it only if its payout factor is at least ${round(reference / p, 2)}×.`);
       if (outcome.push > .04) warnings.push(`${pct(outcome.push)} chance of landing exactly on ${fmt(threshold)} (pick is removed).`);

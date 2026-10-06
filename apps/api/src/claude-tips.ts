@@ -19,7 +19,8 @@ const tipItem = {
     market: { type: 'string', enum: [...TIP_MARKETS],
       description: 'MONEYLINE for "ML"/to win; SPREAD for +1.5/-1.5 handicaps; TOTAL for over/under game totals; DOUBLE_CHANCE for "ML or Draw"; DRAW for a draw; PLAYER_PROP for a player stat.' },
     line: { ...nullable('number'), description: 'The handicap or total number (e.g. 1.5 or -1.5), else null.' },
-    side: { type: ['string', 'null'], enum: ['OVER', 'UNDER', null], description: 'For totals and props.' },
+    // A nullable enum has to be anyOf: an enum next to a ['string', 'null'] type is rejected by strict tools.
+    side: { anyOf: [{ type: 'string', enum: ['OVER', 'UNDER'] }, { type: 'null' }], description: 'For totals and props.' },
     stat: { ...nullable('string'), description: 'For player props, the stat (e.g. passing yards), else null.' },
     odds: { ...nullable('number'), description: 'American odds if the post shows them (e.g. -110, +150), else null. Never guess.' },
     eventDate: { ...nullable('string'), description: 'YYYY-MM-DD of the game if the post says (e.g. "Tuesday" → the coming Tuesday from today), else null.' },
