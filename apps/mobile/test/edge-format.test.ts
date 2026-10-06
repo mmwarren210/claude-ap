@@ -42,3 +42,14 @@ test('Edge line comparison and generator day windows', () => {
   assert.equal(tomorrow.from, today.to);
   assert.ok(Date.parse(today.from!) <= now && now < Date.parse(today.to!));
 });
+
+test('expected returns in dollars for the chosen entry', async () => {
+  const { slipDollars, usd } = await import('../src/edge-format.js');
+  assert.equal(usd(11.2), '$11.20');
+  assert.equal(usd(-0.6), '−$0.60');
+  assert.equal(usd(1250), '$1,250');
+  const dollars = slipDollars({ expectedReturn: 1.12, entry: { size: 6, payouts: { 6: 25, 5: 2, 4: 0.4 } } }, 10);
+  assert.ok(Math.abs(dollars.back - 11.2) < 1e-9);
+  assert.ok(Math.abs(dollars.profit - 1.2) < 1e-9);
+  assert.deepEqual(dollars.payouts.map((payout) => [payout.hits, payout.amount]), [[6, 250], [5, 20], [4, 4]]);
+});

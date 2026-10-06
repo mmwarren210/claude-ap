@@ -3,11 +3,12 @@ import type { EdgeEntry, EdgeGenResponse, EdgePick, EdgeSlip } from '@crowniq/co
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../auth';
-import { dayWindow, pct } from '../edge-format';
+import { dayWindow, pct, usd } from '../edge-format';
+import { useEdgeStake } from '../edge-stake';
 import { chosenDay, gameDays } from '../game-days';
 import { edgeSlip } from '../edge-slip';
 import { palette } from '../theme';
-import { SlipSummary } from './EdgeSlipPanel';
+import { SlipSummary, StakePicker } from './EdgeSlipPanel';
 import { DayPicker } from './ui/DayPicker';
 import { Notice } from './Screen';
 
@@ -23,6 +24,7 @@ export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: reado
   const [picked, setPicked] = useState<string | null>(null);
   const days = gameDays(starts, nowMs), day = chosenDay(picked, days, nowMs);
   const [busy, setBusy] = useState(false);
+  const stake = useEdgeStake();
   const [result, setResult] = useState<{ data: EdgeGenResponse | null; message: string } | null>(null);
   const sizes = entries.filter((entry) => entry.type === type).map((entry) => entry.size).sort((a, b) => a - b);
   const entry = entries.find((item) => item.type === type && item.size === size);
@@ -49,8 +51,9 @@ export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: reado
     <Chips options={[{ key: 'POWER', label: 'Power' }, { key: 'FLEX', label: 'Flex' }]} value={type}
       onChange={(value) => { setType(value); if (!entries.some((item) => item.type === value && item.size === size)) setSize(entries.find((item) => item.type === value)?.size ?? 2); }} />
     <Chips options={sizes.map((value) => ({ key: value, label: `${value} picks` }))} value={size} onChange={setSize} />
-    {entry && <Text style={styles.muted}>Pays {Object.entries(entry.payouts).sort((a, b) => Number(b[0]) - Number(a[0]))
-      .map(([hits, payout]) => `${hits}/${entry.size}: ${payout}×`).join(', ')} · each leg needs {pct(entry.breakEven)} to break even</Text>}
+    <StakePicker />
+    {entry && <Text style={styles.muted}>A {usd(stake)} entry pays {Object.entries(entry.payouts).sort((a, b) => Number(b[0]) - Number(a[0]))
+      .map(([hits, payout]) => `${hits}/${entry.size}: ${usd(payout * stake)}`).join(', ')} · each leg needs {pct(entry.breakEven)} to break even</Text>}
     <Label text="HOW MANY" />
     <Chips options={[1, 2, 3, 5].map((value) => ({ key: value, label: String(value) }))} value={count} onChange={setCount} />
     <Label text="WHEN" />

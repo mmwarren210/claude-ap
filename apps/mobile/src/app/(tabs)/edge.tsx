@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { EdgeBoardView } from '../../components/EdgeBoardView';
 import { EdgeGenView } from '../../components/EdgeGenView';
 import { EdgePickCard } from '../../components/EdgePickCard';
-import { EdgeSlipPanel, SlipSummary } from '../../components/EdgeSlipPanel';
+import { EdgeSlipPanel, SlipSummary, StakePicker } from '../../components/EdgeSlipPanel';
 import { Notice, Screen } from '../../components/Screen';
 import { pct, sportsFrom } from '../../edge-format';
 import { useEdgeSlip } from '../../edge-slip';
@@ -68,6 +68,7 @@ export default function EdgeScreen() {
       {view === 'edges' && data.slips.length > 0 && <View style={styles.section}>
         <Text style={styles.sectionTitle}>BEST ENTRIES</Text>
         <Text style={styles.sectionDetail}>Highest expected value using the strongest legs, one per player and at most two per game.</Text>
+        <StakePicker />
         {data.slips.slice(0, 2).map((item) => <View key={item.entry.type + item.entry.size + item.legs.map((leg) => leg.lineId).join()} style={styles.card}>
           <SlipSummary slip={item} /></View>)}
       </View>}

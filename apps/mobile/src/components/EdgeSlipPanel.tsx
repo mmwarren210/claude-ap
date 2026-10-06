@@ -1,22 +1,39 @@
 import { edgeSlipSchema } from '@crowniq/contracts';
 import type { EdgeEntry, EdgeSlip } from '@crowniq/contracts';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../auth';
-import { formatLine, marketLabel, pct } from '../edge-format';
+import { formatLine, marketLabel, pct, slipDollars, usd } from '../edge-format';
+import { edgeStake, STAKES, useEdgeStake } from '../edge-stake';
 import { edgeSlip, useEdgeSlip } from '../edge-slip';
 import { palette } from '../theme';
 
+/** Pick the entry amount Edge prices slips at ($5–$100 or your own). */
+export function StakePicker() {
+  const stake = useEdgeStake();
+  const [text, setText] = useState('');
+  return <View style={styles.stakeRow}>
+    <Text style={styles.label}>ENTRY</Text>
+    {STAKES.map((value) => <Pressable key={value} accessibilityRole="button" onPress={() => { edgeStake.set(value); setText(''); }}
+      style={[styles.chip, stake === value && styles.chipOn]}>
+      <Text style={[styles.chipText, stake === value && styles.chipTextOn]}>${value}</Text></Pressable>)}
+    <TextInput value={text} placeholder={STAKES.includes(stake) ? 'Other' : `$${stake}`} placeholderTextColor={palette.muted}
+      keyboardType="decimal-pad" maxLength={7} accessibilityLabel="Entry amount in dollars" style={styles.stakeInput}
+      onChangeText={(value) => { const clean = value.replace(/[^0-9.]/g, ''); setText(clean); const amount = Number(clean); if (amount > 0) edgeStake.set(amount); }} />
+  </View>;
+}
+
 export function SlipSummary({ slip, title }: { slip: EdgeSlip; title?: string }) {
-  const profit = slip.expectedProfit;
+  const stake = useEdgeStake();
+  const dollars = slipDollars(slip, stake), profit = dollars.profit;
   return <View style={styles.summary}>
     <Text style={styles.label}>{title ?? `${slip.entry.size}-PICK ${slip.entry.type}`}</Text>
     {slip.legs.map((leg) => <Text key={leg.lineId} style={styles.leg}>
       {pct(leg.probability, 0)} · {leg.playerName} {leg.side} {formatLine(leg.threshold)} {marketLabel(leg.market)}</Text>)}
     <Text style={[styles.ev, { color: profit > 0 ? palette.green : palette.danger }]}>
-      Expected return {(slip.expectedReturn * 100).toFixed(0)}¢ per $1 ({profit >= 0 ? '+' : '−'}{Math.abs(profit * 100).toFixed(1)}%)</Text>
-    <Text style={styles.small}>All legs hit {pct(slip.allHitProbability)} · pays {Object.entries(slip.entry.payouts)
-      .sort((a, b) => Number(b[0]) - Number(a[0])).map(([hits, payout]) => `${hits}/${slip.entry.size}: ${payout}×`).join(', ')}</Text>
+      {usd(stake)} entry · expected back {usd(dollars.back)} ({profit >= 0 ? '+' : ''}{usd(profit)} on average)</Text>
+    <Text style={styles.small}>All legs hit {pct(slip.allHitProbability)} · pays {dollars.payouts
+      .map((payout) => `${payout.hits}/${slip.entry.size}: ${usd(payout.amount)}`).join(', ')}</Text>
     {slip.warnings.map((warning) => <Text key={warning} style={styles.warning}>⚠ {warning}</Text>)}
   </View>;
 }
@@ -51,6 +68,7 @@ export function EdgeSlipPanel({ entries }: { entries: readonly EdgeEntry[] }) {
       <Pressable key={option} accessibilityRole="button" onPress={() => setType(option)}
         style={[styles.chip, type === option && styles.chipOn]}>
         <Text style={[styles.chipText, type === option && styles.chipTextOn]}>{option}</Text></Pressable>)}</View>
+    <StakePicker />
     {!supported && <Text style={styles.small}>{legs.length < 2 ? 'Add at least 2 legs.'
       : `No ${legs.length}-pick ${type.toLowerCase()} payout table is configured.`}</Text>}
     {supported && !current && <Text style={styles.small}>Pricing slip…</Text>}
@@ -71,6 +89,9 @@ const styles = StyleSheet.create({
   chipText: { color: palette.muted, fontSize: 12, fontWeight: '800' },
   chipTextOn: { color: palette.green },
   summary: { gap: 4 },
+  stakeRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
+  stakeInput: { minWidth: 64, borderWidth: 1, borderColor: palette.border, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4,
+    color: palette.text, fontSize: 12, fontWeight: '800' },
   label: { color: palette.muted, fontSize: 10, fontWeight: '900', letterSpacing: 1.2 },
   leg: { color: palette.text, fontSize: 13 },
   ev: { fontSize: 15, fontWeight: '900', marginTop: 2 },

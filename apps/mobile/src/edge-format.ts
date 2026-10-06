@@ -79,3 +79,17 @@ export function dayRange(choice: DayChoice, nowMs: number): { from?: string; to?
 export function lineComparison(pick: EdgePick): string {
   return `PP ${formatLine(pick.threshold)} · Edge line ${formatLine(pick.fairLine)}`;
 }
+
+/** Dollars, to the cent below $1,000 and whole dollars above ("$11.20", "$1,250"). */
+export function usd(value: number): string {
+  const amount = Math.abs(value);
+  const text = amount >= 1000 ? Math.round(amount).toLocaleString('en-US') : amount.toFixed(2);
+  return `${value < 0 ? '−' : ''}$${text}`;
+}
+
+/** An entry's expected result in dollars for a stake: what comes back on average, the profit, and each payout. */
+export function slipDollars(slip: { expectedReturn: number; entry: { size: number; payouts: Record<string, number> } }, stake: number) {
+  return { back: slip.expectedReturn * stake, profit: (slip.expectedReturn - 1) * stake,
+    payouts: Object.entries(slip.entry.payouts).sort((a, b) => Number(b[0]) - Number(a[0]))
+      .map(([hits, multiple]) => ({ hits: Number(hits), amount: multiple * stake })) };
+}
