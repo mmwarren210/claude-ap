@@ -105,7 +105,11 @@
   Top Picks, Board and Gen. It never reads GKR output and is never compared with GKR. Build plan: `docs/EDGE_2_SPEC.md`;
   what's live and how this branch differs from the reference: `docs/EDGE_ENGINE.md`. P1 is PrizePicks; P2 adds Underdog, DK Pick'em
   (edge null until `EDGE_PICK6_PAYOUTS_CONFIRMED`), DraftKings and Hard Rock, each against its own payout (leave-one-out). Snapshot store
-  in `node:sqlite`. `EDGE_ENGINE=false` turns it off.
+  in `node:sqlite`. `EDGE_ENGINE=false` turns it off. P3–P6 (movement/stale, evaluation, projection 2.0, correlated slips) and the
+  spec audit are live. Learned files in `${CROWNIQ_DATA_DIR}/edge/`: `edge-dispersion-v1.json`, `edge-book-weights-v1.json`, refit
+  daily. Owner diagnostics: `/v1/owner/edge/status|health|backtest|stale`.
+- **Memory:** the API needs more than Node's default 2 GB heap. The Dockerfile sets `NODE_OPTIONS=--max-old-space-size=6144`
+  (the service has 8 GB). Avoid `[...list, item]` growth inside loops over whole datasets.
 
 ## Checks
 
