@@ -33,5 +33,7 @@ COPY apps/api apps/api
 COPY --from=web /app/apps/mobile/dist apps/mobile/dist
 # Data files live on the host's permanent disk, mounted at /data.
 ENV NODE_ENV=production API_HOST=0.0.0.0 CROWNIQ_DATA_DIR=/data
+# The service has 8 GB; Node's default 2 GB heap was too small once Edge prices five platforms.
+ENV NODE_OPTIONS=--max-old-space-size=6144
 EXPOSE 3000
 CMD ["npm", "run", "start", "-w", "@crowniq/api"]

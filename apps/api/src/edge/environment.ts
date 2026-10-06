@@ -35,8 +35,9 @@ export class GameEnvironment {
     }
     for (const game of byGame.values()) {
       if (game.total === undefined || game.spread === undefined) continue;
-      this.games.set(game.league, [...this.games.get(game.league) ?? [], { home: game.home, away: game.away, start: game.start,
-        total: game.total, spread: game.spread }]);
+      const list = this.games.get(game.league) ?? [];
+      list.push({ home: game.home, away: game.away, start: game.start, total: game.total, spread: game.spread });
+      this.games.set(game.league, list);
     }
     for (const [league, games] of this.games) if (games.length >= 4)
       this.baselines.set(league, median(games.flatMap((game) => [game.total / 2 - game.spread / 2, game.total / 2 + game.spread / 2])));
@@ -79,17 +80,27 @@ export function restEffects(players: Iterable<{ sport: string; rows: readonly St
   const ratios = new Map<string, number[]>();
   for (const { sport, rows } of players) {
     if (sport !== 'NBA' && sport !== 'WNBA' && sport !== 'NHL') continue;
+    if (rows.length < 10) continue;
     const sorted = [...rows].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
-    const markets = new Set(sorted.flatMap((row) => Object.keys(row.marketValues ?? {})));
+    const times = sorted.map((row) => Date.parse(row.occurredAt));
+    const markets = new Set<string>();
+    for (const row of sorted) for (const market in row.marketValues ?? {}) markets.add(market);
     for (const market of markets) {
-      const values = sorted.map((row) => ({ at: Date.parse(row.occurredAt), value: row.marketValues?.[market] }))
-        .filter((item): item is { at: number; value: number } => Number.isFinite(item.value));
-      if (values.length < 10) continue;
-      const mean = values.reduce((sum, item) => sum + item.value, 0) / values.length;
-      if (mean <= 0) continue;
-      for (let index = 1; index < values.length; index++)
-        if (values[index]!.at - values[index - 1]!.at < 30 * 3600_000)
-          ratios.set(`${sport}:${market}`, [...ratios.get(`${sport}:${market}`) ?? [], values[index]!.value / mean]);
+      let sum = 0, count = 0;
+      for (const row of sorted) { const value = row.marketValues?.[market]; if (Number.isFinite(value)) { sum += value!; count++; } }
+      if (count < 10 || sum <= 0) continue;
+      const mean = sum / count, key = `${sport}:${market}`;
+      let list = ratios.get(key);
+      let previous: number | null = null;
+      for (let index = 0; index < sorted.length; index++) {
+        const value = sorted[index]!.marketValues?.[market];
+        if (!Number.isFinite(value)) continue;
+        if (previous !== null && times[index]! - previous < 30 * 3600_000) {
+          if (!list) { list = []; ratios.set(key, list); }
+          list.push(value! / mean);
+        }
+        previous = times[index]!;
+      }
     }
   }
   const effects = new Map<string, RestEffect>();

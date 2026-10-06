@@ -270,7 +270,7 @@ export class EdgeLedger {
       const decided = (await this.read()).picks.filter((pick) => (pick.outcome === 'WIN' || pick.outcome === 'LOSS') && pick.edge !== null);
       const groups = new Map<string, TrackedEdgePick[]>();
       for (const pick of decided) for (const key of [pick.stale ? 'STALE' : pick.tier, `${pick.platform}:${pick.tier}`])
-        groups.set(key, [...groups.get(key) ?? [], pick]);
+        { const list = groups.get(key); if (list) list.push(pick); else groups.set(key, [pick]); }
       const weak = new Set<string>();
       for (const [key, list] of groups) {
         if (list.length < minimum) continue;
