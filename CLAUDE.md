@@ -103,8 +103,8 @@
 
 - **CrownIQ Edge (Edge 2.0)**: a standalone engine (`packages/edge`, `apps/api/src/edge/`, mobile Edge tab) with its own
   Top Picks, Board and Gen. It never reads GKR output and is never compared with GKR. Build plan: `docs/EDGE_2_SPEC.md`;
-  what's live and how this branch differs from the reference: `docs/EDGE_ENGINE.md`. P1 is PrizePicks (scraped board +
-  SharpAPI PrizePicks lines, SharpAPI book prices leave-one-out, internal history + shared History values). Snapshot store
+  what's live and how this branch differs from the reference: `docs/EDGE_ENGINE.md`. P1 is PrizePicks; P2 adds Underdog, DK Pick'em
+  (edge null until `EDGE_PICK6_PAYOUTS_CONFIRMED`), DraftKings and Hard Rock, each against its own payout (leave-one-out). Snapshot store
   in `node:sqlite`. `EDGE_ENGINE=false` turns it off.
 
 ## Checks

@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { useAuth } from '../auth';
 import { dayWindow, pct, usd } from '../edge-format';
 import { useEdgeStake } from '../edge-stake';
+import { isBook, useEdgePlatform } from '../edge-platform';
 import { chosenDay, gameDays } from '../game-days';
 import { edgeSlip } from '../edge-slip';
 import { palette } from '../theme';
@@ -16,8 +17,11 @@ import { Notice } from './Screen';
 export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: readonly EdgeEntry[]; sports: readonly string[];
   nowMs: number; starts: readonly string[] }) {
   const { request } = useAuth();
-  const [type, setType] = useState<'POWER' | 'FLEX'>('POWER');
-  const [size, setSize] = useState(3);
+  const platform = useEdgePlatform(), book = isBook(platform);
+  const types = [...new Set(entries.map((item) => item.type))];
+  const [chosenType, setType] = useState<'POWER' | 'FLEX' | 'PARLAY'>('POWER');
+  const type = types.includes(chosenType) ? chosenType : types[0] ?? 'POWER';
+  const [chosenSize, setSize] = useState(3);
   const [count, setCount] = useState(3);
   const [sport, setSport] = useState<string | null>(null);
   // The game day to build from (today, else the soonest day with games; "All days" turns it off).
@@ -27,12 +31,13 @@ export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: reado
   const stake = useEdgeStake();
   const [result, setResult] = useState<{ data: EdgeGenResponse | null; message: string } | null>(null);
   const sizes = entries.filter((entry) => entry.type === type).map((entry) => entry.size).sort((a, b) => a - b);
+  const size = sizes.includes(chosenSize) ? chosenSize : sizes[0] ?? 2;
   const entry = entries.find((item) => item.type === type && item.size === size);
   const generate = async () => {
     setBusy(true);
     try {
       const response = await request('/v1/edge/gen', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ type, size, count, ...(sport ? { sport } : {}), ...dayWindow(day) }) });
+        body: JSON.stringify({ platform, type, size, count, ...(sport ? { sport } : {}), ...dayWindow(day) }) });
       if (!response.ok) { setResult({ data: null, message: response.status === 422 ? 'That entry size has no payout table configured.' : 'Could not generate entries.' }); return; }
       setResult({ data: edgeGenResponseSchema.parse(await response.json()), message: '' });
     } catch { setResult({ data: null, message: 'Could not generate entries.' }); }
@@ -40,20 +45,21 @@ export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: reado
   };
   const loadEntry = async (slip: EdgeSlip) => {
     const picks = await Promise.all(slip.legs.map(async (leg) => {
-      const response = await request('/v1/edge/line/' + encodeURIComponent(leg.lineId));
+      const response = await request('/v1/edge/line/' + encodeURIComponent(leg.lineId) + `?platform=${platform}`);
       return response.ok ? edgePickSchema.parse((await response.json()).pick) : null;
     }));
     edgeSlip.set(picks.filter((pick): pick is EdgePick => !!pick));
   };
   return <View style={styles.wrap}>
-    <Text style={styles.intro}>Builds entries from Edge&apos;s own +EV reads: one leg per player, at most two per game, at least two games, and no leg reused across entries.</Text>
+    <Text style={styles.intro}>Builds entries from Edge&apos;s own +EV reads: one leg per player, at most two per game{book ? '' : ', at least two games'}, and no leg reused across entries.</Text>
     <Label text="ENTRY" />
-    <Chips options={[{ key: 'POWER', label: 'Power' }, { key: 'FLEX', label: 'Flex' }]} value={type}
-      onChange={(value) => { setType(value); if (!entries.some((item) => item.type === value && item.size === size)) setSize(entries.find((item) => item.type === value)?.size ?? 2); }} />
-    <Chips options={sizes.map((value) => ({ key: value, label: `${value} picks` }))} value={size} onChange={setSize} />
+    {types.length > 1 && <Chips options={types.map((value) => ({ key: value, label: value === 'PARLAY' ? 'Parlay'
+      : value === 'POWER' ? platform === 'underdog' ? 'Standard' : 'Power' : 'Flex' }))} value={type} onChange={setType} />}
+    <Chips options={sizes.map((value) => ({ key: value, label: `${value} ${book ? 'legs' : 'picks'}` }))} value={size} onChange={setSize} />
     <StakePicker />
-    {entry && <Text style={styles.muted}>A {usd(stake)} entry pays {Object.entries(entry.payouts).sort((a, b) => Number(b[0]) - Number(a[0]))
-      .map(([hits, payout]) => `${hits}/${entry.size}: ${usd(payout * stake)}`).join(', ')} · each leg needs {pct(entry.breakEven)} to break even</Text>}
+    {entry && (book ? <Text style={styles.muted}>A {usd(stake)} parlay pays the legs’ odds multiplied together, only if all {entry.size} win.</Text>
+      : <Text style={styles.muted}>A {usd(stake)} entry pays {Object.entries(entry.payouts).sort((a, b) => Number(b[0]) - Number(a[0]))
+      .map(([hits, payout]) => `${hits}/${entry.size}: ${usd(payout * stake)}`).join(', ')}{platform === 'underdog' ? ' (times each pick’s multiplier)' : ''} · each leg needs {pct(entry.breakEven)} to break even</Text>)}
     <Label text="HOW MANY" />
     <Chips options={[1, 2, 3, 5].map((value) => ({ key: value, label: String(value) }))} value={count} onChange={setCount} />
     <Label text="WHEN" />

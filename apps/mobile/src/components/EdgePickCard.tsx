@@ -11,7 +11,7 @@ export function EdgePickCard({ pick, rank, inSlip }: { pick: EdgePick; rank?: nu
   // Payout-factor guidance is already in the summary line for alternates.
   const warning = pick.warnings.find((item) => !item.includes('payout factor'));
   return <View style={styles.card}><Pressable accessibilityRole="button" accessibilityLabel={`Edge detail for ${pick.playerName}`}
-    onPress={() => router.push({ pathname: '/edge/[lineId]', params: { lineId: pick.lineId } })} style={styles.body}>
+    onPress={() => router.push({ pathname: '/edge/[lineId]', params: { lineId: pick.lineId, platform: pick.platform } })} style={styles.body}>
     <View style={styles.row}>
       <Text style={styles.eyebrow}>{rank ? `#${rank} · ` : ''}{pick.sport} · {tierLabel[pick.tier]}
         {pick.lineType !== 'REGULAR' ? ` · ${pick.lineType === 'UNKNOWN_ALTERNATE' ? 'ALT' : pick.lineType}` : ''}</Text>

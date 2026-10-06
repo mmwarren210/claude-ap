@@ -37,8 +37,14 @@ export function headline(pick: EdgePick): string {
   return `${pick.side} ${formatLine(pick.threshold)} ${marketLabel(pick.market)}`;
 }
 
+/** American odds for decimal odds ("+150", "−120"). */
+export const americanOdds = (decimal: number) => decimal >= 2 ? `+${Math.round((decimal - 1) * 100)}` : `−${Math.round(100 / (decimal - 1))}`;
+
 export function edgeSummary(pick: EdgePick): string {
-  if (pick.edge !== null) return `${pct(pick.probability)} to hit · ${signedPoints(pick.edge)} pts vs ${pct(pick.breakEven)} break-even`;
+  if (pick.decimalOdds && pick.ev !== undefined) return `${pct(pick.probability)} to hit at ${americanOdds(pick.decimalOdds)} · EV ${
+    pick.ev >= 0 ? '+' : '−'}${Math.abs(pick.ev * 100).toFixed(1)}% · bet ${pct(pick.kelly ?? 0)} of bankroll (¼ Kelly)`;
+  if (pick.edge !== null) return `${pct(pick.probability)} to hit · ${signedPoints(pick.edge)} pts vs ${pct(pick.breakEven)} break-even` +
+    (pick.payoutMultiplier && pick.payoutMultiplier !== 1 ? ` (pays ${pick.payoutMultiplier}×)` : '');
   return `${pct(pick.probability)} to hit · needs payout factor ≥ ${pick.requiredPayoutFactor.toFixed(2)}×`;
 }
 
@@ -75,9 +81,10 @@ export function dayRange(choice: DayChoice, nowMs: number): { from?: string; to?
   return { from: start.toISOString(), to: end.toISOString() };
 }
 
-/** "PP 24.5 · Edge 26.5" — the PrizePicks number beside the number Edge would set. */
+const shortNames: Readonly<Record<string, string>> = { prizepicks: 'PP', underdog: 'UD', pick6: 'P6', draftkings: 'DK', hardrock: 'HR' };
+/** "PP 24.5 · Edge line 26.5": the platform's number beside the number Edge would set. */
 export function lineComparison(pick: EdgePick): string {
-  return `PP ${formatLine(pick.threshold)} · Edge line ${formatLine(pick.fairLine)}`;
+  return `${shortNames[pick.platform] ?? 'PP'} ${formatLine(pick.threshold)} · Edge line ${formatLine(pick.fairLine)}`;
 }
 
 /** Dollars, to the cent below $1,000 and whole dollars above ("$11.20", "$1,250"). */

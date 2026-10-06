@@ -6,6 +6,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../auth';
 import { formatLine, marketLabel, pct, ratingColor, ratingLabel, tierLabel } from '../edge-format';
 import { edgeSlip, useEdgeSlip } from '../edge-slip';
+import { platformShort, useEdgePlatform } from '../edge-platform';
 import { palette } from '../theme';
 import { Notice } from './Screen';
 
@@ -20,6 +21,7 @@ const PAGE = 60;
 /** Every line on the board with Edge's read, including lines GKR skips and lines Edge cannot read. */
 export function EdgeBoardView() {
   const { request } = useAuth();
+  const platform = useEdgePlatform();
   const slip = useEdgeSlip();
   const [sport, setSport] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
@@ -27,10 +29,10 @@ export function EdgeBoardView() {
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(PAGE);
   const [state, setState] = useState<{ key: string; rows: EdgeBoardRow[]; total: number; sports: string[]; message: string } | null>(null);
-  const key = JSON.stringify([sport, filter, sort, search.trim(), limit]);
+  const key = JSON.stringify([platform, sport, filter, sort, search.trim(), limit]);
   useEffect(() => {
     let active = true;
-    const params = new URLSearchParams({ filter, sort, limit: String(Math.min(limit, 200)) });
+    const params = new URLSearchParams({ platform, filter, sort, limit: String(Math.min(limit, 200)) });
     if (sport) params.set('sport', sport);
     if (search.trim()) params.set('q', search.trim());
     const timer = setTimeout(() => {
@@ -42,7 +44,7 @@ export function EdgeBoardView() {
       }).catch(() => { if (active) setState({ key, rows: [], total: 0, sports: [], message: 'Could not load the Edge board.' }); });
     }, search ? 250 : 0);
     return () => { active = false; clearTimeout(timer); };
-  }, [filter, key, limit, request, search, sort, sport]);
+  }, [filter, key, limit, request, search, sort, sport, platform]);
   const inSlip = new Set(slip.map((leg) => leg.lineId));
   const current = state; // keep the previous page visible while a new query loads
   return <View style={styles.wrap}>
@@ -61,7 +63,7 @@ export function EdgeBoardView() {
           : <View key={row.line.lineId} style={[styles.row, styles.noRead]}>
             <View style={styles.rowMain}>
               <Text style={styles.name}>{row.line.playerName}</Text>
-              <Text style={styles.line}>PP {formatLine(row.line.threshold)} {marketLabel(row.line.market)}{row.line.lineType !== 'REGULAR' ? ` · ${row.line.lineType === 'UNKNOWN_ALTERNATE' ? 'ALT' : row.line.lineType}` : ''}</Text>
+              <Text style={styles.line}>{platformShort(row.line.platform)} {formatLine(row.line.threshold)} {marketLabel(row.line.market)}{row.line.lineType !== 'REGULAR' ? ` · ${row.line.lineType === 'UNKNOWN_ALTERNATE' ? 'ALT' : row.line.lineType}` : ''}</Text>
               <Text style={styles.muted}>{row.line.sport} · {row.line.eventName}</Text>
               <Text style={styles.muted}>{row.line.note}</Text>
             </View>
@@ -80,16 +82,16 @@ function PickRow({ row, inSlip }: { row: Extract<EdgeBoardRow, { kind: 'PICK' }>
   const pick = row.pick, color = ratingColor(pick.rating, palette);
   return <View style={styles.row}>
     <Pressable accessibilityRole="button" accessibilityLabel={`Edge detail for ${pick.playerName}`} style={styles.rowMain}
-      onPress={() => router.push({ pathname: '/edge/[lineId]', params: { lineId: pick.lineId } })}>
+      onPress={() => router.push({ pathname: '/edge/[lineId]', params: { lineId: pick.lineId, platform: pick.platform } })}>
       <Text style={styles.name}>{pick.playerName}</Text>
-      <Text style={styles.line}>{marketLabel(pick.market)} · PP {formatLine(pick.threshold)} · Edge {formatLine(pick.fairLine)}</Text>
+      <Text style={styles.line}>{marketLabel(pick.market)} · {platformShort(pick.platform)} {formatLine(pick.threshold)} · Edge {formatLine(pick.fairLine)}</Text>
       <Text style={styles.muted}>{pick.sport} · {tierLabel[pick.tier]}{pick.lineType !== 'REGULAR' ? ` · ${pick.lineType === 'UNKNOWN_ALTERNATE' ? 'ALT' : pick.lineType}` : ''}</Text>
       {pick.reasons[0] && <Text style={styles.muted} numberOfLines={2}>{pick.reasons[0]}</Text>}
     </Pressable>
     <View style={styles.side}>
       <Text style={[styles.call, { color: pick.edge !== null && pick.rating !== 'NONE' ? color : palette.text }]}>{pick.side}</Text>
       <Text style={styles.hit}>{pct(pick.probability, 0)}</Text>
-      <Text style={[styles.rating, { color: pick.edge === null ? palette.muted : color }]}>{pick.edge === null ? `≥${pick.requiredPayoutFactor.toFixed(2)}×` : ratingLabel[pick.rating]}</Text>
+      <Text style={[styles.rating, { color: pick.edge === null ? palette.muted : color }]}>{pick.ev !== undefined ? `EV ${pick.ev >= 0 ? '+' : '−'}${Math.abs(pick.ev * 100).toFixed(1)}%` : pick.edge === null ? `≥${pick.requiredPayoutFactor.toFixed(2)}×` : ratingLabel[pick.rating]}</Text>
       <Pressable accessibilityRole="button" onPress={() => edgeSlip.toggle(pick)} style={[styles.add, inSlip && styles.addOn]}>
         <Text style={[styles.addText, inSlip && { color: palette.green }]}>{inSlip ? '✓' : '+'}</Text></Pressable>
     </View>

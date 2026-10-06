@@ -1,7 +1,7 @@
 import type { EdgeEntry } from '@crowniq/contracts';
 
 export interface EntryDefinition {
-  readonly type: 'POWER' | 'FLEX';
+  readonly type: 'POWER' | 'FLEX' | 'PARLAY';
   readonly size: number;
   /** payouts[k] = multiple of the stake returned when exactly k legs hit. */
   readonly payouts: Readonly<Record<number, number>>;
@@ -32,6 +32,13 @@ export function entriesFromTables(tables: Readonly<Partial<Record<'POWER' | 'FLE
     if (Object.keys(payouts).length) out.push({ type, size: Number(size), payouts });
   }
   return out;
+}
+
+/** Sportsbook parlays of 2..max legs: the all-hit payout is the product of the legs' decimal odds (each leg carries its own
+ * odds as its multiplier), so the table itself pays 1× on all legs hitting. */
+export function parlayEntries(max: number): EntryDefinition[] {
+  return Array.from({ length: Math.max(0, max - 1) }, (_, index) => ({ type: 'PARLAY' as const, size: index + 2,
+    payouts: { [index + 2]: 1 } }));
 }
 
 /** Exact distribution of the number of hits for independent legs (Poisson binomial). */

@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../auth';
 import { formatLine, marketLabel, pct, slipDollars, usd } from '../edge-format';
 import { edgeStake, STAKES, useEdgeStake } from '../edge-stake';
+import { isBook, platformLabel, useEdgePlatform } from '../edge-platform';
 import { edgeSlip, useEdgeSlip } from '../edge-slip';
 import { palette } from '../theme';
 
@@ -26,14 +27,17 @@ export function StakePicker() {
 export function SlipSummary({ slip, title }: { slip: EdgeSlip; title?: string }) {
   const stake = useEdgeStake();
   const dollars = slipDollars(slip, stake), profit = dollars.profit;
+  // Each leg's own multiplier (an app's per-pick payout, or a parlay leg's odds) scales every payout.
+  const boost = slip.legs.reduce((product, leg) => product * (leg.payoutMultiplier ?? 1), 1);
   return <View style={styles.summary}>
     <Text style={styles.label}>{title ?? `${slip.entry.size}-PICK ${slip.entry.type}`}</Text>
     {slip.legs.map((leg) => <Text key={leg.lineId} style={styles.leg}>
-      {pct(leg.probability, 0)} · {leg.playerName} {leg.side} {formatLine(leg.threshold)} {marketLabel(leg.market)}</Text>)}
+      {pct(leg.probability, 0)} · {leg.playerName} {leg.side} {formatLine(leg.threshold)} {marketLabel(leg.market)}
+      {leg.payoutMultiplier && leg.payoutMultiplier !== 1 ? ` · ${leg.payoutMultiplier}×` : ''}</Text>)}
     <Text style={[styles.ev, { color: profit > 0 ? palette.green : palette.danger }]}>
       {usd(stake)} entry · expected back {usd(dollars.back)} ({profit >= 0 ? '+' : ''}{usd(profit)} on average)</Text>
     <Text style={styles.small}>All legs hit {pct(slip.allHitProbability)} · pays {dollars.payouts
-      .map((payout) => `${payout.hits}/${slip.entry.size}: ${usd(payout.amount)}`).join(', ')}</Text>
+      .map((payout) => `${payout.hits}/${slip.entry.size}: ${usd(payout.amount * boost)}`).join(', ')}</Text>
     {slip.warnings.map((warning) => <Text key={warning} style={styles.warning}>⚠ {warning}</Text>)}
   </View>;
 }
@@ -41,22 +45,25 @@ export function SlipSummary({ slip, title }: { slip: EdgeSlip; title?: string })
 export function EdgeSlipPanel({ entries }: { entries: readonly EdgeEntry[] }) {
   const { request } = useAuth();
   const legs = useEdgeSlip();
-  const [type, setType] = useState<'POWER' | 'FLEX'>('POWER');
+  const platform = useEdgePlatform();
+  const types = [...new Set(entries.map((entry) => entry.type))];
+  const [chosen, setType] = useState<'POWER' | 'FLEX' | 'PARLAY'>('POWER');
+  const type = types.includes(chosen) ? chosen : types[0] ?? 'POWER';
   const [result, setResult] = useState<{ key: string; slip: EdgeSlip | null; message: string } | null>(null);
   const supported = entries.some((entry) => entry.type === type && entry.size === legs.length);
-  const key = JSON.stringify([type, legs.map((leg) => leg.lineId)]);
+  const key = JSON.stringify([platform, type, legs.map((leg) => leg.lineId)]);
   useEffect(() => {
     if (!supported) return;
     let active = true;
     void request('/v1/edge/slip', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ type, lineIds: legs.map((leg) => leg.lineId) }) })
+      body: JSON.stringify({ platform, type, lineIds: legs.map((leg) => leg.lineId) }) })
       .then(async (response) => {
         if (!active) return;
         if (!response.ok) { setResult({ key, slip: null, message: 'Could not price this slip; a line may have expired.' }); return; }
         setResult({ key, slip: edgeSlipSchema.parse((await response.json()).slip), message: '' });
       }).catch(() => { if (active) setResult({ key, slip: null, message: 'Could not price this slip.' }); });
     return () => { active = false; };
-  }, [key, legs, request, supported, type]);
+  }, [key, legs, request, supported, type, platform]);
   if (!legs.length) return null;
   const current = result?.key === key ? result : null;
   return <View style={styles.panel}>
@@ -64,17 +71,19 @@ export function EdgeSlipPanel({ entries }: { entries: readonly EdgeEntry[] }) {
       <Text style={styles.title}>MY SLIP · {legs.length} {legs.length === 1 ? 'LEG' : 'LEGS'}</Text>
       <Pressable accessibilityRole="button" onPress={() => edgeSlip.clear()}><Text style={styles.clear}>Clear</Text></Pressable>
     </View>
-    <View style={styles.toggle}>{(['POWER', 'FLEX'] as const).map((option) =>
+    <View style={styles.toggle}>{types.map((option) =>
       <Pressable key={option} accessibilityRole="button" onPress={() => setType(option)}
         style={[styles.chip, type === option && styles.chipOn]}>
-        <Text style={[styles.chipText, type === option && styles.chipTextOn]}>{option}</Text></Pressable>)}</View>
+        <Text style={[styles.chipText, type === option && styles.chipTextOn]}>{option === 'PARLAY' ? 'Parlay' : option === 'POWER'
+          ? platform === 'underdog' ? 'Standard' : 'Power' : 'Flex'}</Text></Pressable>)}</View>
     <StakePicker />
     {!supported && <Text style={styles.small}>{legs.length < 2 ? 'Add at least 2 legs.'
       : `No ${legs.length}-pick ${type.toLowerCase()} payout table is configured.`}</Text>}
     {supported && !current && <Text style={styles.small}>Pricing slip…</Text>}
     {current?.slip && <SlipSummary slip={current.slip} title="EXPECTED VALUE" />}
     {current?.message ? <Text style={styles.warning}>{current.message}</Text> : null}
-    <Text style={styles.small}>Payouts are CrownIQ defaults; confirm them in the PrizePicks app. Same-game legs are correlated.</Text>
+    <Text style={styles.small}>{isBook(platform) ? 'A parlay pays only if every leg wins; each leg also works as a single bet.'
+      : `Payouts are ${platformLabel(platform)}’s chart as CrownIQ keeps it; confirm in the app.`} Same-game legs are correlated.</Text>
   </View>;
 }
 

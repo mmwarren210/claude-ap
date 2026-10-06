@@ -171,3 +171,21 @@ New in P1:
 **Owner changes after P1 (2026-10-06):** Kalshi and Polymarket are removed from the app, so Edge 2.0 covers five
 platforms: PrizePicks, Underdog, DK Pick'em, DraftKings and Hard Rock. The spec's Kalshi/Polymarket sections (§1.1b,
 §2.5, §4) no longer apply. BetRivers joins the SharpAPI books as a price source (data only, no tab).
+
+### P2 (2026-10-06): every platform, each with its own payout math
+
+Edge prices five platforms in one pass (`apps/api/src/edge/service.ts`, `platform-lines.ts`), and the app's Edge tab has a
+platform chip for each:
+
+| Platform | Lines | A side's bar | Entries |
+| --- | --- | --- | --- |
+| PrizePicks | Scraped board + SharpAPI PrizePicks lines | Entry break-even (Goblin/Demon ÷ owner-set factor, else no edge) | Power 2–6, Flex 2–6 (app chart) |
+| Underdog | Scraped board, each side's multiplier | Entry break-even ÷ the pick's multiplier | Standard 2–8, Flex 3–8 (app chart × each pick's multiplier) |
+| DK Pick'em | Scraped board, each side's multiplier; gimmes never ranked | No public chart: chance shown, edge null until the owner sets `EDGE_PICK6_PAYOUTS_CONFIRMED=true` (tables in `CROWNIQ_PAYOUTS`) | Power 2–6 once confirmed |
+| DraftKings | SharpAPI prices, every rung | 1 ÷ decimal odds; EV = p × odds − 1; quarter-Kelly stake capped at 2% | Parlays 2–8 |
+| Hard Rock | SharpAPI prices, every rung | Same as DraftKings | Parlays 2–20 |
+
+- Leave-one-out: a platform's own book never counts toward its fair price, and pick'em rows never count as prices.
+- An edge above 15 points is held for review and never ranked (spec §6).
+- Slip EV multiplies the entry's payout by each leg's own multiplier (an app pick's payout, or a parlay leg's odds).
+- `/v1/edge`, `/board`, `/gen`, `/line/:id`, `/player/:id` and `/slip` take `platform` (default `prizepicks`).

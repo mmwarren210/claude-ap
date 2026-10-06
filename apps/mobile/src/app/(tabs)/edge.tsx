@@ -10,6 +10,7 @@ import { useEdgeSlip } from '../../edge-slip';
 import { palette } from '../../theme';
 import { useBoard } from '../../use-board';
 import { useEdge } from '../../use-edge';
+import { edgePlatform, EDGE_PLATFORMS, isBook, platformLabel, useEdgePlatform } from '../../edge-platform';
 import type { EdgeView } from '../../use-edge';
 
 const views: { key: EdgeView; label: string }[] = [
@@ -22,7 +23,10 @@ const sections: { key: Section; label: string }[] = [
 
 export default function EdgeScreen() {
   const [section, setSection] = useState<Section>('top');
-  const [view, setView] = useState<EdgeView>('edges');
+  const [chosenView, setView] = useState<EdgeView>('edges');
+  const platform = useEdgePlatform(), book = isBook(platform);
+  // Goblins and Demons are PrizePicks only.
+  const view: EdgeView = platform === 'prizepicks' ? chosenView : 'edges';
   const [sport, setSport] = useState<string | null>(null);
   const { status, data, message, retry } = useEdge(view);
   const slip = useEdgeSlip();
@@ -31,8 +35,12 @@ export default function EdgeScreen() {
   const sports = sportsFrom(live);
   const picks = live.filter((pick) => !sport || pick.sport === sport).slice(0, 100);
   const inSlip = new Set(slip.map((leg) => leg.lineId));
-  return <Screen eyebrow="CROWNIQ  /  EDGE  /  PRIZEPICKS" title="Edge">
-    <Text style={styles.intro}>CrownIQ&apos;s own probability engine. It reads every PrizePicks line, sets its own line, and picks the side that beats the payout. Lines it can&apos;t read say exactly what&apos;s missing.</Text>
+  return <Screen eyebrow={`CROWNIQ  /  EDGE  /  ${platformLabel(platform).toUpperCase()}`} title="Edge">
+    <Text style={styles.intro}>CrownIQ&apos;s own probability engine. It reads every line on each app and book, sets its own line, and picks the side that beats that platform&apos;s payout. Lines it can&apos;t read say exactly what&apos;s missing.</Text>
+    <View style={styles.chips}>{EDGE_PLATFORMS.map((item) => <Pressable key={item.value} accessibilityRole="button"
+      accessibilityState={{ selected: platform === item.value }} onPress={() => { edgePlatform.set(item.value); setSport(null); }}
+      style={[styles.chip, platform === item.value && styles.chipOn]}>
+      <Text style={[styles.chipText, platform === item.value && styles.chipTextOn]}>{item.label}</Text></Pressable>)}</View>
     <View style={styles.segments}>{sections.map((item) => <Pressable key={item.key} accessibilityRole="tab"
       accessibilityState={{ selected: section === item.key }} onPress={() => setSection(item.key)}
       style={[styles.segment, section === item.key && styles.segmentOn]}>
@@ -41,9 +49,9 @@ export default function EdgeScreen() {
       : section === 'gen' ? data ? <><EdgeGenView entries={data.entries} sports={sports} nowMs={nowMs} starts={live.map((pick) => pick.eventStartTime)} /><EdgeSlipPanel entries={data.entries} /></>
         : <Notice title={status === 'loading' ? 'Pricing the board' : 'Edge pending'} detail={message || 'Reading the saved board.'} />
       : <>
-    <View style={styles.chips}>{views.map((item) => <Pressable key={item.key} accessibilityRole="button"
+    {platform === 'prizepicks' && <View style={styles.chips}>{views.map((item) => <Pressable key={item.key} accessibilityRole="button"
       onPress={() => setView(item.key)} style={[styles.chip, view === item.key && styles.chipOn]}>
-      <Text style={[styles.chipText, view === item.key && styles.chipTextOn]}>{item.label}</Text></Pressable>)}</View>
+      <Text style={[styles.chipText, view === item.key && styles.chipTextOn]}>{item.label}</Text></Pressable>)}</View>}
     {!data ? <>
       <Notice title={status === 'loading' ? 'Pricing the board' : 'Edge pending'}
         detail={message || 'Reading the saved board and sportsbook prices.'} />
@@ -53,9 +61,10 @@ export default function EdgeScreen() {
         <Stat label="Priced" value={String(data.counts.linesPriced)} />
         <Stat label="+EV lines" value={String(data.counts.positiveEdge)} />
         <Stat label="Sharp-priced" value={String(data.counts.sharp)} />
-        <Stat label="Break-even" value={pct(data.referenceEntry.breakEven)} />
+        {!book && <Stat label="Break-even" value={pct(data.referenceEntry.breakEven)} />}
       </View>
-      <Text style={styles.meta}>Break-even is the {data.referenceEntry.size}-pick {data.referenceEntry.type.toLowerCase()} entry.
+      <Text style={styles.meta}>{book ? 'Each bet is held against its own odds (it needs 1 ÷ the odds to break even), priced from the other books.'
+        : `Break-even is the ${data.referenceEntry.size}-pick ${data.referenceEntry.type.toLowerCase()} entry${platform === 'prizepicks' ? '' : ', divided by each pick’s own multiplier'}.`}
         {' '}{data.calibration.status === 'CALIBRATED' ? `Calibrated on ${data.calibration.graded} graded picks.`
           : `Uncalibrated: ${data.calibration.graded} graded picks so far (calibration starts at 150).`}
         {data.counts.quotes === 0 ? ' No sportsbook prices on this board yet; picks are model/ladder only.' : ''}</Text>
@@ -73,9 +82,11 @@ export default function EdgeScreen() {
           <SlipSummary slip={item} /></View>)}
       </View>}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>{view === 'edges' ? 'PICKS ABOVE BREAK-EVEN' : 'ALTERNATE LINES BY HIT PROBABILITY'}</Text>
+        <Text style={styles.sectionTitle}>{view === 'edges' ? book ? 'BETS WITH POSITIVE EV' : 'PICKS ABOVE BREAK-EVEN' : 'ALTERNATE LINES BY HIT PROBABILITY'}</Text>
         <Text style={styles.sectionDetail}>{view === 'edges'
-          ? 'Standard lines whose hit probability beats the break-even. Edge is shown in percentage points.'
+          ? book ? 'Every rung the book posts, held against its own odds. Stake shown is a quarter-Kelly share of your bankroll, capped at 2%.'
+            : platform === 'pick6' ? 'DK Pick’em publishes no payout chart, so Edge shows each pick’s chance; edges appear once the payouts are confirmed.'
+            : 'Picks whose hit probability beats the break-even. Edge is shown in percentage points.'
           : 'No source gives PrizePicks’ Goblin/Demon payout factors, so Edge shows each leg’s hit chance and the minimum payout factor that makes it worth it.'}</Text>
         {picks.length ? picks.map((pick, index) => <EdgePickCard key={pick.key + pick.side} pick={pick}
           rank={view === 'edges' ? index + 1 : undefined} inSlip={inSlip.has(pick.lineId)} />)

@@ -17,19 +17,19 @@ const american = (decimal: number | null) => decimal === null ? '—'
 
 export default function EdgeDetail() {
   const { request } = useAuth();
-  const { lineId } = useLocalSearchParams<{ lineId: string }>();
+  const { lineId, platform } = useLocalSearchParams<{ lineId: string; platform?: string }>();
   const [state, setState] = useState<{ id: string; pick: EdgePick | null; message: string } | null>(null);
   const slip = useEdgeSlip();
   useEffect(() => {
     let active = true;
-    void request('/v1/edge/line/' + encodeURIComponent(lineId)).then(async (response) => {
+    void request('/v1/edge/line/' + encodeURIComponent(lineId) + (platform ? `?platform=${encodeURIComponent(platform)}` : '')).then(async (response) => {
       if (!active) return;
       if (!response.ok) { setState({ id: lineId, pick: null, message: response.status === 404
         ? (await response.json().catch(() => null) as { note?: string } | null)?.note ?? 'Edge has no read for this line.' : 'Could not load this line.' }); return; }
       setState({ id: lineId, pick: edgePickSchema.parse((await response.json()).pick), message: '' });
     }).catch(() => { if (active) setState({ id: lineId, pick: null, message: 'Could not load this line.' }); });
     return () => { active = false; };
-  }, [lineId, request]);
+  }, [lineId, platform, request]);
   const current = state?.id === lineId ? state : null;
   const pick = current?.pick;
   if (!pick) return <Screen eyebrow="EDGE" title="Line detail">
@@ -72,7 +72,7 @@ export default function EdgeDetail() {
       <Text style={styles.muted}>Last 5 avg {formatLine(stats.recentMean)} · sample avg {formatLine(stats.seasonMean)}
         {stats.hitRateAtLine !== null ? ` · ${pick.side} hit ${pct(stats.hitRateAtLine, 0)} of games` : ''}</Text>
     </Section>}
-    {ladder && <Section title={`PRIZEPICKS LADDER · ${pct(ladder.weight, 0)} WEIGHT`}>
+    {ladder && <Section title={`REGULAR-LINE LADDER · ${pct(ladder.weight, 0)} WEIGHT`}>
       <Text style={styles.text}>Regular line {formatLine(ladder.regularThreshold)} treated as a 50/50 anchor</Text>
     </Section>}
     <Text style={styles.muted}>Model {pick.modelVersion}{pick.calibrated ? ' · calibrated on graded results' : ' · not yet calibrated'}. Probabilities are estimates; confirm the line is still offered.</Text>

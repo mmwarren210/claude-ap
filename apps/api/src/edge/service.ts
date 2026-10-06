@@ -1,37 +1,45 @@
 import { readFileSync } from 'node:fs';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { BoardResponse, EdgeBoardPage, EdgeBoardResponse, EdgeBoardRow, EdgeEntry, EdgePick, EdgeSlip, Payouts,
-  PropLine } from '@crowniq/contracts';
+import type { BoardResponse, EdgeBoardPage, EdgeBoardResponse, EdgeBoardRow, EdgeEntry, EdgePick, EdgePlatform, EdgeSlip, Payouts,
+  PlayableDirection, PropLine } from '@crowniq/contracts';
 import { backtestProjection, buildSlips, describeEntry, EDGE_MODEL_VERSION, entriesFromTables, evaluateSlip, fitCalibration,
-  forecastReport, marketProfiles, priceBoard, profileFor } from '@crowniq/edge';
-import type { EntryDefinition, StatRow, UnpricedLine } from '@crowniq/edge';
+  forecastReport, marketProfiles, parlayEntries, priceBoard, profileFor } from '@crowniq/edge';
+import type { CalibrationModel, EntryDefinition, SidePayout, StatRow, UnpricedLine } from '@crowniq/edge';
 import type { BoxScoreResults } from '../box-score-results.js';
 import type { FairPrice, PickemLine } from '../context/sharp-props.js';
 import { normalizedName } from '../context/match.js';
 import type { InternalHistoryRow, InternalHistoryStore } from '../internal-history.js';
+import type { StoredLine } from '../scrapers/line-store.js';
 import { leagueLabel } from '../scrapers/markets.js';
+import { appLines, bookLines } from './platform-lines.js';
+import type { PayoutBook } from './platform-lines.js';
 import type { EdgeLedger, TrackedEdgePick } from './ledger.js';
 import { gradeTarget } from './ledger.js';
 import { canonicalMarket, matchBookPrices, playerKey } from './market-map.js';
 import type { MatchReport } from './market-map.js';
 
-// CrownIQ Edge on PrizePicks (Edge 2.0, P1). A standalone engine: it reads every PrizePicks line itself (the scraped
-// board, plus any line SharpAPI lists that the scrapers missed), prices each from the sportsbooks' SharpAPI prices
-// (PrizePicks itself never counts: a platform never confirms its own price), CrownIQ's game rows and the same History
-// values every tab uses, and returns a read or a "No read" with the exact missing input for every line. It never reads
-// GKR output and is never compared with GKR.
+// CrownIQ Edge (Edge 2.0): a standalone engine on every platform the app supports: PrizePicks (the scraped board plus any
+// line SharpAPI lists that the scrapers missed), Underdog and DK Pick'em (their scraped boards with each pick's
+// multiplier), DraftKings and Hard Rock (their SharpAPI prices). Each line is priced from the other sportsbooks' prices
+// (a platform never confirms its own price), CrownIQ's game rows and the same History values every tab uses, then held
+// against that platform's own payout: the entry's break-even over the pick's multiplier, or 1 / the book's odds. Every
+// line gets a read or a "No read" with the exact missing input. It never reads GKR output and is never compared with GKR.
 
 export interface EdgeServiceOptions {
   readonly board: () => BoardResponse | null;
   /** SharpAPI's latest book prices and PrizePicks lines. */
   readonly sharp?: { prices(): Promise<readonly FairPrice[]>; pickem(): Promise<readonly PickemLine[]> } | null;
+  /** The scraped Underdog and DK Pick'em boards. */
+  readonly appBoards?: { active(app: 'underdog' | 'pick6'): Promise<readonly StoredLine[]> } | null;
   readonly history?: InternalHistoryStore | null;
   /** A player's recent values for a line's stat (the shared History values), newest first. */
   readonly values?: ((line: PropLine) => Promise<{ values: number[] } | null>) | null;
   readonly ledger?: EdgeLedger | null;
   readonly payouts: Payouts;
   readonly alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>;
+  /** DK Pick'em has no public payout chart: its entry tables only count once the owner confirms them (EDGE_PICK6_PAYOUTS_CONFIRMED). */
+  readonly pick6PayoutsConfirmed?: boolean;
   readonly clock?: () => Date;
   /** Reprice at least this often (drops started games, picks up new prices and history). */
   readonly ttlMs?: number;
@@ -42,6 +50,7 @@ export interface EdgeServiceOptions {
 }
 
 export interface EdgeSnapshot {
+  readonly platform: EdgePlatform;
   readonly response: EdgeBoardResponse;
   readonly byLine: ReadonlyMap<string, EdgePick>;
   /** Lines Edge could not read, kept so the Edge board lists every line. */
@@ -50,21 +59,30 @@ export interface EdgeSnapshot {
   readonly computedAt: number;
   readonly durationMs: number;
   readonly report: EdgeReport;
+  /** Games an entry needs on this platform (pick'em apps 2, sportsbook parlays 1). */
+  readonly minEvents: number;
 }
 
-/** What one pricing pass saw, for the phase reports and owner diagnostics. */
+/** What one pricing pass saw on one platform, for the phase reports and owner diagnostics. */
 export interface EdgeReport {
-  readonly platform: 'prizepicks';
+  readonly platform: EdgePlatform;
   readonly lines: number; readonly read: number; readonly noRead: number;
   readonly noReadByReason: Readonly<Record<string, number>>;
   readonly plusEv: number;
-  /** Goblin/Demon reads left with edge = null (no confirmed payout factor). */
+  /** Reads left with edge = null (no confirmed payout: Goblins/Demons, unconfirmed DK Pick'em tables, promos). */
   readonly edgeNull: number;
   readonly byTier: Readonly<Record<string, number>>;
-  readonly sharpApi: { readonly lines: number; readonly confirmed: number; readonly added: number };
+  readonly sharpApi?: { readonly lines: number; readonly confirmed: number; readonly added: number };
   readonly match: MatchReport | null;
   readonly historyValues: { readonly asked: number; readonly found: number };
 }
+
+export const EDGE_PLATFORMS: readonly EdgePlatform[] = ['prizepicks', 'underdog', 'pick6', 'draftkings', 'hardrock'];
+/** Each platform's book in SharpAPI, left out of its own fair price (a book never confirms its own price). */
+const ownBooks: Readonly<Record<EdgePlatform, readonly string[]>> = { prizepicks: ['prizepicks', 'prizepicks_flex'],
+  underdog: ['underdog'], pick6: ['pick6'], draftkings: ['draftkings'], hardrock: ['hardrock'] };
+/** Largest parlay Edge builds per sportsbook (DraftKings 8, Hard Rock 20). */
+const parlayMax: Readonly<Partial<Record<EdgePlatform, number>>> = { draftkings: 8, hardrock: 20 };
 
 export type EdgeView = 'edges' | 'alternates' | 'all';
 
@@ -115,16 +133,25 @@ export function sharpPrizePicksLines(board: readonly PropLine[], pickem: readonl
   return { added, confirmed, total };
 }
 
+/** One platform's lines for a pass, each side's payout, and its entries. */
+interface PlatformSet {
+  readonly platform: EdgePlatform;
+  readonly lines: PropLine[];
+  readonly payouts: PayoutBook | null;
+  readonly entries: EntryDefinition[];
+  readonly minEvents: number;
+  readonly sharpApi?: EdgeReport['sharpApi'];
+}
+
 export class EdgeService {
-  private current: EdgeSnapshot | null = null;
+  private current = new Map<EdgePlatform, EdgeSnapshot>();
+  private computedAt = 0;
   private key: string | null = null;
-  private pending: Promise<EdgeSnapshot | null> | null = null;
+  private pending: Promise<void> | null = null;
   private lastError: string | null = null;
-  private readonly entries: readonly EntryDefinition[];
   private readonly clock: () => Date;
 
   constructor(private readonly options: EdgeServiceOptions) {
-    this.entries = entriesFromTables(options.payouts.prizepicks);
     this.clock = options.clock ?? (() => new Date());
     if (options.valuesCacheFile) {
       try {
@@ -135,25 +162,31 @@ export class EdgeService {
     }
   }
 
-  status() {
-    const response = this.current?.response;
-    return { modelVersion: EDGE_MODEL_VERSION, computedAt: this.current ? new Date(this.current.computedAt).toISOString() : null,
-      durationMs: this.current?.durationMs ?? null, counts: response?.counts ?? null, report: this.current?.report ?? null,
-      calibration: response?.calibration ?? null, lastError: this.lastError,
-      alternateFactors: this.options.alternateFactors ?? {}, entries: this.entries.map((entry) => describeEntry(entry)) };
+  /** A platform's entries: the app's own payout charts (DK Pick'em only once confirmed), or sportsbook parlays. */
+  private entriesFor(platform: EdgePlatform): EntryDefinition[] {
+    if (platform === 'draftkings' || platform === 'hardrock') return parlayEntries(parlayMax[platform]!);
+    return entriesFromTables(this.options.payouts[platform]);
   }
 
-  /** The latest pricing, recomputed when the board changes or the last pass is older than the TTL. */
-  async snapshot(): Promise<EdgeSnapshot | null> {
+  status() {
+    const reports = Object.fromEntries([...this.current].map(([platform, snapshot]) => [platform, snapshot.report]));
+    const prizepicks = this.current.get('prizepicks');
+    return { modelVersion: EDGE_MODEL_VERSION, computedAt: this.computedAt ? new Date(this.computedAt).toISOString() : null,
+      durationMs: prizepicks?.durationMs ?? null, counts: prizepicks?.response.counts ?? null, report: prizepicks?.report ?? null,
+      reports, calibration: prizepicks?.response.calibration ?? null, lastError: this.lastError,
+      alternateFactors: this.options.alternateFactors ?? {}, pick6PayoutsConfirmed: !!this.options.pick6PayoutsConfirmed,
+      entries: Object.fromEntries(EDGE_PLATFORMS.map((platform) => [platform, this.entriesFor(platform).map((entry) => describeEntry(entry))])) };
+  }
+
+  /** A platform's latest pricing; every platform is repriced together when the board changes or the TTL passes. */
+  async snapshot(platform: EdgePlatform = 'prizepicks'): Promise<EdgeSnapshot | null> {
     const board = this.options.board();
     if (!board) return null;
     const key = `${board.board.fetchedAt}|${board.builtAt}`;
-    const fresh = this.current && this.key === key &&
-      this.clock().getTime() - this.current.computedAt < (this.options.ttlMs ?? 5 * 60_000);
-    if (fresh) return this.current;
-    if (this.pending) return this.current ?? this.pending;
-    this.pending = this.compute(board, key).finally(() => { this.pending = null; });
-    return this.current ?? this.pending;
+    const fresh = this.computedAt && this.key === key && this.clock().getTime() - this.computedAt < (this.options.ttlMs ?? 5 * 60_000);
+    if (!fresh && !this.pending) this.pending = this.computeAll(board, key).finally(() => { this.pending = null; });
+    if (!this.current.has(platform) && this.pending) await this.pending;
+    return this.current.get(platform) ?? null;
   }
 
   /** History values Edge already looked up: kept 6 hours when found and 1 hour when not, so each pass only looks up
@@ -194,84 +227,123 @@ export class EdgeService {
     return { found, asked: groups.size };
   }
 
-  private async compute(board: BoardResponse, key: string): Promise<EdgeSnapshot | null> {
+  /** Every platform's lines for this pass. */
+  private async platformSets(board: BoardResponse, prices: readonly FairPrice[], pickem: readonly PickemLine[],
+    now: Date): Promise<PlatformSet[]> {
+    const nowIso = now.toISOString(), open = (line: PropLine) => Date.parse(line.eventStartTime) > now.getTime();
+    const boardLines = board.board.lines.filter(open);
+    const extra = sharpPrizePicksLines(boardLines, pickem, nowIso);
+    const sets: PlatformSet[] = [{ platform: 'prizepicks', lines: [...boardLines, ...extra.added.filter(open)], payouts: null,
+      entries: this.entriesFor('prizepicks'), minEvents: 2,
+      sharpApi: { lines: extra.total, confirmed: extra.confirmed, added: extra.added.length } }];
+    for (const app of ['underdog', 'pick6'] as const) {
+      const stored = await this.options.appBoards?.active(app).catch(() => []) ?? [];
+      const { lines, payouts } = appLines(stored, app, nowIso);
+      sets.push({ platform: app, lines: lines.filter(open), payouts, entries: this.entriesFor(app), minEvents: 2 });
+    }
+    for (const book of ['draftkings', 'hardrock'] as const) {
+      const { lines, payouts } = bookLines(prices, book, nowIso);
+      sets.push({ platform: book, lines: lines.filter(open), payouts, entries: this.entriesFor(book), minEvents: 1 });
+    }
+    return sets;
+  }
+
+  private async computeAll(board: BoardResponse, key: string): Promise<void> {
     const startedAt = Date.now();
     try {
-      const now = this.clock(), nowIso = now.toISOString();
-      const open = board.board.lines.filter((line) => Date.parse(line.eventStartTime) > now.getTime());
+      const now = this.clock();
       const [prices, pickem] = this.options.sharp
         ? await Promise.all([this.options.sharp.prices(), this.options.sharp.pickem()]) : [[], []];
-      const extra = sharpPrizePicksLines(open, pickem, nowIso);
-      const lines = [...open, ...extra.added.filter((line) => Date.parse(line.eventStartTime) > now.getTime())];
-      // PrizePicks never counts toward its own fair price (leave-one-out).
-      const matched = prices.length ? matchBookPrices(lines, prices, nowIso, ['prizepicks', 'prizepicks_flex']) : null;
+      const sets = await this.platformSets(board, prices, pickem, now);
+      const allLines = sets.flatMap((set) => set.lines);
       const players = new Map<string, { key: string; sport: string; playerId: string; playerName: string }>();
-      for (const line of lines) {
+      for (const line of allLines) {
         if (!historySports.has(line.sport) || !profileFor(line.sport, line.market).stat) continue;
         const id = playerKey(line.sport, line.playerName);
         if (!players.has(id)) players.set(id, { key: id, sport: line.sport, playerId: line.playerId, playerName: line.playerName });
       }
+      // PrizePicks lines first in the History queue (the main board), then the rest.
       const [rows, values] = await Promise.all([
         this.options.history && players.size ? this.options.history.rowsForPlayers([...players.values()], 60)
           : Promise.resolve(new Map<string, InternalHistoryRow[]>()),
-        this.gatherValues(lines)]);
+        this.gatherValues(allLines)]);
       const calibrationRows = await this.options.ledger?.calibrationRows().catch(() => []) ?? [];
       const calibration = fitCalibration(calibrationRows);
       const forecast = forecastReport(calibrationRows);
-      const priced = priceBoard({ now, lines, quotes: matched?.quotes ?? [], entries: this.entries, calibration,
-        platform: 'prizepicks', excludeBooks: ['prizepicks', 'prizepicks_flex'],
-        ...(this.options.alternateFactors ? { alternateFactors: this.options.alternateFactors } : {}),
-        history: (player) => { const list = rows.get(playerKey(player.sport, player.playerName)); return list ? dedupeRows(list) : undefined; },
-        values: (line) => values.found.get(`${line.sport}|${line.playerId}|${line.market}`) });
-      const slips = buildSlips(priced.picks, priced.entries);
-      const count = (tier: string) => priced.picks.filter((pick) => pick.tier === tier).length;
-      const response: EdgeBoardResponse = {
-        modelVersion: EDGE_MODEL_VERSION, builtAt: nowIso, boardFetchedAt: board.board.fetchedAt,
-        referenceEntry: priced.referenceEntry, entries: priced.entries,
-        counts: { linesPriced: priced.picks.length, linesUnpriced: priced.unpriced, sharp: count('SHARP'),
-          market: count('MARKET'), model: count('MODEL'), ladder: count('LADDER'),
-          positiveEdge: priced.picks.filter((pick) => pick.edge !== null && pick.edge > 0).length,
-          quotes: matched?.quotes.length ?? 0 },
-        calibration: { status: calibration.global ? 'CALIBRATED' : 'UNCALIBRATED', graded: forecast.graded,
-          brier: forecast.brier, hitRate: forecast.hitRate },
-        picks: priced.picks, slips,
-      };
-      const byLine = new Map<string, EdgePick>();
-      for (const pick of priced.picks) {
-        byLine.set(pick.lineId, pick);
-        if (pick.oppositeLineId && !byLine.has(pick.oppositeLineId)) byLine.set(pick.oppositeLineId, pick);
+      for (const set of sets) {
+        const snapshot = this.priceSet(set, board, prices, now, calibration, forecast, rows, values, startedAt);
+        this.current.set(set.platform, snapshot);
+        this.log(snapshot);
+        void this.options.ledger?.record(snapshot.response.picks, (lineId) => {
+          const line = snapshot.lines.get(lineId);
+          return { team: line?.team ?? null, home: line?.homeTeam ?? null, away: line?.awayTeam ?? null };
+        }).catch(() => undefined);
       }
-      const lineMap = new Map(lines.map((line) => [line.id, line]));
-      // Every line counts once: a pick can stand for both sides' lines at one number.
-      const readLines = new Set(priced.picks.flatMap((pick) => [pick.lineId, pick.oppositeLineId].filter((id): id is string => !!id)));
-      const noReadByReason: Record<string, number> = {};
-      for (const item of priced.unpricedLines) noReadByReason[item.reason] = (noReadByReason[item.reason] ?? 0) + 1;
-      const report: EdgeReport = { platform: 'prizepicks', lines: lines.length, read: readLines.size,
-        noRead: priced.unpricedLines.length, noReadByReason,
-        plusEv: priced.picks.filter((pick) => pick.edge !== null && pick.edge > 0).length,
-        edgeNull: priced.picks.filter((pick) => pick.edge === null).length,
-        byTier: { SHARP: count('SHARP'), MARKET: count('MARKET'), MODEL: count('MODEL'), LADDER: count('LADDER') },
-        sharpApi: { lines: extra.total, confirmed: extra.confirmed, added: extra.added.length },
-        match: matched?.report ?? null, historyValues: { asked: values.asked, found: values.found.size } };
-      const snapshot: EdgeSnapshot = { response, byLine, unpriced: priced.unpricedLines, lines: lineMap,
-        computedAt: now.getTime(), durationMs: Date.now() - startedAt, report };
-      this.current = snapshot; this.key = key; this.lastError = null;
-      console.log(`[edge] prizepicks ${report.lines} lines: ${report.read} read, ${report.noRead} no read ` +
-        `${JSON.stringify(report.noReadByReason)}, ${report.plusEv} +EV, ${report.edgeNull} edge null, tiers ${JSON.stringify(report.byTier)}, ` +
-        `sharpapi ${JSON.stringify(report.sharpApi)}, match ${report.match ? `${report.match.linesMatched}/${report.match.linesWithBookPrice} ` +
-          `lines, ${report.match.matched} quotes, ${report.match.ambiguous} ambiguous, ${report.match.noEvent} no event, ` +
-          `${report.match.mismatches} MARKET_MISMATCH` : 'none'}, history values ${values.found.size}/${values.asked}, ${snapshot.durationMs}ms`);
-      if (report.match?.noEventSamples.length) console.log(`[edge-match] no game for: ${JSON.stringify(report.match.noEventSamples)}`);
-      void this.options.ledger?.record(priced.picks, (lineId) => {
-        const line = lineMap.get(lineId);
-        return { team: line?.team ?? null, home: line?.homeTeam ?? null, away: line?.awayTeam ?? null };
-      }).catch(() => undefined);
-      return snapshot;
+      this.computedAt = now.getTime(); this.key = key; this.lastError = null;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : 'EDGE_PRICING_FAILED';
       console.error(JSON.stringify({ event: 'crowniq_edge_pricing_failed', error: this.lastError }));
-      return this.current;
     }
+  }
+
+  private priceSet(set: PlatformSet, board: BoardResponse, prices: readonly FairPrice[], now: Date,
+    calibration: CalibrationModel, forecast: ReturnType<typeof forecastReport>, rows: Map<string, InternalHistoryRow[]>,
+    values: { found: Map<string, number[]>; asked: number }, startedAt: number): EdgeSnapshot {
+    // A platform's own book never prices it, and pick'em apps' rows are payouts, never prices.
+    const nowIso = now.toISOString(), own = [...new Set([...ownBooks[set.platform], 'prizepicks', 'prizepicks_flex', 'underdog', 'pick6'])];
+    const matched = prices.length && set.lines.length ? matchBookPrices(set.lines, prices, nowIso, own) : null;
+    // DK Pick'em's entry chart isn't public: until the owner confirms it, its picks get a chance but no edge.
+    const unconfirmed = set.platform === 'pick6' && !this.options.pick6PayoutsConfirmed;
+    const sidePayout = set.payouts ? (line: PropLine, side: PlayableDirection): SidePayout => {
+      const payout = set.payouts!.get(line.id)?.[side] ?? { kind: 'ENTRY', multiplier: 1 };
+      return unconfirmed && payout.kind === 'ENTRY' ? { ...payout, multiplier: null } : payout;
+    } : undefined;
+    const priced = priceBoard({ now, lines: set.lines, quotes: matched?.quotes ?? [], entries: set.entries, calibration,
+      platform: set.platform, excludeBooks: own, ...(sidePayout ? { sidePayout } : {}),
+      ...(this.options.alternateFactors ? { alternateFactors: this.options.alternateFactors } : {}),
+      history: (player) => { const list = rows.get(playerKey(player.sport, player.playerName)); return list ? dedupeRows(list) : undefined; },
+      values: (line) => values.found.get(`${line.sport}|${line.playerId}|${line.market}`) });
+    const slips = buildSlips(priced.picks, priced.entries, { minEvents: set.minEvents });
+    const count = (tier: string) => priced.picks.filter((pick) => pick.tier === tier).length;
+    const response: EdgeBoardResponse = {
+      modelVersion: EDGE_MODEL_VERSION, builtAt: nowIso, boardFetchedAt: board.board.fetchedAt,
+      referenceEntry: priced.referenceEntry, entries: priced.entries,
+      counts: { linesPriced: priced.picks.length, linesUnpriced: priced.unpriced, sharp: count('SHARP'),
+        market: count('MARKET'), model: count('MODEL'), ladder: count('LADDER'),
+        positiveEdge: priced.picks.filter((pick) => pick.edge !== null && pick.edge > 0 && pick.rating !== 'NONE').length,
+        quotes: matched?.quotes.length ?? 0 },
+      calibration: { status: calibration.global ? 'CALIBRATED' : 'UNCALIBRATED', graded: forecast.graded,
+        brier: forecast.brier, hitRate: forecast.hitRate },
+      picks: priced.picks, slips,
+    };
+    const byLine = new Map<string, EdgePick>();
+    for (const pick of priced.picks) {
+      byLine.set(pick.lineId, pick);
+      if (pick.oppositeLineId && !byLine.has(pick.oppositeLineId)) byLine.set(pick.oppositeLineId, pick);
+    }
+    // Every line counts once: a pick can stand for both sides' lines at one number.
+    const readLines = new Set(priced.picks.flatMap((pick) => [pick.lineId, pick.oppositeLineId].filter((id): id is string => !!id)));
+    const noReadByReason: Record<string, number> = {};
+    for (const item of priced.unpricedLines) noReadByReason[item.reason] = (noReadByReason[item.reason] ?? 0) + 1;
+    const report: EdgeReport = { platform: set.platform, lines: set.lines.length, read: readLines.size,
+      noRead: priced.unpricedLines.length, noReadByReason, plusEv: response.counts.positiveEdge,
+      edgeNull: priced.picks.filter((pick) => pick.edge === null).length,
+      byTier: { SHARP: count('SHARP'), MARKET: count('MARKET'), MODEL: count('MODEL'), LADDER: count('LADDER') },
+      ...(set.sharpApi ? { sharpApi: set.sharpApi } : {}),
+      match: matched?.report ?? null, historyValues: { asked: values.asked, found: values.found.size } };
+    return { platform: set.platform, response, byLine, unpriced: priced.unpricedLines, lines: new Map(set.lines.map((line) => [line.id, line])),
+      computedAt: now.getTime(), durationMs: Date.now() - startedAt, report, minEvents: set.minEvents };
+  }
+
+  private log(snapshot: EdgeSnapshot) {
+    const report = snapshot.report;
+    console.log(`[edge] ${report.platform} ${report.lines} lines: ${report.read} read, ${report.noRead} no read ` +
+      `${JSON.stringify(report.noReadByReason)}, ${report.plusEv} +EV, ${report.edgeNull} edge null, tiers ${JSON.stringify(report.byTier)}, ` +
+      `${report.sharpApi ? `sharpapi ${JSON.stringify(report.sharpApi)}, ` : ''}match ${report.match ? `${report.match.linesMatched}/${report.match.linesWithBookPrice} ` +
+        `lines, ${report.match.matched} quotes, ${report.match.ambiguous} ambiguous, ${report.match.noEvent} no event, ` +
+        `${report.match.mismatches} MARKET_MISMATCH` : 'none'}, history values ${report.historyValues.found}/${report.historyValues.asked}, ${snapshot.durationMs}ms`);
+    if (report.platform === 'prizepicks' && report.match?.noEventSamples.length)
+      console.log(`[edge-match] no game for: ${JSON.stringify(report.match.noEventSamples)}`);
   }
 }
 
@@ -303,7 +375,7 @@ export function viewPicks(snapshot: EdgeSnapshot, view: EdgeView, filters: { spo
 export function customSlip(snapshot: EdgeSnapshot, entry: EdgeEntry, lineIds: readonly string[]): EdgeSlip | null {
   const legs = lineIds.map((id) => pickForLine(snapshot, id));
   if (legs.some((leg) => !leg)) return null;
-  return evaluateSlip(entry, legs as EdgePick[]);
+  return evaluateSlip(entry, legs as EdgePick[], { minEvents: snapshot.minEvents });
 }
 
 export type EdgeBoardFilter = 'all' | 'picks' | 'no_read';
@@ -319,7 +391,7 @@ export function boardPage(snapshot: EdgeSnapshot, query: { sport?: string; marke
   const picks: EdgeBoardRow[] = query.filter === 'no_read' ? [] : snapshot.response.picks.filter(keep)
     .map((pick) => ({ kind: 'PICK' as const, pick }));
   const unread: EdgeBoardRow[] = query.filter === 'picks' ? [] : snapshot.unpriced
-    .map(({ line, reason, note }) => ({ platform: 'prizepicks' as const, lineId: line.id, sport: line.sport, league: line.league,
+    .map(({ line, reason, note }) => ({ platform: snapshot.platform, lineId: line.id, sport: line.sport, league: line.league,
       eventId: line.eventId, eventName: line.eventName, eventStartTime: line.eventStartTime, playerId: line.playerId,
       playerName: line.playerName, market: line.market, threshold: line.threshold, lineType: line.lineType,
       availableDirections: [...line.availableDirections], reason, note }))

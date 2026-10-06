@@ -33,7 +33,23 @@ export interface PricingInput {
   readonly values?: (line: PropLine) => readonly number[] | undefined;
   /** Books that never count toward the fair price (the platform being priced: a book never confirms its own price). */
   readonly excludeBooks?: readonly string[];
+  /** Each side's own payout on its platform; default: a standard pick'em payout (Goblins/Demons from alternateFactors). */
+  readonly sidePayout?: (line: PropLine, side: PlayableDirection) => SidePayout;
 }
+
+/**
+ * What one side pays. ENTRY: a pick'em leg whose entry payout is multiplied by `multiplier` (1 = standard; null = unknown,
+ * so no edge). ODDS: a sportsbook single at decimal odds. `blocked` names why a side is never ranked as an edge (a
+ * promo pick), while its probability still shows.
+ */
+export type SidePayout = { readonly kind: 'ENTRY'; readonly multiplier: number | null; readonly blocked?: string }
+  | { readonly kind: 'ODDS'; readonly decimal: number };
+
+/** Quarter Kelly, capped at 2% of bankroll per bet (spec §4; EDGE_KELLY_FRACTION can change the fraction). */
+export const kellyStake = (p: number, decimal: number, fraction = .25) =>
+  decimal > 1 ? clamp(fraction * (p * decimal - 1) / (decimal - 1), 0, .02) : 0;
+/** An edge this big is almost always mismatched data (spec §6): held for review, never ranked. */
+export const REVIEW_EDGE = .15;
 
 /** A line Edge could not read, with the reason shown to the user instead of hiding the line. */
 export interface UnpricedLine {
@@ -235,21 +251,30 @@ export function priceBoard(input: PricingInput): PricingResult {
       const over = conditionalOver(dist, threshold);
       const sides = thresholdLines.map((line) => line.availableDirections.map((side) => ({ line, side })))
         .flat();
-      const scored = sides.map(({ line, side }) => ({ line, side,
-        probability: applyCalibration(input.calibration, line.sport, side === 'MORE' ? over : 1 - over) }))
-        .sort((a, b) => b.probability - a.probability);
+      const payoutOf = (line: PropLine, side: PlayableDirection): SidePayout => input.sidePayout?.(line, side)
+        ?? { kind: 'ENTRY', multiplier: line.lineType === 'REGULAR' ? 1
+          : line.lineType === 'GOBLIN' || line.lineType === 'DEMON' ? input.alternateFactors?.[line.lineType] ?? null : null };
+      const scored = sides.map(({ line, side }) => {
+        const probability = applyCalibration(input.calibration, line.sport, side === 'MORE' ? over : 1 - over);
+        const payout = payoutOf(line, side);
+        // Each side against its own bar: a pick'em leg needs the entry's break-even divided by its multiplier; a sportsbook
+        // bet needs 1 / decimal odds.
+        const breakEven = payout.kind === 'ODDS' ? 1 / payout.decimal
+          : payout.multiplier ? reference / payout.multiplier : reference;
+        const edge = payout.kind === 'ENTRY' && (payout.multiplier === null || payout.blocked) ? null : probability - breakEven;
+        return { line, side, probability, payout, breakEven, edge };
+      }).sort((a, b) => (b.edge ?? -9) - (a.edge ?? -9) || b.probability - a.probability);
       const best = scored[0];
       const opposite = scored.find((item) => item.side !== best.side) ?? null;
       const p = best.probability;
-      const factor = best.line.lineType === 'REGULAR' ? 1
-        : best.line.lineType === 'GOBLIN' || best.line.lineType === 'DEMON'
-          ? input.alternateFactors?.[best.line.lineType] ?? null : null;
-      const edge = factor === null ? null : p * factor - reference;
-      const adjusted = edge === null ? null : edge * tierFactor[tier];
+      const review = best.edge !== null && best.edge > REVIEW_EDGE;
+      const edge = best.edge;
+      const adjusted = edge === null || review ? null : edge * tierFactor[tier];
       const rating = adjusted === null ? 'NONE' : adjusted >= .07 ? 'ELITE' : adjusted >= .045 ? 'STRONG'
         : adjusted >= .02 ? 'VALUE' : adjusted > 0 ? 'THIN' : 'NONE';
       const edgeScore = adjusted === null ? 0 : round(clamp(50 + 600 * adjusted, 0, 100), 1);
       const side: PlayableDirection = best.side;
+      const factor = best.payout.kind === 'ENTRY' ? best.payout.multiplier : best.payout.decimal;
 
       const reasons: string[] = [], warnings: string[] = [];
       const label = `${side} ${fmt(threshold)}`;
@@ -278,6 +303,8 @@ export function priceBoard(input: PricingInput): PricingResult {
         if (stats.samples < 8) warnings.push(`Small stats sample (${stats.samples} games).`);
       }
       if (ladder && !isRegular && !market) reasons.push(`Priced from the ${appName} regular line ${fmt(ladder.regularThreshold)} using the ${profile.family === 'NORMAL' ? 'normal' : 'count'} distribution.`);
+      if (review) warnings.push(`Held for review: a ${pct(edge!)} edge is bigger than real edges get; usually the sources disagree on the stat or game.`);
+      if (best.payout.kind === 'ENTRY' && best.payout.blocked) warnings.push(best.payout.blocked);
       if (factor === null && best.line.lineType !== 'REGULAR') warnings.push(
         `${best.line.lineType === 'UNKNOWN_ALTERNATE' ? 'Alternate' : best.line.lineType} payout factor is unknown: worth it only if its payout factor is at least ${round(reference / p, 2)}×.`);
       if (outcome.push > .04) warnings.push(`${pct(outcome.push)} chance of landing exactly on ${fmt(threshold)} (pick is removed).`);
@@ -292,8 +319,8 @@ export function priceBoard(input: PricingInput): PricingResult {
         playerId: best.line.playerId, playerName: best.line.playerName, market: best.line.market,
         threshold, lineType: best.line.lineType, side,
         probability: round(p), pushProbability: round(outcome.push), oppositeProbability: round(1 - p),
-        breakEven: round(reference), edge: edge === null ? null : round(edge),
-        requiredPayoutFactor: round(reference / Math.max(p, 1e-4), 3), edgeScore, rating, tier,
+        breakEven: round(best.breakEven), edge: edge === null ? null : round(edge),
+        requiredPayoutFactor: round((best.payout.kind === 'ODDS' ? 1 : reference) / Math.max(p, 1e-4), 3), edgeScore, rating, tier,
         projection: { mean: round(dist.mean, 2), median: median(dist), sd: round(Math.sqrt(dist.variance), 2),
           family: dist.family },
         fairLine,
@@ -308,6 +335,9 @@ export function priceBoard(input: PricingInput): PricingResult {
             regularThreshold: ladder.regularThreshold } : null,
         },
         reasons, warnings, calibrated, modelVersion: EDGE_MODEL_VERSION,
+        ...(best.payout.kind === 'ODDS' ? { decimalOdds: round(best.payout.decimal, 3), payoutMultiplier: round(best.payout.decimal, 3),
+          ev: round(p * best.payout.decimal - 1), kelly: round(kellyStake(p, best.payout.decimal)) }
+          : best.payout.multiplier && best.payout.multiplier !== 1 ? { payoutMultiplier: best.payout.multiplier } : {}),
       });
     }
   }

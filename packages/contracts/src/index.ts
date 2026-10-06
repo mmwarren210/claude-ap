@@ -364,9 +364,15 @@ export const edgePickSchema = z.object({
   warnings: z.array(z.string()),
   calibrated: z.boolean(),
   modelVersion: identifier,
+  // The side's own payout: an app's per-pick multiplier (Underdog, DK Pick'em, a confirmed Goblin/Demon factor) or a
+  // sportsbook's decimal odds, with the bet's expected value per $1 and a quarter-Kelly stake (share of bankroll).
+  payoutMultiplier: z.number().positive().finite().optional(),
+  decimalOdds: z.number().gt(1).finite().optional(),
+  ev: z.number().finite().optional(),
+  kelly: z.number().min(0).max(1).optional(),
 });
 export const edgeEntrySchema = z.object({
-  type: z.enum(['POWER', 'FLEX']), size: z.number().int().min(2).max(8),
+  type: z.enum(['POWER', 'FLEX', 'PARLAY']), size: z.number().int().min(2).max(20),
   // payouts[k] is the multiple of the entry returned when exactly k legs hit.
   payouts: z.record(z.string(), z.number().nonnegative()),
   breakEven: probability,
@@ -375,7 +381,7 @@ export const edgeSlipSchema = z.object({
   entry: edgeEntrySchema,
   legs: z.array(z.object({ lineId: identifier, playerName: identifier, market: identifier,
     threshold: z.number().finite(), side: playableDirectionSchema, probability,
-    eventId: identifier, sport: sportSchema })),
+    eventId: identifier, sport: sportSchema, payoutMultiplier: z.number().positive().finite().optional() })),
   allHitProbability: probability,
   expectedReturn: z.number().nonnegative().finite(),
   expectedProfit: z.number().finite(),
