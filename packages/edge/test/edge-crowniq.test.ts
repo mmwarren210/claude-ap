@@ -117,3 +117,12 @@ test('an edge too big to be real is held for review, never ranked', () => {
   assert.equal(pick.rating, 'NONE');
   assert.ok(pick.warnings.some((warning) => warning.startsWith('Held for review')));
 });
+
+test('a sportsbook bet no other book prices is shown but not ranked', () => {
+  const values = [31, 28, 30, 35, 27, 29, 33, 30, 26, 32];
+  const pick = priceBoard({ lines: [line('m', 24.5)], now, values: () => values,
+    sidePayout: () => ({ kind: 'ODDS', decimal: 1.9 }) }).picks[0]!;
+  assert.equal(pick.tier, 'MODEL');
+  assert.equal(pick.rating, 'NONE');
+  assert.ok(pick.warnings.some((warning) => warning.startsWith('No other sportsbook')));
+});

@@ -50,6 +50,7 @@ export const kellyStake = (p: number, decimal: number, fraction = .25) =>
   decimal > 1 ? clamp(fraction * (p * decimal - 1) / (decimal - 1), 0, .02) : 0;
 /** An edge this big is almost always mismatched data (spec §6): held for review, never ranked. */
 export const REVIEW_EDGE = .15;
+export const REVIEW_BOOK_EV = .25;
 
 /** A line Edge could not read, with the reason shown to the user instead of hiding the line. */
 export interface UnpricedLine {
@@ -267,9 +268,17 @@ export function priceBoard(input: PricingInput): PricingResult {
       const best = scored[0];
       const opposite = scored.find((item) => item.side !== best.side) ?? null;
       const p = best.probability;
-      const review = best.edge !== null && best.edge > REVIEW_EDGE;
+      // Spec §6: an edge over 15 points, or over 25% EV on a sportsbook, is held for review until a second source agrees.
+      const bookEv = best.payout.kind === 'ODDS' ? p * best.payout.decimal - 1 : null;
+      const review = best.edge !== null && (best.edge > REVIEW_EDGE || (bookEv !== null && bookEv > REVIEW_BOOK_EV));
+      // A sportsbook bet is only ranked when other books price the same player and stat: a model-only read against a book's
+      // own odds hasn't earned that trust yet (spec §5.6 honesty gate).
+      const unbacked = best.payout.kind === 'ODDS' && !market;
+      // A book's far rungs sit in the distribution's tail, where Edge's estimate is least reliable: shown, not ranked, until
+      // the track record (CLV, calibration) shows the tails hold up.
+      const tail = best.payout.kind === 'ODDS' && Math.abs(threshold - dist.mean) > 1.5 * Math.sqrt(dist.variance);
       const edge = best.edge;
-      const adjusted = edge === null || review ? null : edge * tierFactor[tier];
+      const adjusted = edge === null || review || unbacked || tail ? null : edge * tierFactor[tier];
       const rating = adjusted === null ? 'NONE' : adjusted >= .07 ? 'ELITE' : adjusted >= .045 ? 'STRONG'
         : adjusted >= .02 ? 'VALUE' : adjusted > 0 ? 'THIN' : 'NONE';
       const edgeScore = adjusted === null ? 0 : round(clamp(50 + 600 * adjusted, 0, 100), 1);
@@ -303,6 +312,8 @@ export function priceBoard(input: PricingInput): PricingResult {
         if (stats.samples < 8) warnings.push(`Small stats sample (${stats.samples} games).`);
       }
       if (ladder && !isRegular && !market) reasons.push(`Priced from the ${appName} regular line ${fmt(ladder.regularThreshold)} using the ${profile.family === 'NORMAL' ? 'normal' : 'count'} distribution.`);
+      if (tail && !unbacked) warnings.push('A far rung of the book’s ladder (more than 1.5 SD from Edge’s projection): shown but not ranked yet.');
+      if (unbacked) warnings.push('No other sportsbook prices this player and stat: a stats-only read against the book’s odds is shown but not ranked.');
       if (review) warnings.push(`Held for review: a ${pct(edge!)} edge is bigger than real edges get; usually the sources disagree on the stat or game.`);
       if (best.payout.kind === 'ENTRY' && best.payout.blocked) warnings.push(best.payout.blocked);
       if (factor === null && best.line.lineType !== 'REGULAR') warnings.push(
