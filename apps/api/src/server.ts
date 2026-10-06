@@ -565,7 +565,9 @@ export function buildServer(options: ServerOptions = {}) {
       // CrownIQ's opinion runs in the background (a web search per batch); the app refreshes until it lands.
       void analyzeTips(options.tips.store,options.tips.reader,tips,now);
       return reply.code(201).send({source:tips[0]!.source,tips:tips.map(({accountId:_account,...tip})=>tip)});
-    }catch(error){console.warn('[tips] read failed',error instanceof Error?error.message:error);
+    }catch(error){const message=error instanceof Error?error.message:String(error);console.warn('[tips] read failed',message);
+      // The Claude account behind CrownIQ is out of credits: say so instead of "could not read".
+      if(/credit balance is too low/i.test(message))return reply.code(503).send({code:'AI_CREDITS_EXHAUSTED'});
       return reply.code(502).send({code:'TIPS_READ_FAILED'});}
   });
   app.post('/v1/tips/recheck',async(request,reply)=>{

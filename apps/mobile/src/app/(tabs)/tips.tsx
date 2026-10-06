@@ -93,8 +93,12 @@ export default function TipsScreen() {
       if (response.ok) {
         const added = await response.json() as { source: string; tips: Tip[] };
         setMessage(`Read ${added.tips.length} picks from ${added.source}. CrownIQ is checking them now…`); setText(''); await load();
-      } else setMessage(response.status === 422 ? 'No picks found in that.' : response.status === 429 ? 'Daily upload limit reached (30).'
-        : response.status === 503 ? 'Reading screenshots isn’t set up on the server yet.' : 'Could not read that. Try again or paste the text.');
+      } else {
+        const code = (await response.json().catch(() => null) as { code?: string } | null)?.code;
+        setMessage(response.status === 422 ? 'No picks found in that.' : response.status === 429 ? 'Daily upload limit reached (30).'
+          : code === 'AI_CREDITS_EXHAUSTED' ? 'CrownIQ’s AI is out of credits right now, so it can’t read picks. The owner needs to top up the Claude account.'
+          : response.status === 503 ? 'Reading screenshots isn’t set up on the server yet.' : 'Could not read that. Try again or paste the text.');
+      }
     } catch { setMessage('Could not upload. Check your connection.'); }
     finally { setBusy(false); }
   };
