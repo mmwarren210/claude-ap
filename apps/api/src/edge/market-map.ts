@@ -17,6 +17,19 @@ const marketAliases: Readonly<Record<string, string>> = {
   'NCAAFB:pass_plus_rush_yds': 'player_pass_rush_yds', 'NCAAFB:rush_plus_rec_yds': 'player_rush_reception_yds',
   'MLB:earned_runs': 'pitcher_earned_runs', 'MLB:earned_runs_allowed': 'pitcher_earned_runs', 'MLB:stolen_bases': 'sb',
   'MLB:pitcher_hits_allowed': 'hits_allowed',
+  // Market audit (2026-10-06): the same stat under the scraper's short labels and the books' names.
+  'WNBA:3ptm': 'player_threes', 'WNBA:pra': 'player_points_rebounds_assists', 'NBA:3ptm': 'player_threes',
+  'NBA:pra': 'player_points_rebounds_assists', 'NHL:player_assists': 'assists', 'NHL:player_blocked_shots': 'blocked_shots',
+  'NHL:player_goals': 'goals', 'NHL:player_points': 'points', 'NHL:player_total_saves': 'saves', 'NHL:player_shots_on_goal': 'shots_on_goal',
+  'TENNIS:total_games_won': 'games_won', 'MLB:po': 'pitcher_outs', 'MLB:pitching_outs': 'pitcher_outs',
+  'MLB:batter_runs_scored': 'runs', 'MLB:batter_singles': 'singles', 'MLB:batter_doubles': 'doubles', 'MLB:batter_rbis': 'rbis',
+  'MLB:pitcher_walks': 'walks_allowed', 'MLB:pitcher_strikeouts': 'pitcher_strikeouts',
+  'NCAAFB:recs': 'player_receptions', 'NCAAFB:pass_tds': 'player_pass_tds', 'NCAAFB:rush_atts': 'player_rush_attempts',
+  'NCAAFB:pass_attempts': 'player_pass_attempts', 'NCAAFB:pass_comp': 'player_pass_completions',
+  'NCAAFB:longest_rec': 'player_reception_longest', 'NCAAFB:longest_rush': 'player_rush_longest',
+  'NCAAFB:longest_completion': 'player_pass_longest_completion', 'NCAAFB:int': 'player_pass_interceptions',
+  'NCAAFB:kicking_points': 'player_kicking_points', 'NCAAFB:pat_made': 'player_pats',
+  'NFL:longest_rec': 'player_reception_longest', 'NFL:longest_rush': 'player_rush_longest', 'NFL:int': 'player_pass_interceptions',
 };
 
 /** The one market key every source maps into. */

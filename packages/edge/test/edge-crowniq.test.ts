@@ -178,3 +178,16 @@ test('a 1st-period line (sport OTHER) on the same game and stat never takes the 
   assert.ok(result.picks.some((pick) => pick.lineId === 'full' && pick.sources.market));
   assert.ok(!result.picks.some((pick) => pick.lineId === 'p1' && pick.sources.market), 'no full-game price on the 1st-period line');
 });
+
+test('market audit: PrizePicks short labels reach their real models, and odd stats get the right shape', async () => {
+  const { profileKey, varianceAt } = await import('../src/index.js');
+  assert.equal(profileKey('WNBA', '3ptm'), 'WNBA:player_threes');
+  assert.equal(profileKey('WNBA', 'pra'), 'WNBA:player_points_rebounds_assists');
+  assert.equal(profileKey('TENNIS', 'total_games_won'), 'TENNIS:games_won');
+  assert.equal(profileKey('MLB', 'po'), 'MLB:pitcher_outs');
+  assert.equal(profileKey('NCAAFB', 'recs'), 'NFL:player_receptions');
+  const plusMinus = profileFor('NHL', 'plus_minus');
+  assert.equal(plusMinus.family, 'NORMAL', 'plus/minus can go negative');
+  assert.ok(Math.sqrt(varianceAt(profileFor('NHL', 'player_time_on_ice').variance, 21)) < 3.5);
+  assert.ok(Math.sqrt(varianceAt(profileFor('NFL', 'player_completion_percentage').variance, 65)) < 10);
+});

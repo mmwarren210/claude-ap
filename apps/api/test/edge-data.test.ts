@@ -73,3 +73,16 @@ test('identity: board abbreviations match full names; one game within 3 hours ma
   assert.equal(far.report.noEvent, 1, 'another team five hours away stays unmatched');
   assert.equal(far.report.noEventSamples.length, 1);
 });
+
+test('market audit: the scraper and the books use one key per stat; soccer leagues are soccer', async () => {
+  const { canonicalMarket } = await import('../src/edge/market-map.js');
+  const { leagueInfo } = await import('../src/scrapers/markets.js');
+  assert.equal(canonicalMarket('WNBA', '3ptm'), canonicalMarket('WNBA', 'player_threes'));
+  assert.equal(canonicalMarket('WNBA', 'pra'), canonicalMarket('WNBA', 'player_points_rebounds_assists'));
+  assert.equal(canonicalMarket('NHL', 'player_assists'), canonicalMarket('NHL', 'assists'));
+  assert.equal(canonicalMarket('TENNIS', 'total_games_won'), canonicalMarket('TENNIS', 'games_won'));
+  assert.equal(canonicalMarket('MLB', 'po'), canonicalMarket('MLB', 'pitching_outs'));
+  assert.equal(canonicalMarket('MLB', 'batter_runs_scored'), canonicalMarket('MLB', 'runs'));
+  assert.equal(leagueInfo('LA LIGA').sport, 'SOCCER');
+  assert.equal(leagueInfo('NHL1P').sport, 'OTHER', 'period lines stay apart from full-game');
+});

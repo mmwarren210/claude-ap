@@ -10,6 +10,9 @@ export const leagues: Readonly<Record<string, { sport: Sport; key: string }>> = 
   CS2: { sport: 'CS2', key: 'esports_cs2' }, VAL: { sport: 'VALORANT', key: 'esports_valorant' },
   LOL: { sport: 'LOL', key: 'esports_lol' }, DOTA2: { sport: 'DOTA', key: 'esports_dota2' },
   KBO: { sport: 'KBO', key: 'baseball_kbo' }, AFL: { sport: 'AFL', key: 'aussierules_afl' },
+  // Soccer leagues PrizePicks lists under their own labels (market audit 2026-10-06: "LA LIGA" was landing in OTHER).
+  ...Object.fromEntries(['LA LIGA', 'EPL', 'MLS', 'BUNDESLIGA', 'SERIE A', 'LIGUE 1', 'UCL', 'LIGA MX', 'UEFA']
+    .map((league) => [league, { sport: 'SOCCER' as Sport, key: 'soccer' }])),
 };
 
 const basketball: Readonly<Record<string, string>> = { 'Points': 'player_points', 'Rebounds': 'player_rebounds',

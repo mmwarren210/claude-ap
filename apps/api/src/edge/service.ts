@@ -5,7 +5,7 @@ import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import type { BoardResponse, EdgeBoardPage, EdgeBoardResponse, EdgeBoardRow, EdgeEntry, EdgePick, EdgePlatform, EdgeSlip, Payouts,
   PlayableDirection, PropLine } from '@crowniq/contracts';
 import { backtestProjection, buildSlips, describeEntry, EDGE_MODEL_VERSION, entriesFromTables, evaluateSlip, fitCalibration, suggestSwap,
-  forecastReport, marketProfiles, parlayEntries, priceBoard, profileFor } from '@crowniq/edge';
+  forecastReport, marketProfiles, parlayEntries, priceBoard, profileFor, profileKey } from '@crowniq/edge';
 import { rankScore } from '@crowniq/edge';
 import type { CalibrationModel, EntryDefinition, SidePayout, StatRow, UnpricedLine } from '@crowniq/edge';
 import type { BoxScoreResults } from '../box-score-results.js';
@@ -562,7 +562,32 @@ export class EdgeService {
     return this.alerts.filter((alert) => (!platform || alert.platform === platform) && Date.parse(alert.eventStartTime) > nowMs);
   }
 
+  private lastAudit = new Map<string, number>();
+  /**
+   * Hourly market audit per platform (2026-10-06): markets with no dedicated stat model (generic shape), and sizable markets in
+   * a sport the books cover where no line got a sportsbook price (a likely name mismatch between the board and the books).
+   */
+  private audit(snapshot: EdgeSnapshot) {
+    const now = Date.now();
+    if (now - (this.lastAudit.get(snapshot.platform) ?? 0) < 3600_000) return;
+    this.lastAudit.set(snapshot.platform, now);
+    const groups = new Map<string, { lines: number; priced: number }>();
+    for (const line of snapshot.lines.values()) {
+      const key = `${line.sport}:${line.market}`, group = groups.get(key) ?? { lines: 0, priced: 0 };
+      group.lines++; groups.set(key, group);
+    }
+    for (const pick of snapshot.response.picks) if (pick.sources.market) { const group = groups.get(`${pick.sport}:${pick.market}`); if (group) group.priced++; }
+    const bookSports = new Set<string>(snapshot.response.picks.filter((pick) => pick.sources.market).map((pick) => pick.sport));
+    const sorted = [...groups].filter(([key]) => !key.startsWith('OTHER:')).sort((a, b) => b[1].lines - a[1].lines);
+    const generic = sorted.filter(([key]) => { const [sport, market] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)]; return !profileKey(sport, market); })
+      .slice(0, 15).map(([key, group]) => `${key}(${group.lines})`);
+    const unpriced = sorted.filter(([key, group]) => group.lines >= 10 && group.priced === 0 && bookSports.has(key.slice(0, key.indexOf(':'))))
+      .slice(0, 15).map(([key, group]) => `${key}(${group.lines})`);
+    console.log(`[edge-audit] ${snapshot.platform} generic model: ${generic.join(' ') || 'none'} | books cover the sport but none priced: ${unpriced.join(' ') || 'none'}`);
+  }
+
   private log(snapshot: EdgeSnapshot) {
+    this.audit(snapshot);
     const report = snapshot.report;
     console.log(`[edge] ${report.platform} ${report.lines} lines: ${report.read} read, ${report.noRead} no read ` +
       `${JSON.stringify(report.noReadByReason)}, ${report.plusEv} +EV ${JSON.stringify(report.byRating)}, ${report.stale} stale, ${report.steam} steam, ${report.injured} injured, ${report.edgeNull} edge null, tiers ${JSON.stringify(report.byTier)}, ` +

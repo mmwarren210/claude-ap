@@ -105,6 +105,24 @@ const aliases: Readonly<Record<string, string>> = {
   'NCAAFB:passing_yards': 'NFL:passing_yards', 'NCAAFB:player_rush_yds': 'NFL:player_rush_yds',
   'NCAAFB:player_reception_yds': 'NFL:player_reception_yds',
   'TENNIS:aces': 'TENNIS:player_aces', 'TENNIS:double_faults': 'TENNIS:player_double_faults',
+  // Market audit (2026-10-06): PrizePicks' short stat labels as the scraper stores them.
+  'TENNIS:total_games_won': 'TENNIS:games_won', 'NCAAFB:pass_plus_rush_yds': 'NFL:player_pass_rush_yds',
+  'WNBA:3ptm': 'WNBA:player_threes', 'WNBA:pra': 'WNBA:player_points_rebounds_assists',
+  'NBA:3ptm': 'NBA:player_threes', 'NBA:pra': 'NBA:player_points_rebounds_assists',
+  'MLB:earned_runs_allowed': 'MLB:pitcher_earned_runs', 'MLB:po': 'MLB:pitcher_outs',
+  'NFL:longest_rec': 'NFL:player_reception_longest', 'NFL:longest_rush': 'NFL:player_rush_longest',
+  'NFL:int': 'NFL:player_pass_interceptions', 'NFL:fg_made': 'NFL:player_field_goals',
+  ...Object.fromEntries(Object.entries({ recs: 'player_receptions', player_receptions: 'player_receptions',
+    pass_tds: 'player_pass_tds', player_pass_tds: 'player_pass_tds', rush_atts: 'player_rush_attempts',
+    player_rush_attempts: 'player_rush_attempts', pass_attempts: 'player_pass_attempts', player_pass_attempts: 'player_pass_attempts',
+    pass_comp: 'player_pass_completions', longest_rec: 'player_reception_longest', player_reception_longest: 'player_reception_longest',
+    longest_rush: 'player_rush_longest', player_rush_longest: 'player_rush_longest', longest_completion: 'player_pass_longest_completion',
+    player_pass_longest_completion: 'player_pass_longest_completion', int: 'player_pass_interceptions',
+    player_pass_interceptions: 'player_pass_interceptions', kicking_points: 'player_kicking_points',
+    player_kicking_points: 'player_kicking_points', pat_made: 'player_pats', player_pats: 'player_pats', fg_made: 'player_field_goals',
+    player_fantasy_points: 'player_fantasy_points', player_pass_rush_yds: 'player_pass_rush_yds',
+    rush_plus_rec_yds: 'player_rush_reception_yds', player_rush_reception_yds: 'player_rush_reception_yds' })
+    .map(([board, profile]) => [`NCAAFB:${board}`, `NFL:${profile}`])),
 };
 
 // Learned variance functions (spec §2.1), keyed by the profile's sport:market. Set from the API's dispersion file.
@@ -131,6 +149,13 @@ export function profileFor(sport: string, market: string): MarketProfile {
     if (!profile) learnedProfiles.set(key, profile = { ...base, variance: { ...base.variance, phi: fit.phi, psi: fit.psi } });
     return profile;
   }
+  // Shapes the generic count model gets wrong (market audit 2026-10-06): plus/minus goes negative, time on ice and rate stats
+  // are continuous with a narrow spread, and high-volume counts are far less dispersed than a ψ of 0.12 says.
+  if (/plus_minus/.test(market)) return normal(0, 0, 1.5);
+  if (/time_on_ice|^minutes$/.test(market)) return normal(0, 0, 6, undefined, false);
+  if (/percentage/.test(market)) return normal(0, .015, 9, undefined, false);
+  if (/per_carry|per_attempt|per_reception/.test(market)) return normal(0, .25, 1, undefined, false);
+  if (/attempts|atts|pitches|kills|passes|comp\b|completions|headshots|faceoffs|batters_faced|plate_appearances|strikes_counted|balls_counted|first_bloods|rebounds|tackles|clearances/.test(market)) return nb(.03);
   if (/yds|yards|longest/.test(market)) return normal(2, .2, 25);
   if (/fantasy/.test(market)) return normal(2, .06, 4, undefined, false);
   if (/saves|outs|total_games|total_points/.test(market)) return normal(1, .02, 6);
