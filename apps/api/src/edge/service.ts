@@ -72,6 +72,8 @@ export interface EdgeReport {
   /** Reads left with edge = null (no confirmed payout: Goblins/Demons, unconfirmed DK Pick'em tables, promos). */
   readonly edgeNull: number;
   readonly byTier: Readonly<Record<string, number>>;
+  /** +EV reads by rating (THIN is under 2 points). */
+  readonly byRating: Readonly<Record<string, number>>;
   readonly sharpApi?: { readonly lines: number; readonly confirmed: number; readonly added: number };
   readonly match: MatchReport | null;
   readonly historyValues: { readonly asked: number; readonly found: number };
@@ -329,6 +331,8 @@ export class EdgeService {
       noRead: priced.unpricedLines.length, noReadByReason, plusEv: response.counts.positiveEdge,
       edgeNull: priced.picks.filter((pick) => pick.edge === null).length,
       byTier: { SHARP: count('SHARP'), MARKET: count('MARKET'), MODEL: count('MODEL'), LADDER: count('LADDER') },
+      byRating: Object.fromEntries((['ELITE', 'STRONG', 'VALUE', 'THIN'] as const).map((rating) =>
+        [rating, priced.picks.filter((pick) => pick.rating === rating).length])),
       ...(set.sharpApi ? { sharpApi: set.sharpApi } : {}),
       match: matched?.report ?? null, historyValues: { asked: values.asked, found: values.found.size } };
     return { platform: set.platform, response, byLine, unpriced: priced.unpricedLines, lines: new Map(set.lines.map((line) => [line.id, line])),
@@ -338,7 +342,7 @@ export class EdgeService {
   private log(snapshot: EdgeSnapshot) {
     const report = snapshot.report;
     console.log(`[edge] ${report.platform} ${report.lines} lines: ${report.read} read, ${report.noRead} no read ` +
-      `${JSON.stringify(report.noReadByReason)}, ${report.plusEv} +EV, ${report.edgeNull} edge null, tiers ${JSON.stringify(report.byTier)}, ` +
+      `${JSON.stringify(report.noReadByReason)}, ${report.plusEv} +EV ${JSON.stringify(report.byRating)}, ${report.edgeNull} edge null, tiers ${JSON.stringify(report.byTier)}, ` +
       `${report.sharpApi ? `sharpapi ${JSON.stringify(report.sharpApi)}, ` : ''}match ${report.match ? `${report.match.linesMatched}/${report.match.linesWithBookPrice} ` +
         `lines, ${report.match.matched} quotes, ${report.match.ambiguous} ambiguous, ${report.match.noEvent} no event, ` +
         `${report.match.mismatches} MARKET_MISMATCH` : 'none'}, history values ${report.historyValues.found}/${report.historyValues.asked}, ${snapshot.durationMs}ms`);
