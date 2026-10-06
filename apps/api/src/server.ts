@@ -1173,6 +1173,7 @@ export function buildServer(options: ServerOptions = {}) {
     valuesCacheFile:options.edge.valuesCacheFile??null,movement,snapshots:options.edge.snapshots??null,
     alertsFile:options.edge.alertsFile??null,staleLogFile:options.edge.staleLogFile??null,
     injuries:options.contextFeeds?async()=>(await options.contextFeeds!.items<InjuryNote>('injuries')).items:null,
+    gameLines:options.contextFeeds?async()=>(await options.contextFeeds!.items<GameLine>('pinnacle')).items:null,
     clock:()=>now()}):null;
   const edgeWorker=edge&&options.edge?.ledger?new EdgeResultsWorker(options.edge.ledger,options.internalHistory??null,
     options.edge.boxScores??null,()=>now()):null;

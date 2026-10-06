@@ -33,6 +33,12 @@ export interface PricingInput {
   readonly values?: (line: PropLine) => readonly number[] | undefined;
   /** Books that never count toward the fair price (the platform being priced: a book never confirms its own price). */
   readonly excludeBooks?: readonly string[];
+  /** Projection 2.0 (spec §5): a multiplier on the stats projection for this line's game (team environment from game
+   * lines, rest), with the plain-words reasons. The sportsbooks' prices already carry these, so only the stats source moves. */
+  readonly statsAdjust?: (line: PropLine) => { readonly factor: number; readonly reasons: readonly string[] } | null;
+  /** The honesty gate (spec §5.6): the stats source's measured weight for a sport and market, 0–1 (1 = as the standard
+   * error says). Below 1 the stats source counts less in the blend. */
+  readonly statsWeight?: (sport: string, market: string) => number;
   /** Each side's own payout on its platform; default: a standard pick'em payout (Goblins/Demons from alternateFactors). */
   readonly sidePayout?: (line: PropLine, side: PlayableDirection) => SidePayout;
 }
@@ -217,7 +223,11 @@ export function priceBoard(input: PricingInput): PricingResult {
       if (recent?.length) stats = projectFromValues(recent, profile);
       games = Math.max(games, recent?.length ?? 0);
     }
-    const statSource: Source | null = stats ? { mean: stats.mean, se: stats.standardError } : null;
+    const adjust = stats ? input.statsAdjust?.(first) ?? null : null;
+    if (stats && adjust && Number.isFinite(adjust.factor) && adjust.factor > 0 && Math.abs(adjust.factor - 1) > 1e-3)
+      stats = { ...stats, mean: stats.mean * adjust.factor };
+    const honesty = stats ? clamp(input.statsWeight?.(first.sport, first.market) ?? 1, .05, 1) : 1;
+    const statSource: Source | null = stats ? { mean: stats.mean, se: stats.standardError / Math.sqrt(honesty) } : null;
 
     let ladder: (Source & { regularThreshold: number }) | null = null;
     if (regular !== null) {
@@ -310,6 +320,8 @@ export function priceBoard(input: PricingInput): PricingResult {
           reasons.push(`${side === 'MORE' ? 'Cleared' : 'Stayed under'} ${fmt(threshold)} in ${hits} of ${decided.length} games.`);
         }
         if (stats.samples < 8) warnings.push(`Small stats sample (${stats.samples} games).`);
+        for (const reason of adjust?.reasons ?? []) reasons.push(reason);
+        if (honesty < .95) warnings.push(`The stats model counts less on this stat (${Math.round(honesty * 100)}% weight): it hasn’t matched the books on graded picks.`);
       }
       if (ladder && !isRegular && !market) reasons.push(`Priced from the ${appName} regular line ${fmt(ladder.regularThreshold)} using the ${profile.family === 'NORMAL' ? 'normal' : 'count'} distribution.`);
       if (tail && !unbacked) warnings.push('A far rung of the book’s ladder (more than 1.5 SD from Edge’s projection): shown but not ranked yet.');

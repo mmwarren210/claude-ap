@@ -27,6 +27,8 @@ export interface TrackedEdgePick {
   firstDecimal?: number; decimal?: number;
   /** The side's break-even when first shown (CLV is measured against it). */
   firstBreakEven?: number;
+  /** The stats projection's and the books' means at the last sighting (the honesty gate compares them with the result). */
+  statsMean?: number; marketMean?: number;
 }
 
 /** The result fact shape shared with GKR's product tracking (box scores, admin posts). */
@@ -108,7 +110,8 @@ export class EdgeLedger {
           if (existing.outcome !== 'PENDING') continue;
           Object.assign(existing, { probability: pick.probability, edge: pick.edge, rating: pick.rating,
             tier: pick.tier, breakEven: pick.breakEven, lastSeenAt: iso, lineId: pick.lineId,
-            ...(pick.stale ? { stale: true } : {}), ...(pick.decimalOdds ? { decimal: pick.decimalOdds } : {}) });
+            ...(pick.stale ? { stale: true } : {}), ...(pick.decimalOdds ? { decimal: pick.decimalOdds } : {}),
+            ...(pick.sources.stats ? { statsMean: pick.sources.stats.mean } : {}), ...(pick.sources.market ? { marketMean: pick.sources.market.mean } : {}) });
           updated++; continue;
         }
         const side = teams(pick.lineId);
@@ -120,7 +123,8 @@ export class EdgeLedger {
           firstProbability: pick.probability, probability: pick.probability, breakEven: pick.breakEven, firstBreakEven: pick.breakEven,
           edge: pick.edge, firstSeenAt: iso, lastSeenAt: iso, modelVersion: pick.modelVersion,
           outcome: 'PENDING', actual: null, gradedAt: null, resultSource: null,
-          ...(pick.stale ? { stale: true } : {}), ...(pick.decimalOdds ? { firstDecimal: pick.decimalOdds, decimal: pick.decimalOdds } : {}) };
+          ...(pick.stale ? { stale: true } : {}), ...(pick.decimalOdds ? { firstDecimal: pick.decimalOdds, decimal: pick.decimalOdds } : {}),
+          ...(pick.sources.stats ? { statsMean: pick.sources.stats.mean } : {}), ...(pick.sources.market ? { marketMean: pick.sources.market.mean } : {}) };
         data.picks.push(tracked); byId.set(id, tracked); added++;
       }
       // Retention: graded picks for 180 days; picks that never get a result expire as VOID after 5 days.
@@ -150,6 +154,30 @@ export class EdgeLedger {
       }
       if (graded) await this.write(data);
       return { graded };
+    });
+  }
+
+  /**
+   * The honesty gate (spec §5.6): per sport:market, how the stats projection's error compares with the books' on graded
+   * picks that had both (n ≥ 30). Weight = (books' MAE ÷ stats MAE)², capped at 1 and shrunk toward 1 with 100 picks of
+   * prior, so a stats model that doesn't match the close loses weight there and one that does keeps it.
+   */
+  async honesty(): Promise<Map<string, number>> {
+    return this.exclusive(async () => {
+      const groups = new Map<string, { stats: number; market: number; n: number }>();
+      for (const pick of (await this.read()).picks) {
+        if (pick.actual === null || pick.statsMean === undefined || pick.marketMean === undefined || pick.outcome === 'VOID') continue;
+        const key = `${pick.sport}:${pick.market}`, group = groups.get(key) ?? { stats: 0, market: 0, n: 0 };
+        group.stats += Math.abs(pick.statsMean - pick.actual); group.market += Math.abs(pick.marketMean - pick.actual); group.n++;
+        groups.set(key, group);
+      }
+      const weights = new Map<string, number>();
+      for (const [key, group] of groups) {
+        if (group.n < 30 || group.stats <= 0) continue;
+        const measured = Math.min(1, (group.market / group.stats) ** 2);
+        weights.set(key, (group.n * measured + 100) / (group.n + 100));
+      }
+      return weights;
     });
   }
 

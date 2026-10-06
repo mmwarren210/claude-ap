@@ -15,6 +15,9 @@ import type { StoredLine } from '../scrapers/line-store.js';
 import { leagueLabel } from '../scrapers/markets.js';
 import { appLines, bookLines } from './platform-lines.js';
 import type { MovementTracker } from './movement.js';
+import type { GameLine } from '../context/feeds.js';
+import { GameEnvironment, restEffects, restFactor } from './environment.js';
+import type { RestEffect } from './environment.js';
 import type { SnapshotStore } from './snapshots.js';
 import type { PayoutBook } from './platform-lines.js';
 import type { EdgeLedger, TrackedEdgePick } from './ledger.js';
@@ -61,6 +64,8 @@ export interface EdgeServiceOptions {
   readonly alertMinEdge?: number;
   /** The stats model's measured weight by sport and market (spec §5.6), for ranking model-only picks. */
   readonly honesty?: ((sport: string, market: string) => number) | null;
+  /** Pinnacle's game lines (display feed), for the team-environment adjustment (spec §5.1). */
+  readonly gameLines?: (() => Promise<readonly GameLine[]>) | null;
   /** Every STALE flag as it's first seen, for the replay report (spec §3 acceptance). */
   readonly staleLogFile?: string | null;
 }
@@ -180,6 +185,9 @@ interface PlatformSet {
 export class EdgeService {
   private alerts: EdgeAlert[] = [];
   private weakTiers: ReadonlySet<string> = new Set();
+  private rest: { at: number; effects: Map<string, RestEffect> } = { at: 0, effects: new Map() };
+  private statsAdjust: ((line: PropLine) => { factor: number; reasons: string[] } | null) | null = null;
+  private honestyWeights: ReadonlyMap<string, number> = new Map();
   private staleSeen = new Set<string>();
   private lastAlertFor = new Map<string, number>();
   private current = new Map<EdgePlatform, EdgeSnapshot>();
@@ -215,6 +223,7 @@ export class EdgeService {
     return { modelVersion: EDGE_MODEL_VERSION, computedAt: this.computedAt ? new Date(this.computedAt).toISOString() : null,
       durationMs: prizepicks?.durationMs ?? null, counts: prizepicks?.response.counts ?? null, report: prizepicks?.report ?? null,
       reports, calibration: prizepicks?.response.calibration ?? null, lastError: this.lastError, weakTiers: [...this.weakTiers],
+      honesty: Object.fromEntries(this.honestyWeights), restEffects: Object.fromEntries(this.rest.effects),
       alternateFactors: this.options.alternateFactors ?? {}, pick6PayoutsConfirmed: !!this.options.pick6PayoutsConfirmed,
       entries: Object.fromEntries(EDGE_PLATFORMS.map((platform) => [platform, this.entriesFor(platform).map((entry) => describeEntry(entry))])) };
   }
@@ -315,6 +324,21 @@ export class EdgeService {
       for (const note of await this.options.injuries?.().catch(() => []) ?? [])
         if (/^(out|doubtful|suspended|inactive)/i.test(note.status)) injured.set(normalizedName(note.player), `${note.status}${note.team ? ` (${note.team})` : ''}`);
       this.weakTiers = await this.options.ledger?.weakTiers().catch(() => new Set<string>()) ?? new Set<string>();
+      this.honestyWeights = await this.options.ledger?.honesty().catch(() => new Map<string, number>()) ?? new Map<string, number>();
+      // Projection 2.0 inputs: today's game environment, and the back-to-back effect learned hourly from the game rows.
+      const environment = new GameEnvironment(await this.options.gameLines?.().catch(() => []) ?? []);
+      if (Date.now() - this.rest.at > 3600_000 && rows.size)
+        this.rest = { at: Date.now(), effects: restEffects([...rows].map(([key, list]) => ({ sport: key.split('|')[0]!, rows: dedupeRows(list) }))) };
+      console.log(`[edge-p5] environment ${JSON.stringify(environment.summary())}, rest effects ${JSON.stringify(Object.fromEntries(
+        [...this.rest.effects].map(([key, effect]) => [key, Number(effect.coefficient.toFixed(3))])))}, honesty ${JSON.stringify(Object.fromEntries(this.honestyWeights))}`);
+      const lastGame = new Map([...rows].map(([key, list]) => [key, list.reduce((latest, row) => Math.max(latest, Date.parse(row.occurredAt)), 0)]));
+      this.statsAdjust = (line: PropLine) => {
+        const env = environment.factor(line);
+        const before = lastGame.get(playerKey(line.sport, line.playerName));
+        const rest = restFactor(line, before && before < Date.parse(line.eventStartTime) ? before : null, this.rest.effects);
+        if (!env && !rest) return null;
+        return { factor: (env?.factor ?? 1) * (rest?.factor ?? 1), reasons: [...env?.reasons ?? [], ...rest?.reasons ?? []] };
+      };
       const fresh: EdgeAlert[] = [];
       const priced = crossPlatform(sets.map((set) =>
         this.priceSet(set, board, prices, now, calibration, forecast, rows, values, startedAt, injured, fresh)));
@@ -356,6 +380,8 @@ export class EdgeService {
     } : undefined;
     const priced = priceBoard({ now, lines: set.lines, quotes: matched?.quotes ?? [], entries: set.entries, calibration,
       platform: set.platform, excludeBooks: own, ...(sidePayout ? { sidePayout } : {}),
+      ...(this.statsAdjust ? { statsAdjust: this.statsAdjust } : {}),
+      statsWeight: (sport, market) => this.honestyWeights.get(`${sport}:${market}`) ?? 1,
       ...(this.options.alternateFactors ? { alternateFactors: this.options.alternateFactors } : {}),
       history: (player) => { const list = rows.get(playerKey(player.sport, player.playerName)); return list ? dedupeRows(list) : undefined; },
       values: (line) => values.found.get(`${line.sport}|${line.playerId}|${line.market}`) });
@@ -423,7 +449,8 @@ export class EdgeService {
             reasons: [`Books moved ${moved.direction === 'UP' ? 'up' : 'down'} ${minutesAgo} min ago (${moved.books} book${moved.books === 1 ? '' : 's'}, first ${moved.firstMover}); ${name} hasn’t.`, ...pick.reasons] };
         }
       }
-      const rank = rankScore(pick, { weakTiers: this.weakTiers, ...(this.options.honesty ? { honesty: this.options.honesty } : {}) });
+      const rank = rankScore(pick, { weakTiers: this.weakTiers,
+        honesty: (sport, market) => this.options.honesty?.(sport, market) ?? .6 * (this.honestyWeights.get(`${sport}:${market}`) ?? 1) });
       return rank === null ? pick : { ...pick, rank };
     });
     out.sort((a, b) => (b.rank ?? -1) - (a.rank ?? -1) || b.probability - a.probability);

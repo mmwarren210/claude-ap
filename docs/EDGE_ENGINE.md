@@ -222,3 +222,21 @@ platform chip for each:
 - **Backtest:** `GET /v1/owner/edge/backtest` replays the stats projection walk-forward over CrownIQ's game rows (vs the
   last-10 baseline). A replay of the odds snapshot store needs closes that only started being stored on 2026-10-05; the
   stale replay (`/v1/owner/edge/stale`) is the first one.
+
+### P5 (2026-10-06): projection 2.0 with the honesty gate
+
+`apps/api/src/edge/environment.ts`, wired into pricing through `statsAdjust` and `statsWeight`. All three only touch the
+stats source. The sportsbook (market) source is never changed.
+- **Game environment (§5.1):** Pinnacle's total and spread give each team its implied score. The stats mean is multiplied by
+  `(implied ÷ league median today)^e`, where e = 0.5 for volume stats and 0.2 for the rest, capped at ±10%. Pitcher "allowed"
+  stats use the opponent's implied score. A league needs 4 or more games with both a total and a spread before it has a
+  baseline. The pick's reasons say what changed.
+- **Rest (§5.5):** the back-to-back effect for each sport and stat (NBA, WNBA, NHL) is learned from CrownIQ's own game rows.
+  It is used only with 30 or more back-to-back games and a 90% interval that excludes no effect, capped at ±8%. It is
+  refreshed hourly and listed in `status.restEffects`.
+- **Honesty gate (§5.6):** the ledger stores the stats and market means on each tracked pick. Per sport and stat, once 30 or
+  more picks are graded, the stats weight is `(books' MAE ÷ stats MAE)²`, capped at 1 and shrunk toward 1 with 100 picks of
+  prior. The stats standard error is divided by √weight, so the blend leans on the books. Rank confidence also drops. The
+  weights are in `status.honesty`.
+- **Not built:** opponent defense (§5.2), usage when a teammate is out (§5.3) and minutes mixtures (§5.4) all need the team
+  and opponent on each game row. CrownIQ's history rows don't carry those yet.
