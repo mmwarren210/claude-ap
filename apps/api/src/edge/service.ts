@@ -583,6 +583,8 @@ export class EdgeService {
       .slice(0, 15).map(([key, group]) => `${key}(${group.lines})`);
     const unpriced = sorted.filter(([key, group]) => group.lines >= 10 && group.priced === 0 && bookSports.has(key.slice(0, key.indexOf(':'))))
       .slice(0, 15).map(([key, group]) => `${key}(${group.lines})`);
+    const mismatches = snapshot.report.match?.mismatchSamples ?? [];
+    if (mismatches.length) console.log(`[edge-audit] ${snapshot.platform} MARKET_MISMATCH samples: ${JSON.stringify(mismatches.slice(0, 8))}`);
     console.log(`[edge-audit] ${snapshot.platform} generic model: ${generic.join(' ') || 'none'} | books cover the sport but none priced: ${unpriced.join(' ') || 'none'}`);
   }
 
