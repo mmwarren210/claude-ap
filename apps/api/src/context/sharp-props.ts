@@ -50,6 +50,10 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
 /** A row's CrownIQ market key, with the few book-specific exceptions (see TENNIS above). */
 function bookMarket(sport: Sport, book: string, type: string): string | undefined {
   if (sport === 'TENNIS' && type === 'player_total_games' && book !== 'hardrock') return undefined;
+  // Market audit (2026-10-06, MARKET_MISMATCH samples): FanDuel's "rebounds + assists" carries points+rebounds+assists numbers
+  // (A'ja Wilson 37.5) and DraftKings' "walks allowed" carries strikeout numbers (Chris Sale 7.5). Both are left out.
+  if (book === 'fanduel' && type === 'player_rebounds_+_assists') return undefined;
+  if (book === 'draftkings' && sport === 'MLB' && type === 'player_walks_allowed') return undefined;
   return marketKeys[sport]?.[type];
 }
 
