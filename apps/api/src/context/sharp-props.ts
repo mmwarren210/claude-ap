@@ -315,8 +315,10 @@ export class SharpPropsFeed {
       }
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : 'SHARPAPI_FAILED';
+      console.warn(`[sharp] refresh failed after ${this.requests} requests: ${this.lastError}`);
       return this.status();
     }
+    console.log(`[sharp] refresh fetched ${rows.length} prop rows in ${this.requests} requests`);
     // Pick'em rows (PrizePicks) are lines, not prices: kept apart so they never count toward a fair price.
     const bookRows = rows.filter((row) => !isPickemRow(row));
     const prices = fairPrices(bookRows);
