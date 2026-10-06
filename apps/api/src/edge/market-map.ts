@@ -39,10 +39,25 @@ export interface MatchReport {
   /** Board lines (standard) whose player and stat any book prices, and how many of those got a quote. */
   readonly linesWithBookPrice: number; readonly linesMatched: number;
   readonly mismatches: number;
+  /** A few prices that found the player and stat but no game, for diagnosing the match rate. */
+  readonly noEventSamples: readonly { player: string; book: string; start: string; teams: string; boardStarts: string; boardTeams: string }[];
   readonly mismatchSamples: readonly { player: string; market: string; book: string; bookLine: number; boardLine: number }[];
 }
 
-const SIX_HOURS = 6 * 3600_000;
+const SIX_HOURS = 6 * 3600_000, THREE_HOURS = 3 * 3600_000;
+
+/** Team names across sources: full names ("New York Yankees"), nicknames, or the boards' abbreviations ("NYY", "TB"). */
+export function teamsMatch(a: string, b: string): boolean {
+  if (sameTeam(a, b)) return true;
+  const short = a.replace(/[^A-Za-z]/g, '').length <= 4 && !a.includes(' ') ? a : b.replace(/[^A-Za-z]/g, '').length <= 4 && !b.includes(' ') ? b : null;
+  if (!short) return false;
+  const long = short === a ? b : a, code = short.toLowerCase().replace(/[^a-z]/g, '');
+  const words = normalizedName(long).split(' ').filter(Boolean);
+  if (words.length < 2 || code.length < 2) return false;
+  const initials = words.map((word) => word[0]).join('');
+  // NYY = New York Yankees, TB = Tampa Bay (Rays), LAD = Los Angeles Dodgers, KC = Kansas City, SF = San Francisco.
+  return initials === code || initials.startsWith(code) || (words[0]!.startsWith(code) && code.length >= 3);
+}
 
 /**
  * SharpAPI book prices as Edge quotes on the board's own events. `exclude` names the books that may not count (the
@@ -57,6 +72,7 @@ export function matchBookPrices(lines: readonly PropLine[], prices: readonly Fai
   }
   const quotes: MarketQuote[] = [];
   let considered = 0, ambiguous = 0, noEvent = 0;
+  const noEventSamples: MatchReport['noEventSamples'][number][] = [];
   const pricedGroups = new Set<string>(), matchedGroups = new Set<string>();
   for (const price of prices) {
     if (exclude.includes(price.book) || price.stale) continue;
@@ -66,11 +82,25 @@ export function matchBookPrices(lines: readonly PropLine[], prices: readonly Fai
     considered++;
     pricedGroups.add(key);
     const start = Date.parse(price.startTime);
-    const near = candidates.filter((line) => Math.abs(Date.parse(line.eventStartTime) - start) <= SIX_HOURS &&
-      (!price.home || !line.homeTeam || [line.homeTeam, line.awayTeam].some((team) => team &&
-        (sameTeam(team, price.home!) || sameTeam(team, price.away ?? '')))));
+    const window = candidates.filter((line) => Math.abs(Date.parse(line.eventStartTime) - start) <= SIX_HOURS);
+    let near = window.filter((line) => !price.home || !line.homeTeam || [line.homeTeam, line.awayTeam, line.team].some((team) =>
+      team && (teamsMatch(team, price.home!) || teamsMatch(team, price.away ?? ''))));
+    // Team names that can't be compared (a source's own abbreviations, tennis players as "teams"): one game for this player
+    // within three hours of the book's start is the same game; anything wider or with two games stays unmatched.
+    // Full team names that disagree are a different game, so they never fall back.
+    const comparable = (line: PropLine) => [line.homeTeam, line.awayTeam].some((team) => team && team.trim().includes(' '));
+    if (!near.length) {
+      const close = window.filter((line) => Math.abs(Date.parse(line.eventStartTime) - start) <= THREE_HOURS && !comparable(line));
+      if (new Set(close.map((line) => line.eventId)).size === 1) near = close;
+    }
     const events = [...new Set(near.map((line) => line.eventId))];
-    if (!events.length) { noEvent++; continue; }
+    if (!events.length) {
+      noEvent++;
+      if (noEventSamples.length < 8) noEventSamples.push({ player: price.player, book: price.book, start: price.startTime,
+        teams: `${price.away ?? '?'} @ ${price.home ?? '?'}`, boardStarts: [...new Set(candidates.map((line) => line.eventStartTime))].slice(0, 3).join(','),
+        boardTeams: [...new Set(candidates.map((line) => `${line.awayTeam ?? '?'} @ ${line.homeTeam ?? '?'}`))].slice(0, 2).join(',') });
+      continue;
+    }
     if (events.length > 1) { ambiguous++; continue; }
     const line = near[0]!;
     const over = decimalOdds(price.overAmerican), under = decimalOdds(price.underAmerican);
@@ -86,7 +116,7 @@ export function matchBookPrices(lines: readonly PropLine[], prices: readonly Fai
   return { quotes: kept, report: { prices: considered, matched: kept.length, ambiguous, noEvent,
     linesWithBookPrice: [...pricedGroups].filter((key) => regularGroups.has(key)).length,
     linesMatched: [...matchedGroups].filter((key) => regularGroups.has(key)).length,
-    mismatches, mismatchSamples: samples } };
+    mismatches, mismatchSamples: samples, noEventSamples } };
 }
 
 /** Drops quotes whose implied mean is more than 3 SD from the board's regular line for the same player and stat. */

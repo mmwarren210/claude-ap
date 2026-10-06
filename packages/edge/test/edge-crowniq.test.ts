@@ -52,3 +52,10 @@ test('board market keys reach the right profile', () => {
   assert.equal(profileFor('NHL', 'saves'), profileFor('NHL', 'player_total_saves'));
   assert.equal(profileFor('MLB', 'pitching_outs'), profileFor('MLB', 'pitcher_outs'));
 });
+
+test('freshness: an old book price counts less than a fresh one', () => {
+  const fresh = { ...quote('fanduel', 1.6, 2.4), observedAt: now.toISOString() };
+  const stale = { ...quote('draftkings', 2.4, 1.6), observedAt: new Date(now.getTime() - 12 * 3600_000).toISOString() };
+  const pick = priceBoard({ lines: [line('l1', 24.5)], quotes: [fresh, stale], now }).picks[0]!;
+  assert.equal(pick.side, 'MORE', 'the fresh FanDuel over outweighs the 12-hour-old DraftKings under');
+});

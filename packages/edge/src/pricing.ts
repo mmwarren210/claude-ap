@@ -169,8 +169,16 @@ export function priceBoard(input: PricingInput): PricingResult {
     const referencePoint = regular ?? thresholds[Math.floor(thresholds.length / 2)];
 
     const rawQuotes = [...(quoteGroups.get(key)?.values() ?? [])];
-    const paired = rawQuotes.map((quote) => ({ quote, fair: fairQuote(quote) }))
-      .filter((item): item is { quote: MarketQuote; fair: FairQuote } => !!item.fair);
+    // Freshness (spec §2.4): a quote's weight decays with its age, faster near the start (τ = 20 minutes inside two
+    // hours of the game, 3 hours before that). A price the books haven't touched in a while says less about the line.
+    const toStart = Date.parse(first.eventStartTime) - now;
+    const tau = toStart < 2 * 3600_000 ? 20 * 60_000 : 3 * 3600_000;
+    const paired = rawQuotes.map((quote) => {
+      const fair = fairQuote(quote);
+      if (!fair) return null;
+      const age = Math.max(0, now - Date.parse(quote.observedAt ?? quote.fetchedAt));
+      return { quote, fair: { ...fair, weight: fair.weight * Math.max(.1, Math.exp(-age / tau)) } };
+    }).filter((item): item is { quote: MarketQuote; fair: FairQuote } => !!item);
     const fair = paired.map((item) => item.fair);
     quotesUsed += fair.length;
     const market = marketSource(fair, profile, referencePoint);

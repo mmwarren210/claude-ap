@@ -144,19 +144,36 @@ export class EdgeService {
     return this.current ?? this.pending;
   }
 
+  /** History values Edge already looked up: kept 6 hours when found and 1 hour when not, so each pass only looks up
+   * players it hasn't seen (coverage builds up across passes instead of restarting every 10 minutes). */
+  private readonly valuesCache = new Map<string, { until: number; values: number[] | null }>();
+
   private async gatherValues(lines: readonly PropLine[]) {
     const found = new Map<string, number[]>();
     if (!this.options.values) return { found, asked: 0 };
+    const nowMs = Date.now();
     const groups = new Map<string, PropLine>();
     for (const line of lines) groups.set(`${line.sport}|${line.playerId}|${line.market}`, groups.get(`${line.sport}|${line.playerId}|${line.market}`) ?? line);
-    const queue = [...groups.entries()], deadline = Date.now() + (this.options.valuesBudgetMs ?? 45_000);
+    const queue: [string, PropLine][] = [];
+    for (const [key, line] of groups) {
+      const cached = this.valuesCache.get(key);
+      if (cached && cached.until > nowMs) { if (cached.values) found.set(key, cached.values); }
+      else queue.push([key, line]);
+    }
+    // Soonest games first: they matter most and their lines go first.
+    queue.sort((a, b) => a[1].eventStartTime.localeCompare(b[1].eventStartTime));
+    const deadline = nowMs + (this.options.valuesBudgetMs ?? 45_000);
     const worker = async () => {
       for (let item = queue.shift(); item && Date.now() < deadline; item = queue.shift()) {
-        const result = await this.options.values!(item[1]).catch(() => null);
-        if (result?.values.length) found.set(item[0], result.values);
+        const result = await this.options.values!(item[1]).catch(() => undefined);
+        if (result === undefined) continue; // a failed lookup is retried next pass
+        const values = result?.values.length ? result.values : null;
+        this.valuesCache.set(item[0], { until: Date.now() + (values ? 6 : 1) * 3600_000, values });
+        if (values) found.set(item[0], values);
       }
     };
     await Promise.all(Array.from({ length: 8 }, worker));
+    if (this.valuesCache.size > 50_000) for (const [key, value] of this.valuesCache) if (value.until <= nowMs) this.valuesCache.delete(key);
     return { found, asked: groups.size };
   }
 
@@ -227,6 +244,7 @@ export class EdgeService {
         `sharpapi ${JSON.stringify(report.sharpApi)}, match ${report.match ? `${report.match.linesMatched}/${report.match.linesWithBookPrice} ` +
           `lines, ${report.match.matched} quotes, ${report.match.ambiguous} ambiguous, ${report.match.noEvent} no event, ` +
           `${report.match.mismatches} MARKET_MISMATCH` : 'none'}, history values ${values.found.size}/${values.asked}, ${snapshot.durationMs}ms`);
+      if (report.match?.noEventSamples.length) console.log(`[edge-match] no game for: ${JSON.stringify(report.match.noEventSamples)}`);
       void this.options.ledger?.record(priced.picks, (lineId) => {
         const line = lineMap.get(lineId);
         return { team: line?.team ?? null, home: line?.homeTeam ?? null, away: line?.awayTeam ?? null };

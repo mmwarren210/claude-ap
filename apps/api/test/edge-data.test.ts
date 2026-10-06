@@ -53,3 +53,20 @@ test('identity: one market table, events within 6 hours with a matching team, am
   assert.equal(far.report.mismatches, 1);
   assert.equal(far.quotes.length, 0);
 });
+
+test('identity: board abbreviations match full names; one game within 3 hours matches when teams can’t be compared', async () => {
+  const { teamsMatch } = await import('../src/edge/market-map.js');
+  assert.equal(teamsMatch('NYY', 'New York Yankees'), true);
+  assert.equal(teamsMatch('TB', 'Tampa Bay Rays'), true);
+  assert.equal(teamsMatch('LAD', 'Los Angeles Dodgers'), true);
+  assert.equal(teamsMatch('NYY', 'New York Mets'), false);
+  const abbreviated = matchBookPrices([line('l1', { homeTeam: 'TB', awayTeam: 'NYY' })], [price()], start);
+  assert.equal(abbreviated.quotes.length, 1);
+  const tennis = matchBookPrices([line('l1', { homeTeam: 'Sinner', awayTeam: 'Alcaraz' })],
+    [price({ home: 'Jannik Sinner', away: 'Carlos Alcaraz', startTime: '2030-01-11T01:00:00Z' })], start);
+  assert.equal(tennis.quotes.length, 1, 'one game for the player within three hours');
+  const far = matchBookPrices([line('l1', { homeTeam: 'Seattle', awayTeam: 'Houston' })],
+    [price({ home: 'Boston Red Sox', away: 'Texas Rangers', startTime: '2030-01-11T05:00:00Z' })], start);
+  assert.equal(far.report.noEvent, 1, 'another team five hours away stays unmatched');
+  assert.equal(far.report.noEventSamples.length, 1);
+});
