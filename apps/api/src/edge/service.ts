@@ -59,6 +59,8 @@ export interface EdgeServiceOptions {
   readonly alertsFile?: string | null;
   /** Edge (in points) a stale pick needs to raise an alert. */
   readonly alertMinEdge?: number;
+  /** The stats model's measured weight by sport and market (spec §5.6), for ranking model-only picks. */
+  readonly honesty?: ((sport: string, market: string) => number) | null;
   /** Every STALE flag as it's first seen, for the replay report (spec §3 acceptance). */
   readonly staleLogFile?: string | null;
 }
@@ -177,6 +179,7 @@ interface PlatformSet {
 
 export class EdgeService {
   private alerts: EdgeAlert[] = [];
+  private weakTiers: ReadonlySet<string> = new Set();
   private staleSeen = new Set<string>();
   private lastAlertFor = new Map<string, number>();
   private current = new Map<EdgePlatform, EdgeSnapshot>();
@@ -211,7 +214,7 @@ export class EdgeService {
     const prizepicks = this.current.get('prizepicks');
     return { modelVersion: EDGE_MODEL_VERSION, computedAt: this.computedAt ? new Date(this.computedAt).toISOString() : null,
       durationMs: prizepicks?.durationMs ?? null, counts: prizepicks?.response.counts ?? null, report: prizepicks?.report ?? null,
-      reports, calibration: prizepicks?.response.calibration ?? null, lastError: this.lastError,
+      reports, calibration: prizepicks?.response.calibration ?? null, lastError: this.lastError, weakTiers: [...this.weakTiers],
       alternateFactors: this.options.alternateFactors ?? {}, pick6PayoutsConfirmed: !!this.options.pick6PayoutsConfirmed,
       entries: Object.fromEntries(EDGE_PLATFORMS.map((platform) => [platform, this.entriesFor(platform).map((entry) => describeEntry(entry))])) };
   }
@@ -311,6 +314,7 @@ export class EdgeService {
       const injured = new Map<string, string>();
       for (const note of await this.options.injuries?.().catch(() => []) ?? [])
         if (/^(out|doubtful|suspended|inactive)/i.test(note.status)) injured.set(normalizedName(note.player), `${note.status}${note.team ? ` (${note.team})` : ''}`);
+      this.weakTiers = await this.options.ledger?.weakTiers().catch(() => new Set<string>()) ?? new Set<string>();
       const fresh: EdgeAlert[] = [];
       const priced = crossPlatform(sets.map((set) =>
         this.priceSet(set, board, prices, now, calibration, forecast, rows, values, startedAt, injured, fresh)));
@@ -419,7 +423,7 @@ export class EdgeService {
             reasons: [`Books moved ${moved.direction === 'UP' ? 'up' : 'down'} ${minutesAgo} min ago (${moved.books} book${moved.books === 1 ? '' : 's'}, first ${moved.firstMover}); ${name} hasn’t.`, ...pick.reasons] };
         }
       }
-      const rank = rankScore(pick);
+      const rank = rankScore(pick, { weakTiers: this.weakTiers, ...(this.options.honesty ? { honesty: this.options.honesty } : {}) });
       return rank === null ? pick : { ...pick, rank };
     });
     out.sort((a, b) => (b.rank ?? -1) - (a.rank ?? -1) || b.probability - a.probability);

@@ -11,15 +11,16 @@ import { palette } from '../../theme';
 import { useBoard } from '../../use-board';
 import { useEdge } from '../../use-edge';
 import { EdgeAlerts } from '../../components/EdgeAlerts';
+import { EdgeRecord } from '../../components/EdgeRecord';
 import { edgePlatform, EDGE_PLATFORMS, isBook, platformLabel, useEdgePlatform } from '../../edge-platform';
 import type { EdgeView } from '../../use-edge';
 
 const views: { key: EdgeView; label: string }[] = [
   { key: 'edges', label: 'Best edges' }, { key: 'alternates', label: 'Goblins & Demons' },
 ];
-type Section = 'top' | 'board' | 'gen';
+type Section = 'top' | 'board' | 'gen' | 'record';
 const sections: { key: Section; label: string }[] = [
-  { key: 'top', label: 'Top Picks' }, { key: 'board', label: 'Board' }, { key: 'gen', label: 'Gen' },
+  { key: 'top', label: 'Top Picks' }, { key: 'board', label: 'Board' }, { key: 'gen', label: 'Gen' }, { key: 'record', label: 'Record' },
 ];
 
 export default function EdgeScreen() {
@@ -46,7 +47,7 @@ export default function EdgeScreen() {
       accessibilityState={{ selected: section === item.key }} onPress={() => setSection(item.key)}
       style={[styles.segment, section === item.key && styles.segmentOn]}>
       <Text style={[styles.segmentText, section === item.key && styles.segmentTextOn]}>{item.label}</Text></Pressable>)}</View>
-    {section === 'board' ? <><EdgeSlipPanel entries={data?.entries ?? []} /><EdgeBoardView /></>
+    {section === 'record' ? <EdgeRecord /> : section === 'board' ? <><EdgeSlipPanel entries={data?.entries ?? []} /><EdgeBoardView /></>
       : section === 'gen' ? data ? <><EdgeGenView entries={data.entries} sports={sports} nowMs={nowMs} starts={live.map((pick) => pick.eventStartTime)} /><EdgeSlipPanel entries={data.entries} /></>
         : <Notice title={status === 'loading' ? 'Pricing the board' : 'Edge pending'} detail={message || 'Reading the saved board.'} />
       : <>

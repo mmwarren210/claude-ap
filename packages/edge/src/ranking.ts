@@ -9,13 +9,18 @@ import type { EdgePick } from '@crowniq/contracts';
 export interface RankOptions {
   /** The stats model's measured weight by sport:market (spec §5.6); 0.6 when unmeasured. */
   readonly honesty?: (sport: string, market: string) => number;
+  /** Tiers measured as not beating the close after 300 picks (spec §9): their picks' confidence is halved. */
+  readonly weakTiers?: ReadonlySet<string>;
 }
 
 export function confidenceOf(pick: EdgePick, options: RankOptions = {}): number {
   const books = new Set(pick.sources.market?.books.map((book) => book.bookmaker) ?? []).size;
   const base = pick.tier === 'SHARP' ? books >= 3 ? 1 : .95 : pick.tier === 'MARKET' ? .85
     : pick.tier === 'MODEL' ? options.honesty?.(pick.sport, pick.market) ?? .6 : .5;
-  return pick.warnings.some((warning) => warning.startsWith('Sportsbooks disagree')) ? base * .5 : base;
+  const disagree = pick.warnings.some((warning) => warning.startsWith('Sportsbooks disagree')) ? .5 : 1;
+  const weak = options.weakTiers && (options.weakTiers.has(pick.stale ? 'STALE' : pick.tier) ||
+    options.weakTiers.has(`${pick.platform}:${pick.tier}`)) ? .5 : 1;
+  return base * disagree * weak;
 }
 
 export function freshnessBoost(pick: EdgePick): number {

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { EdgePick, PropLine } from '@crowniq/contracts';
-import { forecastReport, profileFor } from '@crowniq/edge';
+import { evaluate, forecastReport, profileFor } from '@crowniq/edge';
 import type { GradedForecast, StatRow } from '@crowniq/edge';
 import type { GradeTarget } from '../box-score-results.js';
 
@@ -25,6 +25,8 @@ export interface TrackedEdgePick {
   stale?: boolean;
   /** Sportsbook bets: decimal odds at the first and last sighting (for CLV and ROI). */
   firstDecimal?: number; decimal?: number;
+  /** The side's break-even when first shown (CLV is measured against it). */
+  firstBreakEven?: number;
 }
 
 /** The result fact shape shared with GKR's product tracking (box scores, admin posts). */
@@ -115,7 +117,7 @@ export class EdgeLedger {
           playerId: pick.playerId, playerName: pick.playerName, team: side.team, homeTeam: side.home, awayTeam: side.away,
           market: pick.market, threshold: pick.threshold,
           lineType: pick.lineType, side: pick.side, tier: pick.tier, rating: pick.rating,
-          firstProbability: pick.probability, probability: pick.probability, breakEven: pick.breakEven,
+          firstProbability: pick.probability, probability: pick.probability, breakEven: pick.breakEven, firstBreakEven: pick.breakEven,
           edge: pick.edge, firstSeenAt: iso, lastSeenAt: iso, modelVersion: pick.modelVersion,
           outcome: 'PENDING', actual: null, gradedAt: null, resultSource: null,
           ...(pick.stale ? { stale: true } : {}), ...(pick.decimalOdds ? { firstDecimal: pick.decimalOdds, decimal: pick.decimalOdds } : {}) };
@@ -204,18 +206,13 @@ export class EdgeLedger {
     return this.exclusive(async () => {
       const picks = (await this.read()).picks;
       const decided = picks.filter((pick) => pick.outcome === 'WIN' || pick.outcome === 'LOSS');
+      const graded = (subset: readonly TrackedEdgePick[]) => evaluate(subset.map((pick) => ({ hit: pick.outcome === 'WIN',
+        firstProbability: pick.firstProbability, closeProbability: pick.probability, breakEven: pick.firstBreakEven ?? pick.breakEven,
+        ...(pick.firstDecimal ? { decimal: pick.firstDecimal } : {}) })));
       const rows = (subset: readonly TrackedEdgePick[]) => subset.map((pick) =>
         ({ probability: pick.probability, hit: pick.outcome === 'WIN', sport: pick.sport }));
-      const summary = (subset: readonly TrackedEdgePick[]) => {
-        const report = forecastReport(rows(subset));
-        const standard = subset.filter((pick) => pick.edge !== null);
-        const hits = standard.filter((pick) => pick.outcome === 'WIN').length;
-        return { graded: report.graded, hitRate: report.hitRate, averageForecast: report.averageForecast, brier: report.brier,
-          standardLines: { graded: standard.length, hitRate: standard.length ? hits / standard.length : null,
-            averageBreakEven: standard.length ? standard.reduce((sum, pick) => sum + pick.breakEven, 0) / standard.length : null } };
-      };
       const groupBy = (select: (pick: TrackedEdgePick) => string) => Object.fromEntries(
-        [...new Set(decided.map(select))].sort().map((key) => [key, summary(decided.filter((pick) => select(pick) === key))]));
+        [...new Set(decided.map(select))].sort().map((key) => [key, graded(decided.filter((pick) => select(pick) === key))]));
       const standard = decided.filter((pick) => pick.edge !== null);
       const standardHits = standard.filter((pick) => pick.outcome === 'WIN').length;
       return {
@@ -223,14 +220,38 @@ export class EdgeLedger {
         pending: picks.filter((pick) => pick.outcome === 'PENDING').length,
         voided: picks.filter((pick) => pick.outcome === 'VOID' || pick.outcome === 'PUSH').length,
         overall: forecastReport(rows(decided)),
+        evaluation: graded(standard),
         standardLines: { graded: standard.length, hitRate: standard.length ? standardHits / standard.length : null,
           averageBreakEven: standard.length ? standard.reduce((sum, pick) => sum + pick.breakEven, 0) / standard.length : null },
         byPlatform: groupBy((pick) => pick.platform ?? 'prizepicks'),
-        byTier: groupBy((pick) => pick.tier), byRating: groupBy((pick) => pick.rating),
+        // STALE flags are measured as their own tier (spec §3 acceptance, §9).
+        byTier: groupBy((pick) => pick.stale ? 'STALE' : pick.tier), byRating: groupBy((pick) => pick.rating),
         bySport: groupBy((pick) => pick.sport),
         recent: picks.filter((pick) => pick.outcome !== 'PENDING')
           .sort((a, b) => b.eventStartTime.localeCompare(a.eventStartTime)).slice(0, 50),
       };
+    });
+  }
+
+  /**
+   * Tiers whose closing-line value is zero or worse after 300 graded picks (spec §9): their picks' rank is halved and the
+   * owner diagnostics flag them. Keys are tier names (STALE included) and platform:tier.
+   */
+  async weakTiers(minimum = 300): Promise<Set<string>> {
+    return this.exclusive(async () => {
+      const decided = (await this.read()).picks.filter((pick) => (pick.outcome === 'WIN' || pick.outcome === 'LOSS') && pick.edge !== null);
+      const groups = new Map<string, TrackedEdgePick[]>();
+      for (const pick of decided) for (const key of [pick.stale ? 'STALE' : pick.tier, `${pick.platform}:${pick.tier}`])
+        groups.set(key, [...groups.get(key) ?? [], pick]);
+      const weak = new Set<string>();
+      for (const [key, list] of groups) {
+        if (list.length < minimum) continue;
+        const clv = evaluate(list.map((pick) => ({ hit: pick.outcome === 'WIN', firstProbability: pick.firstProbability,
+          closeProbability: pick.probability, breakEven: pick.firstBreakEven ?? pick.breakEven,
+          ...(pick.firstDecimal ? { decimal: pick.firstDecimal } : {}) }))).clv;
+        if (clv && clv.value <= 0) weak.add(key);
+      }
+      return weak;
     });
   }
 }

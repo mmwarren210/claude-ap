@@ -208,3 +208,17 @@ platform chip for each:
   app ships to the stores. `GET /v1/edge/alerts`: STALE picks (≤ 30 minutes old) with ≥ 4 points of edge, one per player
   per hour, shown at the top of the Edge tab.
 - **Best number across apps:** every pick lists the same player and stat on the other platforms with Edge's chance there.
+
+### P4 (2026-10-06): evaluation and the track record
+
+- `packages/edge/src/evaluation.ts`: CLV (Edge's chance at the close minus the break-even when the pick was shown; for
+  sportsbooks the EV at the close at the odds taken), beat-the-close rate, hit rate with a Wilson 95% interval against the
+  average break-even, ROI per $1 with a bootstrap 95% interval (books at their odds, pick'em legs at a fair 1 ÷ break-even
+  payout), Brier, and 5-point calibration buckets with the largest gap in buckets of 50+.
+- `GET /v1/edge/performance` reports all of it overall and by platform, by source (SHARP / MARKET / MODEL / LADDER and STALE)
+  and by rating. The Edge tab's **Record** section shows it to every user.
+- **Automatic down-weighting:** a tier (or platform:tier) whose CLV is zero or worse after 300 graded picks has its picks'
+  rank halved; `status.weakTiers` lists them.
+- **Backtest:** `GET /v1/owner/edge/backtest` replays the stats projection walk-forward over CrownIQ's game rows (vs the
+  last-10 baseline). A replay of the odds snapshot store needs closes that only started being stored on 2026-10-05; the
+  stale replay (`/v1/owner/edge/stale`) is the first one.
