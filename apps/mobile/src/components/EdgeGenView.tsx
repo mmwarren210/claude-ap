@@ -7,6 +7,7 @@ import { dayWindow, pct, usd } from '../edge-format';
 import { useEdgeStake } from '../edge-stake';
 import { isBook, useEdgePlatform } from '../edge-platform';
 import { chosenDay, gameDays } from '../game-days';
+import { edgeEntryType, useEdgeEntryType } from '../edge-entry-type';
 import { edgeSlip } from '../edge-slip';
 import { palette } from '../theme';
 import { SlipSummary, StakePicker } from './EdgeSlipPanel';
@@ -19,7 +20,7 @@ export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: reado
   const { request } = useAuth();
   const platform = useEdgePlatform(), book = isBook(platform);
   const types = [...new Set(entries.map((item) => item.type))];
-  const [chosenType, setType] = useState<'POWER' | 'FLEX' | 'PARLAY'>('POWER');
+  const chosenType = useEdgeEntryType(), setType = edgeEntryType.set;
   const type = types.includes(chosenType) ? chosenType : types[0] ?? 'POWER';
   const [chosenSize, setSize] = useState(3);
   const [count, setCount] = useState(3);

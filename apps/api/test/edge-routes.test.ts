@@ -82,6 +82,14 @@ test('Edge routes: every line read or No read, leave-one-out, Gen, slips and own
 
     const slip = await app.inject({ method: 'POST', url: '/v1/edge/slip', payload: { type: 'POWER', lineIds: ['line-0', 'line-2'] } });
     assert.equal(slip.statusCode, 200);
+    // The ticket's own payouts replace the chart: EV uses exactly what the app showed, with no swap suggested.
+    const ticket = (await app.inject({ method: 'POST', url: '/v1/edge/slip',
+      payload: { type: 'POWER', lineIds: ['line-0', 'line-2'], payouts: { '2': 6, '1': 0 } } })).json().slip;
+    assert.deepEqual(ticket.entry.payouts, { '2': 6 });
+    assert.ok(Math.abs(ticket.expectedReturn - ticket.hitDistribution[2] * 6) < 1e-3);
+    assert.equal(ticket.suggestion, undefined);
+    assert.equal((await app.inject({ method: 'POST', url: '/v1/edge/slip',
+      payload: { type: 'POWER', lineIds: ['line-0', 'line-2'], payouts: { '2': -1 } } })).statusCode, 400);
     assert.equal((await app.inject('/v1/edge/line/lonely')).json().code, 'EDGE_LINE_UNPRICED');
     assert.equal((await app.inject('/v1/edge/player/player-0')).json().picks.length, 2);
     assert.equal((await app.inject('/v1/owner/edge/status')).statusCode, 404, 'owner only');

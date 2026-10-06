@@ -19,6 +19,8 @@ export interface EvaluateOptions {
   readonly minEvents?: number;
   /** Copula draws when a pair is correlated (20k by default; the builder's search uses fewer). */
   readonly draws?: number;
+  /** The payouts are the ones the app showed for this exact ticket (already including any pick multipliers). */
+  readonly payoutsFinal?: boolean;
 }
 
 const pct = (value: number) => `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)}%`;
@@ -41,7 +43,7 @@ export function evaluateSlip(entry: EdgeEntry, legs: readonly EdgePick[], option
   const { independent, correlated: distribution, pairs } = slipDistribution(legs, options.draws ?? SIMULATION_DRAWS);
   // Underdog / DK Pick'em multiply the entry's payout by each pick's own multiplier; a parlay's legs carry their odds.
   // (Only the all-hit payout is boosted by a parlay's odds; pick'em multipliers apply to every paying outcome.)
-  const boost = legs.reduce((product, leg) => product * (leg.payoutMultiplier ?? 1), 1);
+  const boost = options.payoutsFinal ? 1 : legs.reduce((product, leg) => product * (leg.payoutMultiplier ?? 1), 1);
   const returns = (hits: number) => (entry.payouts[String(hits)] ?? 0) * boost;
   const expectedOf = (dist: readonly number[]) => dist.reduce((sum, mass, hits) => sum + mass * returns(hits), 0);
   const expected = expectedOf(distribution), independentExpected = expectedOf(independent);
@@ -55,7 +57,7 @@ export function evaluateSlip(entry: EdgeEntry, legs: readonly EdgePick[], option
   if (events.size < (options.minEvents ?? 2)) warnings.push('The app requires players from at least two teams; legs come from one game.');
   if (sameGameLegs) warnings.push(`${sameGameLegs} legs share a game with another leg; the EV uses CrownIQ's prior correlations for them, not measured ones.`);
   if (legs.some((leg) => leg.edge === null)) warnings.push('Includes a line whose payout is unknown; EV assumes a standard payout for it.');
-  if (legs.some((leg) => !legAllowed(entry, leg))) warnings.push('PrizePicks pays Goblins and Demons differently in Flex; this EV uses the Power factor and is only approximate. Play them in Power.');
+  if (!options.payoutsFinal && legs.some((leg) => !legAllowed(entry, leg))) warnings.push('PrizePicks pays Goblins and Demons differently in Flex; this EV uses the Power factor and is only approximate. Play them in Power.');
   const strongest = [...pairs].sort((a, b) => Math.abs(b.rho) - Math.abs(a.rho))[0];
   const lift = independentExpected > 0 ? expected / independentExpected - 1 : 0;
   return {

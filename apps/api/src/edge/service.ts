@@ -662,12 +662,29 @@ export function viewPicks(snapshot: EdgeSnapshot, view: EdgeView, filters: { spo
   return picks.slice(0, filters.limit);
 }
 
-export function customSlip(snapshot: EdgeSnapshot, entry: EdgeEntry, lineIds: readonly string[], nowMs = Date.now()): EdgeSlip | null {
+/**
+ * Prices the member's own legs. `payouts` (hits → multiple) are the numbers the app showed for this exact ticket; they
+ * replace the chart and already include any Goblin/Demon or pick multipliers, so no swap is suggested (a swap would change them).
+ */
+export function customSlip(snapshot: EdgeSnapshot, chart: EdgeEntry, lineIds: readonly string[], nowMs = Date.now(),
+  payouts?: Readonly<Record<string, number>>): EdgeSlip | null {
   const legs = lineIds.map((id) => pickForLine(snapshot, id));
   if (legs.some((leg) => !leg)) return null;
-  const slip = evaluateSlip(entry, legs as EdgePick[], { minEvents: snapshot.minEvents });
+  const entry = payouts ? ticketEntry(chart, payouts) : chart;
+  const slip = evaluateSlip(entry, legs as EdgePick[], { minEvents: snapshot.minEvents, payoutsFinal: !!payouts });
+  if (payouts) return slip;
   const suggestion = suggestSwap(entry, legs as EdgePick[], snapshot.response.picks, { minEvents: snapshot.minEvents, nowMs });
   return suggestion ? { ...slip, suggestion } : slip;
+}
+
+/** The chart entry with the ticket's own payouts in place of the chart's (only hit counts the entry can have). */
+export function ticketEntry(chart: EdgeEntry, payouts: Readonly<Record<string, number>>): EdgeEntry {
+  const table: Record<number, number> = {};
+  for (const [hits, multiple] of Object.entries(payouts)) {
+    const count = Number(hits);
+    if (Number.isInteger(count) && count >= 0 && count <= chart.size && multiple > 0) table[count] = multiple;
+  }
+  return describeEntry({ type: chart.type, size: chart.size, payouts: table });
 }
 
 export type EdgeBoardFilter = 'all' | 'picks' | 'no_read';

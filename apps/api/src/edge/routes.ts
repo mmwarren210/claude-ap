@@ -155,13 +155,16 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
 
   app.post('/v1/edge/slip', async (request, reply) => {
     const body = z.object({ platform: platformSchema, type: z.enum(['POWER', 'FLEX', 'PARLAY']),
-      lineIds: z.array(z.string().min(1).max(300)).min(2).max(20) }).strict().safeParse(request.body);
+      lineIds: z.array(z.string().min(1).max(300)).min(2).max(20),
+      // The payouts the app showed for this exact ticket (hits → multiple), when the member typed them in.
+      payouts: z.record(z.string().regex(/^\d{1,2}$/), z.number().min(0).max(10_000)).optional() }).strict().safeParse(request.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_SLIP' });
     const snapshot = await edge.snapshot(body.data.platform);
     if (!snapshot) return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
     const entry = snapshot.response.entries.find((item) => item.type === body.data.type && item.size === body.data.lineIds.length);
     if (!entry) return reply.code(422).send({ code: 'ENTRY_UNSUPPORTED' });
-    const slip = customSlip(snapshot, entry, body.data.lineIds, now().getTime());
+    const payouts = body.data.payouts && Object.values(body.data.payouts).some((value) => value > 0) ? body.data.payouts : undefined;
+    const slip = customSlip(snapshot, entry, body.data.lineIds, now().getTime(), payouts);
     return slip ? { slip } : reply.code(422).send({ code: 'EDGE_LINE_UNPRICED' });
   });
 
