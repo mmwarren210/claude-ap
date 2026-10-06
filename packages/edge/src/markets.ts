@@ -107,9 +107,30 @@ const aliases: Readonly<Record<string, string>> = {
   'TENNIS:aces': 'TENNIS:player_aces', 'TENNIS:double_faults': 'TENNIS:player_double_faults',
 };
 
+// Learned variance functions (spec §2.1), keyed by the profile's sport:market. Set from the API's dispersion file.
+let learned: ReadonlyMap<string, { phi: number; psi: number }> = new Map();
+const learnedProfiles = new Map<string, MarketProfile>();
+
+/** Replaces the learned variance functions used by `profileFor` (empty map = the hand-set defaults). */
+export function setLearnedDispersion(fits: ReadonlyMap<string, { phi: number; psi: number }>): void {
+  learned = fits; learnedProfiles.clear();
+}
+
+/** The profile key `profileFor` resolves a board market to, or null for the generic fallbacks. */
+export function profileKey(sport: string, market: string): string | null {
+  const key = sport + ':' + market;
+  return marketProfiles[key] ? key : marketProfiles[aliases[key] ?? ''] ? aliases[key]! : null;
+}
+
 export function profileFor(sport: string, market: string): MarketProfile {
-  const exact = marketProfiles[sport + ':' + market] ?? marketProfiles[aliases[sport + ':' + market] ?? ''];
-  if (exact) return exact;
+  const key = profileKey(sport, market);
+  if (key) {
+    const fit = learned.get(key), base = marketProfiles[key]!;
+    if (!fit) return base;
+    let profile = learnedProfiles.get(key);
+    if (!profile) learnedProfiles.set(key, profile = { ...base, variance: { ...base.variance, phi: fit.phi, psi: fit.psi } });
+    return profile;
+  }
   if (/yds|yards|longest/.test(market)) return normal(2, .2, 25);
   if (/fantasy/.test(market)) return normal(2, .06, 4, undefined, false);
   if (/saves|outs|total_games|total_points/.test(market)) return normal(1, .02, 6);

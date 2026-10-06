@@ -129,3 +129,13 @@ test('a sportsbook bet no other book prices is shown but not ranked', () => {
   assert.equal(pick.rating, 'NONE');
   assert.ok(pick.warnings.some((warning) => warning.startsWith('No other sportsbook')));
 });
+
+test('freshness: a quote from before the books’ latest move counts 4× less', () => {
+  const t = now.getTime();
+  const before = { ...quote('draftkings', 2.4, 1.6), observedAt: new Date(t - 40 * 60_000).toISOString() };
+  const after = { ...quote('fanduel', 1.6, 2.4), observedAt: new Date(t - 10 * 60_000).toISOString() };
+  const plain = priceBoard({ lines: [line('l1', 24.5)], quotes: [before, after], now }).picks[0]!;
+  const moved = priceBoard({ lines: [line('l1', 24.5)], quotes: [before, after], now, lastMoveAt: () => t - 20 * 60_000 }).picks[0]!;
+  const over = (pick: typeof plain) => pick.side === 'MORE' ? pick.probability : 1 - pick.probability;
+  assert.ok(over(moved) > over(plain) + .01, 'the post-move FanDuel over dominates once the older DraftKings under is discounted');
+});

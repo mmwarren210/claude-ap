@@ -264,3 +264,46 @@ stats source. The sportsbook (market) source is never changed.
   over 8 legs keep the greedy fill.
 - **Slip checker (§7.4):** `POST /v1/edge/slip` returns the EV, the hit distribution, the correlation-adjusted all-hit chance,
   and `suggestion`: the single swap that adds the most EV (≥ 0.5% of the stake), shown in USD.
+
+### Audit against EDGE_2_SPEC (2026-10-06)
+
+Fixed or added in the audit:
+- **Out-of-memory restarts:** P4 and P5 crash-looped at Node's default 2 GB heap. The service now runs with a 6 GB heap
+  (the container has 8 GB). Quadratic array copies in weak tiers, rest effects and the backtest are gone.
+- **§2.1 learned dispersion** (`packages/edge/src/dispersion.ts`, `apps/api/src/edge/dispersion-store.ts`):
+  - Fitted by maximum likelihood per sport:market from the board players' game rows, daily, capped at 20k games per market.
+  - Shrunk with n/(n+500), saved as `edge-dispersion-v1.json` and applied through `profileFor`.
+  - The PIT KS statistic per market is in `status.dispersion`.
+  - Tested: synthetic data recovers ψ within 15%, and the PIT is uniform.
+- **§2.2 learned book weights** (`learnBookWeights`, `apps/api/src/edge/book-weights.ts`):
+  - Each book's main price 3 hours out is compared with the other books' close (leave one out), in SDs, over the last 14 days.
+  - Weights are inverse-variance, shrunk to the prior with 200 scores, per sport; a per-market override applies at 300+.
+  - Refit daily, saved as `edge-book-weights-v1.json`, shown in `status.bookWeights`.
+- **§2.4:** a quote older than the books' latest move (movement tracker) counts 4× less.
+- **§4:** ¼ Kelly is capped at 6% per game; a game's bets are scaled together.
+- **§5:**
+  - Rest effects now read box-score stats, not just stored market values. Before this they learned nothing from most rows.
+  - The game environment matches leagues by sport (Pinnacle "NCAAF" = CrownIQ NCAAFB).
+  - The backtest (`/v1/owner/edge/backtest`) reports current vs projection 2.0 vs last-10 per market, with a §5 `acceptance`
+    table.
+- **§8:**
+  - Line detail shows the fair distribution chart with the line marked, every platform's number on one ladder, and a
+    24-hour movement sparkline from the snapshot store.
+  - The Record screen has a calibration plot, a by-sport breakdown, and Brier skill against the close.
+- **§9:** `brierSkill` is added to every evaluation.
+- **§1.3:** the share of finished picks graded within 6 hours of the final is reported overall and by sport (`gradingCoverage`,
+  in `/v1/edge/performance` and the hourly `[edge-health]` log).
+- **§10:**
+  - `GET /v1/owner/edge/health` covers per-source freshness (board, SharpAPI, scrapers, context feeds), match rates and
+    MARKET_MISMATCH per platform, snapshot rows, Odds API credits, scraper spend today, grading coverage and the learned tables.
+  - Pricing yields to the event loop between platforms.
+  - Sportsbook +EV shape (by side, odds range and sport) is logged as `[edge-ev]`.
+
+Not built, and why:
+- §3.3 NEWS_MODEL and §5.2–5.4 (opponent, usage, minutes mixture): CrownIQ's game rows carry no team or opponent. Injured
+  players are still pulled from rankings.
+- §8 push notifications: the app runs on the web, where Expo push doesn't reach. Alerts are in-app.
+- §2.5 and the §4 Kalshi/Polymarket layer: the owner removed both.
+- §7 residual-learned loadings: same team/opponent gap. The priors are used.
+- §10 worker thread: the copula runs per slip (20k draws, a few ms), and board pricing yields between platforms. A worker
+  thread can follow if pricing time grows.

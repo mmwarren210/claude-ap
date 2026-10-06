@@ -17,6 +17,8 @@ import { TheOddsApiProvider } from './the-odds-api-provider.js';
 import { probeOddsApiOnce } from './edge/odds-api-probe.js';
 import { EdgeLedger } from './edge/ledger.js';
 import { SnapshotStore } from './edge/snapshots.js';
+import { BookWeightStore } from './edge/book-weights.js';
+import { DispersionStore } from './edge/dispersion-store.js';
 import { NflPassingFileResearch } from './nfl-evidence-file.js';
 import { JsonSelectionLedger } from './selection-ledger.js';
 import { CombinedWebResearch, WebResearchAdapter, WebResearchCatalog } from './web-research.js';
@@ -344,7 +346,11 @@ const edgeSnapshots=process.env.EDGE_ENGINE==='false'?null:(()=>{
   try{return new SnapshotStore(process.env.CROWNIQ_EDGE_SNAPSHOTS_FILE ?? `${dataDir}/edge/snapshots.sqlite`);}
   catch(error){console.error('[edge-snapshots] unavailable',error instanceof Error?error.message:error);return null;}
 })();
-const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',
+const edgeDispersion=new DispersionStore(`${dataDir}/edge/edge-dispersion-v1.json`);
+await edgeDispersion.load();
+const edgeBookWeights=new BookWeightStore(`${dataDir}/edge/edge-book-weights-v1.json`);
+await edgeBookWeights.load();
+const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',dispersion:edgeDispersion,bookWeights:edgeBookWeights,
   ledger:new EdgeLedger(process.env.CROWNIQ_EDGE_LEDGER_FILE ?? `${dataDir}/edge/ledger.json`),
   snapshots:edgeSnapshots,alternateFactors:edgeAlternateFactors,
   boxScores:new BoxScoreResults(fetch,undefined,historyArchive),

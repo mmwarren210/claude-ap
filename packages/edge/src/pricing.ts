@@ -39,6 +39,8 @@ export interface PricingInput {
   /** The honesty gate (spec §5.6): the stats source's measured weight for a sport and market, 0–1 (1 = as the standard
    * error says). Below 1 the stats source counts less in the blend. */
   readonly statsWeight?: (sport: string, market: string) => number;
+  /** When the books last moved on this player and stat (ms), from the movement tracker; quotes older than that count 4× less. */
+  readonly lastMoveAt?: (line: PropLine) => number | null;
   /** Each side's own payout on its platform; default: a standard pick'em payout (Goblins/Demons from alternateFactors). */
   readonly sidePayout?: (line: PropLine, side: PlayableDirection) => SidePayout;
 }
@@ -196,11 +198,14 @@ export function priceBoard(input: PricingInput): PricingResult {
     // hours of the game, 3 hours before that). A price the books haven't touched in a while says less about the line.
     const toStart = Date.parse(first.eventStartTime) - now;
     const tau = toStart < 2 * 3600_000 ? 20 * 60_000 : 3 * 3600_000;
+    // A quote from before the books' latest move is about where the line was, not where it is: 4× less weight.
+    const movedAt = input.lastMoveAt?.(first) ?? null;
     const paired = rawQuotes.map((quote) => {
       const fair = fairQuote(quote);
       if (!fair) return null;
-      const age = Math.max(0, now - Date.parse(quote.observedAt ?? quote.fetchedAt));
-      return { quote, fair: { ...fair, weight: fair.weight * Math.max(.1, Math.exp(-age / tau)) } };
+      const seen = Date.parse(quote.observedAt ?? quote.fetchedAt), age = Math.max(0, now - seen);
+      const behind = movedAt !== null && seen < movedAt ? .25 : 1;
+      return { quote, fair: { ...fair, weight: fair.weight * Math.max(.1, Math.exp(-age / tau)) * behind } };
     }).filter((item): item is { quote: MarketQuote; fair: FairQuote } => !!item);
     const fair = paired.map((item) => item.fair);
     quotesUsed += fair.length;

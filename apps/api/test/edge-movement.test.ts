@@ -41,7 +41,7 @@ test('stale: books moved past the app after its number last changed, toward the 
   const service = new EdgeService({ board: () => board, payouts: DEFAULT_PAYOUTS, clock: () => now, movement,
     sharp: { prices: async () => prices, pickem: async () => [] },
     // The app's number last changed at 11:30, before the books moved at 12:00.
-    snapshots: { lastChange: () => Date.parse('2030-01-10T11:30:00Z') },
+    snapshots: { lastChange: () => Date.parse('2030-01-10T11:30:00Z'), bookEvents: () => [], bookRows: () => [] },
     injuries: async () => [{ player: 'Charlie Big', team: 'Home A', status: 'Out', league: 'NBA' }] });
   const snapshot = (await service.snapshot('prizepicks'))!;
   const alpha = snapshot.response.picks.find((pick) => pick.playerName === 'Alpha Guard')!;

@@ -85,3 +85,25 @@ test('honesty gate: a stats model that misses by more than the books loses weigh
     assert.equal(weights.has('MLB:player_points'), false, 'under 30 graded picks');
   } finally { await rm(directory, { recursive: true, force: true, maxRetries: 5 }); }
 });
+
+test('backtest: projection 2.0 (with a learned back-to-back effect) beats the current projection where the effect is real', async () => {
+  const { backtestHistory } = await import('../src/edge/service.js');
+  let seed = 9;
+  const uniform = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return (seed + .5) / 2 ** 32; };
+  const rows = Array.from({ length: 40 }, (_, player) => Array.from({ length: 30 }, (_, game) => {
+    const b2b = game % 3 === 1, base = 18 + player % 10;
+    const at = Date.parse('2029-11-01T00:00:00Z') + (Math.floor(game / 3) * 120 + (game % 3) * 24 + (game % 3 === 2 ? 24 : 0)) * 3600_000;
+    const points = Math.max(0, Math.round(base * (b2b ? .75 : 1) + (uniform() - .5) * 8));
+    return { id: `${player}-${game}`, sport: 'NBA' as const, playerId: `p${player}`, playerName: `Player ${player}`, sourcePlayerId: null,
+      eventId: `e${player}-${game}`, occurredAt: new Date(at).toISOString(), metrics: { pts: points, minutes: 32 }, marketValues: {},
+      sourceKind: 'BOX_SCORE' as never, sourceName: 'test', sourceUrl: 'https://example.test', sourceType: 'PUBLIC' as const,
+      importedAt: '2029-12-01T00:00:00Z', modelVersion: null, line: null, direction: null, lineScore: null, dataConfidence: null };
+  })).flat();
+  const summary = backtestHistory(rows);
+  const points = summary.byMarket['NBA:player_points']!;
+  assert.ok(points.games > 500);
+  assert.ok(points.v2.mae < points.edge.mae, `2.0 MAE ${points.v2.mae} vs current ${points.edge.mae}`);
+  assert.ok(points.v2.logScore > points.edge.logScore);
+  assert.equal(summary.acceptance['NBA:player_points'], points.v2Best);
+  assert.equal(summary.acceptance['MLB:batter_hits'], null, 'no history for that market');
+});

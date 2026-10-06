@@ -1,4 +1,5 @@
 import type { PropLine } from '@crowniq/contracts';
+import { marketProfiles, profileKey } from '@crowniq/edge';
 import type { StatRow } from '@crowniq/edge';
 import type { GameLine } from '../context/feeds.js';
 import { teamsMatch } from './market-map.js';
@@ -15,6 +16,13 @@ import { teamsMatch } from './market-map.js';
 const volume = /points|pts|yds|yards|reception|rec_|hits|bases|runs|rbis|shots|goals|assists|fantasy|threes|rebounds|attempts|completions|targets|saves|sot/;
 const allowed = /hits_allowed|earned_runs|walks_allowed|pitcher_hits|pitcher_earned|pitcher_walks/;
 
+// Pinnacle's league names → CrownIQ sports, so board lines (whose league labels vary by app) find their games. Other leagues
+// (soccer) are matched on the line's own league label.
+const leagueSports: Readonly<Record<string, string>> = { NFL: 'NFL', NCAAF: 'NCAAFB', NCAAFB: 'NCAAFB', CFB: 'NCAAFB', NBA: 'NBA',
+  WNBA: 'WNBA', MLB: 'MLB', NHL: 'NHL' };
+const groupOf = (league: string) => leagueSports[league.toUpperCase()] ?? league.toUpperCase();
+const groupForLine = (line: PropLine) => Object.values(leagueSports).includes(line.sport) ? line.sport : line.league.toUpperCase();
+
 export interface Adjustment { readonly factor: number; readonly reasons: string[] }
 
 const median = (values: number[]) => { const sorted = [...values].sort((a, b) => a - b); return sorted[Math.floor(sorted.length / 2)]!; };
@@ -28,8 +36,8 @@ export class GameEnvironment {
     const byGame = new Map<string, { league: string; home: string; away: string; start: number; total?: number; spread?: number }>();
     for (const line of lines) {
       if (line.line === null || (line.market !== 'total' && line.market !== 'spread')) continue;
-      const key = `${line.league.toUpperCase()}|${line.home}|${line.away}|${line.startTime.slice(0, 13)}`;
-      const game = byGame.get(key) ?? { league: line.league.toUpperCase(), home: line.home, away: line.away, start: Date.parse(line.startTime) };
+      const key = `${groupOf(line.league)}|${line.home}|${line.away}|${line.startTime.slice(0, 13)}`;
+      const game = byGame.get(key) ?? { league: groupOf(line.league), home: line.home, away: line.away, start: Date.parse(line.startTime) };
       if (line.market === 'total') game.total = line.line; else game.spread = line.line;
       byGame.set(key, game);
     }
@@ -50,7 +58,7 @@ export class GameEnvironment {
 
   /** The stats-projection multiplier for a line's game, or null without a Pinnacle game, a team, or a league baseline. */
   factor(line: PropLine): Adjustment | null {
-    const league = line.league.toUpperCase(), baseline = this.baselines.get(league);
+    const league = groupForLine(line), baseline = this.baselines.get(league);
     if (!baseline || !line.team) return null;
     const start = Date.parse(line.eventStartTime);
     const game = (this.games.get(league) ?? []).find((item) => Math.abs(item.start - start) <= 6 * 3600_000 &&
@@ -73,8 +81,8 @@ export class GameEnvironment {
 export interface RestEffect { readonly coefficient: number; readonly n: number; readonly low: number; readonly high: number }
 
 /**
- * The back-to-back effect per sport:market, learned from CrownIQ's game rows: each back-to-back game's value over the
- * player's own average. Kept only when n ≥ 30 and the 90% interval excludes 1 (spec §5.5).
+ * The back-to-back effect per profile sport:market, learned from CrownIQ's game rows: each back-to-back game's value over
+ * the player's own average. Kept only when n ≥ 30 and the 90% interval excludes 1 (spec §5.5).
  */
 export function restEffects(players: Iterable<{ sport: string; rows: readonly StatRow[] }>): Map<string, RestEffect> {
   const ratios = new Map<string, number[]>();
@@ -83,21 +91,24 @@ export function restEffects(players: Iterable<{ sport: string; rows: readonly St
     if (rows.length < 10) continue;
     const sorted = [...rows].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
     const times = sorted.map((row) => Date.parse(row.occurredAt));
-    const markets = new Set<string>();
-    for (const row of sorted) for (const market in row.marketValues ?? {}) markets.add(market);
-    for (const market of markets) {
+    for (const [key, profile] of Object.entries(marketProfiles)) {
+      if (!key.startsWith(sport + ':')) continue;
+      const market = key.slice(sport.length + 1);
+      // Each game's value: the stored market value, else the stat from the box score; DNPs (zero opportunity) are skipped.
+      const value = (row: StatRow) => profile.stat?.opportunity?.(row.metrics) === 0 ? null
+        : Number.isFinite(row.marketValues?.[market]) ? row.marketValues![market]! : profile.stat?.value(row.metrics) ?? null;
       let sum = 0, count = 0;
-      for (const row of sorted) { const value = row.marketValues?.[market]; if (Number.isFinite(value)) { sum += value!; count++; } }
+      const values = sorted.map((row) => { const v = value(row); if (v !== null && Number.isFinite(v)) { sum += v; count++; return v; } return null; });
       if (count < 10 || sum <= 0) continue;
-      const mean = sum / count, key = `${sport}:${market}`;
+      const mean = sum / count;
       let list = ratios.get(key);
       let previous: number | null = null;
       for (let index = 0; index < sorted.length; index++) {
-        const value = sorted[index]!.marketValues?.[market];
-        if (!Number.isFinite(value)) continue;
+        const current = values[index];
+        if (current === null || current === undefined) continue;
         if (previous !== null && times[index]! - previous < 30 * 3600_000) {
           if (!list) { list = []; ratios.set(key, list); }
-          list.push(value! / mean);
+          list.push(current / mean);
         }
         previous = times[index]!;
       }
@@ -117,7 +128,7 @@ export function restEffects(players: Iterable<{ sport: string; rows: readonly St
 /** The rest multiplier for a line: its learned back-to-back effect when the player's last game was under 30 hours before. */
 export function restFactor(line: PropLine, lastGameAt: number | null, effects: ReadonlyMap<string, RestEffect>): Adjustment | null {
   if (lastGameAt === null || Date.parse(line.eventStartTime) - lastGameAt >= 30 * 3600_000) return null;
-  const effect = effects.get(`${line.sport}:${line.market}`);
+  const effect = effects.get(profileKey(line.sport, line.market) ?? `${line.sport}:${line.market}`);
   if (!effect) return null;
   return { factor: effect.coefficient, reasons: [`Second game of a back-to-back: CrownIQ's history has players at ×${effect.coefficient.toFixed(2)} ` +
     `of their average in these (${effect.n} games).`] };

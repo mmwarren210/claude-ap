@@ -116,6 +116,24 @@ export class SnapshotStore {
     return out;
   }
 
+  /** Every market's rows for one player since a time, oldest first (line detail movement), at most `limit` rows. */
+  playerHistory(playerKey: string, sinceIso: string, limit = 5000): SnapshotRow[] {
+    return this.db.prepare(`SELECT * FROM snapshots WHERE playerKey = ? AND observedAt >= ? ORDER BY observedAt LIMIT ?`)
+      .all(playerKey, sinceIso, limit) as unknown as SnapshotRow[];
+  }
+
+  /** Events with sportsbook prices that started in [from, to) (for learning book weights). */
+  bookEvents(fromIso: string, toIso: string): string[] {
+    return (this.db.prepare(`SELECT DISTINCT eventKey FROM snapshots WHERE source = 'sharpapi' AND startTime >= ? AND startTime < ?
+      AND platform NOT IN ('prizepicks', 'prizepicks_flex')`).all(fromIso, toIso) as { eventKey: string }[]).map((row) => row.eventKey);
+  }
+
+  /** One event's sportsbook price rows before the start, oldest first. */
+  bookRows(eventKey: string): SnapshotRow[] {
+    return this.db.prepare(`SELECT * FROM snapshots WHERE eventKey = ? AND source = 'sharpapi' AND observedAt < startTime
+      AND platform NOT IN ('prizepicks', 'prizepicks_flex') ORDER BY observedAt`).all(eventKey) as unknown as SnapshotRow[];
+  }
+
   /** Full resolution for 120 days, then one row per key per hour. */
   prune(days = 120): number {
     const cutoff = new Date(this.clock().getTime() - days * 86_400_000).toISOString();

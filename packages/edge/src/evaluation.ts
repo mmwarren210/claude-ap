@@ -73,9 +73,19 @@ export interface Evaluation {
   /** Return per $1: books at their odds; pick'em legs at a fair 1 ÷ break-even payout. */
   readonly roi: Interval | null;
   readonly brier: number | null;
+  /** 1 − Brier(first chance) ÷ Brier(closing chance). */
+  readonly brierSkill: number | null;
   readonly calibration: Bucket[];
   /** Largest gap between forecast and hit rate in buckets with 50+ picks (spec target ≤ 3 points). */
   readonly maxCalibrationGap: number | null;
+}
+
+/** Brier skill of the chance shown when the pick was made, against the closing chance: ≥ 0 means as good as the close (spec §9). */
+export function brierSkill(picks: readonly GradedPick[]): number | null {
+  if (!picks.length) return null;
+  const score = (select: (pick: GradedPick) => number) => picks.reduce((sum, pick) => sum + (select(pick) - (pick.hit ? 1 : 0)) ** 2, 0);
+  const close = score((pick) => pick.closeProbability);
+  return close > 0 ? 1 - score((pick) => pick.firstProbability) / close : null;
 }
 
 export function evaluate(picks: readonly GradedPick[]): Evaluation {
@@ -88,5 +98,6 @@ export function evaluate(picks: readonly GradedPick[]): Evaluation {
     averageBreakEven: picks.length ? picks.reduce((sum, pick) => sum + pick.breakEven, 0) / picks.length : null,
     clv: meanInterval(clv), beatClose: picks.length ? picks.filter((pick) => pick.closeProbability > pick.firstProbability).length / picks.length : null,
     roi: bootstrapInterval(roi), brier: picks.length ? picks.reduce((sum, pick) => sum + (pick.closeProbability - (pick.hit ? 1 : 0)) ** 2, 0) / picks.length : null,
+    brierSkill: brierSkill(picks),
     calibration, maxCalibrationGap: big.length ? Math.max(...big.map((bucket) => Math.abs(bucket.forecast - bucket.hitRate))) : null };
 }

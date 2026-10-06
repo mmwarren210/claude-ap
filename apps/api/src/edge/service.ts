@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import type { BoardResponse, EdgeBoardPage, EdgeBoardResponse, EdgeBoardRow, EdgeEntry, EdgePick, EdgePlatform, EdgeSlip, Payouts,
   PlayableDirection, PropLine } from '@crowniq/contracts';
 import { backtestProjection, buildSlips, describeEntry, EDGE_MODEL_VERSION, entriesFromTables, evaluateSlip, fitCalibration, suggestSwap,
@@ -16,6 +17,8 @@ import { leagueLabel } from '../scrapers/markets.js';
 import { appLines, bookLines } from './platform-lines.js';
 import type { MovementTracker } from './movement.js';
 import type { GameLine } from '../context/feeds.js';
+import type { BookWeightStore } from './book-weights.js';
+import type { DispersionStore } from './dispersion-store.js';
 import { GameEnvironment, restEffects, restFactor } from './environment.js';
 import type { RestEffect } from './environment.js';
 import type { SnapshotStore } from './snapshots.js';
@@ -55,7 +58,7 @@ export interface EdgeServiceOptions {
   readonly valuesCacheFile?: string | null;
   /** Book moves across SharpAPI refreshes (spec §3.1) and the odds snapshots, for stale-line checks (§3.2). */
   readonly movement?: MovementTracker | null;
-  readonly snapshots?: Pick<SnapshotStore, 'lastChange'> | null;
+  readonly snapshots?: Pick<SnapshotStore, 'lastChange' | 'bookEvents' | 'bookRows'> | null;
   /** Players on the injury report (display feed); OUT/DOUBTFUL players are never ranked (§3.3). */
   readonly injuries?: (() => Promise<readonly { player: string; team: string; status: string; league: string }[]>) | null;
   /** Where in-app alerts are kept (§8). */
@@ -66,6 +69,10 @@ export interface EdgeServiceOptions {
   readonly honesty?: ((sport: string, market: string) => number) | null;
   /** Pinnacle's game lines (display feed), for the team-environment adjustment (spec §5.1). */
   readonly gameLines?: (() => Promise<readonly GameLine[]>) | null;
+  /** The learned dispersion table (spec §2.1), refit daily from the board players' game rows. */
+  readonly dispersion?: DispersionStore | null;
+  /** Book weights learned from the snapshot store (spec §2.2), refit daily. */
+  readonly bookWeights?: BookWeightStore | null;
   /** Every STALE flag as it's first seen, for the replay report (spec §3 acceptance). */
   readonly staleLogFile?: string | null;
 }
@@ -114,6 +121,34 @@ export interface EdgeReport {
   readonly sharpApi?: { readonly lines: number; readonly confirmed: number; readonly added: number };
   readonly match: MatchReport | null;
   readonly historyValues: { readonly asked: number; readonly found: number };
+  /** Sportsbooks: where the +EV bets sit (by side, by odds range, by sport) and their median EV, to spot a systematic lean. */
+  readonly evShape?: { readonly side: Record<string, number>; readonly odds: Record<string, number>; readonly sport: Record<string, number>;
+    readonly medianEv: number | null };
+}
+
+/** Spec §4: ¼ Kelly is capped at 2% per bet (in pricing) and 6% per game; a game's ranked bets over 6% are scaled down together. */
+export function capGameKelly(picks: EdgePick[]): void {
+  const totals = new Map<string, number>();
+  for (const pick of picks) if (pick.kelly && pick.rating !== 'NONE') totals.set(pick.eventId, (totals.get(pick.eventId) ?? 0) + pick.kelly);
+  picks.forEach((pick, index) => {
+    const total = totals.get(pick.eventId) ?? 0;
+    if (pick.kelly && pick.rating !== 'NONE' && total > .06)
+      picks[index] = { ...pick, kelly: Math.round(pick.kelly * .06 / total * 10_000) / 10_000,
+        warnings: [...pick.warnings, `Stake scaled down: Edge's bets on this game add up to ${(total * 100).toFixed(1)}% of bankroll; the cap is 6% per game.`] };
+  });
+}
+
+function evShape(picks: readonly EdgePick[]) {
+  const plus = picks.filter((pick) => pick.edge !== null && pick.edge > 0 && pick.rating !== 'NONE' && pick.decimalOdds);
+  const tally = (select: (pick: EdgePick) => string) => {
+    const out: Record<string, number> = {};
+    for (const pick of plus) out[select(pick)] = (out[select(pick)] ?? 0) + 1;
+    return out;
+  };
+  const evs = plus.map((pick) => pick.ev ?? 0).sort((a, b) => a - b);
+  return { side: tally((pick) => pick.side),
+    odds: tally((pick) => pick.decimalOdds! < 1.7 ? 'under 1.70' : pick.decimalOdds! <= 2.2 ? '1.70-2.20' : pick.decimalOdds! <= 3.5 ? '2.20-3.50' : 'over 3.50'),
+    sport: tally((pick) => pick.sport), medianEv: evs.length ? Math.round(evs[Math.floor(evs.length / 2)]! * 1000) / 1000 : null };
 }
 
 export const EDGE_PLATFORMS: readonly EdgePlatform[] = ['prizepicks', 'underdog', 'pick6', 'draftkings', 'hardrock'];
@@ -224,6 +259,7 @@ export class EdgeService {
       durationMs: prizepicks?.durationMs ?? null, counts: prizepicks?.response.counts ?? null, report: prizepicks?.report ?? null,
       reports, calibration: prizepicks?.response.calibration ?? null, lastError: this.lastError, weakTiers: [...this.weakTiers],
       honesty: Object.fromEntries(this.honestyWeights), restEffects: Object.fromEntries(this.rest.effects),
+      dispersion: this.options.dispersion?.status() ?? null, bookWeights: this.options.bookWeights?.status() ?? null,
       alternateFactors: this.options.alternateFactors ?? {}, pick6PayoutsConfirmed: !!this.options.pick6PayoutsConfirmed,
       entries: Object.fromEntries(EDGE_PLATFORMS.map((platform) => [platform, this.entriesFor(platform).map((entry) => describeEntry(entry))])) };
   }
@@ -331,6 +367,15 @@ export class EdgeService {
         this.rest = { at: Date.now(), effects: restEffects((function* () {
           for (const [key, list] of rows) yield { sport: key.split('|')[0]!, rows: dedupeRows(list) };
         })()) };
+      if (this.options.dispersion?.due() && rows.size) {
+        const store = this.options.dispersion;
+        void store.refit((function* () { for (const [key, list] of rows) yield { sport: key.split('|')[0]!, rows: dedupeRows(list) }; })())
+          .then((count) => console.log(`[edge-dispersion] refit ${count} markets`)).catch((error: unknown) => console.warn('[edge-dispersion] refit failed', error));
+      }
+      if (this.options.bookWeights?.due() && this.options.snapshots) {
+        void this.options.bookWeights.refit(this.options.snapshots)
+          .then((count) => console.log(`[edge-book-weights] refit ${count} weights`)).catch((error: unknown) => console.warn('[edge-book-weights] refit failed', error));
+      }
       console.log(`[edge-p5] environment ${JSON.stringify(environment.summary())}, rest effects ${JSON.stringify(Object.fromEntries(
         [...this.rest.effects].map(([key, effect]) => [key, Number(effect.coefficient.toFixed(3))])))}, honesty ${JSON.stringify(Object.fromEntries(this.honestyWeights))}`);
       const lastGame = new Map([...rows].map(([key, list]) => [key, list.reduce((latest, row) => Math.max(latest, Date.parse(row.occurredAt)), 0)]));
@@ -342,8 +387,13 @@ export class EdgeService {
         return { factor: (env?.factor ?? 1) * (rest?.factor ?? 1), reasons: [...env?.reasons ?? [], ...rest?.reasons ?? []] };
       };
       const fresh: EdgeAlert[] = [];
-      const priced = crossPlatform(sets.map((set) =>
-        this.priceSet(set, board, prices, now, calibration, forecast, rows, values, startedAt, injured, fresh)));
+      // One platform at a time, yielding between them so requests keep being answered while the board reprices.
+      const each: EdgeSnapshot[] = [];
+      for (const set of sets) {
+        await yieldToLoop();
+        each.push(this.priceSet(set, board, prices, now, calibration, forecast, rows, values, startedAt, injured, fresh));
+      }
+      const priced = crossPlatform(each);
       for (const snapshot of priced) {
         this.current.set(snapshot.platform, snapshot);
         this.log(snapshot);
@@ -384,6 +434,7 @@ export class EdgeService {
       platform: set.platform, excludeBooks: own, ...(sidePayout ? { sidePayout } : {}),
       ...(this.statsAdjust ? { statsAdjust: this.statsAdjust } : {}),
       statsWeight: (sport, market) => this.honestyWeights.get(`${sport}:${market}`) ?? 1,
+      ...(this.options.movement ? { lastMoveAt: (line: PropLine) => this.options.movement!.summary(line.sport, line.playerName, line.market, now.getTime())?.lastMoveAt ?? null } : {}),
       ...(this.options.alternateFactors ? { alternateFactors: this.options.alternateFactors } : {}),
       history: (player) => { const list = rows.get(playerKey(player.sport, player.playerName)); return list ? dedupeRows(list) : undefined; },
       values: (line) => values.found.get(`${line.sport}|${line.playerId}|${line.market}`) });
@@ -419,6 +470,7 @@ export class EdgeService {
       stale: picks.filter((pick) => pick.stale).length, steam: picks.filter((pick) => pick.steam).length,
       injured: picks.filter((pick) => pick.injury).length,
       ...(set.sharpApi ? { sharpApi: set.sharpApi } : {}),
+      ...(set.platform === 'draftkings' || set.platform === 'hardrock' ? { evShape: evShape(picks) } : {}),
       match: matched?.report ?? null, historyValues: { asked: values.asked, found: values.found.size } };
     return { platform: set.platform, response, byLine, unpriced: priced.unpricedLines, lines: new Map(set.lines.map((line) => [line.id, line])),
       computedAt: now.getTime(), durationMs: Date.now() - startedAt, report, minEvents: set.minEvents };
@@ -456,6 +508,7 @@ export class EdgeService {
       return rank === null ? pick : { ...pick, rank };
     });
     out.sort((a, b) => (b.rank ?? -1) - (a.rank ?? -1) || b.probability - a.probability);
+    capGameKelly(out);
     const events: StaleEvent[] = [];
     for (const pick of out) {
       if (!pick.stale || !pick.sources.market) continue;
@@ -513,6 +566,7 @@ export class EdgeService {
       `${report.sharpApi ? `sharpapi ${JSON.stringify(report.sharpApi)}, ` : ''}match ${report.match ? `${report.match.linesMatched}/${report.match.linesWithBookPrice} ` +
         `lines, ${report.match.matched} quotes, ${report.match.ambiguous} ambiguous, ${report.match.noEvent} no event, ` +
         `${report.match.mismatches} MARKET_MISMATCH` : 'none'}, history values ${report.historyValues.found}/${report.historyValues.asked}, ${snapshot.durationMs}ms`);
+    if (report.evShape) console.log(`[edge-ev] ${report.platform} ${JSON.stringify(report.evShape)}`);
     if (report.platform === 'prizepicks' && report.match?.noEventSamples.length)
       console.log(`[edge-match] no game for: ${JSON.stringify(report.match.noEventSamples)}`);
   }
@@ -658,48 +712,67 @@ export class EdgeResultsWorker {
 }
 
 type Metrics = { logScore: number; mae: number; brierAtMedian: number };
+type Column = 'edge' | 'v2' | 'baseline';
 export interface HistoryBacktestSummary {
   readonly players: number;
   readonly games: number;
-  readonly byMarket: Record<string, { players: number; games: number; edge: Metrics; baseline: Metrics }>;
-  readonly overall: { edge: Metrics; baseline: Metrics } | null;
+  /** Per market: the current projection (hand-set dispersion), projection 2.0 (learned dispersion + learned back-to-back
+   * effect) and the last-10-games baseline. `v2Best` is true when 2.0 has the best log score of the three. */
+  readonly byMarket: Record<string, { players: number; games: number; edge: Metrics; v2: Metrics; baseline: Metrics; v2Best: boolean }>;
+  readonly overall: { edge: Metrics; v2: Metrics; baseline: Metrics } | null;
+  /** The spec §5 acceptance markets and whether 2.0 beats both on each (null = not enough history). */
+  readonly acceptance: Record<string, boolean | null>;
 }
 
-/** Walk-forward check of Edge's stats projection against the last-10-games baseline on CrownIQ's game rows. */
+const ACCEPTANCE_MARKETS = ['NBA:player_points', 'NBA:player_rebounds', 'NBA:player_assists', 'NFL:player_reception_yds',
+  'NFL:player_receptions', 'NFL:player_rush_yds', 'NFL:passing_yards', 'MLB:batter_hits', 'MLB:pitcher_strikeouts'];
+
+/**
+ * Walk-forward check of Edge's stats projection on CrownIQ's game rows (spec §5 acceptance): each game is predicted only from
+ * earlier games. The back-to-back effect is learned from the same rows (in-sample for the effect, out-of-sample for each
+ * player's projection). The game-environment adjustment can't be replayed: history has no stored game lines.
+ */
 export function backtestHistory(rows: readonly InternalHistoryRow[], maxPlayers = 400): HistoryBacktestSummary {
   const byPlayer = new Map<string, InternalHistoryRow[]>();
   for (const row of rows) {
     const key = playerKey(row.sport, row.playerName);
-    byPlayer.set(key, [...(byPlayer.get(key) ?? []), row]);
+    const list = byPlayer.get(key);
+    if (list) list.push(row); else byPlayer.set(key, [row]);
   }
-  const markets: Record<string, { players: number; games: number; edge: number[]; baseline: number[] }> = {};
-  let players = 0;
-  for (const [key, list] of [...byPlayer].slice(0, maxPlayers)) {
-    const sport = key.split('|')[0]!, deduped = dedupeRows(list);
-    if (deduped.length < 12) continue;
-    players++;
-    for (const market of Object.keys(marketProfiles).filter((item) => item.startsWith(sport + ':')).map((item) => item.slice(sport.length + 1))) {
-      const profile = profileFor(sport, market);
-      if (!profile.stat) continue;
-      const result = backtestProjection(deduped, profile.stat, profile, market);
-      if (!result) continue;
-      const bucket = markets[sport + ':' + market] ??= { players: 0, games: 0, edge: [0, 0, 0], baseline: [0, 0, 0] };
-      bucket.players++; bucket.games += result.games;
-      const add = (target: number[], metrics: Metrics) => {
-        target[0]! += metrics.logScore * result.games; target[1]! += metrics.mae * result.games;
-        target[2]! += metrics.brierAtMedian * result.games;
+  const chosen = [...byPlayer].slice(0, maxPlayers).map(([key, list]) => ({ sport: key.split('|')[0]!, rows: dedupeRows(list) }))
+    .filter((player) => player.rows.length >= 12);
+  const effects = restEffects(chosen);
+  const markets: Record<string, { players: number; games: number } & Record<Column, number[]>> = {};
+  for (const { sport, rows: deduped } of chosen) {
+    for (const key of Object.keys(marketProfiles).filter((item) => item.startsWith(sport + ':'))) {
+      const market = key.slice(sport.length + 1), base = marketProfiles[key]!, learned = profileFor(sport, market);
+      if (!base.stat) continue;
+      const effect = effects.get(key);
+      const rest = effect ? (target: StatRow, prior: readonly StatRow[]) => {
+        const last = prior[prior.length - 1];
+        return last && Date.parse(target.occurredAt) - Date.parse(last.occurredAt) < 30 * 3600_000 ? effect.coefficient : 1;
+      } : undefined;
+      const current = backtestProjection(deduped, base.stat, base, market);
+      const v2 = backtestProjection(deduped, base.stat, learned, market, 8, rest);
+      if (!current || !v2) continue;
+      const bucket = markets[key] ??= { players: 0, games: 0, edge: [0, 0, 0], v2: [0, 0, 0], baseline: [0, 0, 0] };
+      bucket.players++; bucket.games += current.games;
+      const add = (target: number[], metrics: Metrics, games: number) => {
+        target[0]! += metrics.logScore * games; target[1]! += metrics.mae * games; target[2]! += metrics.brierAtMedian * games;
       };
-      add(bucket.edge, result.edge); add(bucket.baseline, result.baseline);
+      add(bucket.edge, current.edge, current.games); add(bucket.v2, v2.edge, current.games); add(bucket.baseline, current.baseline, current.games);
     }
   }
   const metrics = (values: number[], games: number) => ({ logScore: values[0]! / games, mae: values[1]! / games,
     brierAtMedian: values[2]! / games });
-  const byMarket = Object.fromEntries(Object.entries(markets).map(([key, value]) => [key, {
-    players: value.players, games: value.games, edge: metrics(value.edge, value.games),
-    baseline: metrics(value.baseline, value.games) }]));
+  const byMarket = Object.fromEntries(Object.entries(markets).map(([key, value]) => {
+    const edge = metrics(value.edge, value.games), v2 = metrics(value.v2, value.games), baseline = metrics(value.baseline, value.games);
+    return [key, { players: value.players, games: value.games, edge, v2, baseline,
+      v2Best: v2.logScore >= edge.logScore && v2.logScore > baseline.logScore }];
+  }));
   const games = Object.values(markets).reduce((sum, value) => sum + value.games, 0);
-  const sum = (pick: 'edge' | 'baseline') => Object.values(markets).reduce((total, value) =>
-    total.map((item, index) => item + value[pick][index]!), [0, 0, 0]);
-  return { players, games, byMarket,
-    overall: games ? { edge: metrics(sum('edge'), games), baseline: metrics(sum('baseline'), games) } : null };
+  const total = (column: Column) => [0, 1, 2].map((index) => Object.values(markets).reduce((sum, value) => sum + value[column][index]!, 0));
+  return { players: chosen.length, games, byMarket,
+    overall: games ? { edge: metrics(total('edge'), games), v2: metrics(total('v2'), games), baseline: metrics(total('baseline'), games) } : null,
+    acceptance: Object.fromEntries(ACCEPTANCE_MARKETS.map((key) => [key, byMarket[key] ? byMarket[key]!.v2Best : null])) };
 }

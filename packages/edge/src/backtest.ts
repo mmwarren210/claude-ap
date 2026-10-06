@@ -14,7 +14,7 @@ export interface ProjectionBacktest {
  * error, and the Brier score of an over/under call at a line set at the player's
  * trailing median (a stand-in for a fair line when the historical PrizePicks line is absent). */
 export function backtestProjection(rows: readonly StatRow[], spec: StatSpec, profile: MarketProfile,
-  market?: string, warmup = 8): ProjectionBacktest | null {
+  market?: string, warmup = 8, adjust?: (target: StatRow, prior: readonly StatRow[]) => number): ProjectionBacktest | null {
   const sorted = [...rows].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
   const totals = { edge: { log: 0, mae: 0, brier: 0 }, base: { log: 0, mae: 0, brier: 0 } };
   let games = 0;
@@ -25,8 +25,10 @@ export function backtestProjection(rows: readonly StatRow[], spec: StatSpec, pro
     const opportunity = spec.opportunity?.(target.metrics);
     if (actual === null || !Number.isFinite(actual) || opportunity === 0) continue;
     const prior = sorted.slice(0, index);
-    const projection = projectFromRows(prior, spec, profile, target.occurredAt, {}, market);
-    if (!projection) continue;
+    const raw = projectFromRows(prior, spec, profile, target.occurredAt, {}, market);
+    if (!raw) continue;
+    const factor = adjust?.(target, prior) ?? 1;
+    const projection = factor === 1 ? raw : { ...raw, mean: raw.mean * factor };
     const recent = projection.values.slice(0, 10);
     if (recent.length < 5) continue;
     const baseMean = recent.reduce((a, b) => a + b, 0) / recent.length;

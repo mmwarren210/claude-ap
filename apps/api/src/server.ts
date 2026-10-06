@@ -70,6 +70,8 @@ import { serveWebApp } from './web-app.js';
 import { EdgeResultsWorker, EdgeService } from './edge/service.js';
 import type { EdgeLedger } from './edge/ledger.js';
 import type { SnapshotStore } from './edge/snapshots.js';
+import type { BookWeightStore } from './edge/book-weights.js';
+import type { DispersionStore } from './edge/dispersion-store.js';
 import { registerEdgeRoutes } from './edge/routes.js';
 import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
@@ -152,7 +154,8 @@ export interface ServerOptions {
   edge?: { enabled?: boolean; ledger?: EdgeLedger | null; snapshots?: SnapshotStore | null;
     alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>; boxScores?: BoxScoreResults | null;
     valuesCacheFile?: string | null; pick6PayoutsConfirmed?: boolean; alertsFile?: string | null;
-    staleLogFile?: string | null } | null;
+    staleLogFile?: string | null; dispersion?: DispersionStore | null;
+    bookWeights?: BookWeightStore | null } | null;
   /** JSON-lines history of the books' view of board lines, one row per line per refresh. */
   booksHistoryFile?: string | null;
 }
@@ -1171,7 +1174,7 @@ export function buildServer(options: ServerOptions = {}) {
     history:options.internalHistory??null,values:(line)=>historyReads.valuesFor(line),ledger:options.edge.ledger??null,
     payouts:options.payouts??DEFAULT_PAYOUTS,...(options.edge.alternateFactors?{alternateFactors:options.edge.alternateFactors}:{}),
     valuesCacheFile:options.edge.valuesCacheFile??null,movement,snapshots:options.edge.snapshots??null,
-    alertsFile:options.edge.alertsFile??null,staleLogFile:options.edge.staleLogFile??null,
+    alertsFile:options.edge.alertsFile??null,staleLogFile:options.edge.staleLogFile??null,dispersion:options.edge.dispersion??null,bookWeights:options.edge.bookWeights??null,
     injuries:options.contextFeeds?async()=>(await options.contextFeeds!.items<InjuryNote>('injuries')).items:null,
     gameLines:options.contextFeeds?async()=>(await options.contextFeeds!.items<GameLine>('pinnacle')).items:null,
     clock:()=>now()}):null;
@@ -1179,11 +1182,26 @@ export function buildServer(options: ServerOptions = {}) {
     options.edge.boxScores??null,()=>now()):null;
   if(edge){
     registerEdgeRoutes(app,{edge,ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
-      internalHistory:options.internalHistory??null,isOwner:(request)=>isOwner(request),now});
+      internalHistory:options.internalHistory??null,isOwner:(request)=>isOwner(request),now,
+      health:async()=>({board:{fetchedAt:service.getBoard()?.board.fetchedAt??null},
+        sharpApi:options.sharpProps?await options.sharpProps.status():null,
+        scrapers:options.scraperPuller?await options.scraperPuller.status():null,
+        contextFeeds:options.contextFeeds?await options.contextFeeds.status():null,
+        oddsApi:options.oddsApiQuota?await options.oddsApiQuota().catch(()=>null):null})});
     if(!options.clock){
       const warm=()=>{void edge.snapshot().catch(()=>undefined);};
       const first=setTimeout(warm,60_000);first.unref();
       const every=setInterval(warm,3*60_000);every.unref();
+      // Hourly health line for the logs (spec §10): snapshot rows and grading coverage.
+      const healthLog=()=>{void (async()=>{
+        const snap=options.edge?.snapshots?.status()??null;
+        const coverage=options.edge?.ledger?(await options.edge.ledger.report()).gradingCoverage:null;
+        console.log(`[edge-health] snapshots ${JSON.stringify(snap?{rows:snap.rows,lastHour:snap.lastHour,lastDay:snap.lastDay,oldest:snap.oldest}:null)}, `+
+          `grading ${JSON.stringify(coverage?{finished:coverage.finished,graded:coverage.graded,rate:coverage.rate,onTimeRate:coverage.onTimeRate,
+            bySport:Object.fromEntries(Object.entries(coverage.bySport).map(([sport,value])=>[sport,value.rate]))}:null)}`);
+      })().catch(()=>undefined);};
+      const firstHealth=setTimeout(healthLog,5*60_000);firstHealth.unref();
+      const hourly=setInterval(healthLog,3600_000);hourly.unref();
       edgeWorker?.start();
       const grade=setTimeout(()=>{void edgeWorker?.runOnce().catch(()=>undefined);},5*60_000);grade.unref();
       shadowTimers.push(first,every,grade);

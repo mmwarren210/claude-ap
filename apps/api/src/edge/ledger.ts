@@ -62,6 +62,23 @@ export function gradeTarget(pick: TrackedEdgePick): GradeTarget {
   return { eventId: pick.eventId, playerId: pick.playerId, lineSnapshot: line };
 }
 
+/**
+ * Grading coverage (spec §1.3): of tracked picks whose game finished at least 6 hours ago (start + 3h + 6h), the share with
+ * a result, and the share graded within 6 hours of the final, overall and by sport. Target ≥ 90% for NBA/NFL/MLB/NHL.
+ */
+export function gradingCoverage(picks: readonly TrackedEdgePick[], nowMs: number) {
+  const finished = picks.filter((pick) => Date.parse(pick.eventStartTime) + 9 * 3600_000 <= nowMs && Date.parse(pick.eventStartTime) > nowMs - 14 * DAY);
+  const tally = (list: readonly TrackedEdgePick[]) => {
+    const graded = list.filter((pick) => pick.outcome !== 'PENDING');
+    const onTime = graded.filter((pick) => pick.gradedAt && Date.parse(pick.gradedAt) <= Date.parse(pick.eventStartTime) + 9 * 3600_000);
+    return { finished: list.length, graded: graded.length, within6h: onTime.length,
+      rate: list.length ? Math.round(graded.length / list.length * 1000) / 1000 : null,
+      onTimeRate: list.length ? Math.round(onTime.length / list.length * 1000) / 1000 : null };
+  };
+  const sports = [...new Set(finished.map((pick) => pick.sport))].sort();
+  return { ...tally(finished), bySport: Object.fromEntries(sports.map((sport) => [sport, tally(finished.filter((pick) => pick.sport === sport))])) };
+}
+
 export class EdgeLedger {
   private chain: Promise<unknown> = Promise.resolve();
   private cache: LedgerData | null = null;
@@ -255,6 +272,7 @@ export class EdgeLedger {
         // STALE flags are measured as their own tier (spec §3 acceptance, §9).
         byTier: groupBy((pick) => pick.stale ? 'STALE' : pick.tier), byRating: groupBy((pick) => pick.rating),
         bySport: groupBy((pick) => pick.sport),
+        gradingCoverage: gradingCoverage(picks, this.clock().getTime()),
         recent: picks.filter((pick) => pick.outcome !== 'PENDING')
           .sort((a, b) => b.eventStartTime.localeCompare(a.eventStartTime)).slice(0, 50),
       };

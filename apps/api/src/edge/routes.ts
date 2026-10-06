@@ -1,7 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { buildSlips, EDGE_MODEL_VERSION, generateEntries } from '@crowniq/edge';
 import { z } from 'zod';
-import type { EdgePlatform } from '@crowniq/contracts';
+import type { EdgePick, EdgePlatform } from '@crowniq/contracts';
+import { cdf, makeDistribution } from '@crowniq/edge';
+import { canonicalMarket, playerKey } from './market-map.js';
 import type { InternalHistoryStore } from '../internal-history.js';
 import type { EdgeLedger } from './ledger.js';
 import { backtestHistory, boardPage, customSlip, EDGE_PLATFORMS, pickForLine, viewPicks } from './service.js';
@@ -19,9 +21,40 @@ export interface EdgeRouteDeps {
   readonly internalHistory: InternalHistoryStore | null;
   readonly isOwner: (request: FastifyRequest) => Promise<boolean>;
   readonly now: () => Date;
+  /** Source freshness and spend for the owner health page (spec §10). */
+  readonly health?: () => Promise<Record<string, unknown>>;
 }
 
 const platformSchema = z.enum(EDGE_PLATFORMS as [EdgePlatform, ...EdgePlatform[]]).default('prizepicks');
+
+/** The fair distribution around the line (spec §8 line detail): P(stat = x) for whole numbers, or density bins for normal stats. */
+export function distributionPoints(pick: EdgePick): { x: number; p: number }[] {
+  const { family, mean, sd } = pick.projection;
+  const dist = makeDistribution(family, mean, sd * sd, family !== 'NORMAL');
+  const low = Math.max(0, Math.floor(mean - 3 * sd)), high = Math.ceil(mean + 3 * sd), step = Math.max(1, Math.ceil((high - low) / 40));
+  const out: { x: number; p: number }[] = [];
+  for (let x = low; x <= high; x += step) {
+    const p = family === 'NORMAL' ? cdf({ ...dist, discrete: false }, x + step) - cdf({ ...dist, discrete: false }, x) : cdf(dist, x + step - 1) - cdf(dist, x - 1);
+    out.push({ x, p: Math.round(p * 10_000) / 10_000 });
+  }
+  return out;
+}
+
+/** Each platform's number for this player and stat over the last 24 hours (the movement sparkline), from the snapshot store. */
+export function lineMovement(snapshots: Pick<SnapshotStore, 'playerHistory'>, pick: EdgePick, nowMs: number) {
+  const market = canonicalMarket(pick.sport, pick.market), byPlatform = new Map<string, { t: string; number: number }[]>();
+  for (const row of snapshots.playerHistory(playerKey(pick.sport, pick.playerName), new Date(nowMs - 86_400_000).toISOString())) {
+    if (row.number === null || row.side !== 'MORE' || canonicalMarket(pick.sport, row.market) !== market) continue;
+    if (row.lineType && !/^(regular|standard)$/i.test(row.lineType)) continue;
+    const list = byPlatform.get(row.platform) ?? [];
+    // Books post ladders: keep the number nearest the pick's for each sighting.
+    const last = list[list.length - 1];
+    if (last && last.t === row.observedAt) { if (Math.abs(row.number - pick.threshold) < Math.abs(last.number - pick.threshold)) last.number = row.number; continue; }
+    list.push({ t: row.observedAt, number: row.number });
+    byPlatform.set(row.platform, list);
+  }
+  return [...byPlatform].map(([platform, points]) => ({ platform, points: points.slice(-60) }));
+}
 
 export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): void {
   const { edge, now } = deps;
@@ -103,7 +136,8 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     const snapshot = await edge.snapshot(platform.success ? platform.data.platform : 'prizepicks');
     if (!snapshot) return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
     const pick = pickForLine(snapshot, params.data.lineId);
-    if (pick) return { pick, referenceEntry: snapshot.response.referenceEntry };
+    if (pick) return { pick, referenceEntry: snapshot.response.referenceEntry, distribution: distributionPoints(pick),
+      movement: deps.snapshots ? lineMovement(deps.snapshots, pick, now().getTime()) : [] };
     const unread = snapshot.unpriced.find((item) => item.line.id === params.data.lineId);
     return unread ? reply.code(404).send({ code: 'EDGE_LINE_UNPRICED', reason: unread.reason, note: unread.note })
       : reply.code(404).send({ code: 'EDGE_LINE_NOT_FOUND' });
@@ -152,6 +186,21 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     owner.get('/status', async () => ({ status: edge.status(), grading: deps.worker?.status() ?? null,
       snapshots: deps.snapshots?.status() ?? null }));
     owner.get('/stale', async () => edge.staleReplay(7));
+    // The health page (spec §10): per-source freshness, match rates, MARKET_MISMATCH, snapshot rows per hour, Odds API credits,
+    // scraper spend, grading coverage, and the learned tables.
+    owner.get('/health', async () => {
+      const status = edge.status();
+      const platforms = Object.fromEntries(Object.entries(status.reports).map(([platform, report]) => [platform, {
+        lines: report.lines, read: report.read, noRead: report.noRead, plusEv: report.plusEv,
+        matchRate: report.match && report.match.linesWithBookPrice ? Math.round(report.match.linesMatched / report.match.linesWithBookPrice * 1000) / 1000 : null,
+        marketMismatch: report.match?.mismatches ?? 0, ambiguous: report.match?.ambiguous ?? 0, noEvent: report.match?.noEvent ?? 0 }]));
+      return { checkedAt: now().toISOString(), edge: { computedAt: status.computedAt, lastError: status.lastError, platforms,
+        weakTiers: status.weakTiers }, snapshots: deps.snapshots?.status() ?? null,
+        grading: deps.worker?.status() ?? null, gradingCoverage: deps.ledger ? (await deps.ledger.report()).gradingCoverage : null,
+        dispersion: status.dispersion ? { fittedAt: status.dispersion.fittedAt, markets: Object.keys(status.dispersion.markets).length } : null,
+        bookWeights: status.bookWeights ? { fittedAt: status.bookWeights.fittedAt, scores: status.bookWeights.scores } : null,
+        ...await deps.health?.().catch((error: unknown) => ({ healthError: error instanceof Error ? error.message : String(error) })) ?? {} };
+    });
     owner.post('/grade', async (_request, reply) => deps.worker ? deps.worker.runOnce()
       : reply.code(503).send({ code: 'EDGE_GRADING_UNCONFIGURED' }));
     owner.get('/backtest', async (_request, reply) => {

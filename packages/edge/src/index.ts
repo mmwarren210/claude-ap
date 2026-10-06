@@ -9,4 +9,5 @@ export * from './slips.js';
 export * from './backtest.js';
 export * from './ranking.js';
 export * from './correlation.js';
+export * from './dispersion.js';
 export * from './evaluation.js';
