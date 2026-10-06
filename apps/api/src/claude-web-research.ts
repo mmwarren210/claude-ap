@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { logClaudeUsage } from './claude-usage.js';
 import type { Evidence } from '@crowniq/contracts';
 import { canonicalUrl, findingsToEvidence, outputSchema, webResearchInstructions, webResearchRequest,
   WebResearchRunner } from './web-research.js';
@@ -45,13 +46,17 @@ export class ClaudeWebResearchAdapter extends WebResearchRunner {
     for (let turn = 0; turn < 4; turn++) {
       const response = await this.client.beta.messages.create({
         model: this.model, max_tokens: 8000,
-        system: `${webResearchInstructions} When you have searched, call report_findings once with every finding.`,
+        // Prompt caching: the instructions and tools are the same on every call; later turns resend the search results.
+        system: [{ type: 'text', text: `${webResearchInstructions} When you have searched, call report_findings once with every finding.`,
+          cache_control: { type: 'ephemeral' } }],
+        cache_control: { type: 'ephemeral' },
         tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }, reportTool],
         output_config: { effort: 'low' },
         // If a safety check declines, the API retries on a fallback model inside the same call.
         betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
         messages,
       }, { signal });
+      logClaudeUsage('web-research', response.usage);
       if (response.stop_reason === 'refusal') throw new Error('WEB_SEARCH_REFUSED');
       for (const block of response.content) {
         if (block.type !== 'web_search_tool_result' || !Array.isArray(block.content)) continue;

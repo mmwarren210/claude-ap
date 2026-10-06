@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { logClaudeUsage } from './claude-usage.js';
 import { canonicalUrl } from './web-research.js';
 import { parsePick, parseResult, pickInstructions, pickRequest, pickSchema, resultInstructions, resultSchema } from './ai-picks.js';
 import type { PickQuestion, PickResearcher, ProviderRead, ResultAnswer, ResultQuestion } from './ai-picks.js';
@@ -48,13 +49,16 @@ export class ClaudePickResearcher implements PickResearcher {
     for (let turn = 0; turn < 4; turn++) {
       const response = await this.client.beta.messages.create({
         model: this.model, max_tokens: 8000,
-        system: `${instructions} When you have searched, call ${tool.name} once.`,
+        // Prompt caching: the instructions and tools are the same on every call; later turns resend the search results.
+        system: [{ type: 'text', text: `${instructions} When you have searched, call ${tool.name} once.`, cache_control: { type: 'ephemeral' } }],
+        cache_control: { type: 'ephemeral' },
         tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }, tool],
         output_config: { effort: 'low' },
         // If a safety check declines, the API retries on a fallback model inside the same call.
         betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
         messages,
       }, { signal });
+      logClaudeUsage('ai-picks', response.usage);
       if (response.stop_reason === 'refusal') throw new Error('AI_PICK_REFUSED');
       for (const block of response.content) {
         if (block.type !== 'web_search_tool_result' || !Array.isArray(block.content)) continue;

@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { logClaudeUsage } from './claude-usage.js';
 import { TIP_MARKETS } from './tips.js';
 import type { Tip, TipDraft, TipReader, TipStatus } from './tips.js';
 
@@ -62,8 +63,10 @@ export class ClaudeTipReader implements TipReader {
     if (input.image) content.push({ type: 'image', source: { type: 'base64',
       media_type: input.image.mediaType as 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif', data: input.image.data } });
     content.push({ type: 'text', text: `Today is ${input.today}.${input.text ? `\n\nPost:\n${input.text}` : ''}\n\nCall report_tips once.` });
-    const response = await this.client.messages.create({ model: this.model, max_tokens: 4000, system: readInstructions,
+    const response = await this.client.messages.create({ model: this.model, max_tokens: 4000,
+      system: [{ type: 'text', text: readInstructions, cache_control: { type: 'ephemeral' } }],
       tools: [readTool], tool_choice: { type: 'tool', name: 'report_tips' }, messages: [{ role: 'user', content }] });
+    logClaudeUsage('tips', response.usage);
     const block = response.content.find((item) => item.type === 'tool_use' && item.name === 'report_tips');
     if (!block || block.type !== 'tool_use') throw new Error('TIPS_NOT_READ');
     const output = block.input as { source: string | null; tips: TipDraft[] };
@@ -77,8 +80,10 @@ export class ClaudeTipReader implements TipReader {
     const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content: JSON.stringify({ today, picks: list }) }];
     for (let turn = 0; turn < 4; turn++) {
       const response = await this.client.beta.messages.create({ model: this.model, max_tokens: 6000,
-        system: `${gradeInstructions} When you have searched, call report_results once.`,
+        system: [{ type: 'text', text: `${gradeInstructions} When you have searched, call report_results once.`, cache_control: { type: 'ephemeral' } }],
+        cache_control: { type: 'ephemeral' },
         tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 6 }, gradeTool], messages });
+      logClaudeUsage('tips', response.usage);
       const block = response.content.find((item) => item.type === 'tool_use' && item.name === 'report_results');
       if (block && block.type === 'tool_use') {
         const ids = new Set(tips.map((tip) => tip.id));
