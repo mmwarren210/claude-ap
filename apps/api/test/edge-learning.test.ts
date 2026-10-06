@@ -46,3 +46,43 @@ test('Kelly: a game’s bets are scaled together to 6% of bankroll', async () =>
   assert.equal(picks[4]!.kelly, .02);
   assert.match(picks[0]!.warnings[0]!, /cap is 6% per game/);
 });
+
+test('free-history grading: one tennis match in the window; esports maps 1+2 sum the first two maps; ambiguity stays pending', async () => {
+  const { freeHistoryActual } = await import('../src/edge/service.js');
+  const start = '2030-10-07T15:00:00Z';
+  const match = (date: string, value: number) => ({ date, value });
+  assert.equal(freeHistoryActual({ eventStartTime: start, market: 'total_games_won' },
+    { values: [match('2030-10-07T15:10:00Z', 11), match('2030-10-03T12:00:00Z', 8)], perMap: false }), 11);
+  assert.equal(freeHistoryActual({ eventStartTime: start, market: 'aces' }, { values: [match('2030-10-01T12:00:00Z', 5)], perMap: false }), null,
+    'no match in the window: pending');
+  // Esports maps: oldest first, two maps of one series summed.
+  const maps = [match('2030-10-07T17:40:00Z', 9), match('2030-10-07T15:05:00Z', 7), match('2030-10-07T16:20:00Z', 12)];
+  assert.equal(freeHistoryActual({ eventStartTime: start, market: 'maps_1_2_kills' }, { values: maps, perMap: true }), 19);
+  assert.equal(freeHistoryActual({ eventStartTime: start, market: 'maps_1_3_kills' }, { values: maps, perMap: true }), 28);
+  assert.equal(freeHistoryActual({ eventStartTime: start, market: 'maps_1_3_kills' }, { values: maps.slice(0, 2), perMap: true }), null,
+    'a 2–0 series has no map 3: pending');
+  assert.equal(freeHistoryActual({ eventStartTime: start, market: 'maps_1_2_kills' },
+    { values: [...maps, match('2030-10-08T02:00:00Z', 4)], perMap: true }), null, 'two series that day: pending');
+});
+
+test('Edge results worker grades tennis and esports picks from free history', async () => {
+  const { EdgeResultsWorker } = await import('../src/edge/service.js');
+  const { EdgeLedger } = await import('../src/edge/ledger.js');
+  let now = new Date('2030-10-07T12:00:00Z');
+  const clock = () => now;
+  const pick = { platform: 'prizepicks', key: 'k', lineId: 'l', oppositeLineId: null, sport: 'TENNIS', league: 'TENNIS', eventId: 'e',
+    eventName: 'A vs B', eventStartTime: '2030-10-07T15:00:00Z', playerId: 'p', playerName: 'Iga Swiatek', team: null, market: 'total_games_won',
+    threshold: 10.5, lineType: 'REGULAR', side: 'MORE', probability: .6, pushProbability: 0, oppositeProbability: .4, breakEven: .55, edge: .05,
+    requiredPayoutFactor: 1, edgeScore: 60, rating: 'VALUE', tier: 'MARKET', projection: { mean: 11, median: 11, sd: 2, family: 'NORMAL' },
+    lineGap: 0, fairLine: 11, sources: { market: null, stats: null, ladder: null }, reasons: [], warnings: [], calibrated: false, modelVersion: 'x' };
+  // Record before the start, then grade after.
+  const early = new EdgeLedger(null, clock);
+  await early.record([pick as never], () => ({ team: null, home: null, away: null }));
+  now = new Date('2030-10-08T12:00:00Z');
+  const worker = new EdgeResultsWorker(early, null, null, clock,
+    async () => ({ values: [{ date: '2030-10-07T15:20:00Z', value: 12 }], perMap: false, source: 'ESPN tennis scoreboards' }));
+  assert.equal((await worker.runOnce())!.graded, 1);
+  const report = await early.report();
+  assert.equal(report.recent[0]!.outcome, 'WIN');
+  assert.equal(report.recent[0]!.resultSource, 'ESPN tennis scoreboards');
+});

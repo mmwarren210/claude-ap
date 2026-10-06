@@ -23,7 +23,7 @@ import { GameEnvironment, restEffects, restFactor } from './environment.js';
 import type { RestEffect } from './environment.js';
 import type { SnapshotStore } from './snapshots.js';
 import type { PayoutBook } from './platform-lines.js';
-import type { EdgeLedger, TrackedEdgePick } from './ledger.js';
+import type { EdgeLedger, EdgeResultFact, TrackedEdgePick } from './ledger.js';
 import { gradeTarget } from './ledger.js';
 import { canonicalMarket, matchBookPrices, playerKey } from './market-map.js';
 import type { MatchReport } from './market-map.js';
@@ -696,12 +696,40 @@ export function boardPage(snapshot: EdgeSnapshot, query: { sport?: string; marke
 }
 
 /** Grades Edge picks from ESPN / MLB box scores and CrownIQ's own game rows (no Odds API credits). */
+/** The free history sources' answer for one player and stat (PlayerHistory.values). */
+export type FreeHistoryValues = (sport: string, playerName: string, market: string) =>
+  Promise<{ values: readonly { date: string; value: number }[]; perMap: boolean; source: string } | null>;
+
+/** Sports graded from the free public history sources (tennis scoreboards, OpenDota, Leaguepedia, Sleeper). */
+export const freeGradedSports = new Set(['TENNIS', 'LOL', 'DOTA', 'CS2', 'VALORANT']);
+
+/**
+ * A pick's result from free public history: the player's row(s) dated within the game's window (12h before the start to 36h
+ * after). A whole-match stat needs exactly one match there. Esports rows are single maps: a "maps 1+2" line sums the first two
+ * maps of that day's series (three for "maps 1–3"), and only when the series had at least that many maps and exactly one
+ * series that day. Anything ambiguous stays pending rather than being guessed.
+ */
+export function freeHistoryActual(pick: Pick<TrackedEdgePick, 'eventStartTime' | 'market'>,
+  found: { values: readonly { date: string; value: number }[]; perMap: boolean }): number | null {
+  const start = Date.parse(pick.eventStartTime);
+  const inWindow = found.values.filter((row) => { const at = Date.parse(row.date); return at >= start - 12 * 3600_000 && at <= start + 36 * 3600_000; })
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (!inWindow.length) return null;
+  if (!found.perMap) return inWindow.length === 1 ? inWindow[0]!.value : null;
+  const maps = /1_3|1_plus_2_plus_3|maps_1_3/.test(pick.market) ? 3 : /1_2|1_plus_2|maps_1|games_1/.test(pick.market) ? 2 : 1;
+  // One series that day: its maps all fall within six hours of the first.
+  if (Date.parse(inWindow[inWindow.length - 1]!.date) - Date.parse(inWindow[0]!.date) > 6 * 3600_000) return null;
+  if (inWindow.length < maps || (maps === 1 && inWindow.length !== 1)) return null;
+  return inWindow.slice(0, maps).reduce((sum, row) => sum + row.value, 0);
+}
+
 export class EdgeResultsWorker {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private last: { at: string; graded: number; waiting: number; unsupported: number; error: string | null } | null = null;
   constructor(private readonly ledger: EdgeLedger, private readonly history: InternalHistoryStore | null,
-    private readonly boxScores: Pick<BoxScoreResults, 'results'> | null, private readonly clock: () => Date = () => new Date()) {}
+    private readonly boxScores: Pick<BoxScoreResults, 'results'> | null, private readonly clock: () => Date = () => new Date(),
+    private readonly freeHistory: FreeHistoryValues | null = null) {}
 
   status() { return { scheduled: !!this.timer, running: this.running, last: this.last }; }
   start(intervalMs = 60 * 60_000) {
@@ -730,6 +758,18 @@ export class EdgeResultsWorker {
         const rows = await this.history.rowsForPlayers([...players.values()], 15);
         graded += (await this.ledger.gradeFromRows((pick: TrackedEdgePick) =>
           dedupeRows(rows.get(playerKey(pick.sport, pick.playerName)) ?? []))).graded;
+      }
+      // Tennis and esports from the free public history sources (box scores don't cover them).
+      const free = this.freeHistory ? (await this.ledger.awaitingResults(4)).filter((pick) => freeGradedSports.has(pick.sport)) : [];
+      if (free.length) {
+        const facts: EdgeResultFact[] = [];
+        for (const pick of free.slice(0, 300)) {
+          const found = await this.freeHistory!(pick.sport, pick.playerName, pick.market).catch(() => null);
+          const actual = found ? freeHistoryActual(pick, found) : null;
+          if (actual !== null) facts.push({ eventId: pick.eventId, playerId: pick.playerId, market: pick.market, status: 'FINAL', actual,
+            sourceName: found!.source });
+        }
+        graded += (await this.ledger.grade(facts)).graded;
       }
     } catch (failure) {
       error = failure instanceof Error ? failure.message : 'EDGE_GRADING_FAILED';

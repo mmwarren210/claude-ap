@@ -1246,7 +1246,8 @@ export function buildServer(options: ServerOptions = {}) {
     gameLines:options.contextFeeds?async()=>(await options.contextFeeds!.items<GameLine>('pinnacle')).items:null,
     clock:()=>now()}):null;
   const edgeWorker=edge&&options.edge?.ledger?new EdgeResultsWorker(options.edge.ledger,options.internalHistory??null,
-    options.edge.boxScores??null,()=>now()):null;
+    options.edge.boxScores??null,()=>now(),
+    options.playerHistory?(sport,playerName,market)=>options.playerHistory!.values(sport,playerName,market):null):null;
   if(edge){
     registerEdgeRoutes(app,{edge,ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
       internalHistory:options.internalHistory??null,isOwner:(request)=>isOwner(request),now,
