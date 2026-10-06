@@ -230,7 +230,7 @@ export class SharpPropsFeed {
   constructor(private readonly apiKey: string | null, private readonly file: string | null,
     private readonly options: { books?: readonly string[]; leagues?: readonly string[]; maxPagesPerLeague?: number;
       /** Pause between requests; SharpAPI's Hobby plan allows 120 a minute. */
-      requestGapMs?: number } = {},
+      requestGapMs?: number; retryScale?: number } = {},
     private readonly fetchFn: typeof fetch = fetch, private readonly clock: () => Date = () => new Date()) {}
 
   private loading: Promise<void> | null = null;
@@ -304,7 +304,7 @@ export class SharpPropsFeed {
           url.searchParams.set('limit', '200');
           if (cursor) url.searchParams.set('cursor', cursor);
           if (this.requests++ > 0) await new Promise((resolve) => setTimeout(resolve, this.options.requestGapMs ?? 700));
-          const response = await this.fetchFn(url, { headers: { 'X-API-Key': this.apiKey }, signal: AbortSignal.timeout(30_000) });
+          const response = await this.fetchRetrying(url);
           if (response.status === 404 || response.status === 400) break; // league not offered
           if (!response.ok) throw new Error(`SHARPAPI_HTTP_${response.status}`);
           const body = await response.json() as { data?: unknown[]; pagination?: { has_more?: boolean; next_cursor?: string } };
@@ -316,22 +316,15 @@ export class SharpPropsFeed {
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : 'SHARPAPI_FAILED';
       console.warn(`[sharp] refresh failed after ${this.requests} requests: ${this.lastError}`);
+      // The rows fetched before the failure still feed the market audit; the saved prices stay as they were.
+      this.auditMarkets(rows.filter((row) => !isPickemRow(row)));
       return this.status();
     }
     console.log(`[sharp] refresh fetched ${rows.length} prop rows in ${this.requests} requests`);
     // Pick'em rows (PrizePicks) are lines, not prices: kept apart so they never count toward a fair price.
     const bookRows = rows.filter((row) => !isPickemRow(row));
     const prices = fairPrices(bookRows);
-    // Market audit: the player-prop market types CrownIQ doesn't map yet, per league (a missing mapping means no book prices).
-    const unmapped = new Map<string, number>();
-    for (const value of bookRows) {
-      const row = value as Row, sport = leagueSports[String(row.league)];
-      if (!sport || typeof row.player_name !== 'string' || bookMarket(sport, String(row.sportsbook), String(row.market_type))) continue;
-      const key = `${sport}:${String(row.market_type)}`;
-      unmapped.set(key, (unmapped.get(key) ?? 0) + 1);
-    }
-    if (unmapped.size) console.log(`[sharp-audit] unmapped player markets: ${[...unmapped].sort((x, y) => y[1] - x[1]).slice(0, 30)
-      .map(([key, count]) => `${key}(${count})`).join(' ')}`);
+    this.auditMarkets(bookRows);
     if (!prices.length) { this.lastError = 'NO_PRICES'; return this.status(); }
     this.prices = prices; this.overOnly = overOnlyPrices(bookRows); this.games = gamePrices(gameRows.filter((row) => !isPickemRow(row)));
     this.pickem = pickemLines(rows);
@@ -345,6 +338,34 @@ export class SharpPropsFeed {
     }
     for (const callback of this.onRefreshed) { try { await callback(prices, this.clock()); } catch { /* best effort */ } }
     return this.status();
+  }
+
+  /** Market audit: the player-prop market types CrownIQ doesn't map yet, per league (a missing mapping means no book prices). */
+  private auditMarkets(bookRows: readonly unknown[]): void {
+    const unmapped = new Map<string, number>();
+    for (const value of bookRows) {
+      const row = value as Row, sport = leagueSports[String(row.league)];
+      if (!sport || typeof row.player_name !== 'string' || bookMarket(sport, String(row.sportsbook), String(row.market_type))) continue;
+      const key = `${sport}:${String(row.market_type)}`;
+      unmapped.set(key, (unmapped.get(key) ?? 0) + 1);
+    }
+    if (unmapped.size) console.log(`[sharp-audit] unmapped player markets: ${[...unmapped].sort((x, y) => y[1] - x[1]).slice(0, 30)
+      .map(([key, count]) => `${key}(${count})`).join(' ')}`);
+  }
+
+  /**
+   * One SharpAPI request; a 429 (rate limit) waits for Retry-After (else 15, 30, 60 s) and tries again, up to 3 retries,
+   * so one busy minute doesn't throw away a whole refresh.
+   */
+  private async fetchRetrying(url: URL): Promise<Response> {
+    for (let attempt = 0; ; attempt++) {
+      const response = await this.fetchFn(url, { headers: { 'X-API-Key': this.apiKey! }, signal: AbortSignal.timeout(30_000) });
+      if (response.status !== 429 || attempt >= 3) return response;
+      const after = Number(response.headers.get('retry-after'));
+      const waitMs = Math.min(120_000, Number.isFinite(after) && after > 0 ? after * 1000 : 15_000 * 2 ** attempt) * (this.options.retryScale ?? 1);
+      console.warn(`[sharp] rate limited; retrying in ${Math.round(waitMs / 1000)}s`);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
   }
 
   start(intervalMinutes: number): void {

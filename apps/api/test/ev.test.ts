@@ -71,6 +71,19 @@ test('the SharpAPI feed pages with the cursor, sends the key, and keeps old pric
   assert.equal((await new SharpPropsFeed(null, null).refresh()).lastError, 'SHARPAPI_KEY_MISSING');
 });
 
+test('the SharpAPI feed waits out a 429 and keeps going instead of dropping the refresh', async () => {
+  let calls = 0;
+  const fetchFn = (async () => {
+    calls++;
+    if (calls === 1) return new Response('{}', { status: 429, headers: { 'retry-after': '1' } });
+    return new Response(JSON.stringify({ data: [row('draftkings', 'over', 0.6), row('draftkings', 'under', 0.45)],
+      pagination: { has_more: false } }), { status: 200 });
+  }) as typeof fetch;
+  const status = await new SharpPropsFeed('key', null, { leagues: ['nfl'], requestGapMs: 0, retryScale: 0 }, fetchFn, () => now).refresh();
+  assert.equal(calls, 2);
+  assert.deepEqual([status.prices, status.lastError], [1, null]);
+});
+
 test('Books picks: the books side on lines GKR could not score, at 56% or more, only on an offered side', () => {
   const base = propLineSchema.parse({ ...fixtureLine(), sport: 'NFL', league: 'NFL', market: 'passing_yards', threshold: 249.5,
     lineType: 'REGULAR', availableDirections: ['MORE', 'LESS'], eventStartTime: '2030-10-04T17:00:00.000Z' });
