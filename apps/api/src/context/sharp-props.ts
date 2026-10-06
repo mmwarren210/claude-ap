@@ -28,7 +28,7 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
     player_receiving_yards: 'player_reception_yds', player_receptions: 'player_receptions',
     player_kicking_points: 'player_kicking_points', player_sacks: 'player_sacks',
     'player_tackles_+_assists': 'player_tackles_assists', 'player_passing_+_rushing_yards': 'pass_plus_rush_yds',
-    'player_rushing_+_receiving_yards': 'rush_plus_rec_yds', anytime_touchdown_scorer: 'anytime_tds' },
+    'player_rushing_+_receiving_yards': 'rush_plus_rec_yds' },
   NCAAFB: { player_passing_yards: 'passing_yards', player_rushing_yards: 'player_rush_yds',
     player_receiving_yards: 'player_reception_yds', player_receptions: 'player_receptions',
     'player_passing_+_rushing_yards': 'pass_plus_rush_yds', player_passing_touchdowns: 'player_pass_tds',
@@ -225,6 +225,75 @@ export function gamePrices(rows: readonly unknown[]): GamePrice[] {
   return out;
 }
 
+/** P(N > line) for a Poisson count with mean `mean` (line is x.5). */
+function poissonOver(mean: number, line: number): number {
+  let term = Math.exp(-mean), cdf = term;
+  for (let k = 1; k <= Math.floor(line); k++) { term *= mean / k; cdf += term; }
+  return 1 - cdf;
+}
+
+/** Each event's expected total goals: the median, over books, of the Poisson mean that fits the book's no-vig total. */
+export function expectedGoals(games: readonly GamePrice[]): Map<string, number> {
+  const sides = new Map<string, { over?: number; under?: number; line: number; event: string }>();
+  for (const game of games) {
+    if (game.market !== 'total' || game.line === null) continue;
+    const key = `${game.book}|${game.eventId}|${game.line}`;
+    const entry = sides.get(key) ?? { line: game.line, event: game.eventId };
+    entry[game.side as 'over' | 'under'] = game.probability; sides.set(key, entry);
+  }
+  const means = new Map<string, number[]>();
+  for (const { over, under, line, event } of sides.values()) {
+    if (!over || !under || line % 1 === 0) continue;
+    const target = over / (over + under);
+    let lo = 0.05, hi = 20;
+    for (let i = 0; i < 50; i++) { const mid = (lo + hi) / 2; if (poissonOver(mid, line) < target) lo = mid; else hi = mid; }
+    means.set(event, [...(means.get(event) ?? []), (lo + hi) / 2]);
+  }
+  return new Map([...means].map(([event, list]) => { const sorted = list.sort((a, b) => a - b); return [event, sorted[Math.floor(sorted.length / 2)]!]; }));
+}
+
+/**
+ * Anytime goal scorer (NHL, soccer). SharpAPI sends one "Yes" price per player (selection "other", no line) and no "No"
+ * side, so the book's cut can't be removed player by player. Instead, per book and game: player goals are close to Poisson,
+ * so the fair chances must satisfy sum(-ln(1 - p)) = the game's expected goals (from the no-vig total, less ~3% own goals).
+ * Each Yes is divided by the one factor k that makes that hold. Games without a total, or with k outside 1.0–1.6 (an
+ * incomplete player list), are left out rather than guessed. The result is the over of 0.5 goals.
+ */
+export function scorerFairPrices(rows: readonly unknown[], games: readonly GamePrice[]): FairPrice[] {
+  const totals = expectedGoals(games);
+  const groups = new Map<string, Row[]>();
+  for (const value of rows) {
+    const row = value as Row;
+    if (row.market_type !== 'anytime_goal_scorer' || row.selection_type !== 'other' || row.is_live === true || row.is_active === false ||
+      typeof row.player_name !== 'string' || !(Number(row.odds_probability) > 0 && Number(row.odds_probability) < 1)) continue;
+    const sport = leagueSports[String(row.league)];
+    if (sport !== 'NHL' && sport !== 'SOCCER') continue;
+    const key = `${String(row.sportsbook)}|${String(row.event_id)}`;
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
+  const out: FairPrice[] = [];
+  for (const list of groups.values()) {
+    const goals = totals.get(String(list[0]!.event_id));
+    if (!goals || list.length < 10) continue;
+    const target = goals * 0.97, implied = list.map((row) => Number(row.odds_probability));
+    const sum = (k: number) => implied.reduce((total, p) => total - Math.log(1 - Math.min(p / k, 0.99)), 0);
+    if (sum(1) < target || sum(1.6) > target) continue;
+    let lo = 1, hi = 1.6;
+    for (let i = 0; i < 50; i++) { const mid = (lo + hi) / 2; if (sum(mid) > target) lo = mid; else hi = mid; }
+    const k = (lo + hi) / 2;
+    for (const row of list) {
+      const sport = leagueSports[String(row.league)]!;
+      out.push({ book: String(row.sportsbook), sport, player: String(row.player_name), market: 'goals', line: 0.5,
+        fairOver: Math.round(Number(row.odds_probability) / k * 10_000) / 10_000,
+        overAmerican: typeof row.odds_american === 'number' ? row.odds_american : null, underAmerican: null,
+        startTime: String(row.event_start_time), home: typeof row.home_team === 'string' ? row.home_team : null,
+        away: typeof row.away_team === 'string' ? row.away_team : null,
+        ...(row.is_stale_pregame_price === true ? { stale: true } : {}), ...(typeof row.timestamp === 'string' ? { observedAt: row.timestamp } : {}) });
+    }
+  }
+  return out;
+}
+
 export interface SharpPropsStatus {
   readonly configured: boolean; readonly fetchedAt: string | null; readonly prices: number;
   readonly lastError: string | null; readonly requests: number;
@@ -310,7 +379,10 @@ export class SharpPropsFeed {
     const rows: unknown[] = [], gameRows: unknown[] = [];
     const books = this.options.books ?? ['draftkings', 'hardrock', 'fanduel'];
     // Player props for the leagues CrownIQ covers. (Full-game lines were only for Kalshi, removed 2026-10-06.)
-    const jobs = (this.options.leagues ?? sharpLeagues).map((league) => ({ league, props: true }));
+    const leagues = this.options.leagues ?? sharpLeagues;
+    // Game goal totals for NHL and soccer: they set the scale that takes the cut out of anytime-scorer prices.
+    const jobs = [...leagues.map((league) => ({ league, props: true })),
+      ...leagues.filter((league) => league === 'nhl' || leagueSports[league] === 'SOCCER').map((league) => ({ league, props: false }))];
     try {
       for (const { league, props } of jobs) {
         let cursor: string | null = null;
@@ -319,7 +391,7 @@ export class SharpPropsFeed {
           url.searchParams.set('sportsbooks', books.join(','));
           url.searchParams.set('league', league);
           if (props) url.searchParams.set('is_player_prop', 'true');
-          else url.searchParams.set('market_type', gameMarketTypes.join(','));
+          else url.searchParams.set('market_type', 'total_goals');
           url.searchParams.set('is_live', 'false');
           url.searchParams.set('limit', '200');
           if (cursor) url.searchParams.set('cursor', cursor);
@@ -343,10 +415,14 @@ export class SharpPropsFeed {
     console.log(`[sharp] refresh fetched ${rows.length} prop rows in ${this.requests} requests`);
     // Pick'em rows (PrizePicks) are lines, not prices: kept apart so they never count toward a fair price.
     const bookRows = rows.filter((row) => !isPickemRow(row));
-    const prices = fairPrices(bookRows);
+    const games = gamePrices(gameRows.filter((row) => !isPickemRow(row)));
+    const scorers = scorerFairPrices(bookRows, games);
+    if (scorers.length || rows.some((row) => (row as Row).market_type === 'anytime_goal_scorer'))
+      console.log(`[sharp] anytime scorer: ${scorers.length} goals prices from ${expectedGoals(games).size} game totals`);
+    const prices = [...fairPrices(bookRows), ...scorers];
     this.auditMarkets(bookRows);
     if (!prices.length) { this.lastError = 'NO_PRICES'; return this.status(); }
-    this.prices = prices; this.overOnly = overOnlyPrices(bookRows); this.games = gamePrices(gameRows.filter((row) => !isPickemRow(row)));
+    this.prices = prices; this.overOnly = overOnlyPrices(bookRows); this.games = games;
     this.pickem = pickemLines(rows);
     this.fetchedAt = this.clock().toISOString(); this.lastError = null;
     if (this.file) {

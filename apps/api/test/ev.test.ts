@@ -3,7 +3,7 @@ import test from 'node:test';
 import { analysisSchema, boardResponseSchema, propLineSchema } from '@crowniq/contracts';
 import { fixtureLine } from '../../../packages/engine/test/fixtures.js';
 import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from '../src/context/ev.js';
-import { fairPrices, normalizeRow, SharpPropsFeed } from '../src/context/sharp-props.js';
+import { expectedGoals, fairPrices, normalizeRow, scorerFairPrices, SharpPropsFeed } from '../src/context/sharp-props.js';
 
 const now = new Date('2030-10-04T12:00:00Z');
 const row = (book: string, side: 'over' | 'under', probability: number, overrides: Record<string, unknown> = {}) => ({
@@ -79,6 +79,33 @@ test('anytime goal scorer Yes/No becomes the over/under of 0.5 goals (NHL goals 
   assert.equal(price?.fairOver, Math.round(0.3 / 1.05 * 10_000) / 10_000);
   const other = row('draftkings', 'over', 0.5, { market_type: 'player_passing_yards' });
   assert.equal(normalizeRow(other), other, 'other markets pass through');
+});
+
+test('anytime goal scorer: one-sided Yes prices de-vigged per game against the goal total', () => {
+  const base = { sportsbook: 'fanduel', league: 'nhl', event_id: 'g1', event_start_time: '2030-10-04T23:00Z', home_team: 'Home',
+    away_team: 'Away', is_live: false, is_active: true };
+  // Fair scoring rates for 36 skaters summing to 5.8 goals; the book shades every Yes up by 25%.
+  const rates = Array.from({ length: 36 }, (_, index) => 0.05 + 0.3 * ((index * 7) % 36) / 36);
+  const scale = 5.8 / rates.reduce((a, b) => a + b, 0);
+  const fair = rates.map((rate) => 1 - Math.exp(-rate * scale));
+  const rows = fair.map((p, index) => ({ ...base, market_type: 'anytime_goal_scorer', selection_type: 'other', line: null,
+    player_name: `Skater ${index}`, odds_probability: p * 1.25 }));
+  // A 6.5 total priced so the Poisson mean is 5.8 / 0.97.
+  const mean = 5.8 / 0.97;
+  let term = Math.exp(-mean), cdf = term;
+  for (let k = 1; k <= 6; k++) { term *= mean / k; cdf += term; }
+  const over = 1 - cdf;
+  const games = [{ book: 'pinnacle', league: 'nhl', sport: 'hockey', eventId: 'g1', home: 'Home', away: 'Away', startTime: base.event_start_time,
+    market: 'total' as const, line: 6.5, side: 'over' as const, probability: over * 1.03, american: null },
+  { book: 'pinnacle', league: 'nhl', sport: 'hockey', eventId: 'g1', home: 'Home', away: 'Away', startTime: base.event_start_time,
+    market: 'total' as const, line: 6.5, side: 'under' as const, probability: (1 - over) * 1.03, american: null }];
+  assert.ok(Math.abs(expectedGoals(games).get('g1')! - mean) < 1e-3);
+  const prices = scorerFairPrices(rows, games);
+  assert.equal(prices.length, 36);
+  assert.deepEqual([prices[0]!.sport, prices[0]!.market, prices[0]!.line], ['NHL', 'goals', 0.5]);
+  for (const [index, price] of prices.entries()) assert.ok(Math.abs(price.fairOver - fair[index]!) < 0.002, `skater ${index}`);
+  assert.equal(scorerFairPrices(rows, []).length, 0, 'no total, no guess');
+  assert.equal(scorerFairPrices(rows.slice(0, 5), games).length, 0, 'an incomplete player list is left out');
 });
 
 test('the SharpAPI feed waits out a 429 and keeps going instead of dropping the refresh', async () => {
