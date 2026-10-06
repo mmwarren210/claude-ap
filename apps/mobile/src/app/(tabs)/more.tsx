@@ -143,6 +143,7 @@ export default function MoreScreen() {
         <Row icon="lightbulb-on-outline" title="Pick tips" detail={hiddenTips.length
           ? `${hiddenTips.length} hidden · tap to show again` : 'On · advice before weaker picks'}
           onPress={hiddenTips.length ? showAllTips : undefined} />
+        <Row icon="image-text" title="My tip services" detail="Upload screenshots · track records" onPress={demo ? undefined : () => go('/tips')} />
         <Row icon="account-group-outline" title="Social" detail="Top 10 and Crowns" onPress={() => go('/(tabs)/social')} />
         <Row icon="lifebuoy" title="Play responsibly" detail="1-800-MY-RESET" last onPress={() => void Linking.openURL(helpUrl)} />
       </View>

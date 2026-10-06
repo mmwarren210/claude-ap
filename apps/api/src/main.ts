@@ -3,6 +3,8 @@ import { StatApiContextResearch } from './stat-api-context.js';
 import { FreeHistoryEvidence } from './free-history-evidence.js';
 import { EspnTennisHistory, LeaguepediaHistory, OpenDotaHistory, PlayerHistory, SleeperHistory } from './player-history.js';
 import { FeedbackStore } from './feedback.js';
+import { ClaudeTipReader } from './claude-tips.js';
+import { TipGrader, TipStore } from './tips.js';
 import 'dotenv/config';
 import { mergePayouts } from '@crowniq/contracts';
 import { dirname, join } from 'node:path';
@@ -383,6 +385,9 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, playerHistory, es
   historyArchive,
   edge:edgeOptions,
   feedback:new FeedbackStore(`${dataDir}/feedback.json`),
+  tips:(()=>{const store=new TipStore(`${dataDir}/tips.json`);
+    const reader=claudeKey?new ClaudeTipReader({apiKey:claudeKey,model:process.env.CROWNIQ_TIPS_MODEL??'claude-sonnet-5-5'}):null;
+    return {store,reader,grader:reader?new TipGrader(store,reader):null};})(),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,payouts,

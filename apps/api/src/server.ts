@@ -72,6 +72,8 @@ import type { EdgeLedger } from './edge/ledger.js';
 import type { SnapshotStore } from './edge/snapshots.js';
 import type { BookWeightStore } from './edge/book-weights.js';
 import type { DispersionStore } from './edge/dispersion-store.js';
+import { DAILY_TIP_UPLOADS, marketRead } from './tips.js';
+import type { TipGrader, TipReader, TipStore } from './tips.js';
 import { registerEdgeRoutes } from './edge/routes.js';
 import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
@@ -156,6 +158,8 @@ export interface ServerOptions {
     valuesCacheFile?: string | null; pick6PayoutsConfirmed?: boolean; alertsFile?: string | null;
     staleLogFile?: string | null; dispersion?: DispersionStore | null;
     bookWeights?: BookWeightStore | null } | null;
+  /** Tips from paid services, read from screenshots by Claude and graded after the games (display-only). */
+  tips?: { store: TipStore; reader: TipReader | null; grader: TipGrader | null } | null;
   /** JSON-lines history of the books' view of board lines, one row per line per refresh. */
   booksHistoryFile?: string | null;
 }
@@ -221,6 +225,7 @@ export function buildServer(options: ServerOptions = {}) {
     // After a scraper pull changes lines, rebuild the board through the owner job (free; tracks picks).
     options.scraperPuller?.whenLinesChange(()=>startOwnerBoardRefresh());
     options.scraperPuller?.start();
+    options.tips?.grader?.start();
     options.contextFeeds?.start();
     // Keep what the books said about each board line over time, so a "books agree" factor can be measured on graded results.
     let booksHistoryAt=0;
@@ -365,7 +370,7 @@ export function buildServer(options: ServerOptions = {}) {
     shadowTimers.push(firstExtra,everyExtra);
   }
   app.addHook('onClose', async () => {for(const timer of shadowTimers)clearTimeout(timer);options.playerHistory?.stop();appShadow?.stop();options.aiPicks?.stop(); webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
-    options.scraperPuller?.stop();options.contextFeeds?.stop();options.sharpProps?.stop(); });
+    options.scraperPuller?.stop();options.tips?.grader?.stop();options.contextFeeds?.stop();options.sharpProps?.stop(); });
 
   // Every paid provider pull runs through this one job, so two pulls can never overlap or
   // queue back to back. The record is persisted so a restart mid-pull is reported.
@@ -532,6 +537,49 @@ export function buildServer(options: ServerOptions = {}) {
       input.data.kind,input.data.text,input.data.screen??null));}
     catch(error){return (error as Error).message==='DAILY_LIMIT'?reply.code(429).send({code:'DAILY_LIMIT'})
       :reply.code(503).send({code:'FEEDBACK_UNAVAILABLE'});}
+  });
+  // Tips: picks from the services a member pays for, uploaded as a screenshot or text, in their own section (display-only).
+  const tipStatus=z.enum(['PENDING','WON','LOST','PUSH','VOID']);
+  app.get('/v1/tips',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!options.tips)return reply.code(503).send({code:'TIPS_UNAVAILABLE'});
+    return {...await options.tips.store.mine(user.accountId),reading:!!options.tips.reader};
+  });
+  app.post('/v1/tips/upload',{bodyLimit:8_000_000},async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!options.tips?.reader)return reply.code(503).send({code:'TIPS_READER_UNAVAILABLE'});
+    const input=z.object({image:z.object({data:z.string().min(100).max(7_500_000).regex(/^[A-Za-z0-9+/=]+$/),
+      mediaType:z.enum(['image/png','image/jpeg','image/webp','image/gif'])}).optional(),
+      text:z.string().trim().min(2).max(4000).optional(),source:z.string().trim().min(1).max(60).optional()})
+      .strict().refine((value)=>value.image||value.text).safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'INVALID_TIPS_UPLOAD'});
+    if(await options.tips.store.uploadsToday(user.accountId)>=DAILY_TIP_UPLOADS)return reply.code(429).send({code:'DAILY_LIMIT'});
+    try{
+      const read=await options.tips.reader.read({...input.data.image?{image:input.data.image}:{},...input.data.text?{text:input.data.text}:{},
+        today:now().toISOString().slice(0,10)});
+      if(!read.tips.length)return reply.code(422).send({code:'NO_TIPS_FOUND'});
+      const lines=options.contextFeeds?(await options.contextFeeds.items<GameLine>('pinnacle')).items:[];
+      const from=now().getTime();
+      const tips=await options.tips.store.add(user.accountId,input.data.source??read.source??'Unnamed service',read.tips,
+        read.tips.map((tip)=>marketRead(tip,lines,tip.eventDate?Date.parse(tip.eventDate):from)));
+      return reply.code(201).send({source:tips[0]!.source,tips:tips.map(({accountId:_account,...tip})=>tip)});
+    }catch(error){console.warn('[tips] read failed',error instanceof Error?error.message:error);
+      return reply.code(502).send({code:'TIPS_READ_FAILED'});}
+  });
+  app.patch('/v1/tips/:id',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!options.tips)return reply.code(503).send({code:'TIPS_UNAVAILABLE'});
+    const id=z.string().uuid().safeParse((request.params as {id?:string}).id);
+    const input=z.object({status:tipStatus.optional(),source:z.string().trim().min(1).max(60).optional()}).strict().safeParse(request.body);
+    if(!id.success||!input.success)return reply.code(400).send({code:'INVALID_TIP_UPDATE'});
+    return await options.tips.store.update(user.accountId,id.data,input.data)?{updated:true}:reply.code(404).send({code:'TIP_NOT_FOUND'});
+  });
+  app.delete('/v1/tips/:id',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!options.tips)return reply.code(503).send({code:'TIPS_UNAVAILABLE'});
+    const id=z.string().uuid().safeParse((request.params as {id?:string}).id);
+    if(!id.success)return reply.code(400).send({code:'INVALID_TIP_ID'});
+    return await options.tips.store.remove(user.accountId,id.data)?{removed:true}:reply.code(404).send({code:'TIP_NOT_FOUND'});
   });
   app.get('/v1/feedback/mine',async(request,reply)=>{
     const user=await currentUser(request);
