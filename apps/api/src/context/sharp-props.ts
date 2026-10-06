@@ -316,6 +316,16 @@ export class SharpPropsFeed {
     // Pick'em rows (PrizePicks) are lines, not prices: kept apart so they never count toward a fair price.
     const bookRows = rows.filter((row) => !isPickemRow(row));
     const prices = fairPrices(bookRows);
+    // Market audit: the player-prop market types CrownIQ doesn't map yet, per league (a missing mapping means no book prices).
+    const unmapped = new Map<string, number>();
+    for (const value of bookRows) {
+      const row = value as Row, sport = leagueSports[String(row.league)];
+      if (!sport || typeof row.player_name !== 'string' || bookMarket(sport, String(row.sportsbook), String(row.market_type))) continue;
+      const key = `${sport}:${String(row.market_type)}`;
+      unmapped.set(key, (unmapped.get(key) ?? 0) + 1);
+    }
+    if (unmapped.size) console.log(`[sharp-audit] unmapped player markets: ${[...unmapped].sort((x, y) => y[1] - x[1]).slice(0, 30)
+      .map(([key, count]) => `${key}(${count})`).join(' ')}`);
     if (!prices.length) { this.lastError = 'NO_PRICES'; return this.status(); }
     this.prices = prices; this.overOnly = overOnlyPrices(bookRows); this.games = gamePrices(gameRows.filter((row) => !isPickemRow(row)));
     this.pickem = pickemLines(rows);
