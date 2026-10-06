@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors, radius } from '../../theme';
 import { Icon } from './Icon';
 
-/** A slip size the user types or steps, between min and max (Hard Rock up to 20, Kalshi up to 20). */
+/** A slip size the user types or steps, between min and max (Hard Rock up to 20). */
 export function SizeStepper({ value, onChange, min = 2, max, label = 'Picks' }: { value: number; onChange: (value: number) => void;
   min?: number; max: number; label?: string }) {
   const [text, setText] = useState(String(value));

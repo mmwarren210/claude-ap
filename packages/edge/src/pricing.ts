@@ -147,7 +147,7 @@ export function priceBoard(input: PricingInput): PricingResult {
   let unpriced = 0, quotesUsed = 0;
   const unpricedLines: UnpricedLine[] = [];
   const appName = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'DK Pick’em', draftkings: 'DraftKings',
-    hardrock: 'Hard Rock', kalshi: 'Kalshi' }[input.platform ?? 'prizepicks'];
+    hardrock: 'Hard Rock' }[input.platform ?? 'prizepicks'];
   // The exact inputs missing, so a No read says what Edge would need.
   const missing = (games: number, hasRegular: boolean) => [
     'no sportsbook price for this player and stat',

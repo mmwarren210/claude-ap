@@ -98,8 +98,6 @@ function contextLines(context: GameContext, playerName: string): string[] {
   if (spread?.line !== null && spread?.line !== undefined) lines.push(`Pinnacle spread: ${spread.home} ${spread.line > 0 ? '+' : ''}${spread.line}`);
   const total = context.game.find((item) => item.market === 'total');
   if (total?.line !== null && total?.line !== undefined) lines.push(`Pinnacle game total: ${total.line}`);
-  for (const market of context.markets.filter((item) => item.platform === 'kalshi')) lines.push(`Kalshi: ${market.question} · ` +
-    market.outcomes.slice(0, 3).map((item) => `${item.name} ${Math.round(item.probability)}%`).join(' · '));
   return lines;
 }
 

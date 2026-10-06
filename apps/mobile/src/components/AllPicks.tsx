@@ -17,8 +17,6 @@ import { ChipRow, FilterChip } from './ui/Controls';
 
 type BookPick = { id: string; playerName: string; market: string; line: number; side: 'MORE' | 'LESS'; eventStartTime: string;
   by?: 'GKR' | 'HISTORY' | 'VALUE'; score?: number; gkr: { score: number } | null; note?: string | null; american: number | null };
-type MarketPick = { id: string; game: string; side: string; kind: string; startTime: string; fair: number; edge: number;
-  price: number; note?: string };
 const word = (side: 'MORE' | 'LESS') => side === 'MORE' ? 'More' : 'Less';
 const odds = (american: number | null) => american === null ? '' : ` (${american > 0 ? '+' : ''}${american})`;
 
@@ -53,10 +51,6 @@ export function AllPicks({ only }: { only?: PickSource } = {}) {
           key: `${pick.playerName}|${pick.market}`, source: book, by: pick.by ?? 'GKR', title: pick.playerName,
           detail: `${marketLabel(pick.market)} · ${pick.side === 'MORE' ? 'Over' : 'Under'} ${formatLine(pick.line)}${odds(pick.american)}`,
           strength: pick.gkr?.score ?? pick.score ?? 0, edge: null, startTime: pick.eventStartTime, lineId: null, note: pick.note ?? null }))])),
-      ...Object.fromEntries((['kalshi'] as const).map((platform) => [platform, async () =>
-        ((await json<{ picks: MarketPick[] }>(`/v1/markets/${platform}/picks`))?.picks ?? []).map((pick): AnyPick => ({
-          key: pick.id, source: platform, by: 'EDGE', title: pick.game, detail: `${pick.side} · ${Math.round(pick.price * 100)}¢`,
-          strength: Math.round(pick.fair * 100), edge: pick.edge, startTime: pick.startTime, lineId: null, note: pick.note ?? null }))])),
     };
     for (const [name, load] of Object.entries(loaders) as [PickSource, () => Promise<AnyPick[]>][]) {
       if (only && name !== only) continue;

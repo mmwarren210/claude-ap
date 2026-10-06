@@ -6,7 +6,7 @@ import { useAuth } from '../auth';
 import { formatLine, gameTime, marketLabel } from '../insights';
 import { colors, radius } from '../theme';
 import { BoardPicker, sourceNames } from './BoardPicker';
-import type { BoardSource, MarketPlatform, Sportsbook } from './BoardPicker';
+import type { BoardSource, Sportsbook } from './BoardPicker';
 import { Notice } from './Screen';
 import { ScoutVerdict } from './ScoutVerdict';
 import type { AiRead } from '../scout';
@@ -30,17 +30,10 @@ export type BookPick = { id: string; league: string; eventName?: string; playerN
   scout?: AiRead | null;
   prizePicks: { line: number; lineType: string; sides: Side[];
     gkr: { direction: string; score: number | null; reasonCode: string | null } | null } | null };
-/** One Kalshi pick: a game market priced below Pinnacle's no-vig chance. */
-export type MarketPick = { id: string; league: string; game: string; startTime: string; kind: 'WINNER' | 'SPREAD' | 'TOTAL' | 'PROP';
-  by?: 'MARKET' | 'HISTORY'; note?: string; side: string;
-  price: number; cost: number; fair: number; edge: number; url: string | null; scout?: AiRead | null };
-
 export const bookUrls: Readonly<Record<Sportsbook, string>> = { draftkings: 'https://sportsbook.draftkings.com/',
   hardrock: 'https://app.hardrock.bet/' };
-export const marketUrls: Readonly<Record<MarketPlatform, string>> = { kalshi: 'https://kalshi.com/sports' };
 export const odds = (american: number | null) => american === null ? '—' : american > 0 ? `+${american}` : `−${-american}`;
 const pct = (value: number | null) => value === null ? '—' : `${Math.round(value * 100)}%`;
-export const cents = (value: number) => `${(value * 100).toFixed(1).replace(/\.0$/, '')}¢`;
 const impliedOf = (american: number | null) => american === null ? null
   : american < 0 ? -american / (-american + 100) : 100 / (american + 100);
 
@@ -135,56 +128,6 @@ export function BookCard({ book, pick, action }: { book: Sportsbook; pick: BookP
   </View>;
 }
 
-export function MarketCard({ platform, pick, action }: { platform: MarketPlatform; pick: MarketPick; action?: React.ReactNode }) {
-  return <View style={styles.card}>
-    <View style={styles.top}>
-      <View style={styles.leagueBadge}><Text style={styles.leagueText}>{pick.league}</Text></View>
-      <View style={styles.grow}>
-        <Text style={styles.name} numberOfLines={2}>{pick.game}</Text>
-        <Text style={styles.meta}>{gameTime(pick.startTime)}</Text>
-      </View>
-    </View>
-    <View style={styles.middle}>
-      <View style={styles.grow}>
-        <Text style={styles.stat}>{pick.kind === 'WINNER' ? 'Game winner' : pick.kind === 'SPREAD' ? 'Spread'
-          : pick.kind === 'TOTAL' ? 'Game total' : 'Player prop · Yes'}</Text>
-        <Text style={styles.pick} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.7}>{pick.side.toUpperCase()}
-          <Text style={styles.price}>  {cents(pick.price)}</Text></Text>
-      </View>
-      <View style={styles.edge}><Text style={styles.edgeValue}>+{(pick.edge * 100).toFixed(1)}</Text>
-        <Text style={styles.factLabel}>EDGE</Text></View>
-    </View>
-    <View style={styles.facts}>
-      <View style={styles.fact}><Text style={styles.factValue}>{cents(pick.cost)}</Text>
-        <Text style={styles.factLabel}>{platform === 'kalshi' ? 'Cost with fee' : 'Cost'}</Text></View>
-      <View style={[styles.fact, styles.divider]}><Text style={styles.factValue}>{pct(pick.fair)}</Text>
-        <Text style={styles.factLabel}>{pick.by === 'HISTORY' ? 'History’s chance' : pick.note ? 'Books’ chance' : 'Pinnacle’s chance'}</Text></View>
-      <View style={[styles.fact, styles.divider]}><Text style={[styles.factValue, { color: colors.mint }]}>+{cents(pick.edge)}</Text>
-        <Text style={styles.factLabel}>Per $1</Text></View>
-    </View>
-    <Text style={styles.note}>Not a GKR score · {pick.note ?? 'market price against Pinnacle’s fair odds'}</Text>
-    <ScoutVerdict read={pick.scout ?? undefined} gkrDirection="MORE" />
-    {action ?? (!!pick.url && <GhostButton label={`Open in ${sourceNames[platform]}`} icon="open-in-new"
-      onPress={() => void Linking.openURL(pick.url!)} />)}
-  </View>;
-}
-
-type MarketRecordStatus = { graded: number; wins: number; losses: number; pushes: number; hitRate: number | null;
-  perDollar: number | null };
-/** A market tab's graded record. */
-function useRecord(platform: MarketPlatform): MarketRecordStatus | null {
-  const { request, demo } = useAuth();
-  const [value, setValue] = useState<{ platform: MarketPlatform; record: MarketRecordStatus } | null>(null);
-  useFocusEffect(useCallback(() => {
-    if (demo) return;
-    let active = true;
-    void request(`/v1/markets/${platform}/record`).then(async (response) => response.ok ? response.json() : null)
-      .then((body) => { if (active && body) setValue({ platform, record: body as MarketRecordStatus }); }).catch(() => undefined);
-    return () => { active = false; };
-  }, [request, demo, platform]));
-  return value?.platform === platform ? value.record : null;
-}
-
 /** The built slip: its picks in plain words, a summary line, and Copy & open. */
 export function SlipTray({ lines, summary, url, appName, onClear }: { lines: string[]; summary: string; url: string; appName: string;
   onClear: () => void }) {
@@ -262,45 +205,6 @@ export function BookBoard({ book, onSource }: { book: Sportsbook; onSource: (sou
         detail={state === 'demo' ? 'The demo shows PrizePicks only.' : state === 'error'
           ? 'Could not reach CrownIQ. Try again in a moment.'
           : 'Picks show once the book’s prices load (every hour) and GKR, History or Value backs a side.'} />} />
-  </SafeAreaView>;
-}
-
-/** Kalshi: markets priced below the fair chance (Pinnacle's or the sportsbooks'). */
-export function MarketBoard({ platform, onSource }: { platform: MarketPlatform; onSource: (source: BoardSource) => void }) {
-  const { picks, fetchedAt, state } = usePicks<MarketPick>(`/v1/markets/${platform}/picks`);
-  const record = useRecord(platform);
-  const { shown, chips } = useLeagueFilter(picks);
-  const [legs] = useCrownLegs<MarketPick>(platform);
-  const [message, setMessage] = useState('');
-  const header = <View style={styles.header}>
-    <AppHeader subtitle={`${sourceNames[platform]} picks`} />
-    <BoardPicker value={platform} onChange={onSource} />
-    {chips}
-    {state === 'ready' && <Text style={styles.status}>{shown.length} {shown.length === 1 ? 'pick' : 'picks'}{ago(fetchedAt)}</Text>}
-    {record && record.graded > 0 && <Text style={styles.record}>Record: {record.wins}-{record.losses}
-      {record.pushes ? `-${record.pushes}` : ''} ({Math.round((record.hitRate ?? 0) * 100)}%) · {record.perDollar! >= 0 ? '+' : '−'}
-      {Math.abs(Math.round(record.perDollar! * 100))}¢ per $1</Text>}
-    <Text style={styles.explain}>Game winners, spreads and totals{platform === 'kalshi' ? ', and player props,' : ''} priced
-      below their fair chance: Pinnacle’s odds, or the sportsbooks’ no-vig odds, at the same number
-      {platform === 'kalshi' ? ' (Kalshi’s fee included). Player props also use the player’s history' : ''}. Not GKR scores.
-      Add picks to your {sourceNames[platform]} Crown, or build one in the Crown tab.</Text>
-    <CrownCount provider={platform} name={sourceNames[platform]} count={legs.length} message={message} />
-  </View>;
-  return <SafeAreaView style={styles.safe} edges={['top']}>
-    <FlatList data={shown} keyExtractor={(pick) => pick.id} contentContainerStyle={styles.content} ListHeaderComponent={header}
-      renderItem={({ item }) => <MarketCard platform={platform} pick={item} action={<AddToCrown provider={platform}
-        added={legs.some((leg) => leg.id === item.id)} onPress={() => {
-          const result = toggleCrownLeg<MarketPick>(platform, item, (leg) => leg.id, 20);
-          setMessage(result === 'full' ? `A ${sourceNames[platform]} Crown holds up to 20 picks here.` : '');
-        }} />} />}
-      ListFooterComponent={!shown.length && state === 'ready' ? <GhostButton label={`Open ${sourceNames[platform]}`}
-        icon="open-in-new" onPress={() => void Linking.openURL(marketUrls[platform])} /> : null}
-      ListEmptyComponent={<Notice title={state === 'demo' ? 'Sign in to see market picks' : state === 'loading'
-        ? 'Loading picks' : state === 'error' ? 'Picks unavailable' : `No ${sourceNames[platform]} picks right now`}
-        detail={state === 'demo' ? 'The demo shows PrizePicks only.' : state === 'error'
-          ? 'Could not reach CrownIQ. Try again in a moment.'
-          : `Every ${sourceNames[platform]} market that matches the books is priced at or above its fair chance right now. ` +
-            'These markets usually sit within 1–2 points.'} />} />
   </SafeAreaView>;
 }
 

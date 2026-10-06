@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useCrownLegs } from '../crown-legs';
-import { buildBookSlip, buildMarketSlip, parlayAmerican } from '../slip-builders';
+import { buildBookSlip, parlayAmerican } from '../slip-builders';
 import { colors } from '../theme';
 import { useBoard } from '../use-board';
 import { sourceNames } from './BoardPicker';
-import type { MarketPlatform, Sportsbook } from './BoardPicker';
+import type { Sportsbook } from './BoardPicker';
 import { Notice } from './Screen';
-import { BookCard, bookUrls, cents, MarketCard, marketUrls, odds, SlipTray, usePicks } from './SourceBoards';
-import type { BookPick, MarketPick } from './SourceBoards';
+import { BookCard, bookUrls, odds, SlipTray, usePicks } from './SourceBoards';
+import type { BookPick } from './SourceBoards';
 import { PrimaryButton, Segmented } from './ui/Controls';
 import { GlowCard } from './ui/GlowCard';
 import { Icon } from './ui/Icon';
@@ -18,10 +18,10 @@ import { DayPicker } from './ui/DayPicker';
 import { chosenDay, gameDays, onDay } from '../game-days';
 import { formatLine, marketLabel } from '../insights';
 
-// Crown generators for the sportsbooks (DraftKings, Hard Rock) and prediction market (Kalshi), beside the
+// Crown generators for the sportsbooks (DraftKings, Hard Rock), beside the
 // pick'em ones (owner, 2026-10-05). Each builds from its own board, which already carries GKR, the History Read at the
 // book's number and the books' fair prices; picks added on the board show here too. Sizes: DraftKings up to 8, Hard Rock
-// up to 20, Kalshi up to 20 (each contract is bought on its own).
+// up to 20.
 
 function Remove({ onPress }: { onPress: () => void }) {
   return <Pressable accessibilityRole="button" onPress={onPress} style={styles.remove}>
@@ -78,49 +78,6 @@ export function BookCrown({ book }: { book: Sportsbook }) {
       lines={legs.map((pick) => `${pick.playerName} · ${marketLabel(pick.market)} ${pick.side === 'MORE' ? 'Over' : 'Under'} ${formatLine(pick.line)} (${odds(pick.american)})`)}
       summary={legs.length >= 2 && parlay !== null ? `As a ${legs.length}-leg parlay: ${odds(parlay)}. A parlay pays only if every leg wins; ` +
         'each leg also works as a single bet.' : ''} />
-  </View>;
-}
-
-type MarketKind = 'ANY' | 'WINNER' | 'SPREAD' | 'TOTAL' | 'PROP';
-
-export function MarketCrown({ platform }: { platform: MarketPlatform }) {
-  const { picks, state } = usePicks<MarketPick>(`/v1/markets/${platform}/picks`);
-  const { nowMs } = useBoard();
-  const [stored, setStored] = useCrownLegs<MarketPick>(platform);
-  const [size, setSize] = useState(3), [kind, setKind] = useState<MarketKind>('ANY'), [built, setBuilt] = useState(0);
-  const [sports, setSports] = useState<string[]>([]), [picked, setPicked] = useState<string | null>(null);
-  const days = useMemo(() => gameDays(picks.map((pick) => pick.startTime), nowMs), [picks, nowMs]);
-  const day = chosenDay(picked, days, nowMs);
-  const kinds = [{ value: 'ANY' as const, label: 'Any' }, { value: 'WINNER' as const, label: 'Winners' },
-    { value: 'SPREAD' as const, label: 'Spreads' }, { value: 'TOTAL' as const, label: 'Totals' },
-    ...(platform === 'kalshi' ? [{ value: 'PROP' as const, label: 'Props' }] : [])];
-  const pool = useMemo(() => picks.filter((pick) => inSports(sports, pick.league) && onDay(day, pick.startTime) &&
-    (kind === 'ANY' || pick.kind === kind)), [picks, kind, sports, day]);
-  const first = useMemo(() => buildMarketSlip(pool, size, nowMs), [pool, size, nowMs]);
-  const legs = stored.length ? stored : first;
-  const cost = legs.reduce((sum, pick) => sum + pick.cost, 0), fair = legs.reduce((sum, pick) => sum + pick.fair, 0);
-  const name = sourceNames[platform];
-  return <View style={styles.wrap}>
-    <SizeStepper value={size} onChange={(value) => { setSize(value); setStored([]); setBuilt(0); }} max={20} />
-    <DayPicker days={days} day={day} nowMs={nowMs} onChange={(next) => { setPicked(next); setStored([]); setBuilt(0); }} />
-    <SportPicker options={[...new Set(picks.map((pick) => pick.league))].sort()} selected={sports}
-      onChange={(next) => { setSports(next); setStored([]); setBuilt(0); }} />
-    <Segmented label="Market type" value={kind} onChange={(value) => { setKind(value); setStored([]); setBuilt(0); }} options={kinds} />
-    <Summary title={`${name} Crown`} lines={`${legs.length} ${legs.length === 1 ? 'contract' : 'contracts'} · ${stored.length && !built
-      ? 'Hand-picked' : 'Auto-built'} from ${pool.length} priced below fair`} stats={[
-      { value: legs.length ? cents(cost) : '—', label: 'Cost ($1 each)' },
-      { value: legs.length ? cents(fair) : '—', label: 'Fair value' },
-      { value: legs.length ? `+${cents(fair - cost)}` : '—', label: 'Edge' }]} />
-    <View style={styles.actions}>
-      <PrimaryButton label={built ? 'Generate New' : 'Generate'} icon="shuffle-variant" style={styles.action} disabled={!pool.length}
-        onPress={() => { setStored(buildMarketSlip(pool, size, nowMs, (built || 1) * size)); setBuilt((built || 1) + 1); }} />
-    </View>
-    {state !== 'ready' && <Notice title={state === 'loading' ? 'Loading picks' : 'Picks unavailable'} detail="One moment." />}
-    {legs.map((pick) => <MarketCard key={pick.id} platform={platform} pick={pick}
-      action={<Remove onPress={() => setStored(legs.filter((item) => item.id !== pick.id))} />} />)}
-    <SlipTray appName={name} url={marketUrls[platform]} onClear={() => { setStored([]); setBuilt(0); }}
-      lines={legs.map((pick) => `${pick.game}: ${pick.side} at ${cents(pick.price)}`)}
-      summary={legs.length ? `Each is its own contract: about ${cents(cost)} for $1 on each, worth ${cents(fair)} at fair odds.` : ''} />
   </View>;
 }
 

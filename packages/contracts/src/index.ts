@@ -317,7 +317,7 @@ export const nflPassingResultSchema = z.object({
 
 // ---- CrownIQ Edge engine output (a standalone engine; never reads or changes GKR output) ----
 /** Every platform Edge reads. */
-export const edgePlatformSchema = z.enum(['prizepicks', 'underdog', 'pick6', 'draftkings', 'hardrock', 'kalshi']);
+export const edgePlatformSchema = z.enum(['prizepicks', 'underdog', 'pick6', 'draftkings', 'hardrock']);
 const probability = z.number().min(0).max(1);
 export const edgeTierSchema = z.enum(['SHARP', 'MARKET', 'MODEL', 'LADDER']);
 export const edgeRatingSchema = z.enum(['ELITE', 'STRONG', 'VALUE', 'THIN', 'NONE']);

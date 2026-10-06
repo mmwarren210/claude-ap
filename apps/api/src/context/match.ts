@@ -1,5 +1,5 @@
 import type { PropLine } from '@crowniq/contracts';
-import type { GameLine, InjuryNote, MarketOdds } from './feeds.js';
+import type { GameLine, InjuryNote } from './feeds.js';
 
 // Matches display-only context to one board line. Matching is conservative: when it is unclear, nothing is attached.
 
@@ -34,16 +34,3 @@ export function gameLinesFor(line: PropLine, lines: readonly GameLine[]): GameLi
     teams.some((team) => sameTeam(team, item.home)) && teams.some((team) => sameTeam(team, item.away)));
 }
 
-/** Prediction markets whose title names both of the game's teams (by nickname) and that close near the game. */
-export function marketsFor(line: PropLine, markets: readonly MarketOdds[], games: readonly GameLine[]): MarketOdds[] {
-  const game = games[0];
-  if (!game) return [];
-  const names = [nickname(game.home), nickname(game.away)];
-  const start = Date.parse(line.eventStartTime);
-  return markets.filter((item) => {
-    const title = normalizedName(`${item.eventTitle} ${item.question}`);
-    const closes = item.closeTime ? Date.parse(item.closeTime) : start;
-    return names.every((name) => name && title.split(' ').includes(name)) &&
-      closes >= start - 6 * 3600_000 && closes <= start + 7 * 86_400_000;
-  }).slice(0, 4);
-}

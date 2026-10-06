@@ -17,7 +17,7 @@ import { useDraft } from '../use-draft';
 import { AppBoard } from './AppBoard';
 import { BoardPicker } from './BoardPicker';
 import type { BoardSource } from './BoardPicker';
-import { BookBoard, MarketBoard } from './SourceBoards';
+import { BookBoard } from './SourceBoards';
 import { BoardCard } from './BoardCard';
 import { CrownTray } from './CrownTray';
 import { FilterSheet, optionLabel } from './FilterSheet';
@@ -52,7 +52,6 @@ export default function BoardView() {
   const setApp = useCallback((next: BoardSource) => { lastApp = next; setAppState(next); }, []);
   if (app === 'shop') return <LineShopBoard onSource={setApp} />;
   if (app === 'draftkings' || app === 'hardrock') return <BookBoard book={app} onSource={setApp} />;
-  if (app === 'kalshi') return <MarketBoard platform={app} onSource={setApp} />;
   return app === 'prizepicks' ? <PrizePicksBoard onApp={setApp} /> : <AppBoard app={app} onApp={setApp} />;
 }
 

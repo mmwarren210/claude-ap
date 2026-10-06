@@ -1,6 +1,5 @@
 import type { BaseRates, Trend } from './base-rates.js';
 import { lineShop } from './line-shop.js';
-import { consensusGameLines, exchangeGamePicks, exchangePropPicks, playerStarts, propLines } from './exchange-picks.js';
 import { sameGame } from './team-match.js';
 import { bookLines } from './book-picks.js';
 import type { BookFallback } from './book-picks.js';
@@ -55,28 +54,24 @@ import { rankingCards, secondLookWatchlist } from './ranking-cards.js';
 import { auditPrizePicksLineTypes } from './prizepicks-line-types.js';
 import type { HistoryBackfillService, InternalHistorySport, InternalHistoryStore } from './internal-history.js';
 import type { ProductGradingStatus } from './background-grading.js';
-import type { ContextFeeds, GameLine, InjuryNote, MarketOdds } from './context/feeds.js';
-import { gameLinesFor, injuryFor, marketsFor, normalizedName } from './context/match.js';
+import type { ContextFeeds, GameLine, InjuryNote } from './context/feeds.js';
+import { gameLinesFor, injuryFor, normalizedName } from './context/match.js';
 import type { SharpPropsFeed } from './context/sharp-props.js';
 import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
 import type { EvPick } from './context/ev.js';
 import { bookLadder, bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
-import { marketLine, marketPicks, marketQuestion } from './market-picks.js';
 import { gameScriptFor, scriptEligible } from './shadow-record.js';
 import { betaFor } from './scout-beta.js';
 import type { BetaRead } from './scout-beta.js';
-import type { LiveMarkets } from './market-live.js';
-import type { MarketRecord } from './market-record.js';
 import type { HistoryArchive } from './history-archive.js';
 import type { ShadowPick, ShadowRecord } from './shadow-record.js';
-import type { MarketPlatform } from './market-picks.js';
 import type { BookPick, Sportsbook } from './book-picks.js';
 import { serveWebApp } from './web-app.js';
 import { EdgeResultsWorker, EdgeService } from './edge/service.js';
 import type { EdgeLedger } from './edge/ledger.js';
 import type { SnapshotStore } from './edge/snapshots.js';
 import { registerEdgeRoutes } from './edge/routes.js';
-import { bookRows, kalshiRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
+import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
 
 /** How far ahead the public demo shows real lines. */
 const DEMO_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
@@ -130,7 +125,7 @@ export interface ServerOptions {
   contextLookupBudget?: DailyLookupBudget | null;
   /** Scheduled Apify scraper pulls that feed the provider's line store. */
   scraperPuller?: ScraperPuller | null;
-  /** Display-only game context feeds (injuries, Pinnacle, Kalshi); never scored. */
+  /** Display-only game context feeds (injuries, Pinnacle); never scored. */
   contextFeeds?: ContextFeeds | null;
   /** DraftKings and Hard Rock prop prices (SharpAPI) for reference odds and CrownIQ's own +EV; never scored. */
   sharpProps?: SharpPropsFeed | null;
@@ -142,8 +137,6 @@ export interface ServerOptions {
   shadowRecord?: ShadowRecord | null;
   /** Every standard line graded after its game, for Trends (CrownIQ's own hit rates). */
   baseRates?: BaseRates | null;
-  /** Kalshi picks, graded from final scores. */
-  marketRecord?: MarketRecord | null;
   /** Beta feedback: testers' bug reports and suggestions, and the patch notes that answer them. */
   feedback?: FeedbackStore | null;
   /** Free public history (ESPN tennis, OpenDota, Leaguepedia) for the cards' game logs. */
@@ -154,8 +147,6 @@ export interface ServerOptions {
   historyArchive?: HistoryArchive | null;
   /** Reads The Odds API's credit balance (a free call), for the owner. */
   oddsApiQuota?: (() => Promise<{ status: number; remaining: number | null; used: number | null }>) | null;
-  /** Live Kalshi prices from its free public API. */
-  liveMarkets?: LiveMarkets | null;
   /** CrownIQ Edge: a standalone probability engine with its own Top Picks, Board and Gen; never reads or changes GKR. */
   edge?: { enabled?: boolean; ledger?: EdgeLedger | null; snapshots?: SnapshotStore | null;
     alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>; boxScores?: BoxScoreResults | null } | null;
@@ -298,11 +289,10 @@ export function buildServer(options: ServerOptions = {}) {
       }
       if(options.contextFeeds){
         const games=(await options.contextFeeds.items<GameLine>('pinnacle')).items;
-        const markets=(await marketItems('kalshi')).items;
         for(const analysis of board.analyses){
           const line=lines.get(analysis.lineId);
           if(!line||analysis.direction==='PASS'||analysis.score===null||!scriptEligible(line))continue;
-          const script=gameScriptFor(line,games,markets);
+          const script=gameScriptFor(line,games);
           if(script)picks.push({kind:'script',line,side:analysis.direction,strength:analysis.score,script});
         }
       }
@@ -316,24 +306,18 @@ export function buildServer(options: ServerOptions = {}) {
         const line=lines.get(lineId);
         if(line&&trend.direction!=='PASS')picks.push({kind:'trend',line,side:trend.direction,strength:trend.score});
       }
-      // Kalshi picks go to their own record.
-      if(options.marketRecord){
-        const market=(await Promise.all((['kalshi'] as const).map(async(platform)=>(await marketPicksFor(platform))?.picks??[]))).flat();
-        await options.marketRecord.record(market);
-      }
       const found:Record<string,number>={};
       for(const pick of picks)found[pick.kind]=(found[pick.kind]??0)+1;
       return {found,added:await shadow.record(picks)};
     };
     const first=setTimeout(()=>{void recordShadow().catch(()=>undefined);},90_000);first.unref();
     const every=setInterval(()=>{void recordShadow().catch(()=>undefined);},15*60_000);every.unref();
-    const grading=setInterval(()=>{void shadow.grade().catch(()=>undefined);
-      void options.marketRecord?.grade().catch(()=>undefined);},60*60_000);grading.unref();
+    const grading=setInterval(()=>{void shadow.grade().catch(()=>undefined);},60*60_000);grading.unref();
     shadowTimers.push(first,every,grading);
   }
   // Scout second opinions on the new tabs: the sportsbooks' strongest GKR picks (one per player and stat across both
-  // books), then each market's biggest edges. They share Scout's second-opinion caps.
-  let extraSeconds:{line:PropLine;gkr:NonNullable<AiRead['gkr']>;question?:ReturnType<typeof marketQuestion>}[]=[];
+  // books). They share Scout's second-opinion caps.
+  let extraSeconds:{line:PropLine;gkr:NonNullable<AiRead['gkr']>}[]=[];
   const refreshExtraSeconds=async()=>{
     const next:typeof extraSeconds=[];const seen=new Set<string>();
     const bookPicksAll=(await Promise.all(sportsbooks.map(async(book)=>{const result=await picksFor(book);
@@ -343,11 +327,6 @@ export function buildServer(options: ServerOptions = {}) {
       const key=`${line?.eventId}|${line?.playerId}|${pick.market}`;
       if(!line||seen.has(key)||next.length>=6)continue;
       seen.add(key);next.push({line,gkr:{direction:pick.side,score:pick.gkr!.score,modelVersion:pick.gkr!.modelVersion}});
-    }
-    for(const platform of ['kalshi'] as const){
-      const result=await marketPicksFor(platform);
-      for(const pick of (result?.picks??[]).slice(0,3)){const line=marketLine(pick,now());
-        if(line)next.push({line,gkr:{direction:'MORE',score:null,modelVersion:'market-edge'},question:marketQuestion(pick,line)});}
     }
     extraSeconds=next;
     // Scout's own picks on Underdog and Pick6 lines GKR doesn't score at the app's number.
@@ -374,8 +353,7 @@ export function buildServer(options: ServerOptions = {}) {
     const everyExtra=setInterval(()=>{void refreshExtraSeconds().catch(()=>undefined);},15*60_000);everyExtra.unref();
     shadowTimers.push(firstExtra,everyExtra);
   }
-  options.liveMarkets?.start();
-  app.addHook('onClose', async () => {for(const timer of shadowTimers)clearTimeout(timer);options.playerHistory?.stop();options.liveMarkets?.stop();appShadow?.stop();options.aiPicks?.stop(); webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
+  app.addHook('onClose', async () => {for(const timer of shadowTimers)clearTimeout(timer);options.playerHistory?.stop();appShadow?.stop();options.aiPicks?.stop(); webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
     options.scraperPuller?.stop();options.contextFeeds?.stop();options.sharpProps?.stop(); });
 
   // Every paid provider pull runs through this one job, so two pulls can never overlap or
@@ -996,16 +974,15 @@ export function buildServer(options: ServerOptions = {}) {
     const line=service.getBoard()?.board.lines.find((item)=>item.id===parsed.data.lineId);
     if(!line)return reply.code(404).send({code:'LINE_NOT_FOUND'});
     if(!options.contextFeeds)return {injury:null,teamInjuries:[],game:[],markets:[]};
-    const [injuries,pinnacle,kalshi]=await Promise.all([options.contextFeeds.items<InjuryNote>('injuries'),
-      options.contextFeeds.items<GameLine>('pinnacle'),options.contextFeeds.items<MarketOdds>('kalshi')]);
+    const [injuries,pinnacle]=await Promise.all([options.contextFeeds.items<InjuryNote>('injuries'),
+      options.contextFeeds.items<GameLine>('pinnacle')]);
     const game=gameLinesFor(line,pinnacle.items);
     const team=line.team;
     const teamInjuries=team?injuries.items.filter((item)=>item.league.toUpperCase()===line.league.toUpperCase()&&
       (item.teamAbbreviation?.toUpperCase()===team.toUpperCase()||normalizedName(item.team)===normalizedName(team)))
       .slice(0,8):[];
     return {injury:injuryFor(line,injuries.items),teamInjuries,game,
-      markets:marketsFor(line,kalshi.items.filter((item)=>item.platform==='kalshi'),game),
-      fetchedAt:{injuries:injuries.fetchedAt,pinnacle:pinnacle.fetchedAt,kalshi:kalshi.fetchedAt}};
+      markets:[],fetchedAt:{injuries:injuries.fetchedAt,pinnacle:pinnacle.fetchedAt}};
   });
   // Each app's payouts and the per-pick hit rate every entry needs to break even.
   const payouts=options.payouts??DEFAULT_PAYOUTS;
@@ -1198,7 +1175,7 @@ export function buildServer(options: ServerOptions = {}) {
       shadowTimers.push(first,every,grade);
     }
   }
-  // Edge's odds snapshots: every SharpAPI refresh, and the scraped boards and Kalshi every 5 minutes (only changes are kept).
+  // Edge's odds snapshots: every SharpAPI refresh, and the scraped boards every 5 minutes (only changes are kept).
   const snapshots=options.edge?.snapshots??null;
   if(snapshots&&!options.clock){
     options.sharpProps?.whenRefreshed(async(prices,at)=>{
@@ -1209,8 +1186,7 @@ export function buildServer(options: ServerOptions = {}) {
     const tick=async()=>{
       const at=now().toISOString();
       const lines=options.scrapedLines?await options.scrapedLines.active():[];
-      const kalshi=(await options.liveMarkets?.items('kalshi',60))?.items??[];
-      snapshots.record([...scrapedRows(lines,at),...kalshiRows(kalshi,at)]);
+      snapshots.record(scrapedRows(lines,at));
     };
     const first=setTimeout(()=>{void tick().catch(()=>undefined);},2*60_000);first.unref();
     const every=setInterval(()=>{void tick().catch(()=>undefined);},5*60_000);every.unref();
@@ -1480,84 +1456,11 @@ export function buildServer(options: ServerOptions = {}) {
       return {...pick,scout:read?aiView(read):null};}));
     return {book:parsed.data.book,name:sportsbookNames[parsed.data.book],fetchedAt:result.fetchedAt,picks};
   });
-  // Prediction-market picks: Kalshi game markets priced below Pinnacle's no-vig chance. Display only.
-  /** A platform's prices: live from its free API when fresh, else the daily Apify feed. */
-  async function marketItems(platform:MarketPlatform):Promise<{fetchedAt:string|null;items:MarketOdds[];live:boolean}>{
-    const live=await options.liveMarkets?.items(platform);
-    if(live)return {...live,live:true};
-    const feed=options.contextFeeds?await options.contextFeeds.items<MarketOdds>(platform):{fetchedAt:null,items:[]};
-    return {...feed,live:false};
-  }
-  // Market picks (with Kalshi props' History) are cached for 2 minutes and served stale while a fresh set builds.
-  const marketCache=new Map<MarketPlatform,{at:number;value:Awaited<ReturnType<typeof buildMarketPicks>>}>();
-  const marketRefresh=new Map<MarketPlatform,Promise<Awaited<ReturnType<typeof buildMarketPicks>>>>();
-  async function marketPicksFor(platform:MarketPlatform){
-    const cached=marketCache.get(platform);
-    if(cached&&now().getTime()-cached.at<2*60_000)return cached.value;
-    let run=marketRefresh.get(platform);
-    if(!run){run=buildMarketPicks(platform).then((value)=>{marketCache.set(platform,{at:now().getTime(),value});return value;})
-      .finally(()=>marketRefresh.delete(platform));marketRefresh.set(platform,run);}
-    return cached?cached.value:run;
-  }
-  // Keep the book and market picks warm so the tabs open fast.
-  const warmPicks=()=>{for(const book of sportsbooks)void picksFor(book).catch(()=>undefined);
-    for(const platform of ['kalshi'] as const)void marketPicksFor(platform).catch(()=>undefined);};
+  // Keep the book picks warm so the tabs open fast.
+  const warmPicks=()=>{for(const book of sportsbooks)void picksFor(book).catch(()=>undefined);};
   const warmFirst=setTimeout(warmPicks,45_000);warmFirst.unref();
   const warmEvery=setInterval(warmPicks,3*60_000);warmEvery.unref();
   shadowTimers.push(warmFirst,warmEvery);
-  async function buildMarketPicks(platform:MarketPlatform){
-    if(!options.contextFeeds&&!options.sharpProps)return null;
-    const [markets,games]=await Promise.all([marketItems(platform),
-      options.contextFeeds?options.contextFeeds.items<GameLine>('pinnacle'):Promise.resolve({fetchedAt:null,items:[] as GameLine[]})]);
-    // Pinnacle is pulled a few times a day; a market compared with Pinnacle prices more than 6 hours old would show edges
-    // that are only Pinnacle being out of date. The sportsbooks' hourly no-vig lines (SharpAPI) fill in then, and for games
-    // Pinnacle doesn't carry.
-    const pinnacleStale=!games.fetchedAt||now().getTime()-Date.parse(games.fetchedAt)>6*3600_000;
-    const extras=options.sharpProps?await options.sharpProps.extras().catch(()=>null):null;
-    const fresh=extras?.fetchedAt&&now().getTime()-Date.parse(extras.fetchedAt)<3*3600_000?extras:null;
-    const consensus=fresh?consensusGameLines(fresh.games):[];
-    const pinnacle=pinnacleStale?[]:games.items;
-    // Pinnacle's games by market and day, so each books' line only checks games that day.
-    const pinnacleBy=new Map<string,GameLine[]>();
-    for(const item of pinnacle){const key=`${item.market}|${item.startTime.slice(0,10)}`;pinnacleBy.set(key,[...pinnacleBy.get(key)??[],item]);}
-    const fairLines=[...pinnacle,...consensus.filter((line)=>!(pinnacleBy.get(`${line.market}|${line.startTime.slice(0,10)}`)??[])
-      .some((item)=>sameGame(item,line)))];
-    const picks=[...marketPicks(platform,markets.items,fairLines,now())];
-    if(fresh){
-      // The exchange's own markets from SharpAPI (every league, totals too), and Kalshi's player props with History.
-      const more=[...exchangeGamePicks(platform,fresh.games,now())];
-      if(platform==='kalshi'){
-        const board=service.getBoard();
-        const prices=(await options.sharpProps!.current()).prices;
-        const kalshiProps=fresh.overOnly.filter((offer)=>offer.book==='kalshi');
-        const lines=propLines(kalshiProps,board?.board.lines??[],now(),playerStarts(prices,board?.board.lines??[]));
-        const reads=await historyReads.readsFor([...lines.values()]).catch(()=>new Map<string,HistoryRead>());
-        more.push(...exchangePropPicks(kalshiProps,prices,lines,reads,now()));
-      }
-      for(const pick of more){
-        const same=picks.findIndex((item)=>item.kind===pick.kind&&pick.kind!=='PROP'&&sameGame(item,pick));
-        if(same<0)picks.push(pick);
-        else if(pick.edge>picks[same]!.edge)picks[same]=pick;
-      }
-    }
-    return {fetchedAt:markets.fetchedAt??fresh?.fetchedAt??null,live:markets.live,pinnacleAt:games.fetchedAt,pinnacleStale,
-      picks:picks.sort((a,b)=>b.edge-a.edge)};
-  }
-  app.get('/v1/markets/:platform/record',async(request,reply)=>{
-    const parsed=z.object({platform:z.enum(['kalshi'])}).safeParse(request.params);
-    if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_PLATFORM'});
-    return options.marketRecord?options.marketRecord.status(parsed.data.platform):reply.code(503).send({code:'MARKET_RECORD_UNCONFIGURED'});
-  });
-  app.get('/v1/markets/:platform/picks',async(request,reply)=>{
-    const parsed=z.object({platform:z.enum(['kalshi'])}).safeParse(request.params);
-    if(!parsed.success)return reply.code(404).send({code:'UNKNOWN_PLATFORM'});
-    const result=await marketPicksFor(parsed.data.platform);
-    if(!result)return reply.code(503).send({code:'MARKET_PICKS_UNAVAILABLE'});
-    const picks=await Promise.all(result.picks.map(async(pick)=>{const line=marketLine(pick,now());
-      const read=line&&options.aiPicks?await options.aiPicks.readFor(line):null;
-      return {...pick,scout:read?aiView(read):null};}));
-    return {platform:parsed.data.platform,...result,picks};
-  });
   // Carry PrizePicks picks over to Underdog or Pick6: each pick's line on that app and how its number compares.
   app.post('/v1/apps/:app/port',async(request,reply)=>{
     const parsed=z.object({app:z.enum(otherApps as [OtherApp,...OtherApp[]])}).safeParse(request.params);
@@ -1741,24 +1644,16 @@ export function buildServer(options: ServerOptions = {}) {
       return {playerHistory:await options.internalHistory?.status()??null,freeHistory:options.playerHistory?.lastRefresh??null,
         trackedDecisions:(await options.product?.listDecisions(0,1))?.total??null,
         activeAppLines:lines.length,booksHistoryRows,
-        shadow:await options.shadowRecord?.status()??null,markets:await options.marketRecord?.status()??null,
+        shadow:await options.shadowRecord?.status()??null,
         archive:await options.historyArchive?.status()??null};
     });
     admin.get('/members', async (_request, reply) => options.product ? options.product.membership()
       : reply.code(503).send({ code: 'PRODUCT_UNCONFIGURED' }));
-    admin.get('/live-markets', async (_request, reply) => options.liveMarkets ? options.liveMarkets.status()
-      : reply.code(503).send({ code: 'LIVE_MARKETS_UNCONFIGURED' }));
-    admin.post('/live-markets/refresh', async (_request, reply) => options.liveMarkets ? options.liveMarkets.refresh()
-      : reply.code(503).send({ code: 'LIVE_MARKETS_UNCONFIGURED' }));
     admin.get('/shadow', async (_request, reply) => options.shadowRecord ? options.shadowRecord.status()
       : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
     admin.post('/shadow/record', async (_request, reply) => options.shadowRecord ? (await recordShadow()) ?? { found: {}, added: 0 }
       : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
-    admin.get('/market-record', async (_request, reply) => options.marketRecord
-      ? { kalshi: await options.marketRecord.status('kalshi') }
-      : reply.code(503).send({ code: 'MARKET_RECORD_UNCONFIGURED' }));
-    admin.post('/shadow/grade', async (_request, reply) => options.shadowRecord ? { graded: await options.shadowRecord.grade(),
-      markets: await options.marketRecord?.grade() ?? 0 }
+    admin.post('/shadow/grade', async (_request, reply) => options.shadowRecord ? { graded: await options.shadowRecord.grade() }
       : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
     admin.get('/book-picks/:book', async (request, reply) => {
       const parsed=z.object({book:z.enum(sportsbooks)}).safeParse(request.params);
@@ -1904,7 +1799,7 @@ export function buildServer(options: ServerOptions = {}) {
       ? { feeds: await options.contextFeeds.status(), sharpProps: await options.sharpProps?.status() ?? null } : reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' }));
     // One context feed's saved items (read-only), for the owner to check what a feed holds.
     admin.get('/context/:id/items', async (request, reply) => {
-      const parsed=z.object({id:z.enum(['injuries','pinnacle','kalshi'])}).safeParse(request.params);
+      const parsed=z.object({id:z.enum(['injuries','pinnacle'])}).safeParse(request.params);
       if(!parsed.success||!options.contextFeeds)return reply.code(404).send({code:'UNKNOWN_FEED'});
       return options.contextFeeds.items(parsed.data.id);
     });
@@ -1912,7 +1807,7 @@ export function buildServer(options: ServerOptions = {}) {
     admin.post('/context/pull', async (request, reply) => {
       if (!options.contextFeeds) return reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' });
       if (request.headers['x-confirm-provider-cost'] !== 'yes') return reply.code(428).send({ code: 'COST_CONFIRMATION_REQUIRED' });
-      const input = z.object({ source: z.enum(['injuries', 'pinnacle', 'kalshi']) }).safeParse(request.body);
+      const input = z.object({ source: z.enum(['injuries', 'pinnacle']) }).safeParse(request.body);
       if (!input.success) return reply.code(400).send({ code: 'INVALID_CONTEXT_SOURCE' });
       return options.contextFeeds.pull(input.data.source);
     });

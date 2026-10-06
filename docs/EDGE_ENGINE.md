@@ -167,3 +167,7 @@ New in P1:
 - **No read with the exact missing input**: every line Edge can't read says which inputs it lacks (no sportsbook price; N games of history, needs 5; no regular line to anchor it).
 - **Diagnostics**: `[edge]` log line per pricing pass (lines read / No read by reason / +EV / edge null / tiers / SharpAPI confirmations / match rate / MARKET_MISMATCH); `GET /v1/admin/edge/status` and `GET /v1/owner/edge/status` (snapshot rows per source).
 - **Goblins and Demons**: no PrizePicks scraper or Apify actor gives their payout factors (checked 2026-10-05), so `edge` stays null until the owner sets `EDGE_GOBLIN_FACTOR` / `EDGE_DEMON_FACTOR`.
+
+**Owner changes after P1 (2026-10-06):** Kalshi and Polymarket are removed from the app, so Edge 2.0 covers five
+platforms: PrizePicks, Underdog, DK Pick'em, DraftKings and Hard Rock. The spec's Kalshi/Polymarket sections (§1.1b,
+§2.5, §4) no longer apply. BetRivers joins the SharpAPI books as a price source (data only, no tab).

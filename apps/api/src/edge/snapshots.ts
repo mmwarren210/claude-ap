@@ -10,12 +10,12 @@ import { DatabaseSync } from 'node:sqlite';
 // kept current in `latest`. That holds the same information as writing every poll (the value between two rows is the
 // earlier one) at a fraction of the size. Retention: 120 days at full resolution, then one row per key per hour.
 
-export type SnapshotSource = 'sharpapi' | 'scraper' | 'kalshi-api' | 'odds-api';
+export type SnapshotSource = 'sharpapi' | 'scraper' | 'odds-api';
 
 export interface SnapshotRow {
   readonly observedAt: string;
   readonly source: SnapshotSource;
-  /** prizepicks, underdog, pick6, draftkings, hardrock, fanduel, kalshi, … */
+  /** prizepicks, underdog, pick6, draftkings, hardrock, fanduel, betrivers, … */
   readonly platform: string;
   readonly eventKey: string;
   readonly playerKey: string;

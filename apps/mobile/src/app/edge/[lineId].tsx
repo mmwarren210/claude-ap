@@ -11,7 +11,7 @@ import { palette } from '../../theme';
 
 const bookNames: Record<string, string> = { pinnacle: 'Pinnacle', fanduel: 'FanDuel', draftkings: 'DraftKings',
   betmgm: 'BetMGM', williamhill_us: 'Caesars', espnbet: 'ESPN BET', betonlineag: 'BetOnline', betrivers: 'BetRivers',
-  hardrockbet: 'Hard Rock', hardrock: 'Hard Rock', novig: 'Novig', kalshi: 'Kalshi' };
+  hardrockbet: 'Hard Rock', hardrock: 'Hard Rock', novig: 'Novig' };
 const american = (decimal: number | null) => decimal === null ? '—'
   : decimal >= 2 ? '+' + Math.round((decimal - 1) * 100) : String(Math.round(-100 / (decimal - 1)));
 

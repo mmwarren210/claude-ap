@@ -62,7 +62,7 @@ test('the SharpAPI feed pages with the cursor, sends the key, and keeps old pric
   let reported = 0;
   feed.whenRefreshed((prices) => { reported = prices.length; });
   const status = await feed.refresh();
-  assert.deepEqual(calls, ['first', 'next', 'games:first', 'games:next'], 'player props, then full-game lines, each paged');
+  assert.deepEqual(calls, ['first', 'next'], 'player props, paged (game lines were only for Kalshi)');
   assert.equal(reported, 1, 'each successful refresh is reported for the books history');
   assert.deepEqual([status.prices, status.lastError], [1, null]);
   fail = true;

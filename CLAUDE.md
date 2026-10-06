@@ -16,7 +16,7 @@
   Scout also gives **second opinions** on GKR Top Picks (owner, 2026-10-05): researched without seeing GKR's pick, shown
   as agrees/disagrees/no edge plus late news, never changing the GKR score (`CROWNIQ_SCOUT_SECOND_DAILY`, default 40).
   `/admin/ai-picks` tracks GKR's hit rate by verdict; blending Scout into GKR would need a new opt-in model version.
-  Scout second opinions also cover the strongest DraftKings, Hard Rock and Kalshi tab picks (same caps).
+  Scout second opinions also cover the strongest DraftKings and Hard Rock tab picks (same caps).
 - **No AI product names on screen** (owner, 2026-10-05): the two research models show as **Scout A** and **Scout B**
   (`providerName`), and `unbrand` replaces any product name inside their text. Their prompt says never to name one.
 - **Beta** (owner, 2026-10-05): CrownIQ is labeled BETA (header badge, sign-in note, link preview); family members
@@ -84,8 +84,6 @@
 - **Context refresh window is 72 hours** (`CROWNIQ_CONTEXT_WINDOW_HOURS`): player-status findings last 30 minutes, so
   every game on the board must be in the 15-minute refresh, or its GKR plays drop half an hour after a full pull or a
   restart.
-- **Market picks record** (`market-record.ts`): Kalshi picks are saved before their games and graded
-  from ESPN final scores (spreads with their handicap), scored per $1 at the price shown; shown on each market tab.
 - **History archive** (`history-archive.ts`, `$CROWNIQ_DATA_DIR/archive/`): every ESPN game log fetched (all sports),
   every graded box-score result and every line seen with its moves, append-only JSON lines by month, for built-in
   verification and evidence later. Not read for scoring. `/admin/history` shows it with the other stores.
@@ -96,8 +94,9 @@
 - **Shadow records** (owner, 2026-10-05; `shadow-record.ts`, `/admin/shadow`): Books picks, sportsbook-tab picks and
   game-script snapshots, graded in their own record. Display and tracking only; never GKR's record.
 
-- **Polymarket removed (owner, 2026-10-05).** The owner dropped it from SharpAPI; the app has no Polymarket tab, Crown, picks,
-  live prices or Apify feed. Kalshi stays.
+- **Polymarket and Kalshi removed (owner, 2026-10-05 / 2026-10-06).** No prediction-market tabs, Crowns, picks, records,
+  live prices or Apify feeds. SharpAPI books: DraftKings, Hard Rock, FanDuel, BetRivers (data only) and PrizePicks; game
+  lines are no longer requested. Edge platforms: PrizePicks, Underdog, DK Pick'em, DraftKings, Hard Rock.
 - **SharpAPI PrizePicks** (`sharp-props.ts` `pickemLines`): PrizePicks rows (`is_pickem`) are kept as lines for Edge, never
   as a sportsbook price (their price is the payout: Power −137, Flex −119 on every line). Standard lines only, no
   Goblins/Demons. PrizePicks Flex lists the same lines, so it isn't requested.
@@ -133,18 +132,14 @@ and confirm it ends with a healthy `/health` (see `docs/DEPLOY.md`).
 - **Pricey picks (2026-10-05).** A DK/HR pick whose price needs 60%+ shows CHECK HIGHER LINE (Over) or CHECK LOWER LINE
   (Under) instead of PRICEY when either book has a harder number for that side priced under 60% (`fairerLine`); with
   none, PRICEY stays. The break-even note always shows.
-- **Sportsbook and prediction-market expansion (2026-10-05).** SharpAPI (`context/sharp-props.ts`, hourly) now pulls
-  tennis (ATP/WTA) and eight soccer leagues besides the US leagues, more MLB/NHL stats, Kalshi's over-only player props
-  (`overOnly`) and every book's full-game winner/spread/total lines (`games`; NCAAB and UFC game lines too). Books default
-  to DraftKings, Hard Rock, Kalshi, FanDuel, PrizePicks (`CROWNIQ_SHARP_BOOKS`; ones the plan hasn't selected are
+- **Sportsbook expansion (2026-10-05).** SharpAPI (`context/sharp-props.ts`, hourly) now pulls
+  tennis (ATP/WTA) and eight soccer leagues besides the US leagues, more MLB/NHL stats and over-only player props
+  (`overOnly`). Books default
+  to DraftKings, Hard Rock, FanDuel, BetRivers, PrizePicks (`CROWNIQ_SHARP_BOOKS`; ones the plan hasn't selected are
   skipped). DK/HR tabs (`book-picks.ts`): GKR first, then the **History Read at the book's number** (same lookups as
   every tab, blended with that book's no-vig), then **Value** (price needs 3%+ less than the other book's fair chance);
   players off PrizePicks get synthetic lines so History still reads them; graded as shadow kinds `book-history` /
-  `book-value`. Kalshi (`exchange-picks.ts`): exchange game lines vs the books' no-vig (3%+ edge, 15–85¢),
-  Kalshi props vs the books (3%+) or History alone (6%+, dropped when History says Less; matched to the player's real
-  next game because Kalshi stamps props with the close date; 20–85¢), and the books' consensus fills in for Pinnacle when
-  it's stale or lacks the game. Totals are graded from final scores; props stay out of the market record. Soccer winners
-  are skipped (draws). Team names match via `team-match.ts`. Display only; no GKR score changes.
+  `book-value`. Team names match via `team-match.ts`. Display only; no GKR score changes.
   Leagues also include UEFA Nations League, Brazil Serie A, Eredivisie, Primeira Liga, Liga MX and the Championship.
   Over-only book props (no under, e.g. DraftKings soccer shots) become More-only book lines: History can pick them,
   there is no fair chance (`fairChance: null`) and no Value pick.
@@ -154,13 +149,13 @@ and confirm it ends with a healthy `/health` (see `docs/DEPLOY.md`).
   harder number (≤2 away) (`chanceAt` in `context/ev.ts`; `bookViews(..., nearby)` stays exact for Books picks). Each
   +EV pick carries the History Read on the same line ("History agrees/disagrees"). Top Picks opens on **Every app**
   (`AllPicks.tsx`, `all-picks.ts` `rankAll`): PrizePicks GKR/Scout/History, Underdog and DK Pick'em backed lines,
-  DraftKings/Hard Rock GKR/History/Value picks, and Kalshi edges in one list with board chips.
+  DraftKings/Hard Rock GKR/History/Value picks in one list with board chips.
 - **Boards vs Crown vs Top Picks (2026-10-05).** Board tab = picks boards only (no slip builders): each line shows where
-  it scores, with "Add to Crown" (DraftKings/Hard Rock/Kalshi cards; Underdog/DK Pick'em side buttons; PrizePicks
+  it scores, with "Add to Crown" (DraftKings/Hard Rock cards; Underdog/DK Pick'em side buttons; PrizePicks
   via the player screen). Those picks go to a per-provider store (`crown-legs.ts`, session only). The Crown tab has a
   generator for every provider (chips): PrizePicks (line type Any/Standard/Goblin/Demon, 2–6), Underdog and DK Pick'em
   (Any/Standard/Boosted/GKR only, 2–8), DraftKings (2–8) and Hard Rock (2–20) with pick type Any/GKR/History/Value/Fair
-  price (`ProviderCrowns.tsx` `BookCrown`), Kalshi (2–20, Any/Winners/Spreads/Totals/Props) (`MarketCrown`).
+  price (`ProviderCrowns.tsx` `BookCrown`).
   Sizes above 8 use a typed stepper (`ui/SizeStepper.tsx`). Top Picks chips: All, PrizePicks (GKR rankings), each other
   board, +EV. Every generator also has a multi-select sport picker (`ui/SportPicker.tsx`; none picked = all). Every generator also has a game-day picker (`ui/DayPicker.tsx`, `src/game-days.ts`): defaults to today, else the soonest day with games; "All days" turns it off.
 - **Payout tables (checked 2026-10-05).** PrizePicks Power 3/6/10/20/37.5x and Flex from 2 picks (2x/0.5x); Underdog

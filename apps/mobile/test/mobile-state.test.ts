@@ -5,7 +5,7 @@ import { crownOutcome, entryOutlook } from '../src/insights.js';
 import { agreementText, aiPlay, lateNews, providerName, scoutEvidence, scoutVerdict, unbrand } from '../src/scout.js';
 import { bandOf, betaNote } from '../src/beta.js';
 import { buildSlip } from '../src/app-slip.js';
-import { buildBookSlip, buildMarketSlip, parlayAmerican } from '../src/slip-builders.js';
+import { buildBookSlip, parlayAmerican } from '../src/slip-builders.js';
 import { addLeg, betterSwap, boardLinesForMode, isPlay, withBooksPicks, CROWN_LEG_FLOOR, emptyFilters, evidenceExpired, freshness, gkrBacked, shareCrown,
   visibleLines } from '../src/state.js';
 import { parseDraft, profileDraftKey } from '../src/draft-codec.js';
@@ -226,9 +226,6 @@ test('sportsbook and market slip builders: fair prices first, one per player or 
     'fair prices first (B once, its stronger line), then C; pricey A last');
   assert.equal(parlayAmerican([{american:-110},{american:-110}]),264);
   assert.equal(parlayAmerican([{american:-110}]),null);
-  const market=(id:string,game:string,edge:number)=>({id,game,startTime:'2030-01-01T20:00:00Z',edge,side:'x',price:0.4});
-  assert.deepEqual(buildMarketSlip([market('1','g1',0.03),market('2','g1',0.05),market('3','g2',0.02)],3,now).map((pick)=>pick.id),
-    ['2','3'],'one per game, biggest edge first');
 });
 
 test('the app never shows an AI product name: the two models are Scout A and Scout B', () => {
@@ -331,5 +328,5 @@ test('provider Crowns: a board adds a pick, tapping again removes it, and each p
   assert.equal(toggleCrownLeg('hardrock', { id: 'c' }, key, 2), 'full');
   assert.equal(toggleCrownLeg('hardrock', { id: 'a' }, key, 2), 'removed');
   assert.deepEqual(crownLegs('hardrock'), [{ id: 'b' }]);
-  assert.deepEqual(crownLegs('kalshi'), [], 'each provider has its own');
+  assert.deepEqual(crownLegs('draftkings'), [], 'each provider has its own');
 });

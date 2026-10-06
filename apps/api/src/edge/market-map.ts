@@ -5,7 +5,7 @@ import { normalizedName } from '../context/match.js';
 import { sameTeam } from '../team-match.js';
 
 // Edge 2.0 identity layer (spec §1.2): one key for player, event and market across sources (scraped PrizePicks,
-// Underdog and Pick6 boards, SharpAPI books and PrizePicks lines, Kalshi). Names go through `normalizedName`; events match
+// Underdog and Pick6 boards, SharpAPI books and PrizePicks lines). Names go through `normalizedName`; events match
 // on team pair plus start within ±6h; markets go through the one table below. Ambiguity yields no match and a counter,
 // never a guess. A matched quote whose implied mean sits more than 3 SD from the board's own line is rejected as a
 // MARKET_MISMATCH (mislabeled stats, such as tennis "total games" vs "games won").

@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { propLineSchema } from '@crowniq/contracts';
 import { fixtureLine } from '../../../packages/engine/test/fixtures.js';
-import { ContextFeeds, injuryReports, kalshiMarkets, pinnacleLines } from '../src/context/feeds.js';
+import { ContextFeeds, injuryReports, pinnacleLines } from '../src/context/feeds.js';
 import type { ApifyClient } from '../src/scrapers/apify-client.js';
 import type { DailySpendBudget } from '../src/scrapers/spend-budget.js';
-import { gameLinesFor, injuryFor, marketsFor } from '../src/context/match.js';
+import { gameLinesFor, injuryFor } from '../src/context/match.js';
 
 const line = propLineSchema.parse({ ...fixtureLine(), sport: 'NFL', league: 'NFL', playerName: 'Caleb Williams',
   team: 'Chicago Bears', opponent: 'New York Jets', homeTeam: 'Chicago Bears', awayTeam: 'New York Jets',
@@ -16,11 +16,6 @@ const injury = injuryReports.read({ type: 'injury', league: 'nfl', team: 'Chicag
 const pinnacle = pinnacleLines.read({ league: 'nfl', homeTeam: 'Chicago Bears', awayTeam: 'New York Jets',
   startTime: '2030-10-04T17:00Z', market: 'moneyline', line: null, homePrice: -183, awayPrice: 164,
   homeFairProbability: 0.63, awayFairProbability: 0.37, espnLink: 'https://www.espn.com/nfl/game' })!;
-const kalshi = kalshiMarkets.read({ status: 'open', question: 'NY Jets vs CHI Bears — Chicago', eventTitle: 'NY Jets vs CHI Bears',
-  outcomes: [{ name: 'Yes', probability: 64 }, { name: 'No', probability: 36 }], volume24h: 1000,
-  closeTime: '2030-10-04T21:00:00Z', url: 'https://kalshi.com/x' })!;
-const unrelated = kalshiMarkets.read({ status: 'open', question: 'Bitcoin above 100k?', eventTitle: 'Bitcoin',
-  outcomes: [{ name: 'Yes', probability: 40 }], closeTime: '2030-10-04T21:00:00Z' })!;
 
 test('context feeds read each scraper row and match it to a board line conservatively', () => {
   assert.deepEqual([injury.league, injury.status, injury.injury], ['NFL', 'Out', 'Hamstring']);
@@ -29,9 +24,7 @@ test('context feeds read each scraper row and match it to a board line conservat
   const games = gameLinesFor(line, [pinnacle]);
   assert.equal(games.length, 1);
   assert.equal(gameLinesFor({ ...line, eventStartTime: '2030-10-11T17:00:00.000Z' }, [pinnacle]).length, 0);
-  assert.deepEqual(marketsFor(line, [kalshi, unrelated], games).map((item) => item.platform), ['kalshi']);
   assert.equal(pinnacleLines.read({ ...pinnacle, market: 'alternate-total' }), null);
-  assert.equal(kalshiMarkets.read({ status: 'closed', question: 'x', outcomes: [] }), null);
 });
 
 test('a context pull spends from the shared budget, keeps the last good snapshot and counts blank runs', async () => {

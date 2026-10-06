@@ -28,7 +28,7 @@ import { usePlayerGames } from '../../use-player-games';
 import { useRankings } from '../../use-rankings';
 import { ReportNudge } from '../../components/ReportNudge';
 import { AppCrown } from '../../components/AppCrown';
-import { BookCrown, MarketCrown } from '../../components/ProviderCrowns';
+import { BookCrown } from '../../components/ProviderCrowns';
 import { crownOpening, openCrownOn } from '../../crown-legs';
 import { inSports, SportPicker } from '../../components/ui/SportPicker';
 import { DayPicker } from '../../components/ui/DayPicker';
@@ -37,7 +37,7 @@ import type { CrownProvider } from '../../crown-legs';
 
 const crownProviders: readonly { value: CrownProvider | 'prizepicks'; label: string }[] = [
   { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'DK Pick’em' },
-  { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' }, { value: 'kalshi', label: 'Kalshi' }];
+  { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' }];
 
 /** PrizePicks takes up to 6 picks; Underdog and DK Pick’em up to 8. */
 const sizesFor = (most: number) => Array.from({ length: most - 1 }, (_, index) => index + 2).map((value) => ({ value,
@@ -198,8 +198,7 @@ export default function CrownScreen() {
       {provider === 'underdog' || provider === 'pick6' ? <>
         <Segmented label="Crown size" options={sizesFor(8)} value={size} onChange={setSize} />
         <AppCrown key={`${provider}-${size}`} app={provider} size={size} />
-      </> : provider === 'draftkings' || provider === 'hardrock' ? <BookCrown key={provider} book={provider} />
-        : <MarketCrown key={provider} platform={provider} />}
+      </> : <BookCrown key={provider} book={provider} />}
       <ReportNudge where="crown" />
     </ScrollView>
   </SafeAreaView>;

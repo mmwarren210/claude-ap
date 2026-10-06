@@ -36,7 +36,7 @@ import type { PickSource } from '../../all-picks';
 const topLists: readonly { value: 'ALL' | 'GKR' | 'EV' | Exclude<PickSource, 'prizepicks'>; label: string }[] = [
   { value: 'ALL', label: 'All' }, { value: 'GKR', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' },
   { value: 'pick6', label: 'DK Pick’em' }, { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' },
-  { value: 'kalshi', label: 'Kalshi' }, { value: 'EV', label: '+EV' }];
+  { value: 'EV', label: '+EV' }];
 
 type Card = RankingCard | SecondLookCard;
 type ListFilter = { sport: string; date: string; lineType: string };

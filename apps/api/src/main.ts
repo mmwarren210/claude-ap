@@ -22,7 +22,7 @@ import { JsonSelectionLedger } from './selection-ledger.js';
 import { CombinedWebResearch, WebResearchAdapter, WebResearchCatalog } from './web-research.js';
 import { SharpPropsFeed } from './context/sharp-props.js';
 import { SlotLedger } from './scrapers/slot-ledger.js';
-import { ContextFeeds, injuryReports, kalshiMarkets, pinnacleLines } from './context/feeds.js';
+import { ContextFeeds, injuryReports, pinnacleLines } from './context/feeds.js';
 import { ClaudeWebResearchAdapter } from './claude-web-research.js';
 import { ProductLedger } from './product-ledger.js';
 import { ProductGradingWorker } from './background-grading.js';
@@ -30,8 +30,6 @@ import { BoxScoreResults } from './box-score-results.js';
 import { EspnGkrEvidence } from './espn-gkr-evidence.js';
 import { AiPickService } from './ai-picks.js';
 import { ShadowRecord } from './shadow-record.js';
-import { LiveMarkets } from './market-live.js';
-import { MarketRecord } from './market-record.js';
 import { HistoryArchive } from './history-archive.js';
 import { ClaudePickResearcher } from './claude-ai-picks.js';
 import { OpenAiPickResearcher } from './openai-ai-picks.js';
@@ -122,20 +120,19 @@ const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBud
     ...(apiKey?[{source:oddsApiSource(new FullPrizePicksProvider({apiKey,maxEvents,maxCreditsPerRefresh})),
       hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ODDS_API','')}]:[])],
   {maxRunUsd:nonNegativeNumber('CROWNIQ_SCRAPER_MAX_RUN_USD',5),slots:scraperSlots}):null;
-// Display-only game context (never scored): injuries, Pinnacle game lines, Kalshi odds.
+// Display-only game context (never scored): injuries and Pinnacle game lines.
 const contextFeeds=process.env.APIFY_TOKEN?.trim()?new ContextFeeds(apify,scraperBudget,[
   {source:injuryReports,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_INJURIES','8,11,14,17')},
-  {source:pinnacleLines,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_PINNACLE','9,15')},
-  {source:kalshiMarkets,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_KALSHI','11')}],
+  {source:pinnacleLines,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_PINNACLE','9,15')}],
 process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`,undefined,scraperSlots):null;
-// DraftKings and Hard Rock prop prices from SharpAPI (reference odds and +EV), refreshed hourly.
+// DraftKings, Hard Rock, FanDuel and BetRivers prop prices from SharpAPI (reference odds, +EV and Edge), refreshed hourly.
 // The owner's Railway variable is named `sharp_api`; SHARPAPI_KEY also works.
 // Books per request (SharpAPI's Hobby plan takes up to 5): ones the plan hasn't selected are skipped. PrizePicks comes in
 // as lines for Edge, never as a price (PrizePicks Flex lists the same lines at the Flex payout, so it isn't requested).
 // CROWNIQ_SHARP_BOOKS overrides the list.
 const sharpProps=new SharpPropsFeed((process.env.SHARPAPI_KEY ?? process.env.sharp_api)?.trim()||null,
   process.env.CROWNIQ_SHARP_PROPS_FILE ?? `${dataDir}/sharp-props.json`,
-  {books:(process.env.CROWNIQ_SHARP_BOOKS??'draftkings,hardrock,kalshi,fanduel,prizepicks').split(',').map((book)=>book.trim()).filter(Boolean),
+  {books:(process.env.CROWNIQ_SHARP_BOOKS??'draftkings,hardrock,fanduel,betrivers,prizepicks').split(',').map((book)=>book.trim()).filter(Boolean),
     maxPagesPerLeague:100});
 // A bad CROWNIQ_PAYOUTS falls back to the defaults rather than stopping the server.
 const payouts=mergePayouts((()=>{try{return JSON.parse(process.env.CROWNIQ_PAYOUTS??'null');}catch{return null;}})());
@@ -374,12 +371,10 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, playerHistory, es
     return {status:response.status,remaining:header('x-requests-remaining'),used:header('x-requests-used')};
   }:null,
   historyArchive,
-  marketRecord:new MarketRecord(`${dataDir}/market-record.json`),
   edge:edgeOptions,
   feedback:new FeedbackStore(`${dataDir}/feedback.json`),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
-  liveMarkets:process.env.CROWNIQ_LIVE_MARKETS==='false'?null:new LiveMarkets(`${dataDir}/live-markets.json`),
   scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,payouts,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,

@@ -15,8 +15,6 @@ const leagueSports: Readonly<Record<string, Sport>> = { nfl: 'NFL', ncaaf: 'NCAA
   nhl: 'NHL', atp: 'TENNIS', wta: 'TENNIS', ...Object.fromEntries(soccerLeagues.map((league) => [league, 'SOCCER' as Sport])) };
 /** Every league pulled by default: player props for the ones CrownIQ covers, game lines for all of them. */
 export const sharpLeagues: readonly string[] = ['nfl', 'ncaaf', 'mlb', 'nba', 'wnba', 'nhl', 'atp', 'wta', ...soccerLeagues];
-/** Leagues with game lines only (Kalshi and the books price the games; CrownIQ has no player boards for them). */
-export const gameOnlyLeagues: readonly string[] = ['ncaab', 'ufc'];
 
 const basketball: Readonly<Record<string, string>> = { player_points: 'player_points', player_rebounds: 'player_rebounds',
   player_assists: 'player_assists', player_made_threes: 'player_threes',
@@ -143,7 +141,7 @@ export function fairPrices(rows: readonly unknown[]): FairPrice[] {
   return prices;
 }
 
-/** A one-sided price (Kalshi's player props sell "Yes" on the over only): the price is the chance it implies. */
+/** A one-sided price (an over with no under at the same number): the price is the chance it implies. */
 export interface OverOnlyPrice {
   readonly book: string; readonly sport: Sport; readonly player: string; readonly market: string; readonly line: number;
   readonly price: number; readonly american: number | null; readonly startTime: string;
@@ -162,7 +160,7 @@ const gameMarkets: Readonly<Record<string, GamePrice['market']>> = { moneyline: 
 export const gameMarketTypes = Object.keys(gameMarkets);
 
 /**
- * Over-only player props: Kalshi's (Yes on the over) and any book's over with no under at the same number (DraftKings'
+ * Over-only player props: any book's over with no under at the same number (DraftKings'
  * soccer shots), so there's no cut to remove. History can still read them.
  */
 export function overOnlyPrices(rows: readonly unknown[]): OverOnlyPrice[] {
@@ -257,7 +255,7 @@ export class SharpPropsFeed {
     return { fetchedAt: this.fetchedAt, prices: this.prices };
   }
 
-  /** Kalshi's over-only player props and every book's full-game lines, from the same refresh. */
+  /** Over-only player props (a book's over with no under) and any full-game lines, from the same refresh. */
   async extras(): Promise<{ fetchedAt: string | null; overOnly: OverOnlyPrice[]; games: GamePrice[] }> {
     await this.load();
     return { fetchedAt: this.fetchedAt, overOnly: this.overOnly, games: this.games };
@@ -286,10 +284,9 @@ export class SharpPropsFeed {
     await this.load();
     if (!this.apiKey) { this.lastError = 'SHARPAPI_KEY_MISSING'; return this.status(); }
     const rows: unknown[] = [], gameRows: unknown[] = [];
-    const books = this.options.books ?? ['draftkings', 'hardrock', 'kalshi'];
-    // Player props for the leagues CrownIQ covers, then full-game lines (winner, spread, total) for every league.
-    const jobs = [...(this.options.leagues ?? sharpLeagues).map((league) => ({ league, props: true })),
-      ...[...(this.options.leagues ?? sharpLeagues), ...(this.options.leagues ? [] : gameOnlyLeagues)].map((league) => ({ league, props: false }))];
+    const books = this.options.books ?? ['draftkings', 'hardrock', 'fanduel'];
+    // Player props for the leagues CrownIQ covers. (Full-game lines were only for Kalshi, removed 2026-10-06.)
+    const jobs = (this.options.leagues ?? sharpLeagues).map((league) => ({ league, props: true }));
     try {
       for (const { league, props } of jobs) {
         let cursor: string | null = null;

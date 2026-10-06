@@ -1,4 +1,3 @@
-import type { MarketOdds } from '../context/feeds.js';
 import type { FairPrice, PickemLine } from '../context/sharp-props.js';
 import type { StoredLine } from '../scrapers/line-store.js';
 import { leagueInfo, lineMarket } from '../scrapers/markets.js';
@@ -6,7 +5,7 @@ import { decimalOdds, eventKey, playerKey } from './market-map.js';
 import type { SnapshotRow } from './snapshots.js';
 
 // Every source's observations in the snapshot store's one row shape (spec §1.1 write path): SharpAPI book prices and
-// PrizePicks lines, the scraped PrizePicks / Underdog / Pick6 boards (with each side's multiplier), and Kalshi's prices.
+// PrizePicks lines, and the scraped PrizePicks / Underdog / Pick6 boards (with each side's multiplier).
 
 /** SharpAPI book prices: one row per side, at the book's decimal price. */
 export function bookRows(prices: readonly FairPrice[], at: string): SnapshotRow[] {
@@ -37,12 +36,4 @@ export function scrapedRows(lines: readonly StoredLine[], at: string): SnapshotR
       playerKey: playerKey(sport, line.player), market: lineMarket(line), number: line.line, side, lineType: line.tier,
       multiplier: line.multipliers?.[side] ?? null, startTime: new Date(line.startTime).toISOString(), rawId: line.appLineId }));
   });
-}
-
-/** Kalshi's live market prices: each outcome's probability. */
-export function kalshiRows(markets: readonly MarketOdds[], at: string): SnapshotRow[] {
-  return markets.filter((market) => market.closeTime).flatMap((market) => market.outcomes.map((outcome) => ({
-    observedAt: at, source: 'kalshi-api' as const, platform: 'kalshi', eventKey: `KALSHI|${market.eventTitle}`,
-    playerKey: '', market: market.question, number: null, side: outcome.name, probability: outcome.probability / 100,
-    startTime: new Date(market.closeTime!).toISOString(), rawId: market.url })));
 }

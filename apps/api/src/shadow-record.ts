@@ -3,9 +3,8 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { PlayableDirection, PropLine } from '@crowniq/contracts';
 import type { BoxScoreResults } from './box-score-results.js';
-import type { GameLine, MarketOdds } from './context/feeds.js';
+import type { GameLine } from './context/feeds.js';
 import { normalizedName } from './context/match.js';
-import { teamIn } from './market-picks.js';
 
 // Shadow records (owner approved 2026-10-05): picks that are not GKR scores, kept and graded in their own record so the
 // owner can see whether they earn a place. Nothing here changes a GKR score or enters GKR's record.
@@ -29,9 +28,8 @@ export interface GameScript {
   readonly total: number | null;
   /** Pinnacle's no-vig chance the player's team wins. */
   readonly teamWin: number | null;
-  /** Kalshi's chance the player's team wins, when they price the game. */
+  /** Prediction-market win chance and agreement: no longer read (Kalshi was removed, 2026-10-06), always null. */
   readonly marketsWin: number | null;
-  /** The markets agree with Pinnacle within 5 points (null when no market prices the game). */
   readonly agree: boolean | null;
 }
 
@@ -60,10 +58,9 @@ const sameTeam = (a: string | null | undefined, b: string) => !!a && (normalized
   nickname(a) === nickname(b) || normalizedName(b).startsWith(normalizedName(a)) || normalizedName(a).startsWith(normalizedName(b)));
 
 /**
- * The expected script for a line's game, from Pinnacle (spread, total, win chance) and the prediction markets' win
- * chances. Null when Pinnacle has no line for the game or the player's team can't be placed.
+ * The expected script for a line's game, from Pinnacle (spread, total, win chance). Null when Pinnacle has no line for the game or the player's team can't be placed.
  */
-export function gameScriptFor(line: PropLine, games: readonly GameLine[], markets: readonly MarketOdds[]): GameScript | null {
+export function gameScriptFor(line: PropLine, games: readonly GameLine[]): GameScript | null {
   const start = Date.parse(line.eventStartTime);
   const mine = games.filter((game) => Math.abs(Date.parse(game.startTime) - start) <= 6 * 3600_000 &&
     (sameTeam(line.team, game.home) || sameTeam(line.team, game.away)) &&
@@ -74,23 +71,8 @@ export function gameScriptFor(line: PropLine, games: readonly GameLine[], market
   const spread = mine.find((game) => game.market === 'spread'), total = mine.find((game) => game.market === 'total');
   const moneyline = mine.find((game) => game.market === 'moneyline');
   const teamWin = moneyline?.homeFair != null && moneyline.awayFair != null ? (isHome ? moneyline.homeFair : moneyline.awayFair) : null;
-  // Market win chances for the player's team: a winner market naming its nickname or city, priced 0-100.
-  const team = isHome ? home : away, other = isHome ? away : home;
-  const chances = markets.flatMap((market) => {
-    const text = words(`${market.eventTitle} ${market.question}`);
-    if (!teamIn(text, team) || !teamIn(text, other) || /spread|o\/u|total|1h|half/i.test(market.question)) return [];
-    const subject = /— (.+)$/.exec(market.question)?.[1];
-    if (subject) {
-      const yes = market.outcomes.find((outcome) => outcome.name === 'Yes');
-      if (!yes) return [];
-      return sameTeam(subject, team) ? [yes.probability / 100] : sameTeam(subject, other) ? [1 - yes.probability / 100] : [];
-    }
-    const outcome = market.outcomes.find((item) => sameTeam(item.name, team));
-    return outcome ? [outcome.probability / 100] : [];
-  });
-  const marketsWin = chances.length ? Math.round(chances.reduce((sum, value) => sum + value, 0) / chances.length * 10_000) / 10_000 : null;
   return { teamMargin: spread?.line == null ? null : isHome ? -spread.line : spread.line, total: total?.line ?? null,
-    teamWin, marketsWin, agree: marketsWin === null || teamWin === null ? null : Math.abs(marketsWin - teamWin) <= 0.05 };
+    teamWin, marketsWin: null, agree: null };
 }
 
 interface Saved { entries: ShadowEntry[] }

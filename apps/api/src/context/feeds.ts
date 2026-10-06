@@ -5,7 +5,7 @@ import type { ApifyClient } from '../scrapers/apify-client.js';
 import type { DailySpendBudget } from '../scrapers/spend-budget.js';
 import { SlotLedger } from '../scrapers/slot-ledger.js';
 
-// Display-only game context from Apify scrapers: injury reports, Pinnacle game lines and prediction-market odds.
+// Display-only game context from Apify scrapers: injury reports and Pinnacle game lines.
 // None of it feeds GKR scoring; using any of it in a score needs the owner's approval and a new opt-in model version.
 
 export interface InjuryNote {
@@ -22,12 +22,7 @@ export interface GameLine {
   readonly homeFair: number | null; readonly awayFair: number | null;
   readonly sourceUrl: string | null;
 }
-export interface MarketOdds {
-  readonly platform: 'kalshi'; readonly eventTitle: string; readonly question: string;
-  readonly outcomes: readonly { name: string; probability: number }[];
-  readonly volume24h: number | null; readonly closeTime: string | null; readonly url: string | null;
-}
-type FeedItem = InjuryNote | GameLine | MarketOdds;
+type FeedItem = InjuryNote | GameLine;
 
 export interface ContextSource<T extends FeedItem = FeedItem> {
   readonly id: string;
@@ -71,22 +66,6 @@ export const pinnacleLines: ContextSource<GameLine> = {
   },
 };
 
-const predictionMarket = (platform: 'kalshi', actor: string): ContextSource<MarketOdds> => ({
-  id: platform, actor, maxRunUsd: 1,
-  input: () => ({ mode: 'markets', category: 'Sports', minVolume: 1000, sortBy: 'volume24h', maxMarkets: 300,
-    includeClosed: false }),
-  read(value) {
-    const row = asRow(value), question = text(row?.question), eventTitle = text(row?.eventTitle) ?? question;
-    if (!row || !question || !eventTitle || row.status !== 'open' || !Array.isArray(row.outcomes)) return null;
-    const outcomes = row.outcomes.flatMap((item) => {
-      const outcome = asRow(item), name = text(outcome?.name), probability = num(outcome?.probability);
-      return name && probability !== null ? [{ name, probability }] : [];
-    });
-    return outcomes.length ? { platform, eventTitle, question, outcomes, volume24h: num(row.volume24h),
-      closeTime: text(row.closeTime), url: text(row.url) } : null;
-  },
-});
-export const kalshiMarkets = predictionMarket('kalshi', 'lergassy/kalshi-scraper');
 
 export interface ContextScheduled { readonly source: ContextSource; readonly hoursEt: readonly number[] }
 export interface ContextReport {

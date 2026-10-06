@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fixtureLine } from '../../../packages/engine/test/fixtures.js';
-import type { GameLine, MarketOdds } from '../src/context/feeds.js';
+import type { GameLine } from '../src/context/feeds.js';
 import { gameScriptFor, scriptEligible, ShadowRecord } from '../src/shadow-record.js';
 
 const start = '2030-10-04T20:25:00.000Z';
@@ -12,18 +12,10 @@ const game = (market: GameLine['market'], lineValue: number | null, homeFair: nu
   awayPrice: null, homeFair, awayFair: homeFair === null ? null : 1 - homeFair, sourceUrl: null });
 const games = [game('moneyline', null, 0.33), game('spread', 7.5, 0.5), game('total', 48, null)];
 
-test('game script: the player team margin, total and win chance from Pinnacle, with the markets as a check', () => {
-  const markets: MarketOdds[] = [
-    { platform: 'kalshi', eventTitle: 'Kansas City at Las Vegas', question: 'Kansas City at Las Vegas — Las Vegas',
-      outcomes: [{ name: 'Yes', probability: 32 }, { name: 'No', probability: 68 }], volume24h: null, closeTime: start, url: null },
-    { platform: 'kalshi', eventTitle: 'Chiefs vs. Raiders', question: 'Chiefs vs. Raiders',
-      outcomes: [{ name: 'Chiefs', probability: 66 }, { name: 'Raiders', probability: 34 }], volume24h: null, closeTime: start, url: null },
-    { platform: 'kalshi', eventTitle: 'Chiefs vs. Raiders', question: 'Spread: Chiefs (-7.5)',
-      outcomes: [{ name: 'Chiefs', probability: 50 }, { name: 'Raiders', probability: 50 }], volume24h: null, closeTime: start, url: null },
-  ];
-  assert.deepEqual(gameScriptFor(line, games, markets), { teamMargin: -7.5, total: 48, teamWin: 0.33, marketsWin: 0.33, agree: true },
-    'Raiders (home) are 7.5-point underdogs; markets name teams by city or by nickname; spreads are not win markets');
-  assert.equal(gameScriptFor({ ...line, team: 'Jets', opponent: 'Bills' }, games, markets), null, 'no Pinnacle game');
+test('game script: the player team margin, total and win chance from Pinnacle', () => {
+  assert.deepEqual(gameScriptFor(line, games), { teamMargin: -7.5, total: 48, teamWin: 0.33, marketsWin: null, agree: null },
+    'Raiders (home) are 7.5-point underdogs');
+  assert.equal(gameScriptFor({ ...line, team: 'Jets', opponent: 'Bills' }, games), null, 'no Pinnacle game');
   assert.equal(scriptEligible(line), true);
   assert.equal(scriptEligible({ ...line, sport: 'MLB', market: 'batter_hits' }), false);
 });
