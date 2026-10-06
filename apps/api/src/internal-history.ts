@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Evidence } from '@crowniq/contracts';
 import { marketDefinitions } from '@crowniq/engine';
@@ -151,17 +151,25 @@ export class InternalHistoryStore {
   private exclusive<T>(task:()=>Promise<T>):Promise<T>{
     const result=this.chain.then(task);this.chain=result.catch(()=>undefined);return result;
   }
+  // The parsed file, kept until the file on disk changes: lookups run thousands of times a refresh (History Reads, Edge),
+  // and re-parsing the whole file for each one blocked the server.
+  private cached:{mtimeMs:number;size:number;data:HistoryData}|null=null;
   private async read():Promise<HistoryData>{
     try{
+      const info=await stat(this.path);
+      if(this.cached&&this.cached.mtimeMs===info.mtimeMs&&this.cached.size===info.size)return this.cached.data;
       const value=JSON.parse(await readFile(this.path,'utf8')) as HistoryData;
       if(value.version!==1||!Array.isArray(value.rows))throw new Error('INVALID_INTERNAL_HISTORY');
+      this.cached={mtimeMs:info.mtimeMs,size:info.size,data:value};
       return value;
-    }catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return blank();throw error;}
+    }catch(error){this.cached=null;if((error as NodeJS.ErrnoException).code==='ENOENT')return blank();throw error;}
   }
   private async write(data:HistoryData){
+    this.cached=null;
     await mkdir(dirname(this.path),{recursive:true});
     const tmp=this.path+'.'+randomUUID()+'.tmp';
-    try{await writeFile(tmp,JSON.stringify(data),{mode:0o600});await rename(tmp,this.path);}
+    try{await writeFile(tmp,JSON.stringify(data),{mode:0o600});await rename(tmp,this.path);
+      const info=await stat(this.path);this.cached={mtimeMs:info.mtimeMs,size:info.size,data};}
     finally{await rm(tmp,{force:true});}
   }
   async add(rows:readonly InternalHistoryRow[]):Promise<number>{return this.exclusive(async()=>{
@@ -221,6 +229,24 @@ export class InternalHistoryStore {
     return {sport,playerId,playerName:playerName??rows[0]?.playerName??playerId,market,
       source:'CROWNIQ_INTERNAL_HISTORY' as const,unit:spec.unit,games};
   }
+  /** One file read for many players: newest rows first, any date (callers filter by time). Keyed by each caller's key. */
+  async rowsForPlayers(players:readonly {key:string;sport:string;playerId:string;playerName:string}[],limit=60):
+    Promise<Map<string,InternalHistoryRow[]>>{
+    return this.exclusive(async()=>{
+      const byName=new Map(players.map((player)=>[player.sport+'|'+norm(player.playerName),player.key]));
+      const byId=new Map(players.map((player)=>[player.sport+'|'+player.playerId,player.key]));
+      const result=new Map<string,InternalHistoryRow[]>();
+      const rows=[...(await this.read()).rows].sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt));
+      for(const row of rows){
+        const key=byId.get(row.sport+'|'+row.playerId)??byName.get(row.sport+'|'+norm(row.playerName));
+        if(!key)continue;
+        const list=result.get(key)??[];
+        if(list.length<limit){list.push(row);result.set(key,list);}
+      }
+      return result;
+    });
+  }
+  async allRows():Promise<InternalHistoryRow[]>{return this.exclusive(async()=>[...(await this.read()).rows]);}
   async hasMinimumSamples(target:ResearchTarget,minSamples=5,recentSamples=10):Promise<boolean>{
     const spec=internalHistorySpecs[target.sport as InternalHistorySport]?.[target.market];
     if(!spec)return false;

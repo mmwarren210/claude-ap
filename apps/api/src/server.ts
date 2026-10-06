@@ -72,6 +72,11 @@ import type { ShadowPick, ShadowRecord } from './shadow-record.js';
 import type { MarketPlatform } from './market-picks.js';
 import type { BookPick, Sportsbook } from './book-picks.js';
 import { serveWebApp } from './web-app.js';
+import { EdgeResultsWorker, EdgeService } from './edge/service.js';
+import type { EdgeLedger } from './edge/ledger.js';
+import type { SnapshotStore } from './edge/snapshots.js';
+import { registerEdgeRoutes } from './edge/routes.js';
+import { bookRows, kalshiRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
 
 /** How far ahead the public demo shows real lines. */
 const DEMO_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
@@ -151,6 +156,9 @@ export interface ServerOptions {
   oddsApiQuota?: (() => Promise<{ status: number; remaining: number | null; used: number | null }>) | null;
   /** Live Kalshi prices from its free public API. */
   liveMarkets?: LiveMarkets | null;
+  /** CrownIQ Edge: a standalone probability engine with its own Top Picks, Board and Gen; never reads or changes GKR. */
+  edge?: { enabled?: boolean; ledger?: EdgeLedger | null; snapshots?: SnapshotStore | null;
+    alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>; boxScores?: BoxScoreResults | null } | null;
   /** JSON-lines history of the books' view of board lines, one row per line per refresh. */
   booksHistoryFile?: string | null;
 }
@@ -1169,6 +1177,46 @@ export function buildServer(options: ServerOptions = {}) {
     if(!free||(free.perMap&&twoMaps(line.market)))return null;
     return {values:free.values.map((game)=>game.value),source:free.source};
   },()=>now());
+  // CrownIQ Edge (Edge 2.0): its own reads of every PrizePicks line, warmed in the background like the app boards.
+  const edge=options.edge&&options.edge.enabled!==false?new EdgeService({board:()=>service.getBoard(),
+    sharp:options.sharpProps?{prices:async()=>(await options.sharpProps!.current()).prices,
+      pickem:async()=>(await options.sharpProps!.pickemLines()).lines}:null,
+    history:options.internalHistory??null,values:(line)=>historyReads.valuesFor(line),ledger:options.edge.ledger??null,
+    payouts:options.payouts??DEFAULT_PAYOUTS,...(options.edge.alternateFactors?{alternateFactors:options.edge.alternateFactors}:{}),
+    clock:()=>now()}):null;
+  const edgeWorker=edge&&options.edge?.ledger?new EdgeResultsWorker(options.edge.ledger,options.internalHistory??null,
+    options.edge.boxScores??null,()=>now()):null;
+  if(edge){
+    registerEdgeRoutes(app,{edge,ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
+      internalHistory:options.internalHistory??null,isOwner:(request)=>isOwner(request),now});
+    if(!options.clock){
+      const warm=()=>{void edge.snapshot().catch(()=>undefined);};
+      const first=setTimeout(warm,60_000);first.unref();
+      const every=setInterval(warm,3*60_000);every.unref();
+      edgeWorker?.start();
+      const grade=setTimeout(()=>{void edgeWorker?.runOnce().catch(()=>undefined);},5*60_000);grade.unref();
+      shadowTimers.push(first,every,grade);
+    }
+  }
+  // Edge's odds snapshots: every SharpAPI refresh, and the scraped boards and Kalshi every 5 minutes (only changes are kept).
+  const snapshots=options.edge?.snapshots??null;
+  if(snapshots&&!options.clock){
+    options.sharpProps?.whenRefreshed(async(prices,at)=>{
+      const pickem=(await options.sharpProps!.pickemLines()).lines;
+      const changed=snapshots.record([...bookRows(prices,at.toISOString()),...pickemRows(pickem,at.toISOString())]);
+      console.log(`[edge-snapshots] sharpapi ${prices.length} prices, ${pickem.length} PrizePicks lines, ${changed} changed`);
+    });
+    const tick=async()=>{
+      const at=now().toISOString();
+      const lines=options.scrapedLines?await options.scrapedLines.active():[];
+      const kalshi=(await options.liveMarkets?.items('kalshi',60))?.items??[];
+      snapshots.record([...scrapedRows(lines,at),...kalshiRows(kalshi,at)]);
+    };
+    const first=setTimeout(()=>{void tick().catch(()=>undefined);},2*60_000);first.unref();
+    const every=setInterval(()=>{void tick().catch(()=>undefined);},5*60_000);every.unref();
+    const prune=setInterval(()=>{try{snapshots.prune();}catch{/* next day */}},24*3600_000);prune.unref();
+    shadowTimers.push(first,every,prune);
+  }
   let historyCache:{at:number;board:unknown;reads:Record<string,HistoryRead>;trends?:Record<string,HistoryRead>}|null=null;
   /** A Trend in the History Read shape, flagged so the app labels it Trend. */
   const trendRead=(trend:Trend):HistoryRead=>({direction:trend.side,score:Math.round(trend.rate*100),over:0,under:0,games:trend.graded,
@@ -1893,10 +1941,19 @@ export function buildServer(options: ServerOptions = {}) {
       if(!parsed.success)return reply.code(400).send({code:'INVALID_QUERY'});
       return options.product.listDecisions(parsed.data.offset,parsed.data.limit);
     });
+    admin.post('/edge/results',async(request,reply)=>{
+      if(!options.edge?.ledger)return reply.code(503).send({code:'EDGE_TRACKING_UNCONFIGURED'});
+      const parsed=z.object({results:z.array(resultFactSchema).min(1).max(1000)}).strict().safeParse(request.body);
+      if(!parsed.success)return reply.code(400).send({code:'INVALID_RESULTS'});
+      return options.edge.ledger.grade(parsed.data.results);
+    });
+    admin.get('/edge/status',async(_request,reply)=>edge?{status:edge.status(),grading:edgeWorker?.status()??null,
+      snapshots:options.edge?.snapshots?.status()??null}:reply.code(503).send({code:'EDGE_DISABLED'}));
     admin.post('/tracked-results',async(request,reply)=>{
       if(!options.product)return reply.code(503).send({code:'TRACKING_UNCONFIGURED'});
       const parsed=z.object({results:z.array(resultFactSchema).min(1).max(1000)}).strict().safeParse(request.body);
       if(!parsed.success)return reply.code(400).send({code:'INVALID_RESULTS'});
+      await options.edge?.ledger?.grade(parsed.data.results).catch(()=>undefined);
       try{return await options.product.grade(parsed.data.results);}
       catch{return reply.code(422).send({code:'RESULT_GRADE_REJECTED'});}
     });

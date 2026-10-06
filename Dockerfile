@@ -7,6 +7,7 @@ COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/engine/package.json packages/engine/
+COPY packages/edge/package.json packages/edge/
 COPY apps/mobile/package.json apps/mobile/
 RUN npm ci --no-audit --no-fund
 COPY packages packages
@@ -24,8 +25,9 @@ COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/engine/package.json packages/engine/
+COPY packages/edge/package.json packages/edge/
 COPY apps/mobile/package.json apps/mobile/
-RUN npm ci -w @crowniq/api -w @crowniq/contracts -w @crowniq/engine --include-workspace-root --no-audit --no-fund
+RUN npm ci -w @crowniq/api -w @crowniq/contracts -w @crowniq/engine -w @crowniq/edge --include-workspace-root --no-audit --no-fund
 COPY packages packages
 COPY apps/api apps/api
 COPY --from=web /app/apps/mobile/dist apps/mobile/dist

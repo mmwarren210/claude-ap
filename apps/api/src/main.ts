@@ -15,6 +15,8 @@ import { buildServer } from './server.js';
 import { FullPrizePicksProvider } from './full-prizepicks-provider.js';
 import { TheOddsApiProvider } from './the-odds-api-provider.js';
 import { probeOddsApiOnce } from './edge/odds-api-probe.js';
+import { EdgeLedger } from './edge/ledger.js';
+import { SnapshotStore } from './edge/snapshots.js';
 import { NflPassingFileResearch } from './nfl-evidence-file.js';
 import { JsonSelectionLedger } from './selection-ledger.js';
 import { CombinedWebResearch, WebResearchAdapter, WebResearchCatalog } from './web-research.js';
@@ -331,6 +333,25 @@ if(guestCode&&!guestPass)console.warn('CROWNIQ_GUEST_PASS_CODE must be at least 
 process.on('unhandledRejection', (reason) => {
   console.error('Background task failed:', reason instanceof Error ? reason.message : reason);
 });
+// CrownIQ Edge (Edge 2.0): its own ledger and odds snapshots on the data disk. EDGE_ENGINE=false turns it off.
+// Goblin/Demon payout factors exist only when the owner sets them from the app (EDGE_GOBLIN_FACTOR, EDGE_DEMON_FACTOR);
+// until then those lines get a hit chance but no edge.
+const edgeFactor=(name:string)=>{
+  const value=process.env[name];if(!value)return undefined;
+  const parsed=Number(value);if(!Number.isFinite(parsed)||parsed<=0||parsed>5)throw new Error('Invalid '+name);
+  return parsed;
+};
+const edgeAlternateFactors=Object.fromEntries(([['GOBLIN',edgeFactor('EDGE_GOBLIN_FACTOR')],['DEMON',edgeFactor('EDGE_DEMON_FACTOR')]] as const)
+  .filter((entry):entry is readonly ['GOBLIN'|'DEMON',number]=>entry[1]!==undefined)) as Partial<Record<'GOBLIN'|'DEMON',number>>;
+const edgeSnapshots=process.env.EDGE_ENGINE==='false'?null:(()=>{
+  try{return new SnapshotStore(process.env.CROWNIQ_EDGE_SNAPSHOTS_FILE ?? `${dataDir}/edge/snapshots.sqlite`);}
+  catch(error){console.error('[edge-snapshots] unavailable',error instanceof Error?error.message:error);return null;}
+})();
+const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',
+  ledger:new EdgeLedger(process.env.CROWNIQ_EDGE_LEDGER_FILE ?? `${dataDir}/edge/ledger.json`),
+  snapshots:edgeSnapshots,alternateFactors:edgeAlternateFactors,
+  boxScores:new BoxScoreResults(fetch,undefined,historyArchive)};
+
 const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, playerHistory, espnHistory: espnEvidence, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
   webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,
   autoGradingEnabled:!!autoGrade,autoGradingStatus:()=>autoGrade?.status()??null,
@@ -354,6 +375,7 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, playerHistory, es
   }:null,
   historyArchive,
   marketRecord:new MarketRecord(`${dataDir}/market-record.json`),
+  edge:edgeOptions,
   feedback:new FeedbackStore(`${dataDir}/feedback.json`),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),

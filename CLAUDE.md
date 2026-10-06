@@ -102,6 +102,12 @@
   as a sportsbook price (their price is the payout: Power −137, Flex −119 on every line). Standard lines only, no
   Goblins/Demons. PrizePicks Flex lists the same lines, so it isn't requested.
 
+- **CrownIQ Edge (Edge 2.0)**: a standalone engine (`packages/edge`, `apps/api/src/edge/`, mobile Edge tab) with its own
+  Top Picks, Board and Gen. It never reads GKR output and is never compared with GKR. Build plan: `docs/EDGE_2_SPEC.md`;
+  what's live and how this branch differs from the reference: `docs/EDGE_ENGINE.md`. P1 is PrizePicks (scraped board +
+  SharpAPI PrizePicks lines, SharpAPI book prices leave-one-out, internal history + shared History values). Snapshot store
+  in `node:sqlite`. `EDGE_ENGINE=false` turns it off.
+
 ## Checks
 
 Run from the repo root: `npm run typecheck`, `npm test`, `npm run lint`. Tests use `node --import tsx --test`.

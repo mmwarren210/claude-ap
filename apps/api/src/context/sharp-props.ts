@@ -224,14 +224,20 @@ export class SharpPropsFeed {
   private loaded = false;
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<SharpPropsStatus> | null = null;
-  private onRefreshed: ((prices: readonly FairPrice[], at: Date) => unknown) | null = null;
+  private onRefreshed: ((prices: readonly FairPrice[], at: Date) => unknown)[] = [];
   constructor(private readonly apiKey: string | null, private readonly file: string | null,
     private readonly options: { books?: readonly string[]; leagues?: readonly string[]; maxPagesPerLeague?: number;
       /** Pause between requests; SharpAPI's Hobby plan allows 120 a minute. */
       requestGapMs?: number } = {},
     private readonly fetchFn: typeof fetch = fetch, private readonly clock: () => Date = () => new Date()) {}
 
-  private async load() {
+  private loading: Promise<void> | null = null;
+  /** Reads the saved prices once; callers arriving while the read runs wait for it (none see an empty feed). */
+  private load(): Promise<void> {
+    this.loading ??= this.loadNow();
+    return this.loading;
+  }
+  private async loadNow() {
     if (this.loaded) return;
     this.loaded = true;
     if (!this.file) return;
@@ -244,7 +250,7 @@ export class SharpPropsFeed {
   }
 
   /** Called after each successful refresh (the server keeps a history of the books' view of the board). */
-  whenRefreshed(callback: (prices: readonly FairPrice[], at: Date) => unknown): void { this.onRefreshed = callback; }
+  whenRefreshed(callback: (prices: readonly FairPrice[], at: Date) => unknown): void { this.onRefreshed.push(callback); }
 
   async current(): Promise<{ fetchedAt: string | null; prices: FairPrice[] }> {
     await this.load();
@@ -324,7 +330,7 @@ export class SharpPropsFeed {
         pickem: this.pickem }));
       await rename(temporary, this.file);
     }
-    try { await this.onRefreshed?.(prices, this.clock()); } catch { /* history is best effort */ }
+    for (const callback of this.onRefreshed) { try { await callback(prices, this.clock()); } catch { /* best effort */ } }
     return this.status();
   }
 

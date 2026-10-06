@@ -62,6 +62,9 @@ export class HistoryReads {
   private cache = new Map<string, { until: number; value: Promise<{ values: number[]; source: string } | null> }>();
   constructor(private readonly lookup: HistoryValues, private readonly clock: () => Date = () => new Date()) {}
 
+  /** A player's recent values for a line's stat (newest first), cached for 10 minutes; null without any. */
+  valuesFor(line: PropLine) { return this.values(line); }
+
   private values(line: PropLine) {
     const key = `${line.sport}|${line.playerId}|${line.market}`, now = this.clock().getTime(), cached = this.cache.get(key);
     if (cached && cached.until > now) return cached.value;
