@@ -25,6 +25,7 @@ export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: reado
   const [chosenSize, setSize] = useState(3);
   const [count, setCount] = useState(3);
   const [objective, setObjective] = useState<'ev' | 'growth'>('ev');
+  const [alternates, setAlternates] = useState(false);
   const [sport, setSport] = useState<string | null>(null);
   // The game day to build from (today, else the soonest day with games; "All days" turns it off).
   const [picked, setPicked] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: reado
     setBusy(true);
     try {
       const response = await request('/v1/edge/gen', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ platform, type, size, count, objective, ...(sport ? { sport } : {}), ...dayWindow(day) }) });
+        body: JSON.stringify({ platform, type, size, count, objective, alternates: platform === 'prizepicks' && alternates, ...(sport ? { sport } : {}), ...dayWindow(day) }) });
       if (!response.ok) { setResult({ data: null, message: response.status === 422 ? 'That entry size has no payout table configured.' : 'Could not generate entries.' }); return; }
       setResult({ data: edgeGenResponseSchema.parse(await response.json()), message: '' });
     } catch { setResult({ data: null, message: 'Could not generate entries.' }); }
@@ -64,6 +65,10 @@ export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: reado
       .map(([hits, payout]) => `${hits}/${entry.size}: ${usd(payout * stake)}`).join(', ')}{platform === 'underdog' ? ' (times each pick’s multiplier)' : ''} · each leg needs {pct(entry.breakEven)} to break even</Text>)}
     <Label text="HOW MANY" />
     <Chips options={[1, 2, 3, 5].map((value) => ({ key: value, label: String(value) }))} value={count} onChange={setCount} />
+    {platform === 'prizepicks' && <><Label text="LINES" />
+      <Chips options={[{ key: false, label: 'Standard only' }, { key: true, label: '+ Goblins & Demons' }]} value={alternates} onChange={setAlternates} />
+      {alternates && <Text style={styles.muted}>Goblins and Demons go in only when their own read is +EV after their lower or higher payout.
+        {type === 'FLEX' ? ' PrizePicks changes Flex payouts for them, so Edge estimates; type your app’s payouts in My Slip for the exact number.' : ''}</Text>}</>}
     <Label text="BUILD FOR" />
     <Chips options={[{ key: 'ev' as const, label: 'Most EV' }, { key: 'growth' as const, label: 'Steady growth (Kelly)' }]} value={objective} onChange={setObjective} />
     <Label text="WHEN" />
@@ -86,7 +91,7 @@ export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: reado
 
 function Label({ text }: { text: string }) { return <Text style={styles.label}>{text}</Text>; }
 
-function Chips<T extends string | number | null>({ options, value, onChange }: { options: { key: T; label: string }[]; value: T; onChange: (value: T) => void }) {
+function Chips<T extends string | number | boolean | null>({ options, value, onChange }: { options: { key: T; label: string }[]; value: T; onChange: (value: T) => void }) {
   return <View style={styles.chips}>{options.map((option) => <Pressable key={String(option.key)} accessibilityRole="button"
     onPress={() => onChange(option.key)} style={[styles.chip, value === option.key && styles.chipOn]}>
     <Text style={[styles.chipText, value === option.key && styles.chipTextOn]}>{option.label}</Text></Pressable>)}</View>;

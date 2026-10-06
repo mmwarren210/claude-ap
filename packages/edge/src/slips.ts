@@ -28,7 +28,10 @@ const pct = (value: number) => `${value >= 0 ? '+' : ''}${(value * 100).toFixed(
 /** PrizePicks Goblin/Demon factors are Power-only: Flex pays them on a different scale (2-correct ×0.85, 1-correct ×0.5 for a
  * 0.7 Goblin in the owner's screenshots), so they never go into a PrizePicks Flex entry. */
 export const legAllowed = (entry: Pick<EdgeEntry, 'type'>, leg: Pick<EdgePick, 'platform' | 'lineType'>) =>
-  !(entry.type === 'FLEX' && leg.platform === 'prizepicks' && (leg.lineType === 'GOBLIN' || leg.lineType === 'DEMON'));
+  !(entry.type === 'FLEX' && leg.platform === 'prizepicks' && isAlternate(leg));
+
+/** A PrizePicks Goblin or Demon (an easier or harder line than the regular one, with its own payout). */
+export const isAlternate = (leg: Pick<EdgePick, 'lineType'>) => leg.lineType === 'GOBLIN' || leg.lineType === 'DEMON';
 
 /**
  * Built entries use only legs the sportsbooks back (SHARP or MARKET tier). Stats-only reads (MODEL) and ladder reads are
@@ -102,7 +105,7 @@ function fits(legs: readonly EdgePick[], candidate: EdgePick, index: number, siz
 function improve(entry: EdgeEntry, legs: EdgePick[], pool: readonly EdgePick[], allowed: (pick: EdgePick) => boolean,
   limits: Limits, objective: SlipObjective): EdgePick[] {
   if (legs.length > 8) return legs;
-  const candidates = pool.filter((pick) => allowed(pick) && legAllowed(entry, pick)).slice(0, 30);
+  const candidates = pool.filter((pick) => allowed(pick)).slice(0, 30);
   let current = legs, score = objectiveOf(evaluateSlip(entry, current, { minEvents: limits.minEvents, draws: 4000 }), objective);
   for (let round = 0; round < 3; round++) {
     let best: { legs: EdgePick[]; score: number } | null = null;
@@ -164,6 +167,11 @@ export interface GenerateOptions {
   readonly objective?: SlipObjective;
   readonly nowMs?: number;
   readonly minEvents?: number;
+  /**
+   * Goblins and Demons: false keeps them out, true lets them into every entry (Flex too, where PrizePicks' payout for them
+   * is estimated from the Power factor and the slip says so). Unset: allowed in Power, never in PrizePicks Flex.
+   */
+  readonly alternates?: boolean;
 }
 
 /** Edge Gen: several entries of one type and size from Edge's positive-edge standard lines. Each entry takes the
@@ -175,14 +183,14 @@ export function generateEntries(picks: readonly EdgePick[], entry: EdgeEntry, op
   const pool = picks.filter((pick) => pick.edge !== null && pick.edge > (options.minEdge ?? 0) && pick.rating !== 'NONE' && backedLeg(pick) &&
     Date.parse(pick.eventStartTime) > now && (!options.sport || pick.sport === options.sport) &&
     (options.from === undefined || Date.parse(pick.eventStartTime) >= options.from) &&
-    (options.to === undefined || Date.parse(pick.eventStartTime) < options.to))
+    (options.to === undefined || Date.parse(pick.eventStartTime) < options.to) &&
+    (options.alternates === undefined ? legAllowed(entry, pick) : options.alternates || !isAlternate(pick)))
     .sort((a, b) => legValue(b) - legValue(a));
   const uses = new Map<string, number>(), slips: EdgeSlip[] = [];
   for (let index = 0; index < count; index++) {
     const legs: EdgePick[] = [], players = new Set<string>(), events = new Map<string, number>();
     for (const pick of pool) {
       if (legs.length === entry.size) break;
-      if (!legAllowed(entry, pick)) continue;
       if ((uses.get(pick.playerId) ?? 0) >= maxUses || players.has(pick.playerId) ||
         (events.get(pick.eventId) ?? 0) >= maxPerEvent) continue;
       if (minEvents > 1 && legs.length === entry.size - 1 && events.size === 1 && events.has(pick.eventId)) continue;

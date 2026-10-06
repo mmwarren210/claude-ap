@@ -199,3 +199,16 @@ test('plus/minus is priced and shown but never ranked', () => {
   assert.equal(pick.rating, 'NONE');
   assert.ok(pick.warnings.some((warning) => warning.startsWith('Plus/minus isn’t ranked')));
 });
+
+test('Gen: Goblins and Demons go in only when turned on, in Power and Flex', () => {
+  const pp = (id: string, probability: number, lineType: EdgePick['lineType']) => leg(id, probability, { platform: 'prizepicks', lineType });
+  const picks = [pp('g', .8, 'GOBLIN'), pp('d', .6, 'DEMON'), pp('r1', .58, 'REGULAR'), pp('r2', .57, 'REGULAR'), pp('r3', .56, 'REGULAR')];
+  const [power2] = tables({ POWER: { 2: { 2: 3 } } }).map(describeEntry);
+  const [flex3] = tables({ FLEX: { 3: { 3: 3, 2: 1 } } }).map(describeEntry);
+  const types = (slips: ReturnType<typeof generateEntries>) => slips.flatMap((slip) => slip.legs.map((item) => item.lineId));
+  const off = types(generateEntries(picks, power2!, { nowMs: now.getTime(), alternates: false, count: 2 }));
+  assert.ok(!off.includes('g') && !off.includes('d'));
+  assert.ok(types(generateEntries(picks, power2!, { nowMs: now.getTime(), alternates: true, count: 1 })).includes('g'));
+  assert.ok(!types(generateEntries(picks, flex3!, { nowMs: now.getTime() })).includes('g'), 'unset keeps them out of PrizePicks Flex');
+  assert.ok(types(generateEntries(picks, flex3!, { nowMs: now.getTime(), alternates: true })).includes('g'));
+});

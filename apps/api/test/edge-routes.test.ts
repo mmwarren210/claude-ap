@@ -71,8 +71,11 @@ test('Edge routes: every line read or No read, leave-one-out, Gen, slips and own
       ['lonely', 'sharpapi:pp:sa-game-c:foxtrot-center:player_rebounds:9.5']);
     assert.ok(noRead.every((row) => row.kind === 'NO_READ' && row.line.note.startsWith('No read: no sportsbook price')));
 
-    const gen = edgeGenResponseSchema.parse((await app.inject({ method: 'POST', url: '/v1/edge/gen',
-      payload: { type: 'POWER', size: 2, count: 2 } })).json());
+    const genRaw = (await app.inject({ method: 'POST', url: '/v1/edge/gen',
+      payload: { type: 'POWER', size: 2, count: 2 } })).json();
+    const gen = edgeGenResponseSchema.parse(genRaw);
+    // The Goblin stays out until Goblins & Demons is turned on.
+    assert.ok(gen.slips.every((slip) => slip.legs.every((leg) => !leg.lineId.includes('goblin'))));
     assert.ok(gen.slips.length >= 1);
     assert.ok(gen.slips.every((slip) => new Set(slip.legs.map((leg) => leg.eventId)).size >= 2));
     const growth = edgeGenResponseSchema.parse((await app.inject({ method: 'POST', url: '/v1/edge/gen',

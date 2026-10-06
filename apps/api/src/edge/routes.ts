@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { buildSlips, EDGE_MODEL_VERSION, generateEntries } from '@crowniq/edge';
+import { backedLeg, buildSlips, EDGE_MODEL_VERSION, generateEntries, isAlternate } from '@crowniq/edge';
 import { z } from 'zod';
 import type { EdgePick, EdgePlatform } from '@crowniq/contracts';
 import { cdf, makeDistribution } from '@crowniq/edge';
@@ -100,7 +100,9 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
       count: z.number().int().min(1).max(10).default(3), sport: z.string().trim().min(1).max(20).optional(),
       from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(),
       maxPerGame: z.number().int().min(1).max(3).default(2), maxLegUses: z.number().int().min(1).max(5).default(1),
-      objective: z.enum(['ev', 'growth']).default('ev') })
+      objective: z.enum(['ev', 'growth']).default('ev'),
+      // Goblins and Demons go in only when the member turns them on.
+      alternates: z.boolean().default(false) })
       .strict().safeParse(request.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_GEN_REQUEST' });
     const snapshot = await edge.snapshot(body.data.platform);
@@ -111,12 +113,17 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     const slips = generateEntries(snapshot.response.picks, entry, { count: body.data.count, nowMs,
       ...(body.data.sport ? { sport: body.data.sport } : {}),
       ...(body.data.from ? { from: Date.parse(body.data.from) } : {}), ...(body.data.to ? { to: Date.parse(body.data.to) } : {}),
-      maxPerEvent: body.data.maxPerGame, maxLegUses: body.data.maxLegUses, minEvents: snapshot.minEvents, objective: body.data.objective });
+      maxPerEvent: body.data.maxPerGame, maxLegUses: body.data.maxLegUses, minEvents: snapshot.minEvents, objective: body.data.objective, alternates: body.data.alternates });
     const pool = snapshot.response.picks.filter((pick) => pick.edge !== null && pick.edge > 0 && pick.rating !== 'NONE' &&
       Date.parse(pick.eventStartTime) > nowMs && (!body.data.sport || pick.sport === body.data.sport) &&
       (!body.data.from || Date.parse(pick.eventStartTime) >= Date.parse(body.data.from)) &&
-      (!body.data.to || Date.parse(pick.eventStartTime) < Date.parse(body.data.to))).length;
-    const notes = [`${pool} positive-EV standard lines were eligible.`];
+      (!body.data.to || Date.parse(pick.eventStartTime) < Date.parse(body.data.to)) && backedLeg(pick));
+    const alternates = pool.filter(isAlternate).length;
+    const notes = [body.data.alternates
+      ? `${pool.length} positive-EV lines were eligible, ${alternates} of them Goblins or Demons.`
+      : `${pool.length - alternates} positive-EV standard lines were eligible.${alternates ? ` Turn on Goblins & Demons to add ${alternates} more.` : ''}`];
+    if (body.data.alternates && body.data.type === 'FLEX' && slips.some((slip) => slip.legs.some((leg) => leg.payoutMultiplier && leg.payoutMultiplier !== 1)))
+      notes.push('PrizePicks changes Flex payouts for Goblins and Demons; Edge estimates them. Load an entry into My Slip and type your app’s payouts for the exact number.');
     if (slips.length < body.data.count) notes.push(slips.length
       ? `Only ${slips.length} of ${body.data.count} entries had enough distinct +EV legs; Edge does not pad entries with weak legs.`
       : 'Not enough +EV legs across two or more games for this entry right now.');
@@ -126,7 +133,7 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     notes.push('Same-game legs are priced with CrownIQ’s prior correlations (QB + receiver +0.35, teammates’ points −0.05, ' +
       'pitcher strikeouts vs opposing hitters −0.15, any two in one game +0.05).');
     if (body.data.objective === 'growth') notes.push('Built for long-run bankroll growth (Kelly): favours steadier entries over the highest EV.');
-    return { modelVersion: EDGE_MODEL_VERSION, builtAt: new Date(nowMs).toISOString(), pool, slips, notes };
+    return { modelVersion: EDGE_MODEL_VERSION, builtAt: new Date(nowMs).toISOString(), pool: body.data.alternates ? pool.length : pool.length - alternates, slips, notes };
   });
 
   app.get('/v1/edge/line/:lineId', async (request, reply) => {
