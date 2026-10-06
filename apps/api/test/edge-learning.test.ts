@@ -86,3 +86,35 @@ test('Edge results worker grades tennis and esports picks from free history', as
   assert.equal(report.recent[0]!.outcome, 'WIN');
   assert.equal(report.recent[0]!.resultSource, 'ESPN tennis scoreboards');
 });
+
+test('esports maps 1+2 history: per-map rows become series totals; leagues under other labels map to their sport', async () => {
+  const { seriesTotals } = await import('../src/free-history-grading.js');
+  const { leagueInfo, leagueLabel } = await import('../src/scrapers/markets.js');
+  const row = (date: string, value: number) => ({ date, opponent: 'T1', value });
+  const rows = [row('2030-10-05T10:00:00Z', 5), row('2030-10-05T10:50:00Z', 7), row('2030-10-05T11:40:00Z', 3), // a 3-map series
+    row('2030-10-03T18:00:00Z', 4)]; // a series with one map logged: not enough for maps 1+2
+  assert.deepEqual(seriesTotals(rows, 2).map((item) => item.value), [12]);
+  assert.deepEqual(seriesTotals(rows, 3).map((item) => item.value), [15]);
+  assert.equal(leagueInfo('CSGO').sport, 'CS2');
+  assert.equal(leagueInfo('Dota 2').sport, 'DOTA');
+  assert.equal(leagueInfo('ATP').sport, 'TENNIS');
+  assert.equal(leagueLabel('TENNIS'), 'TENNIS', 'the board label stays the main one');
+  assert.equal(leagueLabel('CS2'), 'CS2');
+});
+
+test('saved picks and Crown legs in tennis and esports are graded from free history', async () => {
+  const { ProductGradingWorker } = await import('../src/background-grading.js');
+  const calls: string[] = [];
+  const decision = { grade: 'PENDING', eventId: 'e', playerId: 'p', lineSnapshot: { eventId: 'e', playerId: 'p', playerName: 'Faker', sport: 'LOL',
+    market: 'maps_1_2_kills', eventStartTime: '2030-10-07T10:00:00Z' } };
+  let graded: unknown[] = [];
+  const ledger = { listDecisions: async () => ({ decisions: [decision], total: 1 }), pendingPersonalLegs: async () => [],
+    grade: async (facts: unknown[]) => { graded = facts; return { graded: facts.length, personal: 0 }; } };
+  const worker = new ProductGradingWorker(ledger as never, null, undefined, () => new Date('2030-10-08T12:00:00Z'), null,
+    async (sport, name, market) => { calls.push(`${sport}|${name}|${market}`);
+      return { values: [{ date: '2030-10-07T10:30:00Z', value: 11 }], perMap: false, source: 'Leaguepedia pro games', url: 'https://lol.fandom.com' }; });
+  const result = await worker.runOnce().catch((error: unknown) => ({ error }));
+  assert.deepEqual(calls, ['LOL|Faker|maps_1_2_kills']);
+  assert.equal((graded[0] as { actual: number }).actual, 11);
+  assert.equal((result as { freeHistory?: number }).freeHistory, 1);
+});

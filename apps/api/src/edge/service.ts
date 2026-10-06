@@ -25,6 +25,8 @@ import type { SnapshotStore } from './snapshots.js';
 import type { PayoutBook } from './platform-lines.js';
 import type { EdgeLedger, EdgeResultFact, TrackedEdgePick } from './ledger.js';
 import { gradeTarget } from './ledger.js';
+import { freeGradedSports, freeHistoryActual } from '../free-history-grading.js';
+import type { FreeHistoryValues } from '../free-history-grading.js';
 import { canonicalMarket, matchBookPrices, playerKey } from './market-map.js';
 import type { MatchReport } from './market-map.js';
 
@@ -583,6 +585,12 @@ export class EdgeService {
       .slice(0, 15).map(([key, group]) => `${key}(${group.lines})`);
     const unpriced = sorted.filter(([key, group]) => group.lines >= 10 && group.priced === 0 && bookSports.has(key.slice(0, key.indexOf(':'))))
       .slice(0, 15).map(([key, group]) => `${key}(${group.lines})`);
+    // League labels landing in OTHER (no sport mapping): period/live markets are expected; a sport's own label is a gap.
+    const otherLeagues = new Map<string, number>();
+    for (const line of snapshot.lines.values()) if (line.sport === 'OTHER') otherLeagues.set(line.league, (otherLeagues.get(line.league) ?? 0) + 1);
+    const sports = new Map<string, number>();
+    for (const line of snapshot.lines.values()) sports.set(line.sport, (sports.get(line.sport) ?? 0) + 1);
+    console.log(`[edge-audit] ${snapshot.platform} sports ${JSON.stringify(Object.fromEntries(sports))} · OTHER leagues ${JSON.stringify(Object.fromEntries(otherLeagues))}`);
     const mismatches = snapshot.report.match?.mismatchSamples ?? [];
     if (mismatches.length) console.log(`[edge-audit] ${snapshot.platform} MARKET_MISMATCH samples: ${JSON.stringify(mismatches.slice(0, 8))}`);
     console.log(`[edge-audit] ${snapshot.platform} generic model: ${generic.join(' ') || 'none'} | books cover the sport but none priced: ${unpriced.join(' ') || 'none'}`);
@@ -696,32 +704,8 @@ export function boardPage(snapshot: EdgeSnapshot, query: { sport?: string; marke
 }
 
 /** Grades Edge picks from ESPN / MLB box scores and CrownIQ's own game rows (no Odds API credits). */
-/** The free history sources' answer for one player and stat (PlayerHistory.values). */
-export type FreeHistoryValues = (sport: string, playerName: string, market: string) =>
-  Promise<{ values: readonly { date: string; value: number }[]; perMap: boolean; source: string } | null>;
-
-/** Sports graded from the free public history sources (tennis scoreboards, OpenDota, Leaguepedia, Sleeper). */
-export const freeGradedSports = new Set(['TENNIS', 'LOL', 'DOTA', 'CS2', 'VALORANT']);
-
-/**
- * A pick's result from free public history: the player's row(s) dated within the game's window (12h before the start to 36h
- * after). A whole-match stat needs exactly one match there. Esports rows are single maps: a "maps 1+2" line sums the first two
- * maps of that day's series (three for "maps 1–3"), and only when the series had at least that many maps and exactly one
- * series that day. Anything ambiguous stays pending rather than being guessed.
- */
-export function freeHistoryActual(pick: Pick<TrackedEdgePick, 'eventStartTime' | 'market'>,
-  found: { values: readonly { date: string; value: number }[]; perMap: boolean }): number | null {
-  const start = Date.parse(pick.eventStartTime);
-  const inWindow = found.values.filter((row) => { const at = Date.parse(row.date); return at >= start - 12 * 3600_000 && at <= start + 36 * 3600_000; })
-    .sort((a, b) => a.date.localeCompare(b.date));
-  if (!inWindow.length) return null;
-  if (!found.perMap) return inWindow.length === 1 ? inWindow[0]!.value : null;
-  const maps = /1_3|1_plus_2_plus_3|maps_1_3/.test(pick.market) ? 3 : /1_2|1_plus_2|maps_1|games_1/.test(pick.market) ? 2 : 1;
-  // One series that day: its maps all fall within six hours of the first.
-  if (Date.parse(inWindow[inWindow.length - 1]!.date) - Date.parse(inWindow[0]!.date) > 6 * 3600_000) return null;
-  if (inWindow.length < maps || (maps === 1 && inWindow.length !== 1)) return null;
-  return inWindow.slice(0, maps).reduce((sum, row) => sum + row.value, 0);
-}
+export { freeGradedSports, freeHistoryActual } from '../free-history-grading.js';
+export type { FreeHistoryValues } from '../free-history-grading.js';
 
 export class EdgeResultsWorker {
   private timer: ReturnType<typeof setInterval> | null = null;

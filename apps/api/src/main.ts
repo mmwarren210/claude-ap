@@ -321,7 +321,8 @@ const identityVerifier=googleClients.length||appleClients.length
 const boxScoreGrading=process.env.CROWNIQ_BOX_SCORE_GRADING!=='false';
 const autoGrade=process.env.CROWNIQ_NFLVERSE_AUTO_GRADE==='true'||boxScoreGrading
   ? new ProductGradingWorker(product,process.env.NFLVERSE_MAPPING_FILE||null,undefined,undefined,
-    boxScoreGrading?new BoxScoreResults(fetch,undefined,historyArchive):null) : null;
+    boxScoreGrading?new BoxScoreResults(fetch,undefined,historyArchive):null,
+    playerHistory?(sport,playerName,market)=>playerHistory.values(sport,playerName,market):null) : null;
 // The exported web app (npx expo export -p web), served by this server when present.
 const webAppDir=process.env.CROWNIQ_WEB_DIR ?? fileURLToPath(new URL('../../mobile/dist',import.meta.url));
 // A shared guest link for testers: CROWNIQ_GUEST_PASS_CODE, up to CROWNIQ_GUEST_PASS_MAX devices for

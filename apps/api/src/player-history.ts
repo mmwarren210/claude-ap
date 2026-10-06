@@ -1,5 +1,6 @@
 import type { PlayerGameLog, PropLine } from '@crowniq/contracts';
 import { normalizedName } from './context/match.js';
+import { mapsCovered, seriesTotals } from './free-history-grading.js';
 import type { HistoryArchive } from './history-archive.js';
 
 // Free public history for the sports GKR has no stat source for (owner, 2026-10-05): each player's last 15-20 matches
@@ -380,6 +381,11 @@ export class PlayerHistory {
       this.keep(sport, playerName, result);
       const values = result.games.flatMap((game) => { const value = statFor(sport, market, game.stats);
         return value === null ? [] : [{ date: game.date, opponent: game.opponent, value }]; });
+      // Per-map esports rows for a "maps 1+2" (or 1–3) line become series totals, so the line has a history to read.
+      if (result.perMap && mapsCovered(market) > 1) {
+        const totals = seriesTotals(values, mapsCovered(market));
+        if (totals.length) return { values: totals, source: result.source, url: result.url, perMap: false };
+      }
       if (values.length) return { values, source: result.source, url: result.url, perMap: result.perMap };
     }
     return null;

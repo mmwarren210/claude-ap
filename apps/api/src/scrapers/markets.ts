@@ -10,6 +10,12 @@ export const leagues: Readonly<Record<string, { sport: Sport; key: string }>> = 
   CS2: { sport: 'CS2', key: 'esports_cs2' }, VAL: { sport: 'VALORANT', key: 'esports_valorant' },
   LOL: { sport: 'LOL', key: 'esports_lol' }, DOTA2: { sport: 'DOTA', key: 'esports_dota2' },
   KBO: { sport: 'KBO', key: 'baseball_kbo' }, AFL: { sport: 'AFL', key: 'aussierules_afl' },
+  // Tennis and esports under the other labels apps use (all map to the same sport and player ids).
+  ATP: { sport: 'TENNIS', key: 'tennis' }, WTA: { sport: 'TENNIS', key: 'tennis' },
+  CS: { sport: 'CS2', key: 'esports_cs2' }, CSGO: { sport: 'CS2', key: 'esports_cs2' }, 'CS:GO': { sport: 'CS2', key: 'esports_cs2' },
+  'COUNTER-STRIKE': { sport: 'CS2', key: 'esports_cs2' }, 'COUNTER STRIKE': { sport: 'CS2', key: 'esports_cs2' },
+  'LEAGUE OF LEGENDS': { sport: 'LOL', key: 'esports_lol' }, DOTA: { sport: 'DOTA', key: 'esports_dota2' },
+  'DOTA 2': { sport: 'DOTA', key: 'esports_dota2' }, VALORANT: { sport: 'VALORANT', key: 'esports_valorant' },
   // Soccer leagues PrizePicks lists under their own labels (market audit 2026-10-06: "LA LIGA" was landing in OTHER).
   ...Object.fromEntries(['LA LIGA', 'EPL', 'MLS', 'BUNDESLIGA', 'SERIE A', 'LIGUE 1', 'UCL', 'LIGA MX', 'UEFA']
     .map((league) => [league, { sport: 'SOCCER' as Sport, key: 'soccer' }])),
@@ -79,7 +85,7 @@ export function marketKey(sport: Sport, stat: string, app?: DfsApp): string {
 
 
 export function leagueInfo(league: string): { sport: Sport; key: string } {
-  return leagues[league] ?? { sport: 'OTHER', key: league.toLowerCase() };
+  return leagues[league] ?? leagues[league.trim().toUpperCase()] ?? { sport: 'OTHER', key: league.toLowerCase() };
 }
 
 /** The PrizePicks league label for a CrownIQ sport (used when a source gives sports, not league labels). */
