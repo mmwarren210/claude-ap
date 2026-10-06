@@ -259,7 +259,10 @@ export function expectedGoals(games: readonly GamePrice[]): Map<string, number> 
  * Each Yes is divided by the one factor k that makes that hold. Games without a total, or with k outside 1.0–1.6 (an
  * incomplete player list), are left out rather than guessed. The result is the over of 0.5 goals.
  */
+export const scorerSkips = { groups: 0, noTotal: 0, few: 0, low: 0, high: 0, priced: 0, samples: [] as string[] };
+
 export function scorerFairPrices(rows: readonly unknown[], games: readonly GamePrice[]): FairPrice[] {
+  Object.assign(scorerSkips, { groups: 0, noTotal: 0, few: 0, low: 0, high: 0, priced: 0, samples: [] });
   const totals = expectedGoals(games);
   const groups = new Map<string, Row[]>();
   for (const value of rows) {
@@ -273,11 +276,18 @@ export function scorerFairPrices(rows: readonly unknown[], games: readonly GameP
   }
   const out: FairPrice[] = [];
   for (const list of groups.values()) {
+    scorerSkips.groups++;
     const goals = totals.get(String(list[0]!.event_id));
-    if (!goals || list.length < 10) continue;
+    if (!goals) { scorerSkips.noTotal++; if (scorerSkips.samples.length < 3) scorerSkips.samples.push(`no total ${String(list[0]!.event_id)} ${String(list[0]!.home_team)}`); continue; }
+    if (list.length < 10) { scorerSkips.few++; continue; }
     const target = goals * 0.97, implied = list.map((row) => Number(row.odds_probability));
     const sum = (k: number) => implied.reduce((total, p) => total - Math.log(1 - Math.min(p / k, 0.99)), 0);
-    if (sum(1) < target || sum(1.6) > target) continue;
+    if (sum(1) < target || sum(1.6) > target) {
+      if (sum(1) < target) scorerSkips.low++; else scorerSkips.high++;
+      if (scorerSkips.samples.length < 6) scorerSkips.samples.push(`${String(list[0]!.sportsbook)} ${String(list[0]!.league)} n=${list.length} sum=${sum(1).toFixed(2)} goals=${goals.toFixed(2)}`);
+      continue;
+    }
+    scorerSkips.priced++;
     let lo = 1, hi = 1.6;
     for (let i = 0; i < 50; i++) { const mid = (lo + hi) / 2; if (sum(mid) > target) lo = mid; else hi = mid; }
     const k = (lo + hi) / 2;
@@ -418,7 +428,7 @@ export class SharpPropsFeed {
     const games = gamePrices(gameRows.filter((row) => !isPickemRow(row)));
     const scorers = scorerFairPrices(bookRows, games);
     if (scorers.length || rows.some((row) => (row as Row).market_type === 'anytime_goal_scorer'))
-      console.log(`[sharp] anytime scorer: ${scorers.length} goals prices from ${expectedGoals(games).size} game totals`);
+      console.log(`[sharp] anytime scorer: ${scorers.length} goals prices from ${expectedGoals(games).size} game totals; ${JSON.stringify(scorerSkips)}; total event ids e.g. ${[...expectedGoals(games).keys()].slice(0, 2).join(', ')}`);
     const prices = [...fairPrices(bookRows), ...scorers];
     this.auditMarkets(bookRows);
     if (!prices.length) { this.lastError = 'NO_PRICES'; return this.status(); }
