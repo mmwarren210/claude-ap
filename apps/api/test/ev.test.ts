@@ -3,7 +3,7 @@ import test from 'node:test';
 import { analysisSchema, boardResponseSchema, propLineSchema } from '@crowniq/contracts';
 import { fixtureLine } from '../../../packages/engine/test/fixtures.js';
 import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from '../src/context/ev.js';
-import { fairPrices, SharpPropsFeed } from '../src/context/sharp-props.js';
+import { fairPrices, normalizeRow, SharpPropsFeed } from '../src/context/sharp-props.js';
 
 const now = new Date('2030-10-04T12:00:00Z');
 const row = (book: string, side: 'over' | 'under', probability: number, overrides: Record<string, unknown> = {}) => ({
@@ -69,6 +69,16 @@ test('the SharpAPI feed pages with the cursor, sends the key, and keeps old pric
   const failed = await feed.refresh();
   assert.deepEqual([failed.prices, failed.lastError], [1, 'SHARPAPI_HTTP_500']);
   assert.equal((await new SharpPropsFeed(null, null).refresh()).lastError, 'SHARPAPI_KEY_MISSING');
+});
+
+test('anytime goal scorer Yes/No becomes the over/under of 0.5 goals (NHL goals were unpriced)', () => {
+  const scorer = (side: string, probability: number) => normalizeRow(row('draftkings', 'over', probability,
+    { league: 'nhl', market_type: 'anytime_goal_scorer', selection_type: side, line: null }));
+  const [price] = fairPrices([scorer('yes', 0.3), scorer('no', 0.75)]);
+  assert.deepEqual([price?.sport, price?.market, price?.line], ['NHL', 'goals', 0.5]);
+  assert.equal(price?.fairOver, Math.round(0.3 / 1.05 * 10_000) / 10_000);
+  const other = row('draftkings', 'over', 0.5, { market_type: 'player_passing_yards' });
+  assert.equal(normalizeRow(other), other, 'other markets pass through');
 });
 
 test('the SharpAPI feed waits out a 429 and keeps going instead of dropping the refresh', async () => {

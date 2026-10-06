@@ -28,9 +28,12 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
     player_receiving_yards: 'player_reception_yds', player_receptions: 'player_receptions',
     player_kicking_points: 'player_kicking_points', player_sacks: 'player_sacks',
     'player_tackles_+_assists': 'player_tackles_assists', 'player_passing_+_rushing_yards': 'pass_plus_rush_yds',
-    'player_rushing_+_receiving_yards': 'rush_plus_rec_yds' },
+    'player_rushing_+_receiving_yards': 'rush_plus_rec_yds', anytime_touchdown_scorer: 'anytime_tds' },
   NCAAFB: { player_passing_yards: 'passing_yards', player_rushing_yards: 'player_rush_yds',
-    player_receiving_yards: 'player_reception_yds' },
+    player_receiving_yards: 'player_reception_yds', player_receptions: 'player_receptions',
+    'player_passing_+_rushing_yards': 'pass_plus_rush_yds', player_passing_touchdowns: 'player_pass_tds',
+    player_passing_attempts: 'player_pass_attempts', player_passing_completions: 'player_pass_completions',
+    player_rushing_attempts: 'player_rush_attempts' },
   MLB: { player_hits: 'batter_hits', 'player_hits_+_runs_+_rbis': 'batter_hits_runs_rbis', player_home_runs: 'batter_home_runs',
     player_total_bases: 'batter_total_bases', player_walks: 'batter_walks', player_rbis: 'rbis', player_runs: 'runs',
     player_strikeouts: 'pitcher_strikeouts', player_singles: 'singles', player_doubles: 'doubles',
@@ -38,14 +41,31 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
     player_walks_allowed: 'walks_allowed', player_pitching_outs: 'pitching_outs' },
   NBA: basketball, WNBA: basketball,
   NHL: { player_shots_on_goal: 'shots_on_goal', player_points: 'points', player_saves: 'saves', player_assists: 'assists',
-    player_goals: 'goals', player_blocked_shots: 'blocked_shots', player_power_play_points: 'power_play_points' },
+    player_goals: 'goals', player_blocked_shots: 'blocked_shots', player_power_play_points: 'power_play_points',
+    anytime_goal_scorer: 'goals' },
   // Hard Rock's "player total games" is the games that player wins (market "team_total", lines 7.5–13.5), the same stat as
   // DraftKings' "games won"; DraftKings' own "player total games" (4.5, 7.5) is a set stat and is left out (bookMarket).
   TENNIS: { player_total_games: 'games_won', player_games_won: 'games_won', player_aces: 'aces',
     player_double_faults: 'double_faults' },
   SOCCER: { player_shots: 'shots', player_shots_on_target: 'sot', player_assists: 'assists', player_goals: 'goals',
-    player_fouls: 'fouls', player_saves: 'goalie_saves' },
+    player_fouls: 'fouls', player_saves: 'goalie_saves', anytime_goal_scorer: 'goals' },
 };
+
+/** Yes/no scorer markets: "Yes" is the over of 0.5 (one or more), "No" the under. */
+const scorerMarkets = new Set(['anytime_goal_scorer', 'anytime_touchdown_scorer']);
+
+/**
+ * Turns a yes/no scorer row (audit 2026-10-06: NHL goals were unpriced because books list them only as "anytime goal scorer")
+ * into the over/under of 0.5 every other function reads. Other rows pass through unchanged.
+ */
+export function normalizeRow(value: unknown): unknown {
+  const row = value as Row;
+  if (!scorerMarkets.has(String(row.market_type))) return value;
+  const side = String(row.selection_type).toLowerCase();
+  const selection = side === 'yes' || side === 'over' ? 'over' : side === 'no' || side === 'under' ? 'under' : null;
+  if (!selection || (row.line !== null && row.line !== undefined && row.line !== 0.5)) return value;
+  return { ...row, selection_type: selection, line: 0.5 };
+}
 
 /** A row's CrownIQ market key, with the few book-specific exceptions (see TENNIS above). */
 function bookMarket(sport: Sport, book: string, type: string): string | undefined {
@@ -308,7 +328,7 @@ export class SharpPropsFeed {
           if (response.status === 404 || response.status === 400) break; // league not offered
           if (!response.ok) throw new Error(`SHARPAPI_HTTP_${response.status}`);
           const body = await response.json() as { data?: unknown[]; pagination?: { has_more?: boolean; next_cursor?: string } };
-          (props ? rows : gameRows).push(...(body.data ?? []));
+          (props ? rows : gameRows).push(...(body.data ?? []).map(normalizeRow));
           if (!body.pagination?.has_more || !body.pagination.next_cursor) break;
           cursor = body.pagination.next_cursor;
         }
@@ -349,6 +369,9 @@ export class SharpPropsFeed {
       const key = `${sport}:${String(row.market_type)}`;
       unmapped.set(key, (unmapped.get(key) ?? 0) + 1);
     }
+    const scorer = bookRows.find((value) => scorerMarkets.has(String((value as Row).market_type))) as Row | undefined;
+    if (scorer) console.log(`[sharp-audit] scorer sample: ${JSON.stringify({ book: scorer.sportsbook, league: scorer.league,
+      market: scorer.market_type, selection: scorer.selection_type, line: scorer.line, p: scorer.odds_probability })}`);
     if (unmapped.size) console.log(`[sharp-audit] unmapped player markets: ${[...unmapped].sort((x, y) => y[1] - x[1]).slice(0, 30)
       .map(([key, count]) => `${key}(${count})`).join(' ')}`);
   }
