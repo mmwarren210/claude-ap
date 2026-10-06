@@ -339,7 +339,7 @@ export function priceBoard(input: PricingInput): PricingResult {
         key: key + '|' + threshold, lineId: best.line.id, oppositeLineId: opposite?.line.id ?? null,
         sport: best.line.sport, league: best.line.league, eventId: best.line.eventId,
         eventName: best.line.eventName, eventStartTime: best.line.eventStartTime,
-        playerId: best.line.playerId, playerName: best.line.playerName, market: best.line.market,
+        playerId: best.line.playerId, playerName: best.line.playerName, team: best.line.team ?? null, market: best.line.market,
         threshold, lineType: best.line.lineType, side,
         probability: round(p), pushProbability: round(outcome.push), oppositeProbability: round(1 - p),
         breakEven: round(best.breakEven), edge: edge === null ? null : round(edge),

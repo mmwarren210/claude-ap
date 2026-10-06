@@ -3,7 +3,7 @@ import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises
 import { dirname } from 'node:path';
 import type { BoardResponse, EdgeBoardPage, EdgeBoardResponse, EdgeBoardRow, EdgeEntry, EdgePick, EdgePlatform, EdgeSlip, Payouts,
   PlayableDirection, PropLine } from '@crowniq/contracts';
-import { backtestProjection, buildSlips, describeEntry, EDGE_MODEL_VERSION, entriesFromTables, evaluateSlip, fitCalibration,
+import { backtestProjection, buildSlips, describeEntry, EDGE_MODEL_VERSION, entriesFromTables, evaluateSlip, fitCalibration, suggestSwap,
   forecastReport, marketProfiles, parlayEntries, priceBoard, profileFor } from '@crowniq/edge';
 import { rankScore } from '@crowniq/edge';
 import type { CalibrationModel, EntryDefinition, SidePayout, StatRow, UnpricedLine } from '@crowniq/edge';
@@ -328,7 +328,9 @@ export class EdgeService {
       // Projection 2.0 inputs: today's game environment, and the back-to-back effect learned hourly from the game rows.
       const environment = new GameEnvironment(await this.options.gameLines?.().catch(() => []) ?? []);
       if (Date.now() - this.rest.at > 3600_000 && rows.size)
-        this.rest = { at: Date.now(), effects: restEffects([...rows].map(([key, list]) => ({ sport: key.split('|')[0]!, rows: dedupeRows(list) }))) };
+        this.rest = { at: Date.now(), effects: restEffects((function* () {
+          for (const [key, list] of rows) yield { sport: key.split('|')[0]!, rows: dedupeRows(list) };
+        })()) };
       console.log(`[edge-p5] environment ${JSON.stringify(environment.summary())}, rest effects ${JSON.stringify(Object.fromEntries(
         [...this.rest.effects].map(([key, effect]) => [key, Number(effect.coefficient.toFixed(3))])))}, honesty ${JSON.stringify(Object.fromEntries(this.honestyWeights))}`);
       const lastGame = new Map([...rows].map(([key, list]) => [key, list.reduce((latest, row) => Math.max(latest, Date.parse(row.occurredAt)), 0)]));
@@ -568,10 +570,12 @@ export function viewPicks(snapshot: EdgeSnapshot, view: EdgeView, filters: { spo
   return picks.slice(0, filters.limit);
 }
 
-export function customSlip(snapshot: EdgeSnapshot, entry: EdgeEntry, lineIds: readonly string[]): EdgeSlip | null {
+export function customSlip(snapshot: EdgeSnapshot, entry: EdgeEntry, lineIds: readonly string[], nowMs = Date.now()): EdgeSlip | null {
   const legs = lineIds.map((id) => pickForLine(snapshot, id));
   if (legs.some((leg) => !leg)) return null;
-  return evaluateSlip(entry, legs as EdgePick[], { minEvents: snapshot.minEvents });
+  const slip = evaluateSlip(entry, legs as EdgePick[], { minEvents: snapshot.minEvents });
+  const suggestion = suggestSwap(entry, legs as EdgePick[], snapshot.response.picks, { minEvents: snapshot.minEvents, nowMs });
+  return suggestion ? { ...slip, suggestion } : slip;
 }
 
 export type EdgeBoardFilter = 'all' | 'picks' | 'no_read';

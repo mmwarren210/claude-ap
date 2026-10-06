@@ -66,7 +66,8 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     const body = z.object({ platform: platformSchema, type: z.enum(['POWER', 'FLEX', 'PARLAY']), size: z.number().int().min(2).max(20),
       count: z.number().int().min(1).max(10).default(3), sport: z.string().trim().min(1).max(20).optional(),
       from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(),
-      maxPerGame: z.number().int().min(1).max(3).default(2), maxLegUses: z.number().int().min(1).max(5).default(1) })
+      maxPerGame: z.number().int().min(1).max(3).default(2), maxLegUses: z.number().int().min(1).max(5).default(1),
+      objective: z.enum(['ev', 'growth']).default('ev') })
       .strict().safeParse(request.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_GEN_REQUEST' });
     const snapshot = await edge.snapshot(body.data.platform);
@@ -77,7 +78,7 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     const slips = generateEntries(snapshot.response.picks, entry, { count: body.data.count, nowMs,
       ...(body.data.sport ? { sport: body.data.sport } : {}),
       ...(body.data.from ? { from: Date.parse(body.data.from) } : {}), ...(body.data.to ? { to: Date.parse(body.data.to) } : {}),
-      maxPerEvent: body.data.maxPerGame, maxLegUses: body.data.maxLegUses, minEvents: snapshot.minEvents });
+      maxPerEvent: body.data.maxPerGame, maxLegUses: body.data.maxLegUses, minEvents: snapshot.minEvents, objective: body.data.objective });
     const pool = snapshot.response.picks.filter((pick) => pick.edge !== null && pick.edge > 0 && pick.rating !== 'NONE' &&
       Date.parse(pick.eventStartTime) > nowMs && (!body.data.sport || pick.sport === body.data.sport) &&
       (!body.data.from || Date.parse(pick.eventStartTime) >= Date.parse(body.data.from)) &&
@@ -88,7 +89,10 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
       : 'Not enough +EV legs across two or more games for this entry right now.');
     notes.push(body.data.platform === 'draftkings' || body.data.platform === 'hardrock'
       ? 'A parlay pays the legs’ odds multiplied together and only if every leg wins; each leg also works as a single bet. Same-game legs are correlated.'
-      : 'Payouts are the app’s published chart as CrownIQ keeps it, times each pick’s own multiplier; confirm in the app. Same-game legs are correlated.');
+      : 'Payouts are the app’s published chart as CrownIQ keeps it, times each pick’s own multiplier; confirm in the app.');
+    notes.push('Same-game legs are priced with CrownIQ’s prior correlations (QB + receiver +0.35, teammates’ points −0.05, ' +
+      'pitcher strikeouts vs opposing hitters −0.15, any two in one game +0.05).');
+    if (body.data.objective === 'growth') notes.push('Built for long-run bankroll growth (Kelly): favours steadier entries over the highest EV.');
     return { modelVersion: EDGE_MODEL_VERSION, builtAt: new Date(nowMs).toISOString(), pool, slips, notes };
   });
 
@@ -123,7 +127,7 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     if (!snapshot) return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
     const entry = snapshot.response.entries.find((item) => item.type === body.data.type && item.size === body.data.lineIds.length);
     if (!entry) return reply.code(422).send({ code: 'ENTRY_UNSUPPORTED' });
-    const slip = customSlip(snapshot, entry, body.data.lineIds);
+    const slip = customSlip(snapshot, entry, body.data.lineIds, now().getTime());
     return slip ? { slip } : reply.code(422).send({ code: 'EDGE_LINE_UNPRICED' });
   });
 

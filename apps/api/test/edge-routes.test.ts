@@ -75,6 +75,10 @@ test('Edge routes: every line read or No read, leave-one-out, Gen, slips and own
       payload: { type: 'POWER', size: 2, count: 2 } })).json());
     assert.ok(gen.slips.length >= 1);
     assert.ok(gen.slips.every((slip) => new Set(slip.legs.map((leg) => leg.eventId)).size >= 2));
+    const growth = edgeGenResponseSchema.parse((await app.inject({ method: 'POST', url: '/v1/edge/gen',
+      payload: { type: 'POWER', size: 2, count: 2, objective: 'growth' } })).json());
+    assert.ok(growth.slips.every((slip) => (slip.kellyFraction ?? 0) > 0 && (slip.growth ?? 0) > 0));
+    assert.ok(growth.notes.some((note) => note.includes('Kelly')));
 
     const slip = await app.inject({ method: 'POST', url: '/v1/edge/slip', payload: { type: 'POWER', lineIds: ['line-0', 'line-2'] } });
     assert.equal(slip.statusCode, 200);

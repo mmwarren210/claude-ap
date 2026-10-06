@@ -104,7 +104,10 @@ test('DK Pick’em gimme and unconfirmed payouts: a chance, never an edge', () =
 test('sportsbook parlays: all legs must hit and pay the product of the odds; one game is allowed', () => {
   const [two] = parlayEntries(8).map(describeEntry);
   const slip = evaluateSlip(two!, [leg('a', .55, { payoutMultiplier: 2 }), leg('b', .5, { payoutMultiplier: 2.2, eventId: 'e-a' })], { minEvents: 1 });
-  assert.ok(Math.abs(slip.expectedReturn - .55 * .5 * 4.4) < 1e-6);
+  // Same game, both overs on volume stats: the +0.05 game-total prior lifts the all-hit chance a little.
+  assert.ok(Math.abs(slip.independentExpectedReturn! - .55 * .5 * 4.4) < 1e-6);
+  assert.ok(slip.expectedReturn > slip.independentExpectedReturn! && slip.expectedReturn < slip.independentExpectedReturn! * 1.05);
+  assert.match(slip.correlationNote!, /Same game total: \+\d\.\d% EV vs independent/);
   assert.ok(!slip.warnings.some((warning) => warning.includes('two teams')));
   const built = generateEntries([leg('a', .55, { payoutMultiplier: 2 }), leg('b', .5, { payoutMultiplier: 2.2 })], two!,
     { nowMs: now.getTime(), minEvents: 1 });

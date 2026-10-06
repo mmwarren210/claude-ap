@@ -23,6 +23,7 @@ export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: reado
   const type = types.includes(chosenType) ? chosenType : types[0] ?? 'POWER';
   const [chosenSize, setSize] = useState(3);
   const [count, setCount] = useState(3);
+  const [objective, setObjective] = useState<'ev' | 'growth'>('ev');
   const [sport, setSport] = useState<string | null>(null);
   // The game day to build from (today, else the soonest day with games; "All days" turns it off).
   const [picked, setPicked] = useState<string | null>(null);
@@ -37,7 +38,7 @@ export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: reado
     setBusy(true);
     try {
       const response = await request('/v1/edge/gen', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ platform, type, size, count, ...(sport ? { sport } : {}), ...dayWindow(day) }) });
+        body: JSON.stringify({ platform, type, size, count, objective, ...(sport ? { sport } : {}), ...dayWindow(day) }) });
       if (!response.ok) { setResult({ data: null, message: response.status === 422 ? 'That entry size has no payout table configured.' : 'Could not generate entries.' }); return; }
       setResult({ data: edgeGenResponseSchema.parse(await response.json()), message: '' });
     } catch { setResult({ data: null, message: 'Could not generate entries.' }); }
@@ -51,7 +52,7 @@ export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: reado
     edgeSlip.set(picks.filter((pick): pick is EdgePick => !!pick));
   };
   return <View style={styles.wrap}>
-    <Text style={styles.intro}>Builds entries from Edge&apos;s own +EV reads: one leg per player, at most two per game{book ? '' : ', at least two games'}, and no leg reused across entries.</Text>
+    <Text style={styles.intro}>Builds entries from Edge&apos;s own +EV reads: one leg per player, at most two per game{book ? '' : ', at least two games'}, and no player reused across entries. Same-game legs are priced with their correlation.</Text>
     <Label text="ENTRY" />
     {types.length > 1 && <Chips options={types.map((value) => ({ key: value, label: value === 'PARLAY' ? 'Parlay'
       : value === 'POWER' ? platform === 'underdog' ? 'Standard' : 'Power' : 'Flex' }))} value={type} onChange={setType} />}
@@ -62,6 +63,8 @@ export function EdgeGenView({ entries, sports, nowMs, starts }: { entries: reado
       .map(([hits, payout]) => `${hits}/${entry.size}: ${usd(payout * stake)}`).join(', ')}{platform === 'underdog' ? ' (times each pick’s multiplier)' : ''} · each leg needs {pct(entry.breakEven)} to break even</Text>)}
     <Label text="HOW MANY" />
     <Chips options={[1, 2, 3, 5].map((value) => ({ key: value, label: String(value) }))} value={count} onChange={setCount} />
+    <Label text="BUILD FOR" />
+    <Chips options={[{ key: 'ev' as const, label: 'Most EV' }, { key: 'growth' as const, label: 'Steady growth (Kelly)' }]} value={objective} onChange={setObjective} />
     <Label text="WHEN" />
     <DayPicker days={days} day={day} nowMs={nowMs} onChange={setPicked} />
     {sports.length > 1 && <><Label text="SPORT" />

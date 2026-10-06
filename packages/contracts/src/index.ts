@@ -334,6 +334,8 @@ export const edgePickSchema = z.object({
   sport: sportSchema, league: identifier,
   eventId: identifier, eventName: identifier, eventStartTime: timestamp,
   playerId: identifier, playerName: identifier,
+  /** The player's team when the app lists it (same-game correlation uses it). */
+  team: z.string().nullable().optional(),
   market: identifier, threshold: z.number().finite(),
   lineType: lineTypeSchema,
   side: playableDirectionSchema,
@@ -400,6 +402,17 @@ export const edgeSlipSchema = z.object({
   hitDistribution: z.array(probability),
   sameGameLegs: z.number().int().nonnegative(),
   warnings: z.array(z.string()),
+  /** Same-game pairs CrownIQ prices as correlated (spec §7), and the EV the independent closed form would give. */
+  correlatedPairs: z.array(z.object({ a: identifier, b: identifier, rho: z.number().min(-1).max(1), label: z.string() })).optional(),
+  independentExpectedReturn: z.number().nonnegative().finite().optional(),
+  correlationNote: z.string().optional(),
+  /** Kelly fraction of bankroll for this entry alone and its expected log growth per entry. */
+  kellyFraction: z.number().min(0).max(1).optional(),
+  growth: z.number().finite().optional(),
+  /** The single swap that adds the most EV (custom slip checker). */
+  suggestion: z.object({ replaceLineId: identifier, replacePlayerName: z.string(), lineId: identifier, playerName: z.string(),
+    market: identifier, threshold: z.number().finite(), side: playableDirectionSchema, expectedReturn: z.number().finite(),
+    gain: z.number().finite() }).optional(),
 });
 export const edgeBoardResponseSchema = z.object({
   modelVersion: identifier,

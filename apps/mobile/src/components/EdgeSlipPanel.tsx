@@ -38,6 +38,9 @@ export function SlipSummary({ slip, title }: { slip: EdgeSlip; title?: string })
       {usd(stake)} entry · expected back {usd(dollars.back)} ({profit >= 0 ? '+' : ''}{usd(profit)} on average)</Text>
     <Text style={styles.small}>All legs hit {pct(slip.allHitProbability)} · pays {dollars.payouts
       .map((payout) => `${payout.hits}/${slip.entry.size}: ${usd(payout.amount * boost)}`).join(', ')}</Text>
+    {slip.correlationNote ? <Text style={styles.small}>🔗 {slip.correlationNote}</Text> : null}
+    {slip.kellyFraction ? <Text style={styles.small}>Long-run sizing (Kelly): at most {pct(slip.kellyFraction)} of your bankroll on this entry.</Text> : null}
+    {slip.suggestion ? <Text style={styles.tip}>💡 Swap {slip.suggestion.replacePlayerName} for {slip.suggestion.playerName} {slip.suggestion.side} {formatLine(slip.suggestion.threshold)} {marketLabel(slip.suggestion.market)} to add {usd(slip.suggestion.gain * stake)} expected ({pct(slip.suggestion.gain)} of the entry).</Text> : null}
     {slip.warnings.map((warning) => <Text key={warning} style={styles.warning}>⚠ {warning}</Text>)}
   </View>;
 }
@@ -83,7 +86,7 @@ export function EdgeSlipPanel({ entries }: { entries: readonly EdgeEntry[] }) {
     {current?.slip && <SlipSummary slip={current.slip} title="EXPECTED VALUE" />}
     {current?.message ? <Text style={styles.warning}>{current.message}</Text> : null}
     <Text style={styles.small}>{isBook(platform) ? 'A parlay pays only if every leg wins; each leg also works as a single bet.'
-      : `Payouts are ${platformLabel(platform)}’s chart as CrownIQ keeps it; confirm in the app.`} Same-game legs are correlated.</Text>
+      : `Payouts are ${platformLabel(platform)}’s chart as CrownIQ keeps it; confirm in the app.`} Same-game legs are priced with CrownIQ’s prior correlations.</Text>
   </View>;
 }
 
@@ -106,4 +109,5 @@ const styles = StyleSheet.create({
   ev: { fontSize: 15, fontWeight: '900', marginTop: 2 },
   small: { color: palette.muted, fontSize: 11, lineHeight: 16 },
   warning: { color: palette.danger, fontSize: 11 },
+  tip: { color: palette.green, fontSize: 12, fontWeight: '700', lineHeight: 17 },
 });

@@ -240,3 +240,27 @@ stats source. The sportsbook (market) source is never changed.
   weights are in `status.honesty`.
 - **Not built:** opponent defense (§5.2), usage when a teammate is out (§5.3) and minutes mixtures (§5.4) all need the team
   and opponent on each game row. CrownIQ's history rows don't carry those yet.
+
+### P6 (2026-10-06): correlated slips, builder, slip checker
+
+`packages/edge/src/correlation.ts`, used by `evaluateSlip`, `generateEntries` and `suggestSwap`.
+- **Priors (§7.1)**, used only for legs from the same game (a LESS side flips the sign):
+  - QB passing ↔ his own receivers: +0.35.
+  - Same-team NBA points ↔ points: −0.05.
+  - Pitcher strikeouts ↔ opposing hitters' hits: −0.15.
+  - Pitcher hits or runs allowed ↔ opposing hitters: +0.15.
+  - Any other two volume stats in one game: +0.05 (shared game total).
+  - Learning the loadings from residuals needs game and team on the history rows, which CrownIQ doesn't have yet. Picks now
+    carry `team` for the team rules.
+- **Simulation (§7.2):** a Gaussian copula with 20k seeded draws. A leg hits when its draw is below Φ⁻¹(p), so each leg keeps
+  its own chance. The same draws, uncorrelated, act as a control variate against the exact Poisson-binomial distribution:
+  unbiased, much less noisy, and identical to the closed form at zero correlation. A slip with no correlated pair uses the
+  closed form directly. Payouts use the app's chart times each leg's multiplier, as before.
+- Every slip carries `kellyFraction` and `growth`. A slip with same-game pairs also carries `correlatedPairs`,
+  `independentExpectedReturn` and a note such as "QB + receiver stack: +4.1% EV vs independent".
+- **Builder (§7.3):** greedy fill, then up to 3 rounds of single-leg swaps from the 30 strongest unused legs, scored by EV or
+  Kelly log growth (Gen's "Build for" choice, `objective: 'ev' | 'growth'`). Swaps keep the rules: one leg per player, the
+  per-game cap, two or more games on pick'em apps, and `maxLegUses` as a per-player exposure cap across entries. Entries
+  over 8 legs keep the greedy fill.
+- **Slip checker (§7.4):** `POST /v1/edge/slip` returns the EV, the hit distribution, the correlation-adjusted all-hit chance,
+  and `suggestion`: the single swap that adds the most EV (≥ 0.5% of the stake), shown in USD.
