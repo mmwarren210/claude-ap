@@ -291,7 +291,12 @@ export function priceBoard(input: PricingInput): PricingResult {
       const unbacked = best.payout.kind === 'ODDS' && !market;
       // A book's far rungs sit in the distribution's tail, where Edge's estimate is least reliable: shown, not ranked, until
       // the track record (CLV, calibration) shows the tails hold up.
-      const tail = best.payout.kind === 'ODDS' && Math.abs(threshold - dist.mean) > 1.5 * Math.sqrt(dist.variance);
+      const sd = Math.sqrt(dist.variance);
+      // Yardage is right-skewed and Edge prices it with a symmetric normal: away from the numbers other books actually post,
+      // the normal understates big games (high-rung unders look too good). Those rungs aren't ranked either.
+      const nearestQuote = paired.reduce((best, item) => Math.min(best, Math.abs(item.quote.point - threshold)), Infinity);
+      const skewed = best.payout.kind === 'ODDS' && profile.family === 'NORMAL' && /yds|yards/.test(first.market) && nearestQuote > .75 * sd;
+      const tail = best.payout.kind === 'ODDS' && (Math.abs(threshold - dist.mean) > 1.5 * sd || skewed);
       const edge = best.edge;
       const adjusted = edge === null || review || unbacked || tail ? null : edge * tierFactor[tier];
       const rating = adjusted === null ? 'NONE' : adjusted >= .07 ? 'ELITE' : adjusted >= .045 ? 'STRONG'
@@ -329,7 +334,9 @@ export function priceBoard(input: PricingInput): PricingResult {
         if (honesty < .95) warnings.push(`The stats model counts less on this stat (${Math.round(honesty * 100)}% weight): it hasn’t matched the books on graded picks.`);
       }
       if (ladder && !isRegular && !market) reasons.push(`Priced from the ${appName} regular line ${fmt(ladder.regularThreshold)} using the ${profile.family === 'NORMAL' ? 'normal' : 'count'} distribution.`);
-      if (tail && !unbacked) warnings.push('A far rung of the book’s ladder (more than 1.5 SD from Edge’s projection): shown but not ranked yet.');
+      if (tail && !unbacked) warnings.push(skewed && Math.abs(threshold - dist.mean) <= 1.5 * sd
+        ? 'A yardage rung away from where other books price it: Edge’s curve is least reliable there (yardage is skewed), so it’s shown but not ranked.'
+        : 'A far rung of the book’s ladder (more than 1.5 SD from Edge’s projection): shown but not ranked yet.');
       if (unbacked) warnings.push('No other sportsbook prices this player and stat: a stats-only read against the book’s odds is shown but not ranked.');
       if (review) warnings.push(`Held for review: a ${pct(edge!)} edge is bigger than real edges get; usually the sources disagree on the stat or game.`);
       if (best.payout.kind === 'ENTRY' && best.payout.blocked) warnings.push(best.payout.blocked);

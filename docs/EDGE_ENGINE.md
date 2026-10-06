@@ -280,6 +280,7 @@ Fixed or added in the audit:
   - Weights are inverse-variance, shrunk to the prior with 200 scores, per sport; a per-market override applies at 300+.
   - Refit daily, saved as `edge-book-weights-v1.json`, shown in `status.bookWeights`.
 - **§2.4:** a quote older than the books' latest move (movement tracker) counts 4× less.
+- **Yardage skew guard:** Hard Rock showed 1,143 of 1,808 +EV bets at odds under 1.70, mostly NFL unders. A symmetric normal understates big yardage games, so a book rung more than 0.75 SD from any number other books post is shown but not ranked.
 - **§4:** ¼ Kelly is capped at 6% per game; a game's bets are scaled together.
 - **§5:**
   - Rest effects now read box-score stats, not just stored market values. Before this they learned nothing from most rows.

@@ -139,3 +139,17 @@ test('freshness: a quote from before the books’ latest move counts 4× less', 
   const over = (pick: typeof plain) => pick.side === 'MORE' ? pick.probability : 1 - pick.probability;
   assert.ok(over(moved) > over(plain) + .01, 'the post-move FanDuel over dominates once the older DraftKings under is discounted');
 });
+
+test('a yardage rung far from any other book’s number is shown but not ranked (skew guard)', () => {
+  const yards = (id: string, threshold: number) => line(id, threshold, { sport: 'NFL', league: 'NFL', market: 'player_reception_yds' });
+  const q = (point: number): MarketQuote => ({ ...quote('fanduel', 1.91, 1.91), sport: 'NFL', market: 'player_reception_yds', point,
+    sourceMarketKey: 'player_reception_yds' });
+  // Books price 60.5; Hard Rock's 92.5 rung (about 0.9 SD up) offers the under at 1.35.
+  const priced = priceBoard({ lines: [yards('far', 92.5)], quotes: [q(60.5), { ...q(60.5), bookmaker: 'betrivers' }], now,
+    sidePayout: (_line, side) => ({ kind: 'ODDS', decimal: side === 'LESS' ? 1.35 : 3 }) });
+  const far = priced.picks[0]!;
+  assert.equal(far.side, 'LESS');
+  assert.ok(far.ev! > 0, 'the normal says the under is +EV');
+  assert.equal(far.rating, 'NONE', 'but it is not ranked');
+  assert.ok(far.warnings.some((warning) => warning.includes('yardage rung')));
+});
