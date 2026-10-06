@@ -340,6 +340,10 @@ export function priceBoard(input: PricingInput): PricingResult {
       if (unbacked) warnings.push('No other sportsbook prices this player and stat: a stats-only read against the book’s odds is shown but not ranked.');
       if (review) warnings.push(`Held for review: a ${pct(edge!)} edge is bigger than real edges get; usually the sources disagree on the stat or game.`);
       if (best.payout.kind === 'ENTRY' && best.payout.blocked) warnings.push(best.payout.blocked);
+      if (factor !== null && best.payout.kind === 'ENTRY' && (best.line.lineType === 'GOBLIN' || best.line.lineType === 'DEMON') && !input.sidePayout)
+        warnings.push(`${appName} sets each ${best.line.lineType === 'GOBLIN' ? 'Goblin' : 'Demon'}'s payout separately; Edge assumes ${factor}× ` +
+          `(${best.line.lineType === 'GOBLIN' ? 'from the owner\'s screenshots' : 'the lowest Demon seen, so further Demons pay more'}). ` +
+          `Worth it if the app's factor is at least ${round(reference / p, 2)}×. Power entries only.`);
       if (factor === null && best.line.lineType !== 'REGULAR') warnings.push(
         `${best.line.lineType === 'UNKNOWN_ALTERNATE' ? 'Alternate' : best.line.lineType} payout factor is unknown: worth it only if its payout factor is at least ${round(reference / p, 2)}×.`);
       if (outcome.push > .04) warnings.push(`${pct(outcome.push)} chance of landing exactly on ${fmt(threshold)} (pick is removed).`);

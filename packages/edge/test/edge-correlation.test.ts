@@ -101,3 +101,15 @@ test('slip checker suggests the swap that adds the most EV', () => {
   assert.ok(Math.abs(suggestion.gain - 3 * .6 * (.64 - .52)) < .002);
   assert.equal(suggestSwap(power(2, 3), [pool[2]!, pool[1]!], pool, { nowMs: Date.parse(start) - 3600_000 }), null);
 });
+
+test('PrizePicks Goblins and Demons only go into Power entries, never Flex', () => {
+  const goblin = leg('g', .95, { eventId: 'g1', lineType: 'GOBLIN', payoutMultiplier: .7 });
+  const picks = [goblin, leg('a', .66, { eventId: 'g2' }), leg('b', .64, { eventId: 'g3' })];
+  const flex = { type: 'FLEX' as const, size: 2, payouts: { 2: 2, 1: .5 }, label: '2-pick Flex', breakEven: .5 };
+  const [built] = generateEntries(picks, flex, { count: 1, nowMs: Date.parse(start) - 3600_000 });
+  assert.ok(!built!.legs.some((item) => item.lineId === 'g'));
+  const [power] = generateEntries(picks, power2(), { count: 1, nowMs: Date.parse(start) - 3600_000 });
+  assert.ok(power!.legs.some((item) => item.lineId === 'g'), '0.95 × 0.7 still beats the regulars in Power');
+  assert.ok(evaluateSlip(flex, [goblin, picks[1]!]).warnings.some((warning) => warning.includes('Play them in Power')));
+});
+const power2 = () => ({ type: 'POWER' as const, size: 2, payouts: { 2: 3 }, label: '2-pick Power', breakEven: Math.sqrt(1 / 3) });

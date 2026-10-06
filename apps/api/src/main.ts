@@ -335,10 +335,12 @@ process.on('unhandledRejection', (reason) => {
   console.error('Background task failed:', reason instanceof Error ? reason.message : reason);
 });
 // CrownIQ Edge (Edge 2.0): its own ledger and odds snapshots on the data disk. EDGE_ENGINE=false turns it off.
-// Goblin/Demon payout factors exist only when the owner sets them from the app (EDGE_GOBLIN_FACTOR, EDGE_DEMON_FACTOR);
-// until then those lines get a hit chance but no edge.
+// Goblin/Demon payout factors, read from the owner's PrizePicks screenshots (2026-10-06, 2-pick Power at 3x): a Goblin paid 0.70x
+// and Demons 1.083x, 1.154x and 1.43x (further from the line pays more). PrizePicks sets each one separately, so Goblins use
+// 0.70 and Demons use the lowest Demon seen (1.08) as a floor. EDGE_GOBLIN_FACTOR / EDGE_DEMON_FACTOR override; "off" removes.
+const defaultFactors:Record<string,number>={EDGE_GOBLIN_FACTOR:.7,EDGE_DEMON_FACTOR:1.08};
 const edgeFactor=(name:string)=>{
-  const value=process.env[name];if(!value)return undefined;
+  const value=process.env[name];if(value==='off')return undefined;if(!value)return defaultFactors[name];
   const parsed=Number(value);if(!Number.isFinite(parsed)||parsed<=0||parsed>5)throw new Error('Invalid '+name);
   return parsed;
 };
