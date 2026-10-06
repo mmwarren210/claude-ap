@@ -153,3 +153,21 @@ test('a yardage rung far from any other book’s number is shown but not ranked 
   assert.equal(far.rating, 'NONE', 'but it is not ranked');
   assert.ok(far.warnings.some((warning) => warning.includes('yardage rung')));
 });
+
+test('Goblin/Demon factors from distance to the regular line stay at or under the factors PrizePicks paid', async () => {
+  const { alternateFactorFor, conditionalOver, fitMean, makeDistribution, varianceAt } = await import('../src/index.js');
+  const chance = (sport: string, market: string, regular: number, alt: number) => {
+    const profile = profileFor(sport, market), mean = fitMean(profile.family, profile.variance, regular, .5, profile.discrete);
+    return conditionalOver(makeDistribution(profile.family, mean, varianceAt(profile.variance, mean), profile.discrete), alt);
+  };
+  // Owner's screenshots (2026-10-06): Stokes rebounds regular 7 (Goblin 4.5 paid 0.67x, Demon 12.5 paid 5.4x); Jeanjean total
+  // games regular 20.5 (Demons 21.5 and 25.5 paid 1.154x and 1.43x).
+  const seen: [string, string, number, number, 'GOBLIN' | 'DEMON', number][] = [['WNBA', 'player_rebounds', 7, 4.5, 'GOBLIN', .667],
+    ['WNBA', 'player_rebounds', 7, 12.5, 'DEMON', 5.4], ['TENNIS', 'total_games', 20.5, 21.5, 'DEMON', 1.154], ['TENNIS', 'total_games', 20.5, 25.5, 'DEMON', 1.43]];
+  for (const [sport, market, regular, alt, type, paid] of seen) {
+    const factor = alternateFactorFor(type, chance(sport, market, regular, alt), type === 'GOBLIN' ? .95 : .25, undefined)!;
+    assert.ok(factor <= paid + .02, `${market} ${alt}: ${factor} vs ${paid}`);
+    assert.ok(type === 'GOBLIN' ? factor < 1 && factor > .55 : factor >= 1);
+  }
+  assert.equal(alternateFactorFor('GOBLIN', null, .95, .65), .65, 'no regular on the board: the flat fallback');
+});

@@ -47,6 +47,8 @@ export interface EdgeServiceOptions {
   readonly ledger?: EdgeLedger | null;
   readonly payouts: Payouts;
   readonly alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>;
+  /** Goblin/Demon factor curve exponents (pricing.ts alternateFactorFor). */
+  readonly alternateCurve?: Partial<Record<'GOBLIN' | 'DEMON', number>>;
   /** DK Pick'em has no public payout chart: its entry tables only count once the owner confirms them (EDGE_PICK6_PAYOUTS_CONFIRMED). */
   readonly pick6PayoutsConfirmed?: boolean;
   readonly clock?: () => Date;
@@ -260,7 +262,7 @@ export class EdgeService {
       reports, calibration: prizepicks?.response.calibration ?? null, lastError: this.lastError, weakTiers: [...this.weakTiers],
       honesty: Object.fromEntries(this.honestyWeights), restEffects: Object.fromEntries(this.rest.effects),
       dispersion: this.options.dispersion?.status() ?? null, bookWeights: this.options.bookWeights?.status() ?? null,
-      alternateFactors: this.options.alternateFactors ?? {}, pick6PayoutsConfirmed: !!this.options.pick6PayoutsConfirmed,
+      alternateFactors: this.options.alternateFactors ?? {}, alternateCurve: this.options.alternateCurve ?? {}, pick6PayoutsConfirmed: !!this.options.pick6PayoutsConfirmed,
       entries: Object.fromEntries(EDGE_PLATFORMS.map((platform) => [platform, this.entriesFor(platform).map((entry) => describeEntry(entry))])) };
   }
 
@@ -436,6 +438,7 @@ export class EdgeService {
       statsWeight: (sport, market) => this.honestyWeights.get(`${sport}:${market}`) ?? 1,
       ...(this.options.movement ? { lastMoveAt: (line: PropLine) => this.options.movement!.summary(line.sport, line.playerName, line.market, now.getTime())?.lastMoveAt ?? null } : {}),
       ...(this.options.alternateFactors ? { alternateFactors: this.options.alternateFactors } : {}),
+      ...(this.options.alternateCurve ? { alternateCurve: this.options.alternateCurve } : {}),
       history: (player) => { const list = rows.get(playerKey(player.sport, player.playerName)); return list ? dedupeRows(list) : undefined; },
       values: (line) => values.found.get(`${line.sport}|${line.playerId}|${line.market}`) });
     const picks = this.enrich(set, priced.picks, now, injured, alerts);

@@ -154,7 +154,7 @@ export interface ServerOptions {
   oddsApiQuota?: (() => Promise<{ status: number; remaining: number | null; used: number | null }>) | null;
   /** CrownIQ Edge: a standalone probability engine with its own Top Picks, Board and Gen; never reads or changes GKR. */
   edge?: { enabled?: boolean; ledger?: EdgeLedger | null; snapshots?: SnapshotStore | null;
-    alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>; boxScores?: BoxScoreResults | null;
+    alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>; alternateCurve?: Partial<Record<'GOBLIN' | 'DEMON', number>>; boxScores?: BoxScoreResults | null;
     valuesCacheFile?: string | null; pick6PayoutsConfirmed?: boolean; alertsFile?: string | null;
     staleLogFile?: string | null; dispersion?: DispersionStore | null;
     bookWeights?: BookWeightStore | null } | null;
@@ -1232,6 +1232,7 @@ export function buildServer(options: ServerOptions = {}) {
     appBoards:options.scrapedLines??null,pick6PayoutsConfirmed:options.edge.pick6PayoutsConfirmed===true,
     history:options.internalHistory??null,values:(line)=>historyReads.valuesFor(line),ledger:options.edge.ledger??null,
     payouts:options.payouts??DEFAULT_PAYOUTS,...(options.edge.alternateFactors?{alternateFactors:options.edge.alternateFactors}:{}),
+    ...(options.edge.alternateCurve?{alternateCurve:options.edge.alternateCurve}:{}),
     valuesCacheFile:options.edge.valuesCacheFile??null,movement,snapshots:options.edge.snapshots??null,
     alertsFile:options.edge.alertsFile??null,staleLogFile:options.edge.staleLogFile??null,dispersion:options.edge.dispersion??null,bookWeights:options.edge.bookWeights??null,
     injuries:options.contextFeeds?async()=>(await options.contextFeeds!.items<InjuryNote>('injuries')).items:null,

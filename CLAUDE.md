@@ -107,7 +107,8 @@
   (edge null until `EDGE_PICK6_PAYOUTS_CONFIRMED`), DraftKings and Hard Rock, each against its own payout (leave-one-out). Snapshot store
   in `node:sqlite`. `EDGE_ENGINE=false` turns it off. P3–P6 (movement/stale, evaluation, projection 2.0, correlated slips) and the
   spec audit are live. Learned files in `${CROWNIQ_DATA_DIR}/edge/`: `edge-dispersion-v1.json`, `edge-book-weights-v1.json`, refit
-  daily. PrizePicks Goblin 0.70x and Demon floor 1.08x come from the owner's screenshots (Power only; never in PrizePicks Flex).
+  daily. PrizePicks Goblin/Demon factors are estimated per line from its distance to the regular line, fitted conservatively
+  to the owner's screenshots (Goblins 0.67–0.83x, Demons 1.08–5.4x seen); Power only, never in PrizePicks Flex.
   DK Pick'em payouts are the owner-set minimum floors (edges on; `EDGE_PICK6_PAYOUTS_CONFIRMED=false` turns them off).
   Owner diagnostics: `/v1/owner/edge/status|health|backtest|stale`.
 - **Tips** (`apps/api/src/tips.ts`, `claude-tips.ts`, the app's Tips tab): members upload a screenshot or paste picks from paid

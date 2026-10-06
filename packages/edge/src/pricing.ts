@@ -27,6 +27,12 @@ export interface PricingInput {
   readonly calibration?: CalibrationModel | null;
   /** Owner-verified payout factors for non-standard lines; absent means unknown payout. */
   readonly alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>;
+  /**
+   * Goblin/Demon factor curves: when the player's regular line is on the board, each Goblin/Demon's factor is estimated as
+   * (0.5 ÷ P)^k, where P is the chance of clearing it if the regular line were a coin flip. alternateFactors is then the
+   * fallback for lines without a regular. Fitted to the owner's PrizePicks screenshots, conservatively (see alternateFactorFor).
+   */
+  readonly alternateCurve?: Partial<Record<'GOBLIN' | 'DEMON', number>>;
   /** The platform whose lines these are (default PrizePicks). */
   readonly platform?: EdgePlatform;
   /** A player's recent values for a line's stat (newest first), for stats without full game rows. */
@@ -143,6 +149,16 @@ const fmt = (value: number) => Number.isInteger(value) ? String(value) : value.t
 const pct = (value: number) => (value * 100).toFixed(1) + '%';
 
 /** Price every PrizePicks line on the board as a calibrated hit probability. */
+/**
+ * A Goblin/Demon's payout factor: (0.5 ÷ P)^k when P (the chance of clearing it with the regular line as a coin flip) and a
+ * curve exponent are known, else the flat fallback. Goblins are kept in [0.4, 1] and Demons in [1, 5].
+ */
+export function alternateFactorFor(type: 'GOBLIN' | 'DEMON', chance: number | null, exponent: number | undefined, fallback: number | undefined): number | null {
+  if (chance === null || exponent === undefined) return fallback ?? null;
+  const raw = (.5 / clamp(chance, .01, .99)) ** exponent;
+  return round(type === 'GOBLIN' ? clamp(raw, .4, 1) : clamp(raw, 1, 5), 2);
+}
+
 export function priceBoard(input: PricingInput): PricingResult {
   const entries = (input.entries?.length ? input.entries : defaultEntries).map((entry) => describeEntry(entry));
   const referenceEntry = entries.reduce((best, entry) => entry.breakEven < best.breakEven ? entry : best);
@@ -234,6 +250,13 @@ export function priceBoard(input: PricingInput): PricingResult {
     const honesty = stats ? clamp(input.statsWeight?.(first.sport, first.market) ?? 1, .05, 1) : 1;
     const statSource: Source | null = stats ? { mean: stats.mean, se: stats.standardError / Math.sqrt(honesty) } : null;
 
+    // The regular line as a coin flip, for estimating each Goblin/Demon's payout factor from how far it sits from it.
+    const regularDist = regular !== null ? (() => { const mean = fitMean(profile.family, profile.variance, regular, .5, profile.discrete);
+      return makeDistribution(profile.family, mean, varianceAt(profile.variance, mean), profile.discrete); })() : null;
+    const altFactor = (line: PropLine, side: PlayableDirection) => line.lineType !== 'GOBLIN' && line.lineType !== 'DEMON' ? null
+      : alternateFactorFor(line.lineType, regularDist && input.alternateCurve?.[line.lineType] !== undefined
+        ? (side === 'MORE' ? conditionalOver(regularDist, line.threshold) : 1 - conditionalOver(regularDist, line.threshold)) : null,
+      input.alternateCurve?.[line.lineType], input.alternateFactors?.[line.lineType]);
     let ladder: (Source & { regularThreshold: number }) | null = null;
     if (regular !== null) {
       const mean = fitMean(profile.family, profile.variance, regular, .5, profile.discrete);
@@ -268,8 +291,7 @@ export function priceBoard(input: PricingInput): PricingResult {
       const sides = thresholdLines.map((line) => line.availableDirections.map((side) => ({ line, side })))
         .flat();
       const payoutOf = (line: PropLine, side: PlayableDirection): SidePayout => input.sidePayout?.(line, side)
-        ?? { kind: 'ENTRY', multiplier: line.lineType === 'REGULAR' ? 1
-          : line.lineType === 'GOBLIN' || line.lineType === 'DEMON' ? input.alternateFactors?.[line.lineType] ?? null : null };
+        ?? { kind: 'ENTRY', multiplier: line.lineType === 'REGULAR' ? 1 : altFactor(line, side) };
       const scored = sides.map(({ line, side }) => {
         const probability = applyCalibration(input.calibration, line.sport, side === 'MORE' ? over : 1 - over);
         const payout = payoutOf(line, side);
@@ -341,8 +363,8 @@ export function priceBoard(input: PricingInput): PricingResult {
       if (review) warnings.push(`Held for review: a ${pct(edge!)} edge is bigger than real edges get; usually the sources disagree on the stat or game.`);
       if (best.payout.kind === 'ENTRY' && best.payout.blocked) warnings.push(best.payout.blocked);
       if (factor !== null && best.payout.kind === 'ENTRY' && (best.line.lineType === 'GOBLIN' || best.line.lineType === 'DEMON') && !input.sidePayout)
-        warnings.push(`${appName} sets each ${best.line.lineType === 'GOBLIN' ? 'Goblin' : 'Demon'}'s payout separately; Edge assumes ${factor}× ` +
-          `(${best.line.lineType === 'GOBLIN' ? 'from the owner\'s screenshots' : 'the lowest Demon seen, so further Demons pay more'}). ` +
+        warnings.push(`${appName} sets each ${best.line.lineType === 'GOBLIN' ? 'Goblin' : 'Demon'}'s payout separately; Edge estimates ${factor}× ` +
+          `from how far it sits from the regular line, on the low side (${best.line.lineType === 'GOBLIN' ? 'the app may pay a bit more' : 'the app often pays more'}). ` +
           `Worth it if the app's factor is at least ${round(reference / p, 2)}×. Power entries only.`);
       if (factor === null && best.line.lineType !== 'REGULAR') warnings.push(
         `${best.line.lineType === 'UNKNOWN_ALTERNATE' ? 'Alternate' : best.line.lineType} payout factor is unknown: worth it only if its payout factor is at least ${round(reference / p, 2)}×.`);

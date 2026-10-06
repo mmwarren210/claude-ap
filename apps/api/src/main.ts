@@ -335,10 +335,13 @@ process.on('unhandledRejection', (reason) => {
   console.error('Background task failed:', reason instanceof Error ? reason.message : reason);
 });
 // CrownIQ Edge (Edge 2.0): its own ledger and odds snapshots on the data disk. EDGE_ENGINE=false turns it off.
-// Goblin/Demon payout factors, read from the owner's PrizePicks screenshots (2026-10-06, 2-pick Power at 3x): a Goblin paid 0.70x
-// and Demons 1.083x, 1.154x and 1.43x (further from the line pays more). PrizePicks sets each one separately, so Goblins use
-// 0.70 and Demons use the lowest Demon seen (1.08) as a floor. EDGE_GOBLIN_FACTOR / EDGE_DEMON_FACTOR override; "off" removes.
-const defaultFactors:Record<string,number>={EDGE_GOBLIN_FACTOR:.7,EDGE_DEMON_FACTOR:1.08};
+// Goblin/Demon payout factors from the owner's PrizePicks screenshots (2026-10-06, 2-pick Power at 3x): Goblins 0.67–0.83x,
+// Demons 1.08–5.4x, further from the regular line paying more. Each one's factor is estimated from its distance to the regular
+// line, (0.5 ÷ P)^k, with k = 0.95 for Goblins and 0.25 for Demons: both land at or under every factor seen. Lines without a
+// regular on the board fall back to 0.65 (Goblin) and 1.05 (Demon). EDGE_GOBLIN_FACTOR / EDGE_DEMON_FACTOR override the
+// fallbacks ("off" removes them).
+const defaultFactors:Record<string,number>={EDGE_GOBLIN_FACTOR:.65,EDGE_DEMON_FACTOR:1.05};
+const edgeAlternateCurve={GOBLIN:.95,DEMON:.25};
 const edgeFactor=(name:string)=>{
   const value=process.env[name];if(value==='off')return undefined;if(!value)return defaultFactors[name];
   const parsed=Number(value);if(!Number.isFinite(parsed)||parsed<=0||parsed>5)throw new Error('Invalid '+name);
@@ -356,7 +359,7 @@ const edgeBookWeights=new BookWeightStore(`${dataDir}/edge/edge-book-weights-v1.
 await edgeBookWeights.load();
 const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',dispersion:edgeDispersion,bookWeights:edgeBookWeights,
   ledger:new EdgeLedger(process.env.CROWNIQ_EDGE_LEDGER_FILE ?? `${dataDir}/edge/ledger.json`),
-  snapshots:edgeSnapshots,alternateFactors:edgeAlternateFactors,
+  snapshots:edgeSnapshots,alternateFactors:edgeAlternateFactors,alternateCurve:edgeAlternateCurve,
   boxScores:new BoxScoreResults(fetch,undefined,historyArchive),
   valuesCacheFile:`${dataDir}/edge/history-values.json`,
   // DK Pick'em: the owner set the published minimums as floors (2026-10-06); EDGE_PICK6_PAYOUTS_CONFIRMED=false turns edges off.
