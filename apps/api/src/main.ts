@@ -62,6 +62,9 @@ import { CurrentContextResearch } from './current-context.js';
 import { OddsApiTotals } from './context/odds-api-totals.js';
 import { UfcHistory } from './ufc-history.js';
 import { SoccerHistory } from './soccer-history.js';
+import { startMemoryWatch } from './memory-watch.js';
+
+startMemoryWatch();
 
 // Where the server keeps its data files. On a host, point this at a permanent disk.
 const dataDir=(process.env.CROWNIQ_DATA_DIR ?? 'tmp').replace(/\/$/,'');
