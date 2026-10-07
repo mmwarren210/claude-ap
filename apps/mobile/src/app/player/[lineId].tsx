@@ -2,7 +2,8 @@ import { LineShopFor } from '../../components/LineShop';
 import type { Analysis, PropLine } from '@crowniq/contracts';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Linking, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { openExternal } from '../../port';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../auth';
 import { evidenceDetail, matchup } from '../../components/BoardCard';
@@ -353,7 +354,7 @@ export default function PlayerResearch() {
             <Text style={styles.evidenceLabel}>{group.label}</Text>
             {group.items.map((reason, index) => <Text key={index} style={styles.factorDetail}>
               • {reason.text} <Text style={styles.evidenceBy}>({reason.by})</Text>
-              {reason.url ? <Text style={styles.link} onPress={() => void Linking.openURL(reason.url!)}> source</Text> : null}
+              {reason.url ? <Text style={styles.link} onPress={() => openExternal(reason.url!)}> source</Text> : null}
             </Text>)}
           </View>)}
         </View>

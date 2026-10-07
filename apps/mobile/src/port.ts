@@ -27,12 +27,31 @@ export async function copyAndOpen(app: PickApp, text: string): Promise<'copied' 
   return copyAndOpenUrl(appUrls[app], text);
 }
 
+/**
+ * Opens an outside site or app. On the web it clicks a real link in the same tap: a home-screen web app on iPhone showed a
+ * blank page for window.open(url, '_blank', 'noopener') (what Linking.openURL does), and for any open after an await.
+ */
+export function openExternal(url: string): void {
+  if (Platform.OS === 'web' && typeof document !== 'undefined') {
+    const link = document.createElement('a');
+    link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+    document.body.appendChild(link); link.click(); link.remove();
+    return;
+  }
+  void Linking.openURL(url);
+}
+
 /** The same for any app or site (the sportsbooks and prediction markets). */
 export async function copyAndOpenUrl(url: string, text: string): Promise<'copied' | 'shared'> {
-  let how: 'copied' | 'shared' = 'shared';
   const clipboard = Platform.OS === 'web' && typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
-  if (clipboard) { await clipboard.writeText(text); how = 'copied'; }
-  else await Share.share({ message: text });
-  await Linking.openURL(url);
-  return how;
+  if (clipboard) {
+    // Copy and open in the same tap: the copy starts first, the site opens before anything is awaited.
+    const copied = clipboard.writeText(text);
+    openExternal(url);
+    await copied.catch(() => undefined);
+    return 'copied';
+  }
+  await Share.share({ message: text });
+  openExternal(url);
+  return 'shared';
 }

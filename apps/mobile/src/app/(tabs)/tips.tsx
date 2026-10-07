@@ -1,6 +1,7 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { openExternal } from '../../port';
 import { useAuth } from '../../auth';
 import { StakePicker } from '../../components/EdgeSlipPanel';
 import { Notice, Screen } from '../../components/Screen';
@@ -160,7 +161,7 @@ export default function TipsScreen() {
       {summary.sameGame && <Text style={styles.small}>⚠ Two picks are from the same game; books may not allow that parlay, and the chance is approximate.</Text>}
       <View style={styles.row}>
         <Pressable accessibilityRole="button" onPress={() => void copy()} style={styles.chip}><Text style={styles.chipText}>{copied ? 'Copied ✓' : 'Copy slip'}</Text></Pressable>
-        {books.map((book) => <Pressable key={book.name} accessibilityRole="button" onPress={() => void Linking.openURL(book.url)} style={styles.chip}>
+        {books.map((book) => <Pressable key={book.name} accessibilityRole="button" onPress={() => openExternal(book.url)} style={styles.chip}>
           <Text style={styles.chipText}>Open {book.name}</Text></Pressable>)}
       </View>
       <Text style={styles.small}>Books don&apos;t let other apps fill in your bet slip, so copy it and place the bets in the book.</Text>

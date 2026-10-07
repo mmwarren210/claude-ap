@@ -1,6 +1,6 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { FlatList, Linking, StyleSheet, Text, View } from 'react-native';
+import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth';
 import { formatLine, gameTime, marketLabel } from '../insights';
@@ -12,7 +12,7 @@ import { ScoutVerdict } from './ScoutVerdict';
 import type { AiRead } from '../scout';
 import { AppHeader } from './ui/AppHeader';
 import { ChipRow, FilterChip, GhostButton, PrimaryButton } from './ui/Controls';
-import { copyAndOpenUrl } from '../port';
+import { copyAndOpenUrl, openExternal } from '../port';
 import { openCrownOn, toggleCrownLeg, useCrownLegs } from '../crown-legs';
 import type { CrownProvider } from '../crown-legs';
 import { PlayerAvatar } from './ui/PlayerAvatar';
@@ -199,7 +199,7 @@ export function BookBoard({ book, onSource }: { book: Sportsbook; onSource: (sou
           setMessage(result === 'full' ? `A ${sourceNames[book]} Crown holds up to ${cap} picks.` : '');
         }} />} />}
       ListFooterComponent={shown.length ? <GhostButton label={`Open ${sourceNames[book]}`} icon="open-in-new"
-        onPress={() => void Linking.openURL(bookUrls[book])} /> : null}
+        onPress={() => openExternal(bookUrls[book])} /> : null}
       ListEmptyComponent={<Notice title={state === 'demo' ? 'Sign in to see sportsbook picks' : state === 'loading'
         ? 'Loading picks' : state === 'error' ? 'Picks unavailable' : `No ${sourceNames[book]} picks right now`}
         detail={state === 'demo' ? 'The demo shows PrizePicks only.' : state === 'error'

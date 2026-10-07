@@ -2,7 +2,8 @@ import { entryBreakEvens } from '@crowniq/contracts';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import type { Href } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { openExternal } from '../../port';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../auth';
 import { Sheet } from '../../components/Sheet';
@@ -145,7 +146,7 @@ export default function MoreScreen() {
           onPress={hiddenTips.length ? showAllTips : undefined} />
         {owner && <Row icon="image-text" title="Tip check" detail="Owner · upload a service's picks" onPress={() => go('/(tabs)/tips')} />}
         <Row icon="account-group-outline" title="Social" detail="Top 10 and Crowns" onPress={() => go('/(tabs)/social')} />
-        <Row icon="lifebuoy" title="Play responsibly" detail="1-800-MY-RESET" last onPress={() => void Linking.openURL(helpUrl)} />
+        <Row icon="lifebuoy" title="Play responsibly" detail="1-800-MY-RESET" last onPress={() => openExternal(helpUrl)} />
       </View>
 
       <View style={styles.adminHead}><Text style={styles.heading}>Admin Tools</Text>
