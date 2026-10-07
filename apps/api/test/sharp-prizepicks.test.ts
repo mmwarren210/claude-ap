@@ -177,7 +177,7 @@ test('a book the plan no longer selects gets its own note; a working book gets n
   const feed = new SharpPropsFeed('key', null, { leagues: ['nfl'], books: ['draftkings', 'hardrock'], requestGapMs: 0, retryScale: 0 }, fetchFn, () => now);
   await feed.refresh();
   const status = await feed.status();
-  assert.match(bookFeedNote(status, 'hardrock', 'Hard Rock') ?? '', /isn't on our odds provider plan/);
+  assert.match(bookFeedNote(status, 'hardrock', 'Hard Rock') ?? '', /isn't available from our odds provider/);
   assert.equal(bookFeedNote(status, 'draftkings', 'DraftKings'), null);
   assert.match(bookFeedNote({ unavailable: ['hardrock'] }, 'hardrock', 'Hard Rock') ?? '', /reports the book unavailable/);
 });

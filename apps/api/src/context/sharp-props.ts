@@ -540,7 +540,7 @@ function tooLarge(url: URL, bytes: number): Error {
  */
 export function bookFeedNote(status: Pick<SharpPropsStatus, 'unavailable' | 'planSelects'>, book: string, name: string): string | null {
   if (status.unavailable?.includes(book)) return `${name} prices aren't coming from our odds provider right now (it reports the book unavailable). Picks come back as soon as it does.`;
-  if (status.planSelects?.length && !status.planSelects.includes(book)) return `${name} isn't on our odds provider plan right now, so there are no ${name} prices. Picks come back once it's added again.`;
+  if (status.planSelects?.length && !status.planSelects.includes(book)) return `${name} isn't available from our odds provider right now, so there are no ${name} prices. Picks come back once it is.`;
   return null;
 }
 
