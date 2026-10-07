@@ -8,7 +8,7 @@ import { TipGrader, TipStore } from './tips.js';
 import 'dotenv/config';
 import { mergePayouts } from '@crowniq/contracts';
 import { dirname, join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegistry, lessAwareVersion, marketDefinitions,
   statHistoryReadyVersions, statHistoryV2Versions, statHistoryV3Versions } from '@crowniq/engine';
@@ -62,6 +62,9 @@ import { CurrentContextResearch } from './current-context.js';
 
 // Where the server keeps its data files. On a host, point this at a permanent disk.
 const dataDir=(process.env.CROWNIQ_DATA_DIR ?? 'tmp').replace(/\/$/,'');
+// Half-written saves left by a crash or a full disk (`<file>.<id>.tmp`): nothing is writing yet at startup, so they go.
+try{for(const name of readdirSync(dataDir,{recursive:true}) as string[])if(name.endsWith('.tmp'))rmSync(join(dataDir,name),{force:true});}
+catch{/* no data dir yet */}
 // CrownIQ's own archive: every game log, graded result and line it has seen, kept for verification and evidence.
 const historyArchive=new HistoryArchive(`${dataDir}/archive`);
 const apiKey = process.env.THE_ODDS_API_KEY;

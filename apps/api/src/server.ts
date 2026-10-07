@@ -1350,8 +1350,11 @@ export function buildServer(options: ServerOptions = {}) {
     };
     const first=setTimeout(()=>{void tick().catch(()=>undefined);},2*60_000);first.unref();
     const every=setInterval(()=>{void tick().catch(()=>undefined);},5*60_000);every.unref();
-    const prune=setInterval(()=>{try{snapshots.prune();}catch{/* next day */}},24*3600_000);prune.unref();
-    shadowTimers.push(first,every,prune);
+    const pruneNow=()=>{try{const result=snapshots.prune();console.log(`[edge-snapshots] pruned ${result.deleted} rows${result.compacted?', compacted':''}`);}
+      catch(error){console.warn('[edge-snapshots] prune failed',error instanceof Error?error.message:error);}};
+    const firstPrune=setTimeout(pruneNow,30_000);firstPrune.unref();
+    const prune=setInterval(pruneNow,3600_000);prune.unref();
+    shadowTimers.push(first,every,firstPrune,prune);
   }
   let historyCache:{at:number;board:unknown;reads:Record<string,HistoryRead>;trends?:Record<string,HistoryRead>}|null=null;
   /** A Trend in the History Read shape, flagged so the app labels it Trend. */

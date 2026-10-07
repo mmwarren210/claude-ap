@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -8,7 +8,11 @@ import { DatabaseSync } from 'node:sqlite';
 //
 // Append-only by change: a row is written when a key's value first appears or changes, and each key's `lastSeenAt` is
 // kept current in `latest`. That holds the same information as writing every poll (the value between two rows is the
-// earlier one) at a fraction of the size. Retention: 120 days at full resolution, then one row per key per hour.
+// earlier one) at a fraction of the size.
+// Retention (the data volume is 500 MB; 1.3 days of rows filled 208 MB on 2026-10-07 and every save then failed):
+// - full resolution for a day, then one row per key per hour;
+// - games that started more than 8 days ago dropped (stale replay looks back 7 days);
+// - at most 100,000 rows (~75 MB), oldest first, always keeping each key's newest row.
 
 export type SnapshotSource = 'sharpapi' | 'scraper' | 'odds-api';
 
@@ -39,11 +43,15 @@ const keyOf = (row: SnapshotRow) => JSON.stringify([row.source, row.platform, ro
 const valueOf = (row: SnapshotRow) => JSON.stringify([row.price ?? null, row.probability ?? null, row.multiplier ?? null]);
 
 export class SnapshotStore {
-  private readonly db: DatabaseSync;
-  constructor(file: string | null, private readonly clock: () => Date = () => new Date()) {
+  private db: DatabaseSync;
+  constructor(private readonly file: string | null, private readonly clock: () => Date = () => new Date()) {
     if (file) mkdirSync(dirname(file), { recursive: true });
-    this.db = new DatabaseSync(file ?? ':memory:');
-    this.db.exec(`
+    this.db = SnapshotStore.open(file);
+  }
+
+  private static open(file: string | null): DatabaseSync {
+    const db = new DatabaseSync(file ?? ':memory:');
+    db.exec(`
       PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS snapshots (
         id INTEGER PRIMARY KEY, observedAt TEXT NOT NULL, source TEXT NOT NULL, platform TEXT NOT NULL,
@@ -54,6 +62,7 @@ export class SnapshotStore {
       CREATE INDEX IF NOT EXISTS snapshots_key ON snapshots (key, observedAt);
       CREATE TABLE IF NOT EXISTS latest (key TEXT PRIMARY KEY, value TEXT NOT NULL, lastSeenAt TEXT NOT NULL, startTime TEXT NOT NULL);
     `);
+    return db;
   }
 
   /** Records one poll's rows; returns how many changed (were appended). Rows for games already started are ignored. */
@@ -134,13 +143,38 @@ export class SnapshotStore {
       AND platform NOT IN ('prizepicks', 'prizepicks_flex') ORDER BY observedAt`).all(eventKey) as unknown as SnapshotRow[];
   }
 
-  /** Full resolution for 120 days, then one row per key per hour. */
-  prune(days = 120): number {
-    const cutoff = new Date(this.clock().getTime() - days * 86_400_000).toISOString();
-    const result = this.db.prepare(`DELETE FROM snapshots WHERE observedAt < ? AND id NOT IN (SELECT MAX(id) FROM snapshots
-      WHERE observedAt < ? GROUP BY key, substr(observedAt, 1, 13))`).run(cutoff, cutoff);
-    this.db.prepare('DELETE FROM latest WHERE startTime < ?').run(cutoff);
-    return Number(result.changes);
+  /**
+   * Keeps the store small (see Retention above), then hands the freed space back to the disk when it is worth it: SQLite
+   * reuses deleted pages but never shrinks the file, so a store with over 20 MB free is rewritten compactly.
+   */
+  prune(options: { fullHours?: number; keepDays?: number; maxRows?: number } = {}): { deleted: number; compacted: boolean } {
+    const now = this.clock().getTime(), { fullHours = 24, keepDays = 8, maxRows = 100_000 } = options;
+    const iso = (ms: number) => new Date(now - ms).toISOString();
+    let deleted = 0;
+    const run = (sql: string, ...args: (string | number)[]) => { deleted += Number(this.db.prepare(sql).run(...args).changes); };
+    run('DELETE FROM snapshots WHERE startTime < ?', iso(keepDays * 86_400_000));
+    const hourly = iso(fullHours * 3600_000);
+    run(`DELETE FROM snapshots WHERE observedAt < ? AND id NOT IN (SELECT MAX(id) FROM snapshots WHERE observedAt < ?
+      GROUP BY key, substr(observedAt, 1, 13))`, hourly, hourly);
+    const cut = this.db.prepare('SELECT id FROM snapshots ORDER BY id DESC LIMIT 1 OFFSET ?').get(maxRows) as { id: number } | undefined;
+    if (cut) run('DELETE FROM snapshots WHERE id <= ? AND id NOT IN (SELECT MAX(id) FROM snapshots GROUP BY key)', cut.id);
+    this.db.prepare('DELETE FROM latest WHERE startTime < ?').run(iso(86_400_000));
+    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    return { deleted, compacted: this.compact() };
+  }
+
+  private compact(minFreeBytes = 20e6): boolean {
+    if (!this.file) return false;
+    const pragma = (name: string) => Number(Object.values(this.db.prepare(`PRAGMA ${name}`).get() as Record<string, number>)[0]);
+    if (pragma('freelist_count') * pragma('page_size') < minFreeBytes) return false;
+    const target = `${this.file}.compact`;
+    rmSync(target, { force: true });
+    try { this.db.prepare('VACUUM INTO ?').run(target); } catch { rmSync(target, { force: true }); return false; }
+    this.db.close();
+    for (const suffix of ['-wal', '-shm']) rmSync(`${this.file}${suffix}`, { force: true });
+    renameSync(target, this.file);
+    this.db = SnapshotStore.open(this.file);
+    return true;
   }
 
   /** Rows in total, written in the last hour and day, and per source in the last day (owner diagnostics). */

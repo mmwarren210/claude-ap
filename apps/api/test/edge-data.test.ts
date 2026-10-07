@@ -110,3 +110,41 @@ test('market audit: the scraper and the books use one key per stat; soccer leagu
   assert.equal(leagueInfo('LA LIGA').sport, 'SOCCER');
   assert.equal(leagueInfo('NHL1P').sport, 'OTHER', 'period lines stay apart from full-game');
 });
+
+test('snapshots: retention keeps a day at full resolution, and drops games that started over 8 days ago', async () => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const file = `${mkdtempSync(`${tmpdir()}/snap-`)}/snapshots.sqlite`;
+  let at = new Date('2030-01-01T00:00:00Z');
+  const store = new SnapshotStore(file, () => at);
+  const row = (i: number, price: number, start: string): SnapshotRow => ({ observedAt: at.toISOString(), source: 'sharpapi',
+    platform: 'hardrock', eventKey: `e${i % 50}`, playerKey: `NFL|player ${i}`, market: 'passing_yards', number: 200 + i, side: 'MORE',
+    price, startTime: start });
+  // Two days of a price changing every 10 minutes for 400 keys; games start on Jan 3 (half) or Jan 10.
+  for (let step = 0; step < 288; step++) {
+    store.record(Array.from({ length: 400 }, (_, i) => row(i, 1.5 + (step % 7) / 10, i % 2 ? '2030-01-03T00:00:00Z' : '2030-01-10T00:00:00Z')));
+    at = new Date(at.getTime() + 10 * 60_000);
+  }
+  assert.equal(store.status().rows, 288 * 400);
+  const first = store.prune({ maxRows: 1_000_000 });
+  // The first day is hourly now (24 rows a key), the last 24 hours untouched (144 a key).
+  assert.equal(store.status().rows, 400 * (24 + 144));
+  assert.ok(first.deleted > 0);
+  at = new Date('2030-01-12T00:00:00Z');
+  store.prune({ maxRows: 1_000_000 });
+  assert.equal(store.status().rows, 200 * 48, 'the Jan 3 games are dropped; the Jan 10 games stay, hourly');
+});
+
+test('snapshots: the row cap keeps each key’s newest row', () => {
+  let at = new Date('2030-01-01T00:00:00Z');
+  const store = new SnapshotStore(null, () => at);
+  for (let step = 0; step < 10; step++) {
+    store.record(Array.from({ length: 20 }, (_, i) => ({ observedAt: at.toISOString(), source: 'sharpapi' as const, platform: 'hardrock',
+      eventKey: 'e1', playerKey: `p${i}`, market: 'points', number: 10, side: 'MORE', price: 1.5 + step / 100, startTime: '2030-01-05T00:00:00Z' })));
+    at = new Date(at.getTime() + 60_000);
+  }
+  store.prune({ maxRows: 50 });
+  const rows = store.status().rows;
+  assert.ok(rows <= 50 && rows >= 20, `rows ${rows}`);
+  assert.equal(store.history('p3', 'points').at(-1)?.price, 1.59);
+});
