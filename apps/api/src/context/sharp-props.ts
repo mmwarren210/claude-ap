@@ -13,13 +13,13 @@ const soccerLeagues = ['england_-_premier_league', 'spain_-_la_liga', 'uefa_-_ch
   'brazil_-_serie_a', 'netherlands_-_eredivisie', 'portugal_-_primeira_liga', 'mexico_-_liga_mx', 'england_-_championship'];
 const leagueSports: Readonly<Record<string, Sport>> = { nfl: 'NFL', ncaaf: 'NCAAFB', mlb: 'MLB', nba: 'NBA', wnba: 'WNBA',
   nhl: 'NHL', atp: 'TENNIS', wta: 'TENNIS', atp_challenger: 'TENNIS', ncaab: 'NCAAB', ncaaw: 'NCAAW', euroleague: 'EUROLEAGUE',
-  nba_cup: 'NBA', ...Object.fromEntries(soccerLeagues.map((league) => [league, 'SOCCER' as Sport])) };
+  nba_cup: 'NBA', kbo: 'KBO', ufc: 'OTHER', ...Object.fromEntries(soccerLeagues.map((league) => [league, 'SOCCER' as Sport])) };
 /**
  * Every league pulled by default (CROWNIQ_SHARP_LEAGUES overrides). College basketball has no props until November; its
  * leagues stay in the list and start on their own when SharpAPI lists them.
  */
 export const sharpLeagues: readonly string[] = ['nfl', 'ncaaf', 'mlb', 'nba', 'wnba', 'nhl', 'atp', 'wta', 'atp_challenger',
-  'ncaab', 'ncaaw', 'euroleague', 'nba_cup', ...soccerLeagues];
+  'ncaab', 'ncaaw', 'euroleague', 'nba_cup', 'kbo', 'ufc', ...soccerLeagues];
 
 const basketball: Readonly<Record<string, string>> = { player_points: 'player_points', player_rebounds: 'player_rebounds',
   player_assists: 'player_assists', player_made_threes: 'player_threes',
@@ -49,7 +49,7 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
   NBA: basketball, WNBA: basketball, NCAAB: basketball, NCAAW: basketball, EUROLEAGUE: basketball,
   NHL: { player_shots_on_goal: 'shots_on_goal', player_points: 'points', player_saves: 'saves', player_assists: 'assists',
     player_goals: 'goals', player_blocked_shots: 'blocked_shots', player_power_play_points: 'power_play_points',
-    anytime_goal_scorer: 'goals' },
+    anytime_goal_scorer: 'goals', player_shots: 'shots_on_goal' },
   // Hard Rock's "player total games" is the games that player wins (market "team_total", lines 7.5–13.5), the same stat as
   // DraftKings' "games won"; DraftKings' own "player total games" (4.5, 7.5) is a set stat and is left out (bookMarket).
   TENNIS: { player_total_games: 'games_won', player_games_won: 'games_won', player_aces: 'aces',
@@ -62,9 +62,8 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
 export function fullGameTypes(sport: Sport | undefined): string[] {
   if (!sport) return [];
   const scorer = sport === 'NHL' || sport === 'SOCCER' ? ['anytime_goal_scorer'] : sport === 'NFL' || sport === 'NCAAFB' ? ['anytime_touchdown_scorer'] : [];
-  // Asked for but not mapped until confirmed (4e): NHL "player_shots" is compared with shots on goal in the market audit.
-  const audit = sport === 'NHL' ? ['player_shots'] : [];
-  return [...Object.keys(marketKeys[sport] ?? {}), ...scorer, ...audit];
+  // NHL "player_shots" is shots on goal (4e, confirmed 2026-10-07: median gap 0 across 18 players); the audit keeps checking.
+  return [...Object.keys(marketKeys[sport] ?? {}), ...scorer];
 }
 
 /**
@@ -350,8 +349,16 @@ const TDS_PER_POINT = .105;
 
 export function scorerFairPrices(rows: readonly unknown[], games: readonly GamePrice[]): FairPrice[] {
   Object.assign(scorerSkips, { groups: 0, noTotal: 0, few: 0, low: 0, high: 0, priced: 0, samples: [] });
-  const goalTotals = expectedGoals(games.filter((game) => game.league === 'nhl'));
-  const pointTotals = expectedPoints(games.filter((game) => game.league === 'nfl' || game.league === 'ncaaf'));
+  // Totals and props can carry different event ids for one game (a "_b2" suffix on the props), so both are keyed by the
+  // teams and the date too.
+  const byGame = (game: { home: string | null; away: string | null; startTime: string }) =>
+    `${normalizedName(game.home ?? '')}|${normalizedName(game.away ?? '')}|${game.startTime.slice(0, 10)}`;
+  const rekey = (list: readonly GamePrice[], totals: Map<string, number>) => {
+    for (const game of list) { const total = totals.get(game.eventId); if (total) totals.set(byGame(game), total); }
+    return totals;
+  };
+  const goalGames = games.filter((game) => game.league === 'nhl'), pointGames = games.filter((game) => game.league === 'nfl' || game.league === 'ncaaf');
+  const goalTotals = rekey(goalGames, expectedGoals(goalGames)), pointTotals = rekey(pointGames, expectedPoints(pointGames));
   const groups = new Map<string, Row[]>();
   for (const value of rows) {
     const row = value as Row;
@@ -370,8 +377,11 @@ export function scorerFairPrices(rows: readonly unknown[], games: readonly GameP
   for (const [key, list] of groups) {
     scorerSkips.groups++;
     const kind = key.split('|')[0]!, event = String(list[0]!.event_id);
+    const teams = byGame({ home: typeof list[0]!.home_team === 'string' ? list[0]!.home_team : null,
+      away: typeof list[0]!.away_team === 'string' ? list[0]!.away_team : null, startTime: String(list[0]!.event_start_time) });
     // Expected scoring events in the game: NHL goals less ~3% own goals; football rush + receiving TDs from the points.
-    const expected = kind === 'goals' ? (goalTotals.get(event) ?? 0) * .97 : (pointTotals.get(event) ?? 0) * TDS_PER_POINT;
+    const totals = kind === 'goals' ? goalTotals : pointTotals, total = totals.get(event) ?? totals.get(teams) ?? 0;
+    const expected = kind === 'goals' ? total * .97 : total * TDS_PER_POINT;
     if (!expected) { scorerSkips.noTotal++; if (scorerSkips.samples.length < 3) scorerSkips.samples.push(`no total ${kind} ${event}`); continue; }
     if (list.length < (kind === 'goals' ? 10 : 15)) { scorerSkips.few++; continue; }
     const target = expected, implied = list.map((row) => Number(row.odds_probability));
@@ -418,6 +428,45 @@ export function tennisTotalPrices(games: readonly GamePrice[]): FairPrice[] {
       fairOver, overAmerican: over.american, underAmerican: under.american, startTime: over.startTime, home: over.home, away: over.away });
   }
   return out;
+}
+
+/**
+ * Step 6: a UFC fight's total rounds, from each book's no-vig over/under, as both fighters' "Total Rounds" line (PrizePicks
+ * lists it per fighter; it is the fight's total). Sport OTHER, as PrizePicks' UFC board is.
+ */
+export function fightTotals(rows: readonly unknown[]): FairPrice[] {
+  const pairs = new Map<string, { over?: Row; under?: Row }>();
+  for (const value of rows) {
+    const row = value as Row;
+    if (row.league !== 'ufc' || row.market_type !== 'total_rounds' || typeof row.line !== 'number' || row.is_live === true ||
+      typeof row.home_team !== 'string' || typeof row.away_team !== 'string' || (row.selection_type !== 'over' && row.selection_type !== 'under')) continue;
+    const key = `${String(row.sportsbook)}|${String(row.event_id)}|${row.line}`;
+    const pair = pairs.get(key) ?? {};
+    pair[row.selection_type] = row; pairs.set(key, pair);
+  }
+  const out: FairPrice[] = [];
+  for (const { over, under } of pairs.values()) {
+    const pOver = Number(over?.odds_probability), pUnder = Number(under?.odds_probability);
+    if (!over || !under || !(pOver > 0) || !(pUnder > 0) || pOver + pUnder < .95) continue;
+    for (const fighter of [over.home_team as string, over.away_team as string]) out.push({ book: String(over.sportsbook), sport: 'OTHER',
+      player: fighter, market: 'total_rounds', line: over.line as number, fairOver: Math.round(pOver / (pOver + pUnder) * 10_000) / 10_000,
+      overAmerican: typeof over.odds_american === 'number' ? over.odds_american : null, underAmerican: typeof under.odds_american === 'number' ? under.odds_american : null,
+      startTime: String(over.event_start_time), home: over.home_team as string, away: over.away_team as string });
+  }
+  return out;
+}
+
+/** SharpAPI game totals and spreads as game lines (the game-environment input), one per game and market (first book). */
+export function sharpGameLines(games: readonly GamePrice[]): import('./feeds.js').GameLine[] {
+  const out = new Map<string, import('./feeds.js').GameLine>();
+  for (const game of games) {
+    if ((game.market !== 'total' && game.market !== 'spread') || game.line === null) continue;
+    if (game.market === 'spread' && game.side !== 'home') continue;
+    const key = `${game.eventId}|${game.market}`;
+    if (!out.has(key)) out.set(key, { league: game.league.toUpperCase(), home: game.home, away: game.away, startTime: game.startTime,
+      market: game.market, line: game.line, homePrice: null, awayPrice: null, homeFair: null, awayFair: null, sourceUrl: null });
+  }
+  return [...out.values()];
 }
 
 export interface SharpPropsStatus {
@@ -545,6 +594,7 @@ export class SharpPropsFeed {
           this.notSelected = Array.isArray(selected) ? selected.map(String) : [];
           console.warn(`[sharp] book_not_selected (${league}, asked ${params.sportsbooks}); the plan selects: ${JSON.stringify(selected ?? null)}`);
         } else if (response.status === 403) throw new Error(`SHARPAPI_HTTP_403${code ? `_${code}` : ''}`);
+        else if (response.status === 400 && params.market_type) console.warn(`[sharp] ${league} market_type list rejected (${code ?? 'no code'}): ${params.market_type.slice(0, 200)}`);
         return { rows, capped: false };
       }
       if (!response.ok) throw new Error(`SHARPAPI_HTTP_${response.status}`);
@@ -569,26 +619,29 @@ export class SharpPropsFeed {
     const cap = this.options.maxPagesPerLeague ?? 60;
     let booksOk = false;
     this.lastStartedAt = this.clock().getTime();
-    const perLeague: Record<string, Record<string, number>> = {}, capped: string[] = [];
+    const perLeague: Record<string, Record<string, number>> = {}, capped: string[] = [], partialRows: Record<string, number> = {};
     try {
       for (const league of leagues) {
         const sport = leagueSports[league];
         // Step 1d: only the market types CrownIQ reads, as one comma-separated list per pass (no page flooding);
         // the partial-game types get their own pass.
-        for (const types of [fullGameTypes(sport), partialTypes(sport)]) {
+        for (const [index, types] of [fullGameTypes(sport), partialTypes(sport)].entries()) {
           if (!books.length || !types.length) continue;
           const pass = await this.pages(league, { sportsbooks: books.join(','), is_player_prop: 'true', market_type: types.join(',') }, cap);
           rows.push(...pass.rows);
+          if (index === 1) partialRows[league] = pass.rows.length;
           if (pass.capped) capped.push(league);
           for (const value of pass.rows) { const book = String((value as Row).sportsbook); (perLeague[league] ??= {})[book] = (perLeague[league]?.[book] ?? 0) + 1; }
         }
         // Game totals: NHL goals and football points set the scale that takes the cut out of anytime-scorer prices (4a);
         // tennis total games price PrizePicks' "Total Games" lines (4d).
-        const totalType = { nhl: 'total_goals', nfl: 'total_points', ncaaf: 'total_points', atp: 'total_games', wta: 'total_games', atp_challenger: 'total_games' }[league];
+        // Step 6: UFC total rounds, distance and method; KBO run totals and run lines (into the game environment).
+        const totalType = { nhl: 'total_goals', nfl: 'total_points', ncaaf: 'total_points', atp: 'total_games', wta: 'total_games',
+          atp_challenger: 'total_games', ufc: 'total_rounds,go_the_distance,method_of_victory', kbo: 'total_runs,point_spread' }[league];
         if (totalType && books.length) gameRows.push(...(await this.pages(league, { sportsbooks: books.join(','), market_type: totalType }, 10)).rows);
       }
       booksOk = true;
-      console.log(`[sharp-books] rows per league and book ${JSON.stringify(perLeague)}; page cap hit: ${capped.join(', ') || 'none'}; ` +
+      console.log(`[sharp-books] rows per league and book ${JSON.stringify(perLeague)}; partial-game rows ${JSON.stringify(partialRows)}; page cap hit: ${capped.join(', ') || 'none'}; ` +
         `requests last hour ${this.requestsLastHour()}`);
       // Step 1a: a requested book with no rows in any league, two refreshes running, is flagged.
       for (const book of books) {
@@ -609,7 +662,11 @@ export class SharpPropsFeed {
       const scorers = scorerFairPrices(bookRows, games);
       if (scorers.length || rows.some((row) => scorerMarkets.has(String((row as Row).market_type))))
         console.log(`[sharp] anytime scorer: ${scorers.filter((price) => price.market === 'goals').length} goals and ${scorers.filter((price) => price.market === 'anytime_tds').length} TD prices; ${JSON.stringify(scorerSkips)}; tennis total games ${tennisTotalPrices(games).length}`);
-      const prices = [...fairPrices(bookRows), ...scorers, ...tennisTotalPrices(games)];
+      const fights = fightTotals(gameRows.filter((row) => !isPickemRow(row)));
+      const types = (league: string) => [...new Set(gameRows.filter((row) => (row as Row).league === league).map((row) => String((row as Row).market_type)))];
+      if (leagues.includes('ufc') || leagues.includes('kbo'))
+        console.log(`[sharp] step 6 games: ufc types ${JSON.stringify(types('ufc'))}, ${fights.length} total-rounds prices; kbo types ${JSON.stringify(types('kbo'))}`);
+      const prices = [...fairPrices(bookRows), ...scorers, ...tennisTotalPrices(games), ...fights];
       this.auditMarkets(bookRows);
       const shots = shotsAudit(bookRows);
       if (shots.players) console.log(`[sharp-audit] NHL player_shots vs shots on goal: ${JSON.stringify(shots)}`);

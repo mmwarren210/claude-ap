@@ -49,3 +49,28 @@ test('4d: tennis total games from the match total, for both players; 4e: NHL sho
   const audit = shotsAudit([nhl('player_shots', 2.5), nhl('player_shots_on_goal', 2.5), nhl('player_shots', 3.5, 'Skater B'), nhl('player_shots_on_goal', 3.5, 'Skater B')]);
   assert.deepEqual([audit.players, audit.medianGap], [2, 0]);
 });
+
+test('4a follow-up: a TD group finds its game total by teams and date when the event ids differ', () => {
+  const rates = Array.from({ length: 20 }, (_, index) => .08 + .4 * index / 20);
+  const scale = 44.5 * .105 / rates.reduce((a, b) => a + b, 0);
+  const rows = rates.map((rate, index) => row({ event_id: 'nfl_home_away_b2', market_type: 'anytime_touchdown_scorer', selection_type: 'other',
+    line: null, player_name: `P${index}`, odds_probability: (1 - Math.exp(-rate * scale)) * 1.25 }));
+  const game = (side: 'over' | 'under'): GamePrice => ({ book: 'fanduel', league: 'nfl', sport: 'football', eventId: 'nfl_home_away', home: 'Home',
+    away: 'Away', startTime: start, market: 'total', line: 44.5, side, probability: .524, american: -110 });
+  assert.equal(scorerFairPrices(rows, [game('over'), game('under')]).length, 20);
+});
+
+test('step 6: UFC total rounds for both fighters; KBO totals and run lines as game lines; uncovered sports say so', async () => {
+  const { fightTotals, sharpGameLines } = await import('../src/context/sharp-props.js');
+  const { uncoveredSport } = await import('../src/edge/service.js');
+  const fight = (side: string, p: number) => ({ sportsbook: 'draftkings', league: 'ufc', event_id: 'f1', market_type: 'total_rounds', selection_type: side,
+    line: 2.5, odds_probability: p, odds_american: -110, home_team: 'Fighter One', away_team: 'Fighter Two', event_start_time: start, is_live: false });
+  const prices = fightTotals([fight('over', .6), fight('under', .45)]);
+  assert.deepEqual(prices.map((price) => [price.player, price.sport, price.market, price.line]), [['Fighter One', 'OTHER', 'total_rounds', 2.5], ['Fighter Two', 'OTHER', 'total_rounds', 2.5]]);
+  const kbo = (market: 'total' | 'spread', side: GamePrice['side'], line: number): GamePrice => ({ book: 'fanduel', league: 'kbo', sport: 'baseball',
+    eventId: 'k1', home: 'Home K', away: 'Away K', startTime: start, market, line, side, probability: .5, american: -110 });
+  assert.deepEqual(sharpGameLines([kbo('total', 'over', 9.5), kbo('total', 'under', 9.5), kbo('spread', 'home', -1.5), kbo('spread', 'away', 1.5)])
+    .map((line) => [line.league, line.market, line.line]), [['KBO', 'total', 9.5], ['KBO', 'spread', -1.5]]);
+  assert.ok(uncoveredSport({ sport: 'OTHER', league: 'EUROGOLF' }) && uncoveredSport({ sport: 'OTHER', league: 'NPB' }) && uncoveredSport({ sport: 'DARTS', league: 'PDC' }));
+  assert.equal(uncoveredSport({ sport: 'OTHER', league: 'UFC' }), false);
+});

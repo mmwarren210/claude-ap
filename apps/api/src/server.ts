@@ -59,6 +59,7 @@ import type { ProductGradingStatus } from './background-grading.js';
 import type { ContextFeeds, GameLine, InjuryNote } from './context/feeds.js';
 import { gameLinesFor, injuryFor, normalizedName } from './context/match.js';
 import type { FairPrice, SharpPropsFeed } from './context/sharp-props.js';
+import { sharpGameLines } from './context/sharp-props.js';
 import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
 import type { EvPick } from './context/ev.js';
 import { bookLadder, bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
@@ -1288,7 +1289,10 @@ export function buildServer(options: ServerOptions = {}) {
     valuesCacheFile:options.edge.valuesCacheFile??null,movement,snapshots:options.edge.snapshots??null,
     alertsFile:options.edge.alertsFile??null,staleLogFile:options.edge.staleLogFile??null,dispersion:options.edge.dispersion??null,bookWeights:options.edge.bookWeights??null,
     injuries:options.contextFeeds?async()=>(await options.contextFeeds!.items<InjuryNote>('injuries')).items:null,
-    gameLines:options.contextFeeds?async()=>(await options.contextFeeds!.items<GameLine>('pinnacle')).items:null,
+    // Pinnacle's game lines plus SharpAPI's KBO run totals and run lines (step 6), for the game environment.
+    gameLines:options.contextFeeds||options.sharpProps?async()=>[
+      ...(options.contextFeeds?(await options.contextFeeds.items<GameLine>('pinnacle')).items:[]),
+      ...(options.sharpProps?sharpGameLines((await options.sharpProps.extras()).games.filter((game)=>game.league==='kbo')):[])]:null,
     clock:()=>now()}):null;
   const edgeWorker=edge&&options.edge?.ledger?new EdgeResultsWorker(options.edge.ledger,options.internalHistory??null,
     options.edge.boxScores??null,()=>now(),

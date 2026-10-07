@@ -182,6 +182,10 @@ export function dedupeRows(rows: readonly InternalHistoryRow[]): StatRow[] {
 const lineKey = (sport: string, player: string, market: string, threshold: number) =>
   `${sport}|${normalizedName(player)}|${canonicalMarket(sport, market)}|${threshold}`;
 
+/** Golf (DataGolf declined by the owner), darts, F1, NASCAR, NPB and cricket: no sportsbook props and no free stats source. */
+export const uncoveredSport = (line: Pick<PropLine, 'sport' | 'league'>) =>
+  line.sport === 'DARTS' || /GOLF|PGA|LPGA|LIV|^F1|FORMULA|NASCAR|INDYCAR|NPB|CRICKET|IPL/i.test(line.league);
+
 /** Every pick'em app's regular numbers by canonical player, stat and game day: platform → numbers. */
 export type AnchorIndex = Map<string, Map<string, number[]>>;
 const isPickem = (platform: string) => platform === 'prizepicks' || platform === 'underdog' || platform === 'pick6';
@@ -478,6 +482,10 @@ export class EdgeService {
       values: (line) => values.found.get(`${line.sport}|${line.playerId}|${line.market}`),
       // Pick'em apps read each other's regular lines as weak anchors (step 3); sportsbook platforms have their books.
       ...(isPickem(set.platform) ? { anchors: (line: PropLine) => anchorsFor(anchors, line, set.platform) } : {}) });
+    // Step 6: sports with no sportsbook prices and no free stats source say so plainly.
+    const unpriced = priced.unpricedLines.map((item) => uncoveredSport(item.line)
+      ? { ...item, reason: 'NO_DATA' as const, note: 'No read: no sportsbook prices or free stats source for this sport.' } : item);
+    priced.unpricedLines.splice(0, priced.unpricedLines.length, ...unpriced);
     const picks = this.enrich(set, priced.picks, now, injured, alerts);
     const slips = buildSlips(picks, priced.entries, { minEvents: set.minEvents });
     const count = (tier: string) => priced.picks.filter((pick) => pick.tier === tier).length;
