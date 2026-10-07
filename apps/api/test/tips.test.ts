@@ -75,7 +75,7 @@ test('tips routes: upload a screenshot, see it under its service, mark and remov
     // 80% at -200 (1.5 decimal): EV +20% → PLAY; Kazakhstan has no price → Claude's own verdict.
     assert.deepEqual([england.analysis.verdict, england.analysis.ev, england.analysis.chanceSource, england.analysis.priceSource], ['PLAY', .2, 'Claude', 'DraftKings']);
     assert.equal(mine.tips.find((item: Tip) => item.selection === 'Kazakhstan').analysis.verdict, 'PASS');
-    assert.equal((await app.inject({ method: 'POST', url: '/v1/tips/recheck', headers: auth, payload: { ids: [england.id] } })).json().rechecking, 0, 'analyzed under 30 minutes ago');
+    assert.equal((await app.inject({ method: 'POST', url: '/v1/tips/recheck', headers: auth, payload: { ids: [england.id] } })).json().rechecking, 0, 'already read by the AI: never run again');
     assert.equal(mine.tips.length, 2);
     assert.equal(mine.sources.bookie___bandit.pending, 2);
     assert.equal((await app.inject({ method: 'POST', url: '/v1/tips/upload', headers: auth, payload: {} })).statusCode, 400);

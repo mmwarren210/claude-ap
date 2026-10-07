@@ -200,9 +200,10 @@ export class TipStore {
   /** Marks an account's tips as being re-analyzed; returns them (only ones not analyzed in the last 30 minutes). */
   startRecheck(accountId: string, ids: readonly string[]): Promise<Tip[]> {
     return this.exclusive(async () => {
-      const data = await this.load(), now = this.clock().getTime();
+      const data = await this.load();
+      // A pick the AI already read is never sent again (owner, 2026-10-07: no duplicate runs); only unread picks are.
       const tips = data.tips.filter((tip) => tip.accountId === accountId && ids.includes(tip.id) && tip.status === 'PENDING' && !tip.analyzing &&
-        (!tip.analysis || now - Date.parse(tip.analysis.analyzedAt) > 30 * 60_000));
+        !tip.analysis);
       for (const tip of tips) tip.analyzing = true;
       if (tips.length) await this.save();
       return tips.map((tip) => ({ ...tip }));

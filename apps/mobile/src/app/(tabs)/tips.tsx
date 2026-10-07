@@ -124,6 +124,11 @@ export default function TipsScreen() {
     if (!body) setSlip((ids) => ids.filter((id) => id !== tip.id));
     await load();
   };
+  // Refresh all: Edge's and GKR+'s reads come fresh with the reload; the AI only reads picks it hasn't read yet.
+  const refreshAll = async () => {
+    const unread = pending.filter((tip) => !tip.analysis && !tip.analyzing).map((tip) => tip.id).slice(0, 40);
+    if (unread.length) await recheck(unread); else await load();
+  };
   const recheck = async (ids: string[]) => {
     await request('/v1/tips/recheck', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids }) }).catch(() => null);
     await load();
@@ -189,8 +194,7 @@ export default function TipsScreen() {
 
     {pending.length > 0 && <View style={styles.row}>
       <Text style={[styles.section, styles.flex]}>UPCOMING · CROWNIQ&apos;S TAKE</Text>
-      <Pressable accessibilityRole="button" disabled={pending.every((tip) => tip.analyzing)}
-        onPress={() => void recheck(pending.filter((tip) => !tip.analyzing).map((tip) => tip.id).slice(0, 40))}>
+      <Pressable accessibilityRole="button" onPress={() => void refreshAll()}>
         <Text style={styles.action}>Refresh all</Text></Pressable>
     </View>}
     {pending.map((tip) => <TipCard key={tip.id} tip={tip} inSlip={slip.includes(tip.id)}
@@ -251,7 +255,7 @@ function TipCard({ tip, inSlip, onSlip, onRecheck, onStatus, onRemove }: { tip: 
     {tip.result && <Text style={styles.small}>{tip.result}</Text>}
     <View style={styles.actions}>
       {onSlip && analysis && <Pressable accessibilityRole="button" onPress={onSlip}><Text style={[styles.action, inSlip && styles.actionOn]}>{inSlip ? '✓ In slip' : '+ Slip'}</Text></Pressable>}
-      {onRecheck && !tip.analyzing && <Pressable accessibilityRole="button" onPress={onRecheck}><Text style={styles.action}>Re-check</Text></Pressable>}
+      {onRecheck && !tip.analyzing && !analysis && <Pressable accessibilityRole="button" onPress={onRecheck}><Text style={styles.action}>Re-check</Text></Pressable>}
       {(['WON', 'LOST', 'PUSH'] as const).map((status) => <Pressable key={status} accessibilityRole="button"
         onPress={() => onStatus(tip.status === status ? 'PENDING' : status)}>
         <Text style={[styles.action, tip.status === status && styles.actionOn]}>{status === 'WON' ? 'Won' : status === 'LOST' ? 'Lost' : 'Push'}</Text></Pressable>)}
