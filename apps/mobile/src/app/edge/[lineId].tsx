@@ -8,6 +8,7 @@ import { Notice, Screen } from '../../components/Screen';
 import { edgeSummary, formatLine, headline, pct, ratingLabel, signedPoints, tierLabel } from '../../edge-format';
 import { edgeSlip, useEdgeSlip } from '../../edge-slip';
 import { palette } from '../../theme';
+import { PlayerAvatar } from '../../components/ui/PlayerAvatar';
 
 const bookNames: Record<string, string> = { pinnacle: 'Pinnacle', fanduel: 'FanDuel', draftkings: 'DraftKings',
   betmgm: 'BetMGM', williamhill_us: 'Caesars', espnbet: 'ESPN BET', betonlineag: 'BetOnline', betrivers: 'BetRivers',
@@ -42,6 +43,7 @@ export default function EdgeDetail() {
   return <Screen eyebrow={`EDGE  /  ${pick.sport}  /  ${tierLabel[pick.tier]}`} title={pick.playerName}>
     <Pressable accessibilityRole="button" onPress={() => router.back()}><Text style={styles.link}>← Back</Text></Pressable>
     <View style={styles.hero}>
+      <PlayerAvatar name={pick.playerName} photoUrl={pick.playerImageUrl} size={84} />
       <Text style={styles.line}>{headline(pick)}{pick.lineType !== 'REGULAR' ? ` · ${pick.lineType}` : ''}</Text>
       <Text style={styles.big}>{pct(pick.probability)}</Text>
       <Text style={styles.text}>{edgeSummary(pick)}</Text>

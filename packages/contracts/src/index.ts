@@ -387,6 +387,8 @@ export const edgePickSchema = z.object({
   injury: z.string().optional(),
   // The same player and stat on the other platforms (spec §8 "best number across apps"): each one's number, Edge's chance
   // for this side there, its payout and edge.
+  /** The player's headshot (the board's player photos, or the app line's own image), when there is one. */
+  playerImageUrl: z.url().optional(),
   elsewhere: z.array(z.object({ platform: z.enum(['prizepicks', 'underdog', 'pick6', 'draftkings', 'hardrock']),
     lineId: identifier, threshold: z.number().finite(), side: playableDirectionSchema, probability, edge: z.number().finite().nullable(),
     payoutMultiplier: z.number().positive().finite().optional(), ev: z.number().finite().optional() })).optional(),

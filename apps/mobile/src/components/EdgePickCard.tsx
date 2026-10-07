@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { edgeSummary, elsewhereText, headline, lineComparison, moveBadges, pct, ratingColor, ratingLabel, tierLabel } from '../edge-format';
 import { edgeSlip } from '../edge-slip';
 import { palette } from '../theme';
+import { PlayerAvatar } from './ui/PlayerAvatar';
 
 export function EdgePickCard({ pick, rank, inSlip }: { pick: EdgePick; rank?: number; inSlip: boolean }) {
   const color = ratingColor(pick.rating, palette);
@@ -19,6 +20,7 @@ export function EdgePickCard({ pick, rank, inSlip }: { pick: EdgePick; rank?: nu
       </View>
     </View>
     <View style={styles.row}>
+      <PlayerAvatar name={pick.playerName} photoUrl={pick.playerImageUrl} ring={color} size={52} />
       <View style={styles.main}>
         <Text style={styles.name}>{pick.playerName}</Text>
         <Text style={styles.line}>{headline(pick)}</Text>

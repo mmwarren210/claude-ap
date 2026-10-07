@@ -49,3 +49,11 @@ test('today means the Eastern calendar date: a 10:30 PM ET game is still today, 
   assert.equal(easternDay(new Date('2030-10-08T02:30:00Z')), '2030-10-07');
   assert.equal(easternDay(new Date('2030-10-08T05:00:00Z')), '2030-10-08');
 });
+
+test('player photos ride along on Edge picks and into GKR+', async () => {
+  const { edgePickSchema } = await import('@crowniq/contracts');
+  const photo = 'https://cdn.example.com/player.png';
+  const blended = blendPick(pick({ playerImageUrl: photo } as never), null);
+  assert.equal(blended.playerImageUrl, photo);
+  assert.equal(edgePickSchema.parse(blended).playerImageUrl, photo);
+});

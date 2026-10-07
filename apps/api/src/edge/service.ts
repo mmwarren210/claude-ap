@@ -289,6 +289,7 @@ interface PlatformSet {
 }
 
 export class EdgeService {
+  private photos = new Map<string, string>();
   private alerts: EdgeAlert[] = [];
   private weakTiers: ReadonlySet<string> = new Set();
   private rest: { at: number; effects: Map<string, RestEffect> } = { at: 0, effects: new Map() };
@@ -441,6 +442,13 @@ export class EdgeService {
       const [prices, pickem] = this.options.sharp
         ? await Promise.all([this.options.sharp.prices(), this.options.sharp.pickem()]) : [[], []];
       const sets = await this.platformSets(board, prices, pickem, now);
+      // Player photos for every platform's picks (books have none of their own): the board's photos, then app line images.
+      const photos = new Map<string, string>(), names = new Map(board.board.lines.map((line) => [line.playerId, line.playerName]));
+      for (const [playerId, media] of Object.entries(board.playerMedia ?? {}))
+        if (media.photoUrl && names.has(playerId)) photos.set(normalizedName(names.get(playerId)!), media.photoUrl);
+      for (const line of sets.flatMap((set) => set.lines))
+        if (line.playerImageUrl && !photos.has(normalizedName(line.playerName))) photos.set(normalizedName(line.playerName), line.playerImageUrl);
+      this.photos = photos;
       const allLines = sets.flatMap((set) => set.lines);
       const players = new Map<string, { key: string; sport: string; playerId: string; playerName: string }>();
       for (const line of allLines) {
@@ -596,6 +604,8 @@ export class EdgeService {
     const staleWhy = { noMove: 0, againstTheLine: 0, sideNotOffered: 0, noAppHistory: 0, appChangedAfterMove: 0, gapUnderHalfSd: 0 };
     const out = picks.map((source) => {
       let pick: EdgePick = source;
+      const photo = this.photos.get(normalizedName(pick.playerName));
+      if (photo && !pick.playerImageUrl) pick = { ...pick, playerImageUrl: photo };
       const status = injured.get(normalizedName(pick.playerName));
       if (status) pick = { ...pick, injury: status, rating: 'NONE', edgeScore: 0,
         warnings: [...pick.warnings, `On the injury report: ${status}. Not ranked.`] };
