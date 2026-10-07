@@ -32,8 +32,9 @@ test('stale: books moved past the app after its number last changed, toward the 
     lineType: 'REGULAR', fetchedAt: start });
   const board = { board: { provider: 'prizepicks', fetchedAt: now.toISOString(), lines: [line('a', 'Alpha Guard'), line('b', 'Bravo Wing'),
     line('c', 'Charlie Big')] }, analyses: [], builtAt: now.toISOString() } as unknown as BoardResponse;
+  // Books moved 20.5 → 24 (a 4-point move now reads as too big to be real: the app's own number no longer softens it).
   const prices = ['Alpha Guard', 'Bravo Wing', 'Charlie Big'].flatMap((player) => ['draftkings', 'fanduel', 'hardrock']
-    .map((book) => ({ ...price(book, 24.5), player })));
+    .map((book) => ({ ...price(book, 24), player })));
   const movement = new MovementTracker();
   const t0 = Date.parse('2030-01-10T11:45:00Z');
   movement.observe(prices.map((item) => ({ ...item, line: 20.5 })), t0);

@@ -124,3 +124,16 @@ test('Step 1: books per league logged, market types as one list, book_not_select
   clock = new Date(now.getTime() + 60 * 60_000);
   assert.equal(feed.due(), true);
 });
+
+test('Step 3: each app reads the other apps’ regular numbers, never its own, and skips an app listing two', async () => {
+  const { anchorsFor, dfsAnchors } = await import('../src/edge/service.js');
+  const base = { provider: 'prizepicks', sourceLineIdIsSynthetic: false, sport: 'NFL', league: 'NFL', eventId: 'e', eventName: 'A @ H',
+    eventStartTime: start, playerId: 'p', playerName: 'Test Receiver', team: null, opponent: null, market: 'player_reception_yds',
+    availableDirections: ['MORE', 'LESS'], lineType: 'REGULAR', fetchedAt: now.toISOString() } as const;
+  const make = (id: string, threshold: number, extra: Partial<PropLine> = {}) => ({ ...base, id, sourceLineId: id, threshold, ...extra }) as PropLine;
+  const index = dfsAnchors([{ platform: 'prizepicks', lines: [make('pp', 54.5), make('ppg', 39.5, { lineType: 'GOBLIN' })] },
+    { platform: 'underdog', lines: [make('ud', 52.5)] },
+    { platform: 'pick6', lines: [make('p6a', 50.5), make('p6b', 55.5)] }, { platform: 'draftkings', lines: [make('dk', 60.5)] }]);
+  assert.deepEqual(anchorsFor(index, make('x', 52.5), 'underdog'), [54.5], 'PrizePicks only: own excluded, Pick6 ambiguous, books and Goblins never');
+  assert.deepEqual(anchorsFor(index, make('x', 54.5), 'prizepicks'), [52.5]);
+});

@@ -182,6 +182,33 @@ export function dedupeRows(rows: readonly InternalHistoryRow[]): StatRow[] {
 const lineKey = (sport: string, player: string, market: string, threshold: number) =>
   `${sport}|${normalizedName(player)}|${canonicalMarket(sport, market)}|${threshold}`;
 
+/** Every pick'em app's regular numbers by canonical player, stat and game day: platform → numbers. */
+export type AnchorIndex = Map<string, Map<string, number[]>>;
+const isPickem = (platform: string) => platform === 'prizepicks' || platform === 'underdog' || platform === 'pick6';
+const anchorKey = (line: Pick<PropLine, 'sport' | 'league' | 'playerName' | 'market' | 'eventStartTime'>) =>
+  `${line.sport === 'OTHER' ? line.league.toUpperCase() : line.sport}|${normalizedName(line.playerName)}|${canonicalMarket(line.sport, line.market)}|${line.eventStartTime.slice(0, 10)}`;
+
+/** Step 3: the pick'em apps' regular lines, indexed so each platform can read the others'. */
+export function dfsAnchors(sets: readonly { platform: string; lines: readonly PropLine[] }[]): AnchorIndex {
+  const index: AnchorIndex = new Map();
+  for (const set of sets) {
+    if (!isPickem(set.platform)) continue;
+    for (const line of set.lines) {
+      if (line.lineType !== 'REGULAR') continue;
+      const byPlatform = index.get(anchorKey(line)) ?? new Map<string, number[]>();
+      const numbers = byPlatform.get(set.platform) ?? [];
+      if (!numbers.includes(line.threshold)) numbers.push(line.threshold);
+      byPlatform.set(set.platform, numbers); index.set(anchorKey(line), byPlatform);
+    }
+  }
+  return index;
+}
+
+/** The other apps' regular numbers for a line (one per app; an app listing several gives none, as it's ambiguous). */
+export function anchorsFor(index: AnchorIndex, line: PropLine, platform: string): number[] {
+  return [...(index.get(anchorKey(line)) ?? [])].filter(([other, numbers]) => other !== platform && numbers.length === 1).map(([, numbers]) => numbers[0]!);
+}
+
 /** SharpAPI's PrizePicks lines the scraped board doesn't have, as board lines; and how many it confirms. */
 export function sharpPrizePicksLines(board: readonly PropLine[], pickem: readonly PickemLine[], fetchedAt: string) {
   const onBoard = new Set(board.map((line) => lineKey(line.sport, line.playerName, line.market, line.threshold)));
@@ -393,9 +420,10 @@ export class EdgeService {
       const fresh: EdgeAlert[] = [];
       // One platform at a time, yielding between them so requests keep being answered while the board reprices.
       const each: EdgeSnapshot[] = [];
+      const anchors = dfsAnchors(sets);
       for (const set of sets) {
         await yieldToLoop();
-        each.push(this.priceSet(set, board, prices, now, calibration, forecast, rows, values, startedAt, injured, fresh));
+        each.push(this.priceSet(set, board, prices, now, calibration, forecast, rows, values, startedAt, injured, fresh, anchors));
       }
       const priced = crossPlatform(each);
       for (const snapshot of priced) {
@@ -424,7 +452,7 @@ export class EdgeService {
   private priceSet(set: PlatformSet, board: BoardResponse, prices: readonly FairPrice[], now: Date,
     calibration: CalibrationModel, forecast: ReturnType<typeof forecastReport>, rows: Map<string, InternalHistoryRow[]>,
     values: { found: Map<string, number[]>; asked: number }, startedAt: number, injured: ReadonlyMap<string, string> = new Map(),
-    alerts: EdgeAlert[] = []): EdgeSnapshot {
+    alerts: EdgeAlert[] = [], anchors: AnchorIndex = new Map()): EdgeSnapshot {
     // A platform's own book never prices it, and pick'em apps' rows are payouts, never prices.
     const nowIso = now.toISOString(), own = [...new Set([...ownBooks[set.platform], 'prizepicks', 'prizepicks_flex', 'underdog', 'pick6'])];
     const matched = prices.length && set.lines.length ? matchBookPrices(set.lines, prices, nowIso, own) : null;
@@ -442,7 +470,9 @@ export class EdgeService {
       ...(this.options.alternateFactors ? { alternateFactors: this.options.alternateFactors } : {}),
       ...(this.options.alternateCurve ? { alternateCurve: this.options.alternateCurve } : {}),
       history: (player) => { const list = rows.get(playerKey(player.sport, player.playerName)); return list ? dedupeRows(list) : undefined; },
-      values: (line) => values.found.get(`${line.sport}|${line.playerId}|${line.market}`) });
+      values: (line) => values.found.get(`${line.sport}|${line.playerId}|${line.market}`),
+      // Pick'em apps read each other's regular lines as weak anchors (step 3); sportsbook platforms have their books.
+      ...(isPickem(set.platform) ? { anchors: (line: PropLine) => anchorsFor(anchors, line, set.platform) } : {}) });
     const picks = this.enrich(set, priced.picks, now, injured, alerts);
     const slips = buildSlips(picks, priced.entries, { minEvents: set.minEvents });
     const count = (tier: string) => priced.picks.filter((pick) => pick.tier === tier).length;

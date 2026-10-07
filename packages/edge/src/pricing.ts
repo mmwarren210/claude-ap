@@ -41,6 +41,8 @@ export interface PricingInput {
   readonly excludeBooks?: readonly string[];
   /** Projection 2.0 (spec §5): a multiplier on the stats projection for this line's game (team environment from game
    * lines, rest), with the plain-words reasons. The sportsbooks' prices already carry these, so only the stats source moves. */
+  /** Step 3: the other DFS apps' regular numbers for this line's player, stat and game (never the platform's own). */
+  readonly anchors?: (line: PropLine) => readonly number[];
   readonly statsAdjust?: (line: PropLine) => { readonly factor: number; readonly reasons: readonly string[] } | null;
   /** The honesty gate (spec §5.6): the stats source's measured weight for a sport and market, 0–1 (1 = as the standard
    * error says). Below 1 the stats source counts less in the blend. */
@@ -266,22 +268,36 @@ export function priceBoard(input: PricingInput): PricingResult {
       const sd = Math.sqrt(varianceAt(profile.variance, mean));
       ladder = { mean, se: (market ? .6 : .4) * sd, regularThreshold: regular };
     }
-    if (!market && !statSource && !ladder) { skip(lines, 'NO_DATA', games, regular !== null); continue; }
-
-    const blend = combine([market, statSource, ladder]);
-    const tier: EdgeTier = market ? (market.sharp && market.books >= 2 ? 'SHARP' : 'MARKET')
-      : statSource ? 'MODEL' : 'LADDER';
-    let outcomeVariance = varianceAt(profile.variance, blend.mean);
-    if (stats && stats.samples >= 10) {
-      const scaled = stats.variance * Math.max(blend.mean, .1) / Math.max(stats.mean, .1);
-      outcomeVariance = .5 * outcomeVariance + .5 * scaled;
+    // Step 3: the other DFS apps' regular lines for this player and stat, each a weak 50/50 read (never this platform's own).
+    const anchorLines = (input.anchors?.(first) ?? []).filter((threshold) => Number.isFinite(threshold) && !(scoringMarket(first.market) && threshold <= .5));
+    let anchor: (Source & { thresholds: readonly number[] }) | null = null;
+    if (anchorLines.length) {
+      const mean = anchorLines.reduce((sum, threshold) => sum + fitMean(profile.family, profile.variance, threshold, .5, profile.discrete), 0) / anchorLines.length;
+      const sd = Math.sqrt(varianceAt(profile.variance, mean));
+      // Weak (0.7 SD, about as loose as a single app's ladder), and down-weighted by the honesty gate like any non-book read.
+      const weight = clamp(input.statsWeight?.(first.sport, first.market) ?? 1, .05, 1);
+      anchor = { mean, se: .7 * sd / Math.sqrt(weight), thresholds: anchorLines };
     }
-    const dist: Distribution = makeDistribution(profile.family, blend.mean,
-      outcomeVariance + blend.se ** 2, profile.discrete);
+    if (!market && !statSource && !ladder && !anchor) { skip(lines, 'NO_DATA', games, regular !== null); continue; }
+
+    // Every read but the platform's own regular line (leave-one-out): that line is judged against this; Goblins and Demons,
+    // different lines, still use the regular line as their reference.
+    const blendAll = combine([market, statSource, ladder, anchor]);
+    const blendOut = market || statSource || anchor ? combine([market, statSource, null, anchor]) : null;
+    const tier: EdgeTier = market ? (market.sharp && market.books >= 2 ? 'SHARP' : 'MARKET')
+      : statSource || anchor ? 'MODEL' : 'LADDER';
+    const distOf = (blend: Source) => {
+      let outcomeVariance = varianceAt(profile.variance, blend.mean);
+      if (stats && stats.samples >= 10) {
+        const scaled = stats.variance * Math.max(blend.mean, .1) / Math.max(stats.mean, .1);
+        outcomeVariance = .5 * outcomeVariance + .5 * scaled;
+      }
+      return makeDistribution(profile.family, blend.mean, outcomeVariance + blend.se ** 2, profile.discrete);
+    };
+    const distAll: Distribution = distOf(blendAll), distOut: Distribution | null = blendOut ? distOf(blendOut) : null;
     const marketDist = market ? makeDistribution(profile.family, market.mean,
       varianceAt(profile.variance, market.mean), profile.discrete) : null;
     const calibrated = !!(input.calibration?.bySport[first.sport] ?? input.calibration?.global);
-    const fairLine = edgeLine(dist);
 
     const byThreshold = new Map<number, PropLine[]>();
     for (const line of lines) byThreshold.set(line.threshold, [...(byThreshold.get(line.threshold) ?? []), line]);
@@ -289,6 +305,9 @@ export function priceBoard(input: PricingInput): PricingResult {
       const onlyLadder = tier === 'LADDER';
       const isRegular = thresholdLines.some((line) => line.lineType === 'REGULAR');
       if (onlyLadder && isRegular) { skip(thresholdLines, 'NO_INDEPENDENT_READ', games); continue; }
+      const own = isRegular && distOut && blendOut;
+      const dist = own ? distOut : distAll, blend = own ? blendOut : blendAll;
+      const fairLine = edgeLine(dist);
       const outcome = outcomeAt(dist, threshold);
       const over = conditionalOver(dist, threshold);
       const sides = thresholdLines.map((line) => line.availableDirections.map((side) => ({ line, side })))
@@ -360,6 +379,7 @@ export function priceBoard(input: PricingInput): PricingResult {
         for (const reason of adjust?.reasons ?? []) reasons.push(reason);
         if (honesty < .95) warnings.push(`The stats model counts less on this stat (${Math.round(honesty * 100)}% weight): it hasn’t matched the books on graded picks.`);
       }
+      if (anchor && !market) reasons.push(`Other apps list ${anchor.thresholds.map(fmt).join(' / ')} for this player and stat (a weak read, counted as 50/50).`);
       if (ladder && !isRegular && !market) reasons.push(`Priced from the ${appName} regular line ${fmt(ladder.regularThreshold)} using the ${profile.family === 'NORMAL' ? 'normal' : 'count'} distribution.`);
       if (tail && !unbacked) warnings.push(skewed && Math.abs(threshold - dist.mean) <= 1.5 * sd
         ? 'A yardage rung away from where other books price it: Edge’s curve is least reliable there (yardage is skewed), so it’s shown but not ranked.'
@@ -398,6 +418,7 @@ export function priceBoard(input: PricingInput): PricingResult {
             hitRateAtLine: hitRateAtLine === null ? null : round(hitRateAtLine) } : null,
           ladder: ladder ? { mean: round(ladder.mean, 2), weight: round(blend.weights[2]),
             regularThreshold: ladder.regularThreshold } : null,
+          ...(anchor ? { anchors: { mean: round(anchor.mean, 2), weight: round(blend.weights[3]!), thresholds: [...anchor.thresholds] } } : {}),
         },
         reasons, warnings, calibrated, modelVersion: EDGE_MODEL_VERSION,
         ...(best.payout.kind === 'ODDS' ? { decimalOdds: round(best.payout.decimal, 3), payoutMultiplier: round(best.payout.decimal, 3),

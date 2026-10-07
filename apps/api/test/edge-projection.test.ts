@@ -67,8 +67,12 @@ test('pricing: the stats adjustment moves the stats mean; a low honesty weight w
   assert.ok(lifted.sources.stats!.mean > base.sources.stats!.mean * 1.07);
   assert.ok(lifted.probability > base.probability);
   assert.ok(lifted.reasons.some((reason) => reason.includes('Game total test')));
-  const doubted = priceBoard({ lines: [line()], now, values: () => values, statsWeight: () => .25 }).picks[0]!;
-  assert.ok(doubted.sources.stats!.weight < base.sources.stats!.weight, 'the stats read counts for less in the blend');
+  // The regular line's own number no longer counts toward its price (leave-one-out), so a doubted stats read shows as a
+  // less confident probability (on a line well below the player's average) rather than a smaller share of the blend.
+  const clear = priceBoard({ lines: [line({ threshold: 20.5 })], now, values: () => values }).picks[0]!;
+  const doubted = priceBoard({ lines: [line({ threshold: 20.5 })], now, values: () => values, statsWeight: () => .25 }).picks[0]!;
+  assert.equal(doubted.side, 'MORE');
+  assert.ok(doubted.probability < clear.probability, 'a doubted stats read is less confident');
 });
 
 test('honesty gate: a stats model that misses by more than the books loses weight, shrunk toward 1', async () => {

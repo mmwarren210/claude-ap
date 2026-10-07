@@ -230,3 +230,22 @@ test('anytime TDs and goals: history blended toward a typical scorer, and the 0.
   assert.equal(priceBoard({ lines: [td()], now }).picks.length, 0);
   assert.equal(profileFor('SOCCER', 'goals').family, 'POISSON');
 });
+
+test('one fair price across apps: another app’s regular line is a weak read; a platform’s own line never counts toward its price', () => {
+  const underdog = line('u1', 24.5, { provider: 'prizepicks' });
+  // Only the app's own line: no independent read.
+  assert.equal(priceBoard({ lines: [underdog], now, platform: 'underdog' }).unpricedLines[0]!.reason, 'NO_INDEPENDENT_READ');
+  // PrizePicks lists 22.5 for the same player and stat: a weak 50/50 anchor, MODEL tier, and the read leans LESS at 24.5.
+  const anchored = priceBoard({ lines: [underdog], now, platform: 'underdog', anchors: () => [22.5] }).picks[0]!;
+  assert.equal(anchored.tier, 'MODEL');
+  assert.equal(anchored.side, 'LESS');
+  assert.ok(anchored.probability > .5 && anchored.probability < .65, String(anchored.probability));
+  assert.deepEqual(anchored.sources.anchors?.thresholds, [22.5]);
+  assert.ok(anchored.reasons.some((reason) => reason.includes('Other apps list 22.5')));
+  // The honesty gate weakens it further (a wider read).
+  const doubted = priceBoard({ lines: [underdog], now, platform: 'underdog', anchors: () => [22.5], statsWeight: () => .25 }).picks[0]!;
+  assert.ok(doubted.projection.sd > anchored.projection.sd, 'a wider, less certain read');
+  // With a book price, the line's own number no longer pulls its fair price toward 50/50.
+  const priced = priceBoard({ lines: [line('p1', 24.5)], quotes: [quote('fanduel', 1.6, 2.4)], now }).picks[0]!;
+  assert.equal(priced.sources.ladder?.weight, 0);
+});

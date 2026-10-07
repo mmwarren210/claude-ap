@@ -365,6 +365,8 @@ export const edgePickSchema = z.object({
       hitRateAtLine: probability.nullable() }).nullable(),
     ladder: z.object({ mean: z.number().finite(), weight: probability,
       regularThreshold: z.number().finite() }).nullable(),
+    /** Other DFS apps' regular numbers for the same player and stat, read as weak 50/50 anchors (step 3). */
+    anchors: z.object({ mean: z.number().finite(), weight: probability, thresholds: z.array(z.number().finite()) }).optional(),
   }),
   reasons: z.array(z.string()),
   warnings: z.array(z.string()),
