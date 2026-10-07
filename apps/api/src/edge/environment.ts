@@ -1,5 +1,5 @@
 import type { PropLine } from '@crowniq/contracts';
-import { marketProfiles, profileKey } from '@crowniq/edge';
+import { marketProfiles, profileKey, scoringMarket } from '@crowniq/edge';
 import type { StatRow } from '@crowniq/edge';
 import type { GameLine } from '../context/feeds.js';
 import { teamsMatch } from './market-map.js';
@@ -7,7 +7,8 @@ import { teamsMatch } from './market-map.js';
 // Edge projection 2.0 (spec §5), the parts CrownIQ's data supports today:
 // - §5.1 team environment: Pinnacle's game total and spread give each team's implied points / runs / goals; a team expected
 //   to score more than the league's typical game lifts its players' volume stats (and an opponent expected to score more
-//   lifts a pitcher's "allowed" stats). Elasticity 0.5 for volume stats, 0.2 for the rest, capped at ±10%.
+//   lifts a pitcher's "allowed" stats). Elasticity 1 for scoring events (TDs, goals; ±25%), 0.5 for volume stats, 0.2 for
+//   the rest (±10%).
 // - §5.5 rest: back-to-back games, with the effect learned from CrownIQ's own game rows per sport and stat, used only when
 //   its 90% interval excludes "no effect" (n ≥ 30).
 // Opponent defense (§5.2), usage when a teammate is out (§5.3) and minutes mixtures (§5.4) need team and opponent on each
@@ -70,8 +71,10 @@ export class GameEnvironment {
     const opponent = game.total - own;
     const pitcherAllowed = allowed.test(line.market);
     const implied = pitcherAllowed ? opponent : own;
-    const elasticity = pitcherAllowed || volume.test(line.market) ? .5 : .2;
-    const factor = Math.min(1.1, Math.max(.9, (implied / baseline) ** elasticity));
+    // Scoring events (TDs, goals) rise and fall with the team's expected scoring one for one, within ±25%.
+    const scoring = scoringMarket(line.market);
+    const elasticity = scoring ? 1 : pitcherAllowed || volume.test(line.market) ? .5 : .2;
+    const factor = Math.min(scoring ? 1.25 : 1.1, Math.max(scoring ? .75 : .9, (implied / baseline) ** elasticity));
     if (Math.abs(factor - 1) < .01) return null;
     return { factor, reasons: [`Game total ${fmt(game.total)}: ${pitcherAllowed ? 'the opponent' : 'the team'} is expected to score ${fmt(implied)} vs ` +
       `${fmt(baseline)} in a typical ${league} game today, so the stats projection is ×${factor.toFixed(2)}.`] };

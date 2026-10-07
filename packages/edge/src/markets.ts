@@ -22,7 +22,19 @@ export interface MarketProfile {
   readonly variance: VarianceModel;
   readonly discrete: boolean;
   readonly stat?: StatSpec;
+  /**
+   * Scoring events (TDs, goals): a typical scorer's per-game rate and how many games it counts as. A player's short record is
+   * blended toward it, so five games without a touchdown read as unlikely, not impossible.
+   */
+  readonly prior?: { readonly mean: number; readonly games: number };
 }
+
+/**
+ * Scoring-event markets (anytime TDs, goals): the app's 0.5 line is the only line these bets can have, not a coin flip, so
+ * it is never read as one, and the team's expected scoring moves them in full.
+ */
+export const scoringMarket = (market: string) =>
+  /anytime|(^|_)tds?$|rush_tds|rec_tds|reception_tds|touchdown|goal_scorer|(^|_)goals$|goal_plus_assist/.test(market);
 
 const get = (key: string): Pick => (m) => Number.isFinite(m[key]) ? m[key] : null;
 const total = (...keys: string[]): Pick => (m) =>
@@ -32,6 +44,8 @@ const nb = (psi: number, stat?: StatSpec): MarketProfile =>
   ({ family: 'NEGBIN', variance: { phi: 1, psi }, discrete: true, stat });
 const poisson = (stat?: StatSpec): MarketProfile =>
   ({ family: 'POISSON', variance: { phi: 1, psi: 0 }, discrete: true, stat });
+/** A scoring event: Poisson, blended toward a typical scorer's rate (`mean` per game, worth `games` games). */
+const scoring = (mean: number, games: number, stat?: StatSpec): MarketProfile => ({ ...poisson(stat), prior: { mean, games } });
 const normal = (phi: number, psi: number, floor: number, stat?: StatSpec, discrete = true): MarketProfile =>
   ({ family: 'NORMAL', variance: { phi, psi, floor }, discrete, stat });
 
@@ -70,6 +84,13 @@ export const marketProfiles: Readonly<Record<string, MarketProfile>> = {
   'NFL:player_rush_longest': normal(2, .3, 16), 'NFL:player_reception_longest': normal(2, .25, 16),
   'NFL:player_pass_longest_completion': normal(2, .12, 36),
   'NFL:player_fantasy_points': normal(3, .08, 9, undefined, false),
+  // Scoring events. Typical skill-position rates: about 0.3 rush+rec TDs a game; priors count as 4 games.
+  'NFL:anytime_tds': scoring(.3, 4, { value: total('rushing_tds', 'receiving_tds'), opportunity: snaps }),
+  'NFL:player_rush_tds': scoring(.2, 4, { value: get('rushing_tds'), opportunity: snaps }),
+  'NFL:player_reception_tds': scoring(.2, 4, { value: get('receiving_tds'), opportunity: snaps }),
+  // Soccer: a typical attacker scores about 0.25 a match and assists about 0.15.
+  'SOCCER:goals': scoring(.25, 4), 'SOCCER:assists': scoring(.15, 4), 'SOCCER:goal_plus_assist': scoring(.4, 4),
+  'SOCCER:shots': nb(.12), 'SOCCER:sot': nb(.15), 'SOCCER:fouls': nb(.12),
   'MLB:batter_hits': nb(.05, { value: get('hits'), opportunity: pa }),
   'MLB:batter_total_bases': nb(.35),
   'MLB:batter_hits_runs_rbis': nb(.25, { value: total('hits', 'runs', 'runs_batted_in'), opportunity: pa }),
@@ -84,7 +105,7 @@ export const marketProfiles: Readonly<Record<string, MarketProfile>> = {
   'MLB:pitcher_outs': normal(0, .025, 9),
   'MLB:batter_fantasy_score': normal(2, .2, 4, undefined, false),
   'MLB:pitcher_fantasy_score': normal(2, .06, 25, undefined, false),
-  'NHL:shots_on_goal': nb(.05), 'NHL:points': nb(.1), 'NHL:player_goals': poisson(),
+  'NHL:shots_on_goal': nb(.05), 'NHL:points': nb(.1), 'NHL:player_goals': scoring(.25, 4),
   'NHL:player_assists': nb(.1), 'NHL:player_total_saves': normal(1, .02, 9),
   'NHL:player_blocked_shots': nb(.15), 'NHL:player_power_play_points': poisson(),
   'NHL:player_fantasy_points': normal(2, .1, 4, undefined, false),
@@ -112,6 +133,10 @@ const aliases: Readonly<Record<string, string>> = {
   'MLB:earned_runs_allowed': 'MLB:pitcher_earned_runs', 'MLB:po': 'MLB:pitcher_outs',
   'NFL:longest_rec': 'NFL:player_reception_longest', 'NFL:longest_rush': 'NFL:player_rush_longest',
   'NFL:int': 'NFL:player_pass_interceptions', 'NFL:fg_made': 'NFL:player_field_goals',
+  'NFL:rush_rec_tds': 'NFL:anytime_tds', 'NFL:rush_plus_rec_tds': 'NFL:anytime_tds', 'NFL:rush_tds': 'NFL:player_rush_tds',
+  'NFL:rec_tds': 'NFL:player_reception_tds', 'NFL:receiving_tds': 'NFL:player_reception_tds',
+  'NCAAFB:anytime_tds': 'NFL:anytime_tds', 'NCAAFB:rush_tds': 'NFL:player_rush_tds', 'NCAAFB:rec_tds': 'NFL:player_reception_tds',
+  'SOCCER:shots_on_target': 'SOCCER:sot', 'SOCCER:goals_plus_assists': 'SOCCER:goal_plus_assist',
   ...Object.fromEntries(Object.entries({ recs: 'player_receptions', player_receptions: 'player_receptions',
     pass_tds: 'player_pass_tds', player_pass_tds: 'player_pass_tds', rush_atts: 'player_rush_attempts',
     player_rush_attempts: 'player_rush_attempts', pass_attempts: 'player_pass_attempts', player_pass_attempts: 'player_pass_attempts',

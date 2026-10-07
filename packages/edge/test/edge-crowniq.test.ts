@@ -212,3 +212,21 @@ test('Gen: Goblins and Demons go in only when turned on, in Power and Flex', () 
   assert.ok(!types(generateEntries(picks, flex3!, { nowMs: now.getTime() })).includes('g'), 'unset keeps them out of PrizePicks Flex');
   assert.ok(types(generateEntries(picks, flex3!, { nowMs: now.getTime(), alternates: true })).includes('g'));
 });
+
+test('anytime TDs and goals: history blended toward a typical scorer, and the 0.5 line is never read as a coin flip', () => {
+  const td = (options: Partial<PropLine> = {}) => line('td', 0.5, { sport: 'NFL', league: 'NFL', market: 'anytime_tds', ...options });
+  assert.equal(profileFor('NFL', 'rush_rec_tds'), profileFor('NFL', 'anytime_tds'));
+  assert.equal(profileFor('NCAAFB', 'anytime_tds'), profileFor('NFL', 'anytime_tds'));
+  assert.equal(profileFor('NFL', 'anytime_tds').family, 'POISSON');
+  // Five scoreless games: blended toward 0.3 a game (worth 4 games), not zero.
+  const blank = projectFromValues([0, 0, 0, 0, 0], profileFor('NFL', 'anytime_tds'))!;
+  assert.ok(Math.abs(blank.mean - 0.3 * 4 / 9) < 1e-9);
+  // A back who scored in 6 of 10 (one twice): a read from history alone, about 1 − e^(−0.6) ≈ 45–50% to score.
+  const scorer = priceBoard({ lines: [td()], now, values: () => [1, 0, 1, 2, 0, 1, 0, 1, 0, 1] }).picks[0]!;
+  assert.equal(scorer.tier, 'MODEL');
+  assert.ok(scorer.probability > .4 && scorer.probability < .6, String(scorer.probability));
+  assert.ok(scorer.reasons.some((reason) => /Cleared 0\.5 in 6 of 10|Stayed under 0\.5 in 4 of 10/.test(reason)));
+  // With no history, a lone 0.5 line gives no read (it used to be priced as 50/50).
+  assert.equal(priceBoard({ lines: [td()], now }).picks.length, 0);
+  assert.equal(profileFor('SOCCER', 'goals').family, 'POISSON');
+});

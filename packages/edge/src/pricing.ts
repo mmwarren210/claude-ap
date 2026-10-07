@@ -3,7 +3,7 @@ import { applyCalibration } from './calibration.js';
 import type { CalibrationModel } from './calibration.js';
 import { clamp, conditionalOver, fitMean, makeDistribution, median, outcomeAt, varianceAt } from './distributions.js';
 import type { Distribution } from './distributions.js';
-import { profileFor } from './markets.js';
+import { profileFor, scoringMarket } from './markets.js';
 import type { MarketProfile, StatRow } from './markets.js';
 import { fairQuote, sharpBooks } from './odds.js';
 import type { FairQuote } from './odds.js';
@@ -260,7 +260,8 @@ export function priceBoard(input: PricingInput): PricingResult {
         ? (side === 'MORE' ? conditionalOver(regularDist, line.threshold) : 1 - conditionalOver(regularDist, line.threshold)) : null,
       input.alternateCurve?.[line.lineType], input.alternateFactors?.[line.lineType]);
     let ladder: (Source & { regularThreshold: number }) | null = null;
-    if (regular !== null) {
+    // A scoring event's 0.5 is the only line it can have, not a coin flip: no ladder read from it.
+    if (regular !== null && !(scoringMarket(first.market) && regular <= .5)) {
       const mean = fitMean(profile.family, profile.variance, regular, .5, profile.discrete);
       const sd = Math.sqrt(varianceAt(profile.variance, mean));
       ladder = { mean, se: (market ? .6 : .4) * sd, regularThreshold: regular };

@@ -31,6 +31,11 @@ function weighted(values: readonly number[], halfLife: number) {
   return { mean: total / weights, weightSum: weights, effective: weights * weights / squares };
 }
 
+/** A scoring event's projection blended toward a typical scorer's rate (the profile's prior), weighted by games. */
+function withPrior(projected: number, games: number, profile: MarketProfile): number {
+  return profile.prior ? (projected * games + profile.prior.mean * profile.prior.games) / (games + profile.prior.games) : projected;
+}
+
 /** Recency-weighted, shrunk projection from pre-event game rows.
  *
  * - DNP/inactive rows (zero opportunity) are removed instead of averaged in as zeros.
@@ -47,7 +52,7 @@ export function projectFromValues(recent: readonly number[], profile: MarketProf
   if (values.length < (options.minSamples ?? 5)) return null;
   const seasonMean = mean(values), recentMean = mean(values.slice(0, 5));
   const weightedRecent = weighted(values, options.rateHalfLife ?? 8);
-  const projected = .65 * weightedRecent.mean + .35 * seasonMean;
+  const projected = withPrior(.65 * weightedRecent.mean + .35 * seasonMean, values.length, profile);
   const sampleVariance = values.length > 1
     ? values.reduce((sum, value) => sum + (value - seasonMean) ** 2, 0) / (values.length - 1) : 0;
   const prior = varianceAt(profile.variance, projected);
@@ -100,6 +105,7 @@ export function projectFromRows(rows: readonly StatRow[], spec: StatSpec, profil
     projected = .65 * recent.mean + .35 * seasonMean;
     effective = recent.effective;
   }
+  projected = withPrior(projected, values.length, profile);
   if (!Number.isFinite(projected)) return null;
   const sampleVariance = values.length > 1
     ? values.reduce((sum, value) => sum + (value - seasonMean) ** 2, 0) / (values.length - 1) : 0;

@@ -34,6 +34,10 @@ test('environment: a team implied to score more lifts volume stats, capped at ±
   assert.equal(new GameEnvironment(game('Home A', 'Away A', 240, -10)).factor(line()), null, 'one game is no baseline');
   const extreme = new GameEnvironment([...game('Home A', 'Away A', 400, -60), ...slate.slice(2)]).factor(line())!;
   assert.equal(extreme.factor, 1.1);
+  // Scoring events move one for one with the team's expected scoring, within ±25%.
+  const td = new GameEnvironment(slate).factor(line({ market: 'anytime_tds' }))!;
+  assert.ok(Math.abs(td.factor - 125 / 110) < 1e-9);
+  assert.equal(new GameEnvironment([...game('Home A', 'Away A', 400, -60), ...slate.slice(2)]).factor(line({ market: 'goals' }))!.factor, 1.25);
 });
 
 test('rest: the back-to-back effect is kept only with 30+ games and an interval that excludes no effect', () => {

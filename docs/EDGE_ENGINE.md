@@ -308,3 +308,12 @@ Not built, and why:
 - §7 residual-learned loadings: same team/opponent gap. The priors are used.
 - §10 worker thread: the copula runs per slip (20k draws, a few ms), and board pricing yields between platforms. A worker
   thread can follow if pricing time grows.
+
+### Scoring events: anytime TDs and goals (2026-10-07)
+
+Books price anytime TDs and soccer goals with a one-sided "Yes" only, so these lines run on history and matchup:
+Poisson profiles (`NFL:anytime_tds`, rush/rec TDs, `SOCCER:goals`, assists, goal + assist, `NHL:player_goals`) blend each
+player's record toward a typical scorer's rate worth four games (0.3 TDs, 0.25 goals a game), so a short scoreless run
+reads as unlikely, not impossible. The team's implied points or goals from the game line moves them one for one (±25%).
+The app's 0.5 line is never read as a coin flip for these (`scoringMarket`), so without history there is no read. NHL
+goals also get FanDuel's anytime-scorer price, de-vigged per game against the goal total.
