@@ -29,3 +29,27 @@ test('base rates: every standard line graded into counts; a clear side becomes a
   assert.equal(await rates.trendFor(line(0, 1.5)), null, 'another number has too few lines, and the stat needs more');
   assert.equal(await rates.trendFor({ ...line(0), availableDirections: ['MORE'] } as PropLine), null, 'the side must be offered');
 });
+
+test('Trends for every line at once after a restart share one read of the saved file', async () => {
+  const fs = (await import('node:fs')).default;
+  const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const folder = await mkdtemp(join(tmpdir(), 'crowniq-rates-')), file = join(folder, 'base-rates.json');
+  const promises = fs.promises as unknown as { readFile: (...args: unknown[]) => Promise<unknown> };
+  const original = promises.readFile;
+  try {
+    await writeFile(file, JSON.stringify({ pending: {}, counts: {} }));
+    let reads = 0;
+    promises.readFile = async (...args: unknown[]) => { if (String(args[0]) === file) reads++; return original.apply(fs.promises, args); };
+    syncBuiltinESMExports();
+    const rates = new BaseRates(file, null);
+    await Promise.all(Array.from({ length: 50 }, () => rates.trendFor({ sport: 'NFL', market: 'player_receptions', threshold: 4.5,
+      availableDirections: ['MORE', 'LESS'] })));
+    assert.equal(reads, 1);
+  } finally {
+    promises.readFile = original; syncBuiltinESMExports();
+    await rm(folder, { recursive: true, force: true });
+  }
+});

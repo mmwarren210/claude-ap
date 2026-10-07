@@ -30,12 +30,19 @@ export class BaseRates {
   constructor(private readonly file: string | null, private readonly boxScores: BoxScoreResults | null,
     private readonly clock: () => Date = () => new Date()) {}
 
-  private async load(): Promise<Saved> {
-    if (this.data) return this.data;
-    let saved: Saved = { pending: {}, counts: {} };
-    if (this.file) try { saved = JSON.parse(await readFile(this.file, 'utf8')) as Saved; } catch { /* first run */ }
-    this.data = { pending: saved.pending ?? {}, counts: saved.counts ?? {} };
-    return this.data;
+  private loading: Promise<Saved> | null = null;
+  /**
+   * One read of the file, shared by every caller: Trends asks for every line at once after a restart, and each call used
+   * to read and parse the file on its own (4,175 copies at once ran the server out of memory, 2026-10-07).
+   */
+  private load(): Promise<Saved> {
+    if (this.data) return Promise.resolve(this.data);
+    this.loading ??= (async () => {
+      let saved: Saved = { pending: {}, counts: {} };
+      if (this.file) try { saved = JSON.parse(await readFile(this.file, 'utf8')) as Saved; } catch { /* first run */ }
+      return this.data = { pending: saved.pending ?? {}, counts: saved.counts ?? {} };
+    })();
+    return this.loading;
   }
   private async save() {
     if (!this.file || !this.data || !this.dirty) return;
