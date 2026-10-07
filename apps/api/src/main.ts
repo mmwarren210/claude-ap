@@ -14,7 +14,7 @@ import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegis
   statHistoryReadyVersions, statHistoryV2Versions, statHistoryV3Versions } from '@crowniq/engine';
 import type { OddsProvider } from '@crowniq/engine';
 import { buildServer } from './server.js';
-import { FullPrizePicksProvider } from './full-prizepicks-provider.js';
+import { consensusFairPrices, FullPrizePicksProvider } from './full-prizepicks-provider.js';
 import { TheOddsApiProvider } from './the-odds-api-provider.js';
 import { PROBES_V2, probeOddsApiOnce } from './edge/odds-api-probe.js';
 import { EdgeLedger } from './edge/ledger.js';
@@ -114,6 +114,11 @@ const playerHistory=process.env.CROWNIQ_FREE_HISTORY==='false'?null
     // Slow first load (one request a second), so last.
     new OpenDotaHistory(),new LeaguepediaHistory()],historyArchive);
 playerHistory?.start();
+// Step 5a: the Odds API PrizePicks pull also asks for up to nine sportsbooks (one region, so no extra credits per market).
+// Pinnacle first: the Step 2 probe confirmed it returns player props through The Odds API. CROWNIQ_ODDS_CONSENSUS_BOOKS overrides.
+const oddsPrizePicks=apiKey?new FullPrizePicksProvider({apiKey,maxEvents,maxCreditsPerRefresh,quotesFile:`${dataDir}/odds-consensus.json`,
+  consensusBookmakers:(process.env.CROWNIQ_ODDS_CONSENSUS_BOOKS??'pinnacle,fanduel,draftkings,betmgm,williamhill_us,espnbet,betonlineag,betrivers,lowvig')
+    .split(',').map((book)=>book.trim()).filter(Boolean)}):null;
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
   // Step 0f: SharpAPI is the primary PrizePicks source (hourly), so this scraper is backup duty: twice a day (~$1.80/day).
   [{source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9,15')},
@@ -122,7 +127,7 @@ const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBud
     {source:zenPick6,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PICK6','9,12,15,18')},
     // The Odds API alongside the scrapers as a third check. It spends Odds API credits, so by default
     // it runs only when the owner pulls (CROWNIQ_SCRAPER_HOURS_ODDS_API adds a schedule).
-    ...(apiKey?[{source:oddsApiSource(new FullPrizePicksProvider({apiKey,maxEvents,maxCreditsPerRefresh}),undefined,
+    ...(oddsPrizePicks?[{source:oddsApiSource(oddsPrizePicks,undefined,
       // Step 0b: Goblins/Demons the Odds API pull can't place are classified against SharpAPI's regular PrizePicks line.
       async()=>new Map((await sharpProps.pickemLines()).lines.filter((line)=>line.sport&&line.market)
         .map((line)=>[regularKey(line.sport!,line.player,line.market!,new Date(line.startTime).toISOString()),line.line]))),
@@ -372,7 +377,7 @@ const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',dispersion:edgeDisp
   pick6PayoutsConfirmed:process.env.EDGE_PICK6_PAYOUTS_CONFIRMED!=='false',
   alertsFile:`${dataDir}/edge/alerts.json`,staleLogFile:`${dataDir}/edge/stale-events.jsonl`};
 
-const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, playerHistory, espnHistory: espnEvidence, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
+const app = buildServer({ oddsConsensus:oddsPrizePicks?()=>consensusFairPrices(oddsPrizePicks.consensusQuotes()):undefined, adminToken: process.env.ADMIN_TOKEN, playerHistory, espnHistory: espnEvidence, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
   webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,
   autoGradingEnabled:!!autoGrade,autoGradingStatus:()=>autoGrade?.status()??null,
   requireProfiles:true,identityVerifier,

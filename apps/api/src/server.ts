@@ -58,7 +58,7 @@ import type { HistoryBackfillService, InternalHistorySport, InternalHistoryStore
 import type { ProductGradingStatus } from './background-grading.js';
 import type { ContextFeeds, GameLine, InjuryNote } from './context/feeds.js';
 import { gameLinesFor, injuryFor, normalizedName } from './context/match.js';
-import type { SharpPropsFeed } from './context/sharp-props.js';
+import type { FairPrice, SharpPropsFeed } from './context/sharp-props.js';
 import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
 import type { EvPick } from './context/ev.js';
 import { bookLadder, bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
@@ -85,6 +85,8 @@ const DEMO_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
 export interface ServerOptions {
   provider?: OddsProvider | null;
+  /** The Odds API consensus books' fair prices from the last PrizePicks pull (step 5a), for Edge only. */
+  oddsConsensus?: () => readonly FairPrice[];
   /** Folder holding the exported web app, served at every non-API path. */
   webAppDir?: string | null;
   research?: ResearchAdapter | null;
@@ -1276,7 +1278,8 @@ export function buildServer(options: ServerOptions = {}) {
   // CrownIQ Edge (Edge 2.0): its own reads of every platform, warmed in the background like the app boards.
   const movement=new MovementTracker();
   const edge=options.edge&&options.edge.enabled!==false?new EdgeService({board:()=>service.getBoard(),
-    sharp:options.sharpProps?{prices:async()=>(await options.sharpProps!.current()).prices,
+    // SharpAPI's book prices plus the Odds API consensus books from the PrizePicks pull (step 5a; their age discounts them).
+    sharp:options.sharpProps?{prices:async()=>[...(await options.sharpProps!.current()).prices,...(options.oddsConsensus?.()??[])],
       pickem:async()=>(await options.sharpProps!.pickemLines()).lines}:null,
     appBoards:options.scrapedLines??null,pick6PayoutsConfirmed:options.edge.pick6PayoutsConfirmed===true,
     history:options.internalHistory??null,values:(line)=>historyReads.valuesFor(line),ledger:options.edge.ledger??null,

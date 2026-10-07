@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { propLineSchema } from '@crowniq/contracts';
 import type { PropLine, Sport } from '@crowniq/contracts';
 import type { OddsProvider } from '@crowniq/engine';
@@ -24,6 +26,8 @@ const outcomeSchema = z.object({
   point: z.number().finite().nullish(),
   sid: z.union([z.string().min(1), z.number()]).nullish(),
   multiplier: z.number().positive().finite().nullish(),
+  /** Decimal odds, when the request asked for them (the consensus books' prices). */
+  price: z.number().positive().finite().nullish(),
 });
 const oddsSchema = eventSchema.extend({
   bookmakers: z.array(z.object({
@@ -65,6 +69,21 @@ export interface FullPrizePicksOptions {
   readonly baseUrl?: string;
   readonly maxEvents?: number;
   readonly maxCreditsPerRefresh?: number;
+  /**
+   * Step 5a (from claude/edge-engine d46fb69): sportsbooks asked for in the same odds call as PrizePicks. The Odds API bills
+   * each group of up to 10 bookmakers as one region, so up to nine extra books don't change the credit cost per market.
+   * Their two-sided prices feed Edge only, never a GKR score.
+   */
+  readonly consensusBookmakers?: readonly string[];
+  /** Where the last pull's consensus quotes are kept, so a restart between the twice-daily pulls doesn't drop them. */
+  readonly quotesFile?: string | null;
+}
+
+/** One consensus book's Over and Under for a player, market and number from the last pull (decimal odds). */
+export interface ConsensusQuote {
+  readonly sport: Sport; readonly sportKey: string; readonly eventId: string; readonly startTime: string;
+  readonly home: string | null; readonly away: string | null; readonly book: string; readonly marketKey: string;
+  readonly player: string; readonly point: number; over: number | null; under: number | null; readonly fetchedAt: string;
 }
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 24);
@@ -103,6 +122,9 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
   private lastRequestCost: number | null = null;
   private lastHttpStatus: number | null = null;
   private coverage: FullPullCoverage | null = null;
+  private readonly consensusBooks: readonly string[];
+  private quotes: ConsensusQuote[] = [];
+  private quotesLoaded = false;
 
   constructor(private readonly options: FullPrizePicksOptions) {
     if (!options.apiKey.trim()) throw new Error('THE_ODDS_API_KEY_REQUIRED');
@@ -110,10 +132,22 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
     this.baseUrl = options.baseUrl ?? 'https://api.the-odds-api.com';
     this.maxEvents = options.maxEvents ?? 5000;
     this.maxCredits = options.maxCreditsPerRefresh ?? 10000;
+    this.consensusBooks = [...new Set((options.consensusBookmakers ?? []).map((book) => book.trim().toLowerCase())
+      .filter((book) => book && book !== 'prizepicks'))];
+    if (this.consensusBooks.length > 9 || this.consensusBooks.some((book) => !/^[a-z0-9_]+$/.test(book))) throw new Error('INVALID_CONSENSUS_BOOKMAKERS');
     if (!Number.isSafeInteger(this.maxEvents) || this.maxEvents < 1 ||
       !Number.isSafeInteger(this.maxCredits) || this.maxCredits < 1) {
       throw new Error('INVALID_ODDS_API_REFRESH_BUDGET');
     }
+  }
+
+  /** The last pull's two-sided consensus quotes, keyed like the Odds API PrizePicks lines (same market normalization). */
+  consensusQuotes(): readonly ConsensusQuote[] {
+    if (!this.quotes.length && this.options.quotesFile && !this.quotesLoaded) {
+      this.quotesLoaded = true;
+      try { this.quotes = JSON.parse(readFileSync(this.options.quotesFile, 'utf8')) as ConsensusQuote[]; } catch { /* none yet */ }
+    }
+    return this.quotes.filter((quote) => quote.over && quote.under);
   }
 
   getHealth() {
@@ -173,6 +207,7 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
     const selections: RawSelection[] = [];
     const sportKeys = new Set<string>();
     const marketKeys = new Set<string>();
+    const quotes = new Map<string, ConsensusQuote>(), pulledAt = new Date().toISOString();
     for (const { sport, event, markets } of targets) {
       const path = '/v4/sports/' + encodeURIComponent(sport.key) +
         '/events/' + encodeURIComponent(event.id) + '/odds';
@@ -181,8 +216,8 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
       for (let index = 0; index < markets.length; index += 20) {
         const batch = markets.slice(index, index + 20);
         const odds = oddsSchema.parse(await this.getJson(path, batch.length, coverage, {
-          bookmakers: 'prizepicks', markets: batch.join(','),
-          includeMultipliers: 'true', includeSids: 'true',
+          bookmakers: ['prizepicks', ...this.consensusBooks].join(','), markets: batch.join(','),
+          includeMultipliers: 'true', includeSids: 'true', ...(this.consensusBooks.length ? { oddsFormat: 'decimal' } : {}),
         }));
         coverage.oddsRequests++;
         if (odds.id !== event.id || odds.sport_key !== sport.key) {
@@ -202,7 +237,27 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
             }
           }
         }
+        // The consensus books' Over and Under at each number, joined back together.
+        for (const book of odds.bookmakers.filter((item) => this.consensusBooks.includes(item.key))) {
+          for (const market of book.markets.filter((item) => batch.includes(item.key))) {
+            for (const outcome of market.outcomes) {
+              const player = outcome.description?.trim();
+              if ((outcome.name !== 'Over' && outcome.name !== 'Under') || !player || outcome.point == null || !(outcome.price && outcome.price > 1)) continue;
+              const key = [event.id, book.key, market.key, player.toLowerCase(), outcome.point].join('|');
+              const quote = quotes.get(key) ?? { sport: crownSport(sport.key), sportKey: sport.key, eventId: event.id,
+                startTime: event.commence_time, home: event.home_team ?? null, away: event.away_team ?? null, book: book.key,
+                marketKey: market.key, player, point: outcome.point, over: null, under: null, fetchedAt: pulledAt };
+              if (outcome.name === 'Over') quote.over = outcome.price; else quote.under = outcome.price;
+              quotes.set(key, quote);
+            }
+          }
+        }
       }
+    }
+    this.quotes = [...quotes.values()];
+    if (this.options.quotesFile && this.consensusBooks.length) {
+      try { mkdirSync(dirname(this.options.quotesFile), { recursive: true }); writeFileSync(this.options.quotesFile, JSON.stringify(this.quotes)); }
+      catch { /* best effort */ }
     }
     coverage.selections = selections.length;
     coverage.marketKeys = [...marketKeys].sort();
@@ -211,7 +266,9 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
     // Edge 2.0 budget report (spec §1.1b, §10): credits per refresh, before and after more bookmakers join this call.
     console.log(`[odds-api] PrizePicks pull: ${coverage.eventsWithPrizePicks}/${coverage.eventsDiscovered} events, ` +
       `${coverage.marketsDiscovered} markets, ${coverage.oddsRequests} odds requests, ${selections.length} outcomes, ` +
-      `${coverage.creditsSpent} credits spent, ${coverage.creditsRemaining ?? '?'} left`);
+      `${coverage.creditsSpent} credits spent, ${coverage.creditsRemaining ?? '?'} left; consensus books ${this.consensusBooks.join(',') || 'none'}: ` +
+      `${this.quotes.filter((quote) => quote.over && quote.under).length} two-sided quotes ${JSON.stringify(Object.fromEntries(
+        [...new Set(this.quotes.map((quote) => quote.sport))].map((sport) => [sport, this.quotes.filter((quote) => quote.sport === sport && quote.over && quote.under).length])))}`);
     return selections;
   }
 
@@ -280,4 +337,22 @@ export class FullPrizePicksProvider implements OddsProvider<RawSelection> {
     try { return await response.json(); }
     catch { throw new Error('ODDS_API_INVALID_JSON'); }
   }
+}
+
+/** Decimal odds as American odds (2.5 → +150, 1.5 → -200). */
+const american = (decimal: number) => Math.round(decimal >= 2 ? (decimal - 1) * 100 : -100 / (decimal - 1));
+
+/**
+ * The consensus quotes as Edge's fair prices: each book's Over and Under at one number with the vig removed (multiplicative).
+ * Market keys follow the Odds API PrizePicks lines' own normalization, so they meet the same lines.
+ */
+export function consensusFairPrices(quotes: readonly ConsensusQuote[]): import('./context/sharp-props.js').FairPrice[] {
+  return quotes.flatMap((quote) => {
+    if (!quote.over || !quote.under || quote.sport === 'OTHER') return [];
+    const over = 1 / quote.over, under = 1 / quote.under;
+    if (over + under < .95) return [];
+    return [{ book: quote.book, sport: quote.sport, player: quote.player, market: normalizePrizePicksMarketKey(quote.sport, quote.marketKey),
+      line: quote.point, fairOver: Math.round(over / (over + under) * 10_000) / 10_000, overAmerican: american(quote.over),
+      underAmerican: american(quote.under), startTime: quote.startTime, home: quote.home, away: quote.away, observedAt: quote.fetchedAt }];
+  });
 }

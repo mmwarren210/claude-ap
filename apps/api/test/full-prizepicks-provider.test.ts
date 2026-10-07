@@ -121,3 +121,28 @@ test('refuses to publish a partial board when discovered prop markets exceed rem
   assert.equal(requested.filter((url) => url.pathname.endsWith('/odds')).length, 0);
   assert.equal(provider.getHealth().coverage?.creditsSpent, 2);
 });
+
+test('step 5a: consensus books ride the same odds call; their Over and Under become de-vigged Edge prices', async () => {
+  const { consensusFairPrices } = await import('../src/full-prizepicks-provider.js');
+  const requested: URL[] = [];
+  const base = mockFetch(50, requested);
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const response = await base(input);
+    const url = new URL(String(input));
+    if (!url.pathname.endsWith('/odds') || url.pathname.includes('tennis_')) return response;
+    const body = await response.json() as { bookmakers: unknown[] };
+    body.bookmakers.push({ key: 'pinnacle', markets: [{ key: 'player_pass_yds', outcomes: [
+      { name: 'Over', description: 'Fixture QB', point: 240.5, price: 1.87 }, { name: 'Under', description: 'Fixture QB', point: 240.5, price: 1.95 }] }] });
+    return new Response(JSON.stringify(body), { status: 200, headers: response.headers });
+  }) as typeof fetch;
+  const provider = new FullPrizePicksProvider({ apiKey: 'fixture-key', fetchFn, consensusBookmakers: ['pinnacle', 'fanduel'] });
+  await provider.fetchPrizePicksLines();
+  const odds = requested.filter((url) => url.pathname.endsWith('/odds'));
+  assert.ok(odds.every((url) => url.searchParams.get('bookmakers') === 'prizepicks,pinnacle,fanduel' && url.searchParams.get('oddsFormat') === 'decimal'));
+  const [price] = consensusFairPrices(provider.consensusQuotes());
+  assert.deepEqual([price?.book, price?.sport, price?.market, price?.line], ['pinnacle', 'NFL', 'passing_yards', 240.5]);
+  assert.equal(price?.fairOver, Math.round((1 / 1.87) / (1 / 1.87 + 1 / 1.95) * 10_000) / 10_000);
+  assert.equal(price?.overAmerican, -115);
+  assert.throws(() => new FullPrizePicksProvider({ apiKey: 'k', consensusBookmakers: Array.from({ length: 10 }, (_, index) => `book${index}`) }),
+    /INVALID_CONSENSUS_BOOKMAKERS/, 'more than nine extra books would cost a second region');
+});
