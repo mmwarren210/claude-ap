@@ -47,8 +47,7 @@ export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000): NodeJS.Tim
   let lastLog = 0;
   const timer = setInterval(() => {
     const memory = process.memoryUsage(), mb = (bytes: number) => Math.round(bytes / 1_048_576);
-    const early = process.uptime() < 120;
-    if ((mb(memory.rss) < thresholdMb && !early) || Date.now() - lastLog < (early ? 2000 : 4000)) return;
+    if (mb(memory.rss) < thresholdMb || Date.now() - lastLog < 4000) return;
     lastLog = Date.now();
     const requests = [...inFlight.values()].map((item) => `${item.what} ${Math.round((Date.now() - item.since) / 1000)}s`).slice(0, 4);
     const served = [...incoming.values()].map((item) => `${item.what} ${Math.round((Date.now() - item.since) / 1000)}s`).slice(0, 10);
