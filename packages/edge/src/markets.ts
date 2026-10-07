@@ -66,7 +66,8 @@ const basketball: Record<string, MarketProfile> = {
 
 export const marketProfiles: Readonly<Record<string, MarketProfile>> = {
   ...Object.fromEntries(Object.entries(basketball).map(([key, value]) => ['NBA:' + key, value])),
-  ...Object.fromEntries(Object.entries(basketball).map(([key, value]) => ['WNBA:' + key, value])),
+  ...Object.fromEntries(['WNBA', 'NCAAB', 'NCAAW', 'EUROLEAGUE'].flatMap((sport) =>
+    Object.entries(basketball).map(([key, value]) => [`${sport}:${key}`, value]))),
   'NFL:passing_yards': normal(0, .065, 100, { value: get('passing_yds'), opportunity: get('pass_attempts') }),
   'NFL:player_pass_attempts': nb(.03, { value: get('pass_attempts'), opportunity: snaps }),
   'NFL:player_pass_completions': nb(.03, { value: get('completions'), opportunity: get('pass_attempts') }),

@@ -57,6 +57,7 @@ type Diagnostics={
   funnel?:Funnel;
   lineSources?:{
     prizePicksFeed:{ok:boolean;rows:number;lines:number;at:string;error:string|null}|null;
+    books?:{selectedButEmpty:string[];planSelects:string[]|null;requestsLastHour:number}|null;
     board:{primary:{sharpapi:number;oddsApi:number;scraper:number};goblins:number;demons:number;unconfirmed:number;
       disagreements:Record<string,number>}|null;
   };
@@ -284,6 +285,13 @@ export default function OwnerBoardScreen(){
               ?<Text style={styles.row}>SharpAPI PrizePicks: {diagnostics.lineSources.prizePicksFeed.lines.toLocaleString()} lines · {new Date(diagnostics.lineSources.prizePicksFeed.at).toLocaleString()}</Text>
               :<Text style={styles.error}>SharpAPI PrizePicks feed down ({(diagnostics.lineSources.prizePicksFeed.error??'').replace(/_/g,' ').toLowerCase()}): the board is on The Odds API and the scrapers.</Text>
             :<Text style={styles.hint}>SharpAPI PrizePicks: no pass yet since the server started.</Text>}
+          {diagnostics.lineSources.books&&<>
+            {diagnostics.lineSources.books.selectedButEmpty.length>0&&
+              <Text style={styles.error}>Selected but empty: {diagnostics.lineSources.books.selectedButEmpty.join(', ')} returned no rows in any league two refreshes running.</Text>}
+            {diagnostics.lineSources.books.planSelects&&
+              <Text style={styles.error}>SharpAPI says a requested book is not on the plan; the plan selects {diagnostics.lineSources.books.planSelects.join(', ')}.</Text>}
+            <Text style={styles.hint}>SharpAPI requests in the last hour: {diagnostics.lineSources.books.requestsLastHour.toLocaleString()}</Text>
+          </>}
           {diagnostics.lineSources.board&&<>
             <Text style={styles.row}>From SharpAPI: {diagnostics.lineSources.board.primary.sharpapi.toLocaleString()} · The Odds API: {diagnostics.lineSources.board.primary.oddsApi.toLocaleString()} · Scrapers: {diagnostics.lineSources.board.primary.scraper.toLocaleString()}</Text>
             <Text style={styles.row}>Goblins: {diagnostics.lineSources.board.goblins.toLocaleString()} · Demons: {diagnostics.lineSources.board.demons.toLocaleString()}</Text>

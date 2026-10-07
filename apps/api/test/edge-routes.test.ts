@@ -83,6 +83,11 @@ test('Edge routes: every line read or No read, leave-one-out, Gen, slips and own
     assert.ok(growth.slips.every((slip) => (slip.kellyFraction ?? 0) > 0 && (slip.growth ?? 0) > 0));
     assert.ok(growth.notes.some((note) => note.includes('Kelly')));
 
+    // Hard Rock is held out of ranked picks and Gen until the side-bias check clears it (9b).
+    const held = await app.inject({ method: 'POST', url: '/v1/edge/gen', payload: { platform: 'hardrock', type: 'PARLAY', size: 2 } });
+    assert.ok(held.json().notes.some((note: string) => note.includes('on hold')), held.body);
+    const heldTop = await app.inject('/v1/edge?platform=hardrock');
+    assert.ok(heldTop.statusCode !== 200 || heldTop.json().picks.length === 0);
     const slip = await app.inject({ method: 'POST', url: '/v1/edge/slip', payload: { type: 'POWER', lineIds: ['line-0', 'line-2'] } });
     assert.equal(slip.statusCode, 200);
     // The ticket's own payouts replace the chart: EV uses exactly what the app showed, with no swap suggested.

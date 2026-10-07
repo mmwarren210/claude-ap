@@ -99,3 +99,28 @@ test('SharpAPI feed: PrizePicks gets its own pass; a failed pass clears its line
   assert.equal(status.prizePicksFeed?.ok, false);
   assert.equal(status.prices, 1, 'book prices still refreshed');
 });
+
+test('Step 1: books per league logged, market types as one list, book_not_selected said out loud, empty books flagged, cadence', async () => {
+  const { fullGameTypes } = await import('../src/context/sharp-props.js');
+  assert.ok(fullGameTypes('NFL').includes('player_receiving_yards') && fullGameTypes('NFL').includes('anytime_touchdown_scorer'));
+  assert.ok(fullGameTypes('NCAAB').includes('player_points'), 'college basketball reads like the NBA');
+  const asked: URL[] = [];
+  const fetchFn = (async (input: URL | string) => {
+    const url = new URL(String(input)); asked.push(url);
+    if (url.searchParams.get('sportsbooks')?.includes('betmgm')) return new Response(JSON.stringify({ error: { code: 'book_not_selected',
+      details: { selected: ['draftkings', 'fanduel'] } } }), { status: 400 });
+    return new Response(JSON.stringify({ data: [], pagination: { has_more: false } }));
+  }) as typeof fetch;
+  let clock = now;
+  const feed = new SharpPropsFeed('key', null, { leagues: ['nfl'], books: ['draftkings', 'betmgm'], requestGapMs: 0 }, fetchFn, () => clock);
+  await feed.refresh();
+  assert.ok(asked[0]!.searchParams.get('market_type')!.split(',').length > 5, 'one comma-separated market_type list');
+  assert.equal((await feed.status()).planSelects?.join(), 'draftkings,fanduel');
+  await feed.refresh();
+  assert.deepEqual((await feed.status()).selectedButEmpty, ['draftkings', 'betmgm'], 'no rows two refreshes running');
+  assert.ok(((await feed.status()).requestsLastHour ?? 0) >= 2);
+  // Nothing within 3 hours: due again only after an hour.
+  assert.equal(feed.due(), false);
+  clock = new Date(now.getTime() + 60 * 60_000);
+  assert.equal(feed.due(), true);
+});

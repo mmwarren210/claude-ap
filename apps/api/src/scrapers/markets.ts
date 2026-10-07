@@ -11,6 +11,9 @@ export const leagues: Readonly<Record<string, { sport: Sport; key: string }>> = 
   CS2: { sport: 'CS2', key: 'esports_cs2' }, VAL: { sport: 'VALORANT', key: 'esports_valorant' },
   LOL: { sport: 'LOL', key: 'esports_lol' }, DOTA2: { sport: 'DOTA', key: 'esports_dota2' },
   KBO: { sport: 'KBO', key: 'baseball_kbo' }, AFL: { sport: 'AFL', key: 'aussierules_afl' },
+  CBB: { sport: 'NCAAB', key: 'basketball_ncaab' }, NCAAB: { sport: 'NCAAB', key: 'basketball_ncaab' },
+  WCBB: { sport: 'NCAAW', key: 'basketball_wncaab' }, NCAAW: { sport: 'NCAAW', key: 'basketball_wncaab' },
+  EUROLEAGUE: { sport: 'EUROLEAGUE', key: 'basketball_euroleague' },
   // Tennis and esports under the other labels apps use (all map to the same sport and player ids).
   ATP: { sport: 'TENNIS', key: 'tennis' }, WTA: { sport: 'TENNIS', key: 'tennis' },
   CS: { sport: 'CS2', key: 'esports_cs2' }, CSGO: { sport: 'CS2', key: 'esports_cs2' }, 'CS:GO': { sport: 'CS2', key: 'esports_cs2' },

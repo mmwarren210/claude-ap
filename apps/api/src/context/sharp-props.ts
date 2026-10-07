@@ -12,9 +12,14 @@ const soccerLeagues = ['england_-_premier_league', 'spain_-_la_liga', 'uefa_-_ch
   'italy_-_serie_a', 'france_-_ligue_1', 'usa_-_major_league_soccer', 'uefa_-_europa_league', 'uefa_-_nations_league',
   'brazil_-_serie_a', 'netherlands_-_eredivisie', 'portugal_-_primeira_liga', 'mexico_-_liga_mx', 'england_-_championship'];
 const leagueSports: Readonly<Record<string, Sport>> = { nfl: 'NFL', ncaaf: 'NCAAFB', mlb: 'MLB', nba: 'NBA', wnba: 'WNBA',
-  nhl: 'NHL', atp: 'TENNIS', wta: 'TENNIS', ...Object.fromEntries(soccerLeagues.map((league) => [league, 'SOCCER' as Sport])) };
-/** Every league pulled by default: player props for the ones CrownIQ covers, game lines for all of them. */
-export const sharpLeagues: readonly string[] = ['nfl', 'ncaaf', 'mlb', 'nba', 'wnba', 'nhl', 'atp', 'wta', ...soccerLeagues];
+  nhl: 'NHL', atp: 'TENNIS', wta: 'TENNIS', atp_challenger: 'TENNIS', ncaab: 'NCAAB', ncaaw: 'NCAAW', euroleague: 'EUROLEAGUE',
+  nba_cup: 'NBA', ...Object.fromEntries(soccerLeagues.map((league) => [league, 'SOCCER' as Sport])) };
+/**
+ * Every league pulled by default (CROWNIQ_SHARP_LEAGUES overrides). College basketball has no props until November; its
+ * leagues stay in the list and start on their own when SharpAPI lists them.
+ */
+export const sharpLeagues: readonly string[] = ['nfl', 'ncaaf', 'mlb', 'nba', 'wnba', 'nhl', 'atp', 'wta', 'atp_challenger',
+  'ncaab', 'ncaaw', 'euroleague', 'nba_cup', ...soccerLeagues];
 
 const basketball: Readonly<Record<string, string>> = { player_points: 'player_points', player_rebounds: 'player_rebounds',
   player_assists: 'player_assists', player_made_threes: 'player_threes',
@@ -39,7 +44,7 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
     player_strikeouts: 'pitcher_strikeouts', player_singles: 'singles', player_doubles: 'doubles',
     player_stolen_bases: 'stolen_bases', player_hits_allowed: 'hits_allowed', player_earned_runs: 'earned_runs',
     player_walks_allowed: 'walks_allowed', player_pitching_outs: 'pitching_outs' },
-  NBA: basketball, WNBA: basketball,
+  NBA: basketball, WNBA: basketball, NCAAB: basketball, NCAAW: basketball, EUROLEAGUE: basketball,
   NHL: { player_shots_on_goal: 'shots_on_goal', player_points: 'points', player_saves: 'saves', player_assists: 'assists',
     player_goals: 'goals', player_blocked_shots: 'blocked_shots', player_power_play_points: 'power_play_points',
     anytime_goal_scorer: 'goals' },
@@ -50,6 +55,21 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
   SOCCER: { player_shots: 'shots', player_shots_on_target: 'sot', player_assists: 'assists', player_goals: 'goals',
     player_fouls: 'fouls', player_saves: 'goalie_saves' },
 };
+
+/** The full-game player-prop market types CrownIQ reads for a sport (step 1d), plus the anytime-scorer markets. */
+export function fullGameTypes(sport: Sport | undefined): string[] {
+  if (!sport) return [];
+  const scorer = sport === 'NHL' || sport === 'SOCCER' ? ['anytime_goal_scorer'] : sport === 'NFL' || sport === 'NCAAFB' ? ['anytime_touchdown_scorer'] : [];
+  return [...Object.keys(marketKeys[sport] ?? {}), ...scorer];
+}
+
+/** Partial-game (1st half, quarter, period) market types, read in their own pass (step 4c fills these in). */
+export function partialTypes(sport: Sport | undefined): string[] {
+  return sport ? Object.keys(partialKeys[sport] ?? {}) : [];
+}
+
+/** SharpAPI partial-game market types to CrownIQ keys; the segment stays in the key (step 4c). */
+const partialKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>>>>> = {};
 
 /** Yes/no scorer markets: "Yes" is the over of 0.5 (one or more), "No" the under. */
 const scorerMarkets = new Set(['anytime_goal_scorer', 'anytime_touchdown_scorer']);
@@ -312,6 +332,11 @@ export interface SharpPropsStatus {
   readonly overOnly?: number; readonly games?: number; readonly pickem?: number;
   /** SharpAPI's PrizePicks pass: ok, rows and lines read, when, and the error when it failed (the board then uses the backups). */
   readonly prizePicksFeed?: { ok: boolean; rows: number; lines: number; at: string; error: string | null } | null;
+  readonly requestsLastHour?: number;
+  /** Requested books with no rows in any league two refreshes running (step 1a). */
+  readonly selectedButEmpty?: readonly string[];
+  /** The plan's selected books, when SharpAPI answered book_not_selected. */
+  readonly planSelects?: readonly string[];
 }
 
 /**
@@ -333,6 +358,10 @@ export class SharpPropsFeed {
   private onPickem: ((lines: readonly PickemLine[], ok: boolean, at: Date) => unknown)[] = [];
   /** The PrizePicks pass: whether it worked, rows and lines it read, when, and why not. */
   private pickemStatus: { ok: boolean; rows: number; lines: number; at: string; error: string | null } | null = null;
+  private lastStartedAt = 0;
+  private requestTimes: number[] = [];
+  private emptyStreaks = new Map<string, number>();
+  private notSelected: string[] | null = null;
   constructor(private readonly apiKey: string | null, private readonly file: string | null,
     private readonly options: { books?: readonly string[]; leagues?: readonly string[]; maxPagesPerLeague?: number;
       /** Pause between requests; SharpAPI's Hobby plan allows 120 a minute. */
@@ -389,7 +418,9 @@ export class SharpPropsFeed {
     await this.load();
     return { configured: !!this.apiKey, fetchedAt: this.fetchedAt, prices: this.prices.length, lastError: this.lastError,
       requests: this.requests, overOnly: this.overOnly.length, games: this.games.length,
-      pickem: this.pickem.length, prizePicksFeed: this.pickemStatus };
+      pickem: this.pickem.length, prizePicksFeed: this.pickemStatus, requestsLastHour: this.requestsLastHour(),
+      selectedButEmpty: [...this.emptyStreaks].filter(([, streak]) => streak >= 2).map(([book]) => book),
+      ...(this.notSelected ? { planSelects: this.notSelected } : {}) };
   }
 
   /** One refresh at a time: a second call waits for the running one instead of doubling the requests. */
@@ -410,8 +441,18 @@ export class SharpPropsFeed {
       url.searchParams.set('limit', '200');
       if (cursor) url.searchParams.set('cursor', cursor);
       if (this.requests++ > 0) await new Promise((resolve) => setTimeout(resolve, this.options.requestGapMs ?? 700));
+      this.requestTimes.push(this.clock().getTime());
       const response = await this.fetchRetrying(url);
-      if (response.status === 404 || response.status === 400) return { rows, capped: false }; // league not offered
+      if (response.status === 404 || response.status === 400 || response.status === 403) {
+        // A league not offered ends quietly; a book the plan hasn't selected is said out loud with the plan's list.
+        const body = await response.json().catch(() => null) as { error?: { code?: string; details?: { selected?: unknown } }; code?: string; details?: { selected?: unknown } } | null;
+        const code = body?.error?.code ?? body?.code, selected = body?.error?.details?.selected ?? body?.details?.selected;
+        if (code === 'book_not_selected') {
+          this.notSelected = Array.isArray(selected) ? selected.map(String) : [];
+          console.warn(`[sharp] book_not_selected (${league}, asked ${params.sportsbooks}); the plan selects: ${JSON.stringify(selected ?? null)}`);
+        } else if (response.status === 403) throw new Error(`SHARPAPI_HTTP_403${code ? `_${code}` : ''}`);
+        return { rows, capped: false };
+      }
       if (!response.ok) throw new Error(`SHARPAPI_HTTP_${response.status}`);
       const body = await response.json() as { data?: unknown[]; pagination?: { has_more?: boolean; next_cursor?: string } };
       rows.push(...(body.data ?? []).map(normalizeRow));
@@ -433,13 +474,31 @@ export class SharpPropsFeed {
     const leagues = this.options.leagues ?? sharpLeagues;
     const cap = this.options.maxPagesPerLeague ?? 60;
     let booksOk = false;
+    this.lastStartedAt = this.clock().getTime();
+    const perLeague: Record<string, Record<string, number>> = {}, capped: string[] = [];
     try {
       for (const league of leagues) {
-        if (books.length) rows.push(...(await this.pages(league, { sportsbooks: books.join(','), is_player_prop: 'true' }, cap)).rows);
+        const sport = leagueSports[league];
+        // Step 1d: only the market types CrownIQ reads, as one comma-separated list per pass (no page flooding);
+        // the partial-game types get their own pass.
+        for (const types of [fullGameTypes(sport), partialTypes(sport)]) {
+          if (!books.length || !types.length) continue;
+          const pass = await this.pages(league, { sportsbooks: books.join(','), is_player_prop: 'true', market_type: types.join(',') }, cap);
+          rows.push(...pass.rows);
+          if (pass.capped) capped.push(league);
+          for (const value of pass.rows) { const book = String((value as Row).sportsbook); (perLeague[league] ??= {})[book] = (perLeague[league]?.[book] ?? 0) + 1; }
+        }
         // NHL game goal totals: they set the scale that takes the cut out of anytime-scorer prices.
         if (league === 'nhl' && books.length) gameRows.push(...(await this.pages(league, { sportsbooks: books.join(','), market_type: 'total_goals' }, 10)).rows);
       }
       booksOk = true;
+      console.log(`[sharp-books] rows per league and book ${JSON.stringify(perLeague)}; page cap hit: ${capped.join(', ') || 'none'}; ` +
+        `requests last hour ${this.requestsLastHour()}`);
+      // Step 1a: a requested book with no rows in any league, two refreshes running, is flagged.
+      for (const book of books) {
+        const any = Object.values(perLeague).some((byBook) => (byBook[book] ?? 0) > 0);
+        this.emptyStreaks.set(book, any ? 0 : (this.emptyStreaks.get(book) ?? 0) + 1);
+      }
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : 'SHARPAPI_FAILED';
       console.warn(`[sharp] refresh failed after ${this.requests} requests: ${this.lastError}`);
@@ -529,11 +588,29 @@ export class SharpPropsFeed {
     }
   }
 
+  /**
+   * Step 1e: checks every `intervalMinutes` (15) and refreshes then when a game starts within 3 hours, otherwise once an hour.
+   */
   start(intervalMinutes: number): void {
     if (this.timer || !this.apiKey || intervalMinutes <= 0) return;
     this.refresh().catch(() => undefined);
-    this.timer = setInterval(() => { this.refresh().catch(() => undefined); }, intervalMinutes * 60_000);
+    this.timer = setInterval(() => { if (this.due()) this.refresh().catch(() => undefined); }, intervalMinutes * 60_000);
     this.timer.unref();
+  }
+
+  /** Whether a refresh is due: a game within 3 hours (every tick), else an hour since the last refresh started. */
+  due(): boolean {
+    const now = this.clock().getTime();
+    if (now - this.lastStartedAt >= 55 * 60_000) return true;
+    const starts = [...this.prices.map((price) => price.startTime), ...this.pickem.map((line) => line.startTime)];
+    return starts.some((start) => { const at = Date.parse(start); return at > now && at - now <= 3 * 3600_000; });
+  }
+
+  /** SharpAPI requests in the last hour (the plan allows 120 a minute). */
+  requestsLastHour(): number {
+    const cutoff = this.clock().getTime() - 3600_000;
+    while (this.requestTimes.length && this.requestTimes[0]! < cutoff) this.requestTimes.shift();
+    return this.requestTimes.length;
   }
 
   stop(): void { if (this.timer) clearInterval(this.timer); this.timer = null; }

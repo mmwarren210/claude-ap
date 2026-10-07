@@ -23,6 +23,8 @@ export interface EdgeRouteDeps {
   readonly now: () => Date;
   /** Source freshness and spend for the owner health page (spec §10). */
   readonly health?: () => Promise<Record<string, unknown>>;
+  /** Platforms whose ranked picks and entries are held (a new feed not yet cleared by the side-bias check). */
+  readonly held?: (platform: string) => boolean;
 }
 
 const platformSchema = z.enum(EDGE_PLATFORMS as [EdgePlatform, ...EdgePlatform[]]).default('prizepicks');
@@ -58,6 +60,7 @@ export function lineMovement(snapshots: Pick<SnapshotStore, 'playerHistory'>, pi
 
 export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): void {
   const { edge, now } = deps;
+  const held = (platform: string) => (deps.held ?? (() => false))(platform);
   const edgeQuery = z.object({ platform: platformSchema, view: z.enum(['edges', 'alternates', 'all']).default('edges'),
     sport: z.string().trim().min(1).max(20).optional(), market: z.string().trim().min(1).max(80).optional(),
     limit: z.coerce.number().int().min(1).max(500).default(150),
@@ -72,6 +75,9 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     const filters = { nowMs, limit: query.data.limit, ...(query.data.sport ? { sport: query.data.sport } : {}),
       ...(query.data.market ? { market: query.data.market } : {}),
       ...(query.data.minProbability !== undefined ? { minProbability: query.data.minProbability } : {}) };
+    // A platform on hold (a new feed not yet cleared by the side-bias check, 9b) shows no ranked picks or entries; its
+    // Board still lists every line with Edge's read.
+    if (held(query.data.platform) && query.data.view !== 'all') return { ...snapshot.response, picks: [], slips: [] };
     const picks = viewPicks(snapshot, query.data.view, filters);
     const live = (slip: { legs: { lineId: string }[] }) => slip.legs.every((leg) => {
       const pick = snapshot.byLine.get(leg.lineId); return !!pick && Date.parse(pick.eventStartTime) > nowMs; });
@@ -110,6 +116,8 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     const entry = snapshot.response.entries.find((item) => item.type === body.data.type && item.size === body.data.size);
     if (!entry) return reply.code(422).send({ code: 'ENTRY_UNSUPPORTED' });
     const nowMs = now().getTime();
+    if (held(body.data.platform)) return { modelVersion: EDGE_MODEL_VERSION, builtAt: new Date(nowMs).toISOString(), pool: 0, slips: [],
+      notes: ['Edge entries for this platform are on hold while its new prices are checked for one-sided bias.'] };
     const slips = generateEntries(snapshot.response.picks, entry, { count: body.data.count, nowMs,
       ...(body.data.sport ? { sport: body.data.sport } : {}),
       ...(body.data.from ? { from: Date.parse(body.data.from) } : {}), ...(body.data.to ? { to: Date.parse(body.data.to) } : {}),

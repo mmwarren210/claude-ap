@@ -746,6 +746,8 @@ export function buildServer(options: ServerOptions = {}) {
         contextFeeds:await options.contextFeeds?.status()??null,
         sharpProps:await options.sharpProps?.status()??null,
         lineSources:{prizePicksFeed:(await options.sharpProps?.status())?.prizePicksFeed??null,
+          books:options.sharpProps?await options.sharpProps.status().then((sharp)=>({selectedButEmpty:sharp.selectedButEmpty??[],
+            planSelects:sharp.planSelects??null,requestsLastHour:sharp.requestsLastHour??0})):null,
           board:(options.provider as {lastReport?:BoardSourceReport|null}|null|undefined)?.lastReport??null},
         researchHealth:status.researchHealth,secondLook:status.secondLook,
         freshContext:status.freshContext,lineTypes:auditPrizePicksLineTypes(snapshot.board.lines),
@@ -1289,7 +1291,9 @@ export function buildServer(options: ServerOptions = {}) {
     options.edge.boxScores??null,()=>now(),
     options.playerHistory?(sport,playerName,market)=>options.playerHistory!.values(sport,playerName,market):null):null;
   if(edge){
-    registerEdgeRoutes(app,{edge,ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
+    // Hard Rock joined with the book change (9b): its picks stay out of Top Picks and Gen until the side-bias check clears it.
+    const heldPlatforms=new Set((process.env.CROWNIQ_EDGE_HOLD??'hardrock').split(',').map((item)=>item.trim()).filter(Boolean));
+    registerEdgeRoutes(app,{edge,held:(platform)=>heldPlatforms.has(platform),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
       internalHistory:options.internalHistory??null,isOwner:(request)=>isOwner(request),now,
       health:async()=>({board:{fetchedAt:service.getBoard()?.board.fetchedAt??null},
         sharpApi:options.sharpProps?await options.sharpProps.status():null,

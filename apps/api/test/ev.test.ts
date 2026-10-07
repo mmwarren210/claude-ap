@@ -51,7 +51,7 @@ test('the SharpAPI feed pages with the cursor, sends the key, and keeps old pric
   let fail = false;
   const fetchFn = (async (input: URL | string, init?: RequestInit) => {
     const url = new URL(String(input));
-    calls.push(`${url.searchParams.get('market_type') ? 'games:' : ''}${url.searchParams.get('cursor') ?? 'first'}`);
+    calls.push(`${url.searchParams.get('is_player_prop') ? '' : 'games:'}${url.searchParams.get('cursor') ?? 'first'}`);
     assert.equal((init?.headers as Record<string, string>)['X-API-Key'], 'key');
     if (fail) return new Response('{}', { status: 500 });
     const first = !url.searchParams.get('cursor');

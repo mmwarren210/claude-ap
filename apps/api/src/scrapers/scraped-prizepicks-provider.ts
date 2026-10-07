@@ -114,6 +114,7 @@ export class ScrapedPrizePicksProvider implements OddsProvider<PropLine> {
     for (const line of stored) groups.set(sameLineKey(line), [...groups.get(sameLineKey(line)) ?? [], line]);
     const chosen = resolveRegulars([...groups.values()]);
     this.lastReport = chosen.report;
+    console.log(`[board-sources] prizepicks ${chosen.groups.length} lines ${JSON.stringify(chosen.report)}`);
     return chosen.groups.map(({ lines: group, confirmed }) => {
       const [best, ...others] = [...group].sort((a, b) => Number(fromApp(b)) - Number(fromApp(a)) ||
         b.confirmedBy.length - a.confirmedBy.length || b.lastSeenAt.localeCompare(a.lastSeenAt));

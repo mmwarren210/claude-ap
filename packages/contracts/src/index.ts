@@ -11,7 +11,7 @@ export const lineTypeSchema = z.enum(['REGULAR', 'GOBLIN', 'DEMON', 'UNKNOWN_ALT
 export const sportSchema = z.enum([
   'NFL', 'MLB', 'NBA', 'WNBA', 'TENNIS', 'TABLE_TENNIS', 'BADMINTON',
   'CS2', 'VALORANT', 'LOL', 'DOTA', 'APEX', 'NHL', 'NCAAFB', 'HANDBALL',
-  'SOCCER', 'AFL', 'DARTS', 'KBO',
+  'SOCCER', 'AFL', 'DARTS', 'KBO', 'NCAAB', 'NCAAW', 'EUROLEAGUE',
   'OTHER',
 ]);
 
