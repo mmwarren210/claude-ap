@@ -330,3 +330,19 @@ test('provider Crowns: a board adds a pick, tapping again removes it, and each p
   assert.deepEqual(crownLegs('hardrock'), [{ id: 'b' }]);
   assert.deepEqual(crownLegs('draftkings'), [], 'each provider has its own');
 });
+
+test('Top Picks: other apps’ and books’ picks open the player’s PrizePicks panel, same stat first', async () => {
+  const { linkPanels } = await import('../src/all-picks.js');
+  const start = '2030-01-01T00:00:00Z', nowMs = Date.parse('2029-12-31T00:00:00Z');
+  const lines = [
+    { id: 'pp-1', market: 'player_points', playerId: 'p1', playerName: 'Luka Dončić', eventStartTime: start },
+    { id: 'pp-2', market: 'player_rebounds', playerId: 'p1', playerName: 'Luka Dončić', eventStartTime: start },
+  ];
+  const pick = (extra: Record<string, unknown>) => ({ key: 'x|player_rebounds', source: 'underdog' as const, by: 'GKR' as const,
+    title: 'Luka Doncic', detail: '', strength: 80, edge: null, startTime: start, lineId: null, note: null, ...extra });
+  const [byId, byName, unknown] = linkPanels([pick({ playerId: 'p1' }), pick({ source: 'hardrock', key: 'Luka|passing' }),
+    pick({ title: 'Nobody Here' })], lines, nowMs);
+  assert.equal(byId!.lineId, 'pp-2', 'same player id, same stat');
+  assert.equal(byName!.lineId, 'pp-1', 'a book pick matches by name and falls back to any of the player’s lines');
+  assert.equal(unknown!.lineId, null);
+});

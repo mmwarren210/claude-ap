@@ -761,6 +761,25 @@ export class SharpPropsFeed {
    * One SharpAPI request; a 429 (rate limit) waits for Retry-After (else 15, 30, 60 s) and tries again, up to 3 retries,
    * so one busy minute doesn't throw away a whole refresh.
    */
+  /**
+   * One request per book (NFL, one row) to see what SharpAPI answers for it: the HTTP status, its error code and the
+   * plan's selected books when it names them, and whether a row came back. Diagnostics only (the admin route).
+   */
+  async probeBooks(books: readonly string[], league = 'nfl') {
+    if (!this.apiKey) return { configured: false, books: {} };
+    const out: Record<string, { status: number; code: string | null; rows: number; selected?: unknown }> = {};
+    for (const book of books) {
+      const url = new URL(`${API}/odds`);
+      for (const [key, value] of Object.entries({ league, sportsbooks: book, is_live: 'false', limit: '1' })) url.searchParams.set(key, value);
+      const response = await this.fetchRetrying(url).catch(() => null);
+      if (!response) { out[book] = { status: 0, code: 'NETWORK', rows: 0 }; continue; }
+      const body = await response.json().catch(() => null) as { data?: unknown[]; error?: { code?: string; details?: { selected?: unknown } }; code?: string } | null;
+      out[book] = { status: response.status, code: body?.error?.code ?? body?.code ?? null, rows: body?.data?.length ?? 0,
+        ...(body?.error?.details?.selected ? { selected: body.error.details.selected } : {}) };
+    }
+    return { configured: true, requested: this.options.books ?? null, books: out };
+  }
+
   private async fetchRetrying(url: URL): Promise<Response> {
     for (let attempt = 0; ; attempt++) {
       const response = await this.fetchFn(url, { headers: { 'X-API-Key': this.apiKey! }, signal: AbortSignal.timeout(30_000) });

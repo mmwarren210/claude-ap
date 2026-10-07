@@ -2146,6 +2146,10 @@ export function buildServer(options: ServerOptions = {}) {
       sized.sort((a,b)=>b.mb-a.mb);
       return {root,files:sized.length,totalMb:Math.round(sized.reduce((sum,item)=>sum+item.mb,0)),largest:sized.slice(0,40)};
     });
+    // SharpAPI: the feed's status and one probe request per book (why a book's rows stopped coming).
+    admin.get('/sharp',async(_request,reply)=>options.sharpProps?{status:await options.sharpProps.status(),
+      probe:await options.sharpProps.probeBooks(['hardrock','draftkings','fanduel','betmgm','betrivers','prizepicks'])}
+      :reply.code(503).send({code:'SHARPAPI_UNCONFIGURED'}));
     admin.get('/edge/side-bias',async(_request,reply)=>edge?edge.sideBias():reply.code(503).send({code:'EDGE_UNAVAILABLE'}));
     admin.get('/edge/status',async(_request,reply)=>edge?{status:edge.status(),grading:edgeWorker?.status()??null,
       snapshots:options.edge?.snapshots?.status()??null}:reply.code(503).send({code:'EDGE_DISABLED'}));

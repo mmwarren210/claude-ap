@@ -2,7 +2,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../auth';
-import { byLabels, rankAll, sourceLabels } from '../all-picks';
+import { byLabels, linkPanels, rankAll, sourceLabels } from '../all-picks';
 import type { AnyPick, PickSource } from '../all-picks';
 import { backing, sideLabel } from '../app-lines';
 import type { AppLine } from '../app-lines';
@@ -14,6 +14,7 @@ import { useHistoryReads } from '../use-history-reads';
 import { useRankings } from '../use-rankings';
 import { Notice } from './Screen';
 import { ChipRow, FilterChip } from './ui/Controls';
+import { PlayerAvatar } from './ui/PlayerAvatar';
 
 type BookPick = { id: string; playerName: string; market: string; line: number; side: 'MORE' | 'LESS'; eventStartTime: string;
   by?: 'GKR' | 'HISTORY' | 'VALUE'; score?: number; gkr: { score: number } | null; note?: string | null; american: number | null };
@@ -44,7 +45,8 @@ export function AllPicks({ only }: { only?: PickSource } = {}) {
           const back = backing(line);
           return back ? [{ key: `${line.playerId}|${line.market ?? line.stat}`, source: app, by: back.by, title: line.playerName,
             detail: `${line.stat} · ${sideLabel(app, back.side)} ${formatLine(line.threshold)}`, strength: back.score, edge: null,
-            startTime: line.eventStartTime, lineId: null, note: back.by === 'HISTORY' ? line.history?.text ?? null : null }] : [];
+            startTime: line.eventStartTime, lineId: null, note: back.by === 'HISTORY' ? line.history?.text ?? null : null,
+            photoUrl: line.playerImageUrl, playerId: line.playerId }] : [];
         })])),
       ...Object.fromEntries((['draftkings', 'hardrock'] as const).map((book) => [book, async () =>
         ((await json<{ picks: BookPick[] }>(`/v1/books/${book}/picks`))?.picks ?? []).map((pick): AnyPick => ({
@@ -81,7 +83,14 @@ export function AllPicks({ only }: { only?: PickSource } = {}) {
     }
     return out;
   }, [board, ranked, scout, history]);
-  const all = useMemo(() => rankAll([...prizePicks, ...others], nowMs), [prizePicks, others, nowMs]);
+  // Every app's and book's pick opens the player's panel and shows the photo (Underdog and DK Pick'em share PrizePicks'
+  // player ids; books match by name).
+  const linked = useMemo(() => linkPanels(others, board?.board.lines ?? [], nowMs), [others, board, nowMs]);
+  const photoFor = (pick: AnyPick) => pick.photoUrl ?? (() => {
+    const id = pick.playerId ?? (pick.lineId ? board?.board.lines.find((line) => line.id === pick.lineId)?.playerId : null);
+    return id ? board?.playerMedia?.[id]?.photoUrl ?? null : null;
+  })();
+  const all = useMemo(() => rankAll([...prizePicks, ...linked], nowMs), [prizePicks, linked, nowMs]);
   const shown = (source === 'ALL' ? all : all.filter((pick) => pick.source === source)).slice(0, 60);
   const counts = new Map<string, number>();
   for (const pick of all) counts.set(pick.source, (counts.get(pick.source) ?? 0) + 1);
@@ -96,6 +105,7 @@ export function AllPicks({ only }: { only?: PickSource } = {}) {
     {shown.map((pick, index) => <Pressable key={`${pick.source}|${pick.key}|${pick.by}`} accessibilityRole="button" disabled={!pick.lineId}
       onPress={() => pick.lineId && router.push({ pathname: '/player/[lineId]', params: { lineId: pick.lineId } })} style={styles.card}>
       <Text style={styles.rank}>#{index + 1}</Text>
+      <PlayerAvatar name={pick.title} photoUrl={photoFor(pick)} size={44} ring={colors.borderStrong} />
       <View style={styles.grow}>
         <Text style={styles.title} numberOfLines={1}>{pick.title}</Text>
         <Text style={styles.detail} numberOfLines={2}>{pick.detail}</Text>
