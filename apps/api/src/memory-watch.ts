@@ -1,4 +1,6 @@
+import diagnostics from 'node:diagnostics_channel';
 import fs from 'node:fs';
+import type { IncomingMessage } from 'node:http';
 import { syncBuiltinESMExports } from 'node:module';
 import { capped } from './context/sharp-props.js';
 // Memory watch: the container is killed without a trace when memory passes its cap, so past 3 GB this logs the
@@ -34,14 +36,24 @@ export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000): NodeJS.Tim
     } finally { inFlight.delete(id); }
   }) as typeof fetch;
   watchFiles();
+  // Requests coming into this server, with their declared body size, for the same log.
+  const incoming = new Map<IncomingMessage, { what: string; since: number }>();
+  diagnostics.subscribe('http.server.request.start', (message) => {
+    const request = (message as { request: IncomingMessage }).request;
+    incoming.set(request, { what: `${request.method} ${request.url?.split('?')[0]} ${request.headers['content-length'] ?? '-'}B`, since: Date.now() });
+    request.once('close', () => incoming.delete(request));
+  });
   let lastLog = 0;
   const timer = setInterval(() => {
     const memory = process.memoryUsage(), mb = (bytes: number) => Math.round(bytes / 1_048_576);
     const early = process.uptime() < 120;
     if ((mb(memory.rss) < thresholdMb && !early) || Date.now() - lastLog < (early ? 2000 : 4000)) return;
     lastLog = Date.now();
-    const requests = [...inFlight.values()].map((item) => `${item.what} ${Math.round((Date.now() - item.since) / 1000)}s`).slice(0, 15);
-    console.warn(`[memory] rss ${mb(memory.rss)} MB, heap ${mb(memory.heapUsed)} MB, external ${mb(memory.external)} MB, buffers ${mb(memory.arrayBuffers)} MB | in flight ${JSON.stringify(requests)}`);
+    const requests = [...inFlight.values()].map((item) => `${item.what} ${Math.round((Date.now() - item.since) / 1000)}s`).slice(0, 4);
+    const served = [...incoming.values()].map((item) => `${item.what} ${Math.round((Date.now() - item.since) / 1000)}s`).slice(0, 10);
+    const resources: Record<string, number> = {};
+    for (const name of process.getActiveResourcesInfo()) resources[name] = (resources[name] ?? 0) + 1;
+    console.warn(`[memory] rss ${mb(memory.rss)} MB, heap ${mb(memory.heapUsed)} MB, external ${mb(memory.external)} MB, buffers ${mb(memory.arrayBuffers)} MB | in flight ${JSON.stringify(requests)} | serving ${JSON.stringify(served)} | resources ${JSON.stringify(resources)}`);
   }, everyMs);
   timer.unref();
   return timer;
