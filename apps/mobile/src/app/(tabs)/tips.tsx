@@ -13,7 +13,8 @@ import type { SlipLeg } from '../../tips-slip';
 // Tips: picks from the services you pay for. Upload a screenshot (or paste the text) and CrownIQ reads every pick, checks it
 // against the market and the news, and says what it thinks: Play, Lean, Pass or Fade, with its chance, fair odds and EV.
 // Add picks to the slip to play them as singles or a parlay. Results are graded after the games, with a record per service.
-// Display-only: tips never change CrownIQ's own scores.
+// Display-only: tips never change CrownIQ's own scores. Player props on a board also get Edge's and GKR+'s read (owner only), and
+// GKR+'s verdict leads the card when it has one.
 
 type Status = 'PENDING' | 'WON' | 'LOST' | 'PUSH' | 'VOID';
 type Verdict = 'PLAY' | 'LEAN' | 'PASS' | 'FADE';
@@ -21,7 +22,10 @@ type Analysis = { verdict: Verdict; chance: number; chanceSource: 'Pinnacle' | '
   ev: number | null; fairOdds: number; reasons: string[]; event: string | null; start: string | null };
 type Tip = { id: string; source: string; createdAt: string; text: string; sport: string | null; selection: string; market: string;
   line: number | null; side: string | null; odds: number | null; status: Status; result: string | null;
-  market_read: { chance: number; event: string; start: string } | null; analysis?: Analysis | null; analyzing?: boolean };
+  market_read: { chance: number; event: string; start: string } | null; analysis?: Analysis | null; analyzing?: boolean;
+  /** Edge's and GKR+'s reads when the prop is on a board (refreshed on every load). */
+  models?: { edge: ModelRead | null; gkrPlus: ModelRead | null } | null };
+type ModelRead = { platform: string; market: string; line: number; modelSide: 'MORE' | 'LESS'; chance: number; breakEven: number; verdict: Verdict };
 type ServiceRecord = { picks: number; pending: number; won: number; lost: number; push: number; hitRate: number | null;
   units: number | null; unitsPicks: number; vsMarket: number | null; marketPicks: number };
 type Data = { tips: Tip[]; sources: { [source: string]: ServiceRecord }; reading: boolean };
@@ -183,7 +187,12 @@ export default function TipsScreen() {
     {data === 'error' && <Notice title="Tips unavailable" detail="Try again in a minute." />}
     {data && data !== 'error' && tips.length === 0 && <Notice title="No tips yet" detail="Upload a screenshot from a service to get CrownIQ's take." />}
 
-    {pending.length > 0 && <Text style={styles.section}>UPCOMING · CROWNIQ&apos;S TAKE</Text>}
+    {pending.length > 0 && <View style={styles.row}>
+      <Text style={[styles.section, styles.flex]}>UPCOMING · CROWNIQ&apos;S TAKE</Text>
+      <Pressable accessibilityRole="button" disabled={pending.every((tip) => tip.analyzing)}
+        onPress={() => void recheck(pending.filter((tip) => !tip.analyzing).map((tip) => tip.id).slice(0, 40))}>
+        <Text style={styles.action}>Refresh all</Text></Pressable>
+    </View>}
     {pending.map((tip) => <TipCard key={tip.id} tip={tip} inSlip={slip.includes(tip.id)}
       onSlip={() => setSlip((ids) => ids.includes(tip.id) ? ids.filter((id) => id !== tip.id) : [...ids, tip.id])}
       onRecheck={() => void recheck([tip.id])} onStatus={(status) => void change(tip, { status })} onRemove={() => void change(tip, null)} />)}
@@ -204,9 +213,17 @@ export default function TipsScreen() {
   </Screen>;
 }
 
+/** One model's read: its verdict, its chance on the tipster's side against the break-even, and its own side when it differs. */
+function ModelLine({ name, read }: { name: string; read: ModelRead }) {
+  return <Text style={styles.text}><Text style={[styles.bold, { color: verdictColor[read.verdict] }]}>{name} {read.verdict}</Text>
+    {` · ${pct(read.chance)} on this side (needs ${pct(read.breakEven)})${read.platform !== 'prizepicks' ? ` · ${read.platform}` : ''}`}</Text>;
+}
+
 function TipCard({ tip, inSlip, onSlip, onRecheck, onStatus, onRemove }: { tip: Tip; inSlip: boolean; onSlip: (() => void) | null;
   onRecheck: (() => void) | null; onStatus: (status: Status) => void; onRemove: () => void }) {
-  const analysis = tip.analysis;
+  const analysis = tip.analysis, models = tip.models;
+  // GKR+ leads when the prop is on a board (it blends Edge, history and GKR); the AI read leads otherwise.
+  const lead = models?.gkrPlus?.verdict ?? models?.edge?.verdict ?? analysis?.verdict ?? null;
   return <View style={styles.card}>
     <View style={styles.row}>
       <View style={styles.flex}>
@@ -214,10 +231,16 @@ function TipCard({ tip, inSlip, onSlip, onRecheck, onStatus, onRemove }: { tip: 
         <Text style={styles.small}>{tip.source}{analysis?.event ? ` · ${analysis.event}` : ''}{analysis?.start ? ` · ${new Date(analysis.start).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : ''}</Text>
       </View>
       {tip.status !== 'PENDING' ? <Text style={[styles.badge, { color: statusColor[tip.status], borderColor: statusColor[tip.status] }]}>{tip.status}</Text>
-        : analysis ? <Text style={[styles.badge, { color: verdictColor[analysis.verdict], borderColor: verdictColor[analysis.verdict] }]}>{analysis.verdict}</Text> : null}
+        : lead ? <Text style={[styles.badge, { color: verdictColor[lead], borderColor: verdictColor[lead] }]}>{lead}</Text> : null}
     </View>
+    {models && <View style={styles.models}>
+      {models.gkrPlus && <ModelLine name="GKR+" read={models.gkrPlus} />}
+      {models.edge && <ModelLine name="Edge" read={models.edge} />}
+    </View>}
+    {!models && tip.market === 'PLAYER_PROP' && tip.status === 'PENDING' && <Text style={styles.small}>Edge and GKR+: this player and number aren&apos;t on a board right now.</Text>}
     {tip.analyzing && <View style={styles.row}><ActivityIndicator size="small" color={palette.green} /><Text style={styles.small}>CrownIQ is checking odds and news…</Text></View>}
     {analysis && <>
+      {models && <Text style={[styles.small, styles.bold]}>AI read: {analysis.verdict}</Text>}
       <Text style={styles.text}>{pct(analysis.chance)} to win ({analysis.chanceSource === 'Pinnacle' ? 'Pinnacle, no vig' : 'CrownIQ estimate'}) · fair {formatOdds(analysis.fairOdds)}
         {analysis.price !== null ? ` · best ${formatOdds(analysis.price)} (${analysis.priceSource})` : ' · no price found'}</Text>
       {analysis.ev !== null && <Text style={[styles.text, styles.bold, { color: analysis.ev >= 0 ? palette.green : palette.danger }]}>
@@ -249,6 +272,7 @@ const styles = StyleSheet.create({
   section: { color: palette.green, fontSize: 11, fontWeight: '900', letterSpacing: 1.3, marginTop: 6 },
   card: { backgroundColor: palette.card, borderWidth: 1, borderColor: palette.border, borderRadius: 18, padding: 14, gap: 6 },
   slip: { borderColor: palette.green },
+  models: { gap: 2 },
   input: { borderWidth: 1, borderColor: palette.border, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, color: palette.text, fontSize: 13 },
   area: { minHeight: 80, textAlignVertical: 'top' },
   button: { backgroundColor: palette.green, borderRadius: 14, paddingVertical: 13, alignItems: 'center' },

@@ -72,7 +72,7 @@ import type { ShadowPick, ShadowRecord } from './shadow-record.js';
 import type { BookPick, Sportsbook } from './book-picks.js';
 import { serveWebApp } from './web-app.js';
 import { EDGE_PLATFORMS, EdgeResultsWorker, EdgeService } from './edge/service.js';
-import { blendPicks, GKR_PLUS_VERSION } from './edge/blend.js';
+import { blendPick, blendPicks, GKR_PLUS_VERSION } from './edge/blend.js';
 import type { GkrSide } from './edge/blend.js';
 import { canonicalMarket } from './edge/market-map.js';
 import { buildSlips } from '@crowniq/edge';
@@ -83,7 +83,9 @@ import type { SnapshotStore } from './edge/snapshots.js';
 import type { BookWeightStore } from './edge/book-weights.js';
 import type { DispersionStore } from './edge/dispersion-store.js';
 import { analyzeTips, DAILY_TIP_UPLOADS, marketRead } from './tips.js';
-import type { TipGrader, TipReader, TipStore } from './tips.js';
+import type { TipDraft, TipGrader, TipReader, TipStore } from './tips.js';
+import { matchTip, modelRead } from './tip-models.js';
+import type { TipModelRead } from './tip-models.js';
 import { registerEdgeRoutes } from './edge/routes.js';
 import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
@@ -573,11 +575,16 @@ export function buildServer(options: ServerOptions = {}) {
   });
   // Tips (owner-only for now): picks from the services the owner pays for, uploaded as a screenshot or text, in their own section (display-only).
   const tipStatus=z.enum(['PENDING','WON','LOST','PUSH','VOID']);
+  // Set once Edge is running: each tip's Edge and GKR+ read from the boards.
+  let tipModelReads:((tips:readonly (TipDraft&{id:string})[])=>Promise<Map<string,{edge:TipModelRead|null;gkrPlus:TipModelRead|null}>>)|null=null;
   app.get('/v1/tips',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
     if(!options.tips)return reply.code(503).send({code:'TIPS_UNAVAILABLE'});
-    return {...await options.tips.store.mine(user.accountId),reading:!!options.tips.reader};
+    const mine=await options.tips.store.mine(user.accountId);
+    // Edge's and GKR+'s reads on each prop tip, fresh on every load (the Edge tab's own pricing; nothing is pulled).
+    const reads=tipModelReads?await tipModelReads(mine.tips).catch(()=>null):null;
+    return {...mine,tips:mine.tips.map((tip)=>({...tip,models:reads?.get(tip.id)??null})),reading:!!options.tips.reader};
   });
   app.post('/v1/tips/upload',{bodyLimit:8_000_000},async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
@@ -1407,6 +1414,26 @@ export function buildServer(options: ServerOptions = {}) {
       if(!snapshot)return null;
       const picks=blendPicks(snapshot.response.picks,await gkrSides(platform));
       return {snapshot,picks};
+    };
+    tipModelReads=async(tips)=>{
+      const out=new Map<string,{edge:TipModelRead|null;gkrPlus:TipModelRead|null}>();
+      const props=tips.filter((tip)=>tip.market==='PLAYER_PROP'&&tip.line!==null);
+      if(!props.length)return out;
+      // PrizePicks first (most uploads are PrizePicks slips), then the other apps and books.
+      for(const platform of EDGE_PLATFORMS){
+        const open=props.filter((tip)=>!out.has(tip.id));
+        if(!open.length)break;
+        const snapshot=await edge.snapshot(platform).catch(()=>null);
+        if(!snapshot)continue;
+        let sides:((pick:EdgePick)=>GkrSide|null)|null=null;
+        for(const tip of open){
+          const pick=matchTip(tip,snapshot.byLine.values());
+          if(!pick)continue;
+          sides??=await gkrSides(platform).catch(()=>()=>null);
+          out.set(tip.id,{edge:modelRead(tip,pick,platform),gkrPlus:modelRead(tip,blendPick(pick,sides(pick)),platform)});
+        }
+      }
+      return out;
     };
     app.register(async(owner)=>{
       owner.addHook('preHandler',async(request,reply)=>{
