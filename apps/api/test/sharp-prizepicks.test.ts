@@ -191,3 +191,15 @@ test('a runaway SharpAPI body is cut off instead of read into memory', async () 
   const ok = await capped(new Response(JSON.stringify({ data: [1] }), { status: 200 }), new URL('https://example.test/odds'));
   assert.deepEqual(await ok.json(), { data: [1] });
 });
+
+test('a dropped SharpAPI request is retried instead of failing the whole refresh', async () => {
+  let calls = 0;
+  const fetchFn = (async () => {
+    calls++;
+    if (calls === 1) throw new TypeError('fetch failed');
+    return new Response(JSON.stringify({ data: [], pagination: { has_more: false } }));
+  }) as typeof fetch;
+  const status = await new SharpPropsFeed('key', null, { leagues: ['nfl'], books: ['draftkings'], requestGapMs: 0, retryScale: 0 }, fetchFn, () => now).refresh();
+  assert.notEqual(status.lastError, 'fetch failed', 'the dropped request was tried again');
+  assert.ok(calls >= 2);
+});

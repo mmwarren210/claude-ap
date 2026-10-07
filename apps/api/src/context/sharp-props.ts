@@ -835,8 +835,17 @@ export class SharpPropsFeed {
 
   private async fetchRetrying(url: URL): Promise<Response> {
     for (let attempt = 0; ; attempt++) {
-      const response = await this.fetchFn(url, { headers: { 'X-API-Key': this.apiKey! }, signal: AbortSignal.timeout(30_000) });
-      if (response.status !== 429 || attempt >= 3) return await capped(response, url);
+      // A dropped connection or a 30-second timeout is tried twice more before it fails the refresh (one bad request out of
+      // ~300 used to throw the whole refresh away).
+      let response: Response;
+      try { response = await capped(await this.fetchFn(url, { headers: { 'X-API-Key': this.apiKey! }, signal: AbortSignal.timeout(30_000) }), url); }
+      catch (error) {
+        if (attempt >= 2 || /TOO_LARGE/.test(String((error as Error).message))) throw error;
+        console.warn(`[sharp] request failed (${(error as Error).message}); retrying`);
+        await new Promise((resolve) => setTimeout(resolve, 2_000 * (attempt + 1) * (this.options.retryScale ?? 1)));
+        continue;
+      }
+      if (response.status !== 429 || attempt >= 3) return response;
       const after = Number(response.headers.get('retry-after'));
       const waitMs = Math.min(120_000, Number.isFinite(after) && after > 0 ? after * 1000 : 15_000 * 2 ** attempt) * (this.options.retryScale ?? 1);
       console.warn(`[sharp] rate limited; retrying in ${Math.round(waitMs / 1000)}s`);
