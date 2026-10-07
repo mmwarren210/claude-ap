@@ -60,7 +60,7 @@ import type { ProductGradingStatus } from './background-grading.js';
 import type { ContextFeeds, GameLine, InjuryNote } from './context/feeds.js';
 import { gameLinesFor, injuryFor, normalizedName } from './context/match.js';
 import type { FairPrice, SharpPropsFeed } from './context/sharp-props.js';
-import { sharpGameLines } from './context/sharp-props.js';
+import { bookFeedNote, sharpGameLines } from './context/sharp-props.js';
 import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
 import type { EvPick } from './context/ev.js';
 import { bookLadder, bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
@@ -1365,7 +1365,7 @@ export function buildServer(options: ServerOptions = {}) {
     const feedNote=async(platform:string)=>{
       if(platform!=='draftkings'&&platform!=='hardrock'||!options.sharpProps)return null;
       const status=await options.sharpProps.status();
-      return status.unavailable?.includes(platform)?`${platform==='hardrock'?'Hard Rock':'DraftKings'} prices aren't coming from our odds provider right now (it reports the book unavailable). Picks come back as soon as it does.`:null;
+      return bookFeedNote(status,platform,platform==='hardrock'?'Hard Rock':'DraftKings');
     };
     registerEdgeRoutes(app,{edge,feedNote,held:(platform)=>edge.sideBiasFlagged(platform)||(heldPlatforms.has(platform)&&!edge.sideBiasCleared(platform)),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
       internalHistory:options.internalHistory??null,isOwner:(request)=>isOwner(request),now,
@@ -1747,9 +1747,9 @@ export function buildServer(options: ServerOptions = {}) {
     const picks=await Promise.all(result.picks.map(async(pick)=>{const line=result.lines.get(pick.id);
       const read=line&&options.aiPicks?await options.aiPicks.readFor(line):null;
       return {...pick,scout:read?aiView(read):null};}));
-    const feedDown=await options.sharpProps?.status().then((status)=>status.unavailable?.includes(parsed.data.book)).catch(()=>false);
+    const feedNote=await options.sharpProps?.status().then((status)=>bookFeedNote(status,parsed.data.book,sportsbookNames[parsed.data.book])).catch(()=>null);
     return {book:parsed.data.book,name:sportsbookNames[parsed.data.book],fetchedAt:result.fetchedAt,picks,
-      ...(feedDown?{feedNote:`${sportsbookNames[parsed.data.book]} prices aren't coming from our odds provider right now (it reports the book unavailable). Picks come back as soon as it does.`}:{})};
+      ...(feedNote?{feedNote}:{})};
   });
   // Keep the book picks warm so the tabs open fast.
   const warmPicks=()=>{for(const book of sportsbooks)void picksFor(book).catch(()=>undefined);};

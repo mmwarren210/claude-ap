@@ -165,3 +165,19 @@ test('a requested book SharpAPI answers book_unavailable for is reported as down
   await feed.refresh();
   assert.deepEqual((await feed.status()).unavailable, ['hardrock']);
 });
+
+test('a book the plan no longer selects gets its own note; a working book gets none', async () => {
+  const { bookFeedNote } = await import('../src/context/sharp-props.js');
+  const fetchFn = (async (input: URL | string) => {
+    const url = new URL(String(input));
+    if (url.searchParams.get('sportsbooks') === 'hardrock') return new Response(JSON.stringify({ error: { code: 'book_not_selected',
+      details: { selected: ['draftkings', 'caesars'] } } }), { status: 403 });
+    return new Response(JSON.stringify({ data: [], pagination: { has_more: false } }));
+  }) as typeof fetch;
+  const feed = new SharpPropsFeed('key', null, { leagues: ['nfl'], books: ['draftkings', 'hardrock'], requestGapMs: 0, retryScale: 0 }, fetchFn, () => now);
+  await feed.refresh();
+  const status = await feed.status();
+  assert.match(bookFeedNote(status, 'hardrock', 'Hard Rock') ?? '', /isn't on our odds provider plan/);
+  assert.equal(bookFeedNote(status, 'draftkings', 'DraftKings'), null);
+  assert.match(bookFeedNote({ unavailable: ['hardrock'] }, 'hardrock', 'Hard Rock') ?? '', /reports the book unavailable/);
+});

@@ -506,6 +506,16 @@ export interface SharpPropsStatus {
 }
 
 /**
+ * Why a sportsbook's prices are missing, for its tab: SharpAPI reports the book down ("book_unavailable"), or the plan's
+ * selected books leave it out ("book_not_selected"). Null when neither applies.
+ */
+export function bookFeedNote(status: Pick<SharpPropsStatus, 'unavailable' | 'planSelects'>, book: string, name: string): string | null {
+  if (status.unavailable?.includes(book)) return `${name} prices aren't coming from our odds provider right now (it reports the book unavailable). Picks come back as soon as it does.`;
+  if (status.planSelects?.length && !status.planSelects.includes(book)) return `${name} isn't on our odds provider plan right now, so there are no ${name} prices. Picks come back once it's added again.`;
+  return null;
+}
+
+/**
  * Keeps the latest DraftKings and Hard Rock player-prop prices from SharpAPI, refreshed on an interval and saved to disk.
  * A failed refresh keeps the previous prices.
  */
@@ -689,7 +699,11 @@ export class SharpPropsFeed {
     const empty = books.filter((book) => !rows.some((row) => (row as Row).sportsbook === book));
     if (empty.length) {
       const probe = await this.probeBooks(empty).catch(() => null);
-      this.unavailable = Object.entries((probe?.books ?? {}) as Record<string, { code: string | null }>).filter(([, item]) => item.code === 'book_unavailable').map(([book]) => book);
+      const answers = Object.entries((probe?.books ?? {}) as Record<string, { code: string | null; selected?: unknown }>);
+      this.unavailable = answers.filter(([, item]) => item.code === 'book_unavailable').map(([book]) => book);
+      // A book the plan no longer selects (the combined request leaves it out silently): keep the plan's list.
+      const selected = answers.find(([, item]) => item.code === 'book_not_selected' && Array.isArray(item.selected))?.[1].selected;
+      if (Array.isArray(selected)) this.notSelected = selected.map(String);
       if (this.unavailable.length) console.warn(`[sharp] SharpAPI reports ${this.unavailable.join(', ')} unavailable (its feed for the book is down)`);
     } else this.unavailable = [];
     if (booksOk) {
