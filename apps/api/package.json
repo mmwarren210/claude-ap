@@ -19,7 +19,7 @@
   },
   "scripts": {
     "dev": "node --import tsx --watch src/main.ts",
-    "start": "node --import tsx src/main.ts",
+    "start": "node --max-old-space-size=3072 --report-on-fatalerror --report-compact --report-filename=stdout --import tsx src/main.ts",
     "pull:prizepicks": "node --import tsx scripts/pull-prizepicks.ts",
     "audit:nfl": "node --import tsx scripts/audit-nfl-passing.ts",
     "plan:research": "node --import tsx scripts/plan-web-research.ts",
