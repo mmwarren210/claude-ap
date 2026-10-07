@@ -2,7 +2,8 @@ import type { PropLine } from '@crowniq/contracts';
 
 // Fantasy score lines, scored the way each app scores them, from ESPN's public game logs (owner, 2026-10-07: "PrizePicks
 // and Underdog do it differently and it's more than just the couple stats"). History Read and Edge use these values;
-// GKR does not.
+// GKR does not. Only PrizePicks fantasy lines are read (owner, 2026-10-07); the Underdog charts below are kept for
+// reference and tests but no Underdog line uses them.
 //
 // Charts (published by each app; checked 2026-10-07):
 // - PrizePicks NFL/college: full PPR. 0.04 per passing yard, 4 per passing TD, -1 per interception, 0.1 per rushing or
@@ -110,3 +111,6 @@ export function tennisFantasy(stats: Readonly<Record<string, number>>, aces: num
   if (![gamesWon, gamesLost, setsWon, totalSets].every((value) => Number.isFinite(value))) return null;
   return 10 + gamesWon! - gamesLost! + 3 * setsWon! - 3 * (totalSets! - setsWon!) + .5 * aces - .5 * doubleFaults;
 }
+
+/** Whether a line gets a history read at all: fantasy score is read on PrizePicks only. */
+export const fantasyBlocked = (line: Pick<PropLine, 'id' | 'market'>) => isFantasyMarket(line.market) && fantasyApp(line) !== 'prizepicks';

@@ -68,3 +68,11 @@ test('kickers on PrizePicks’ chart; NHL goalies on both apps', () => {
   assert.equal(fantasyValue('underdog', 'NFL', 'player_fantasy_points', kick!), null);
   assert.equal(fantasyValue('underdog', 'NHL', 'player_fantasy_points', row({ wins: 1, saves: 30, goalsAgainst: 2 })), 6 + 18 - 6);
 });
+
+test('fantasy score is read on PrizePicks only', async () => {
+  const { fantasyBlocked } = await import('../src/fantasy-history.js');
+  assert.equal(fantasyBlocked({ id: 'underdog:1', market: 'player_fantasy_points' }), true);
+  assert.equal(fantasyBlocked({ id: 'pick6:1', market: 'fantasy_points' }), true);
+  assert.equal(fantasyBlocked({ id: 'pp-1', market: 'player_fantasy_points' }), false);
+  assert.equal(fantasyBlocked({ id: 'underdog:1', market: 'player_points' }), false);
+});

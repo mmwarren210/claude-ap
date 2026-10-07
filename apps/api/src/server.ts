@@ -5,7 +5,7 @@ import { bookLines } from './book-picks.js';
 import type { BookFallback } from './book-picks.js';
 import type { ShopEntry, ShopPick } from './line-shop.js';
 import { HistoryReads } from './history-read.js';
-import { fantasyApp, isFantasyMarket } from './fantasy-history.js';
+import { fantasyApp, fantasyBlocked, isFantasyMarket } from './fantasy-history.js';
 import { statApiValueFor } from './stat-api-gkr-evidence.js';
 import type { HistoryRead } from './history-read.js';
 import { twoMaps } from './player-history.js';
@@ -1281,6 +1281,8 @@ export function buildServer(options: ServerOptions = {}) {
     return found&&found.values.length>=5?found:null;
   };
   const historyReads=new HistoryReads(async(line)=>{
+    // Fantasy score is read on PrizePicks only (owner, 2026-10-07: Underdog and DK Pick'em fantasy lines get no read).
+    if(fantasyBlocked(line))return null;
     // Soccer fantasy score: PrizePicks' chart over Sofascore's full match stats (PrizePicks only).
     if(line.sport==='SOCCER'&&isFantasyMarket(line.market))return fantasyApp(line)==='prizepicks'?soccerValues(line):null;
     // UFC: each fighter's past fights from UFCStats (fantasy on PrizePicks' MMA chart, strikes, takedowns, rounds).
