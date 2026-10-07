@@ -43,3 +43,9 @@ test('GKR+: picks Edge holds back stay held; book EV and stake follow the blende
   const ranked = blendPicks([pick({ lineId: 'weak' }), pick({ lineId: 'strong', hitRate: .9, games: 15 })], () => null);
   assert.equal(ranked[0]!.lineId, 'strong');
 });
+
+test('today means the Eastern calendar date: a 10:30 PM ET game is still today, 1 AM ET is tomorrow', async () => {
+  const { easternDay } = await import('../src/edge/routes.js');
+  assert.equal(easternDay(new Date('2030-10-08T02:30:00Z')), '2030-10-07');
+  assert.equal(easternDay(new Date('2030-10-08T05:00:00Z')), '2030-10-08');
+});

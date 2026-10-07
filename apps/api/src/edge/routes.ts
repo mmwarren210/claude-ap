@@ -27,6 +27,9 @@ export interface EdgeRouteDeps {
   readonly held?: (platform: string) => boolean;
 }
 
+/** A time's calendar date in Eastern time ("today" for the slate). */
+export const easternDay = (date: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(date);
+
 const platformSchema = z.enum(EDGE_PLATFORMS as [EdgePlatform, ...EdgePlatform[]]).default('prizepicks');
 
 /** The fair distribution around the line (spec §8 line detail): P(stat = x) for whole numbers, or density bins for normal stats. */
@@ -64,7 +67,9 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
   const edgeQuery = z.object({ platform: platformSchema, view: z.enum(['edges', 'alternates', 'all']).default('edges'),
     sport: z.string().trim().min(1).max(20).optional(), market: z.string().trim().min(1).max(80).optional(),
     limit: z.coerce.number().int().min(1).max(500).default(150),
-    minProbability: z.coerce.number().min(0).max(1).optional() }).strict();
+    minProbability: z.coerce.number().min(0).max(1).optional(),
+    /** Best entries from today's games only (Eastern date), or any upcoming game. */
+    day: z.enum(['all', 'today']).default('all') }).strict();
 
   app.get('/v1/edge', async (request, reply) => {
     const query = edgeQuery.safeParse(request.query);
@@ -81,8 +86,10 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     const picks = viewPicks(snapshot, query.data.view, filters);
     const live = (slip: { legs: { lineId: string }[] }) => slip.legs.every((leg) => {
       const pick = snapshot.byLine.get(leg.lineId); return !!pick && Date.parse(pick.eventStartTime) > nowMs; });
-    const slips = query.data.sport || query.data.market
-      ? buildSlips(viewPicks(snapshot, 'edges', { ...filters, limit: 500 }), snapshot.response.entries, { minEvents: snapshot.minEvents })
+    const today = query.data.day === 'today' ? easternDay(new Date(nowMs)) : null;
+    const slips = query.data.sport || query.data.market || today
+      ? buildSlips(viewPicks(snapshot, 'edges', { ...filters, limit: 500 }).filter((pick) => !today || easternDay(new Date(pick.eventStartTime)) === today),
+        snapshot.response.entries, { minEvents: snapshot.minEvents })
       : snapshot.response.slips.filter(live);
     return { ...snapshot.response, picks, slips };
   });

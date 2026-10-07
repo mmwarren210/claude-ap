@@ -21,7 +21,7 @@ const paths: Readonly<Record<string, string>> = { NHL: 'hockey/nhl', NCAAFB: 'fo
   // Fantasy score lines only (History Read and Edge): these sports have no ESPN spec, so GKR never reads them here.
   NFL: 'football/nfl', NBA: 'basketball/nba', MLB: 'baseball/mlb' };
 
-type Row = { occurredAt: string | null; metrics: Readonly<Record<string, number>> };
+type Row = { occurredAt: string | null; opponent?: string | null; metrics: Readonly<Record<string, number>> };
 const n = (row: Row, key: string) => Number.isFinite(row.metrics[key]) ? row.metrics[key] : null;
 const ratio = (a: number | null, b: number | null) => a !== null && b !== null && b !== 0 ? a / b : null;
 const sum = (...values: (number | null)[]) => values.every((value) => value !== null)
@@ -73,6 +73,17 @@ function wnbaSpecs(): Record<string, HistorySpec> {
   ];
   return Object.fromEntries(table.flatMap(([keys, value, unit]) => keys.map((key) => [key, hoops(value, unit)])));
 }
+
+/**
+ * Stats the player page shows that no GKR model reads from ESPN (touchdowns): kept apart from espnSpecs so GKR's
+ * evidence never changes. Each is a plain value from the game-log row.
+ */
+const td = (r: Row) => sum(n(r, 'rushingTouchdowns') ?? 0, n(r, 'receivingTouchdowns') ?? 0);
+export const displaySpecs: Readonly<Record<string, Readonly<Record<string, (r: Row) => number | null>>>> = {
+  NCAAFB: { anytime_tds: td, rush_plus_rec_td_scorer: td, rec_tds: (r) => n(r, 'receivingTouchdowns'),
+    rush_tds: (r) => n(r, 'rushingTouchdowns'), pass_tds: (r) => n(r, 'passingTouchdowns'),
+    recs: (r) => n(r, 'receptions'), player_rush_rec_yds: (r) => sum(n(r, 'rushingYards') ?? 0, n(r, 'receivingYards') ?? 0) },
+};
 
 /** ESPN game-log columns behind each market. Stats ESPN's logs don't carry (hits, faceoffs, tackles) aren't listed. */
 export const espnSpecs: Readonly<Record<string, Readonly<Record<string, HistorySpec>>>> = {
@@ -139,7 +150,10 @@ export function gameLogRows(log: unknown): Row[] {
         const number = cell(stats[index]); if (name && number !== null) metrics[name] = number;
       });
       const date = str(obj(events[id])?.gameDate);
-      rows.set(id, { occurredAt: date && Number.isFinite(Date.parse(date)) ? new Date(date).toISOString() : null, metrics });
+      const opponent = obj(obj(events[id])?.opponent), atVs = str(obj(events[id])?.atVs);
+      const against = str(opponent?.abbreviation) || str(opponent?.displayName);
+      rows.set(id, { occurredAt: date && Number.isFinite(Date.parse(date)) ? new Date(date).toISOString() : null, metrics,
+        opponent: against ? `${atVs === '@' ? '@ ' : 'vs '}${against}` : null });
     }
   }
   return [...rows.values()];
@@ -304,6 +318,27 @@ export class EspnGkrEvidence implements ResearchAdapter {
       for (const fixture of finished) out.set(`${fixture.date}|${fixture.home}`, fixture);
     }
     return [...out.values()].sort((a, b) => b.date.localeCompare(a.date));
+  }
+
+  /**
+   * The player page's game log: a player's last 15 games for a stat (date, opponent, value), from the same ESPN logs
+   * History Read uses. Display only; GKR's evidence is unchanged.
+   */
+  async recentGames(target: ResearchTarget): Promise<{ date: string; opponent: string | null; value: number }[] | null> {
+    const spec = espnSpecs[target.sport]?.[target.market]?.value ?? displaySpecs[target.sport]?.[target.market];
+    if (!spec || !paths[target.sport]) return null;
+    const counters = { searches: 0, cacheHits: 0 };
+    const rosters = await this.rosters(target, counters);
+    if (!rosters) return null;
+    const matches = sharedName(rosters.athletes.filter((athlete) => normalizedPlayer(athlete.name) === normalizedPlayer(target.playerName)),
+      target.team, (athlete) => athlete.team);
+    if (matches.length !== 1) return null;
+    const log = await this.gameLog(target.sport, matches[0].id, counters);
+    const before = Date.parse(target.eventStartTime);
+    return log.rows.filter((row) => row.occurredAt && Date.parse(row.occurredAt) < before)
+      .sort((a, b) => (b.occurredAt ?? '').localeCompare(a.occurredAt ?? ''))
+      .flatMap((row) => { const value = spec(row); return value !== null && Number.isFinite(value)
+        ? [{ date: row.occurredAt!.slice(0, 10), opponent: row.opponent ?? null, value }] : []; }).slice(0, 15);
   }
 
   /** A player's last 15 fantasy scores before this game, scored by one app's chart (History Read and Edge). */

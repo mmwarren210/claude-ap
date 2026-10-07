@@ -30,7 +30,8 @@ export default function EdgeScreen() {
   // Goblins and Demons are PrizePicks only.
   const view: EdgeView = platform === 'prizepicks' ? chosenView : 'edges';
   const [sport, setSport] = useState<string | null>(null);
-  const { status, data, message, retry } = useEdge(view);
+  const [day, setDay] = useState<'all' | 'today'>('all');
+  const { status, data, message, retry } = useEdge(view, 'edge', day);
   const slip = useEdgeSlip();
   const { nowMs } = useBoard();
   const live = data?.picks.filter((pick) => Date.parse(pick.eventStartTime) > nowMs) ?? [];
@@ -77,9 +78,11 @@ export default function EdgeScreen() {
       </View>}
       <EdgeAlerts platform={platform} />
       <EdgeSlipPanel entries={data.entries} />
-      {view === 'edges' && data.slips.length > 0 && <View style={styles.section}>
+      {view === 'edges' && <View style={styles.section}>
         <Text style={styles.sectionTitle}>BEST ENTRIES</Text>
         <Text style={styles.sectionDetail}>Highest expected value using the strongest legs, one per player and at most two per game.</Text>
+        <DayChips day={day} setDay={setDay} />
+        {!data.slips.length && <Text style={styles.sectionDetail}>{day === 'today' ? 'No entry clears the bar with today’s games alone.' : 'No entry clears the bar right now.'}</Text>}
         <StakePicker />
         {data.slips.slice(0, 2).map((item) => <View key={item.entry.type + item.entry.size + item.legs.map((leg) => leg.lineId).join()} style={styles.card}>
           <SlipSummary slip={item} /></View>)}
@@ -99,6 +102,14 @@ export default function EdgeScreen() {
     </>}
     </>}
   </Screen>;
+}
+
+/** Best entries from any upcoming game, or today's games only (an entry settles when its last game ends). */
+function DayChips({ day, setDay }: { day: 'all' | 'today'; setDay: (day: 'all' | 'today') => void }) {
+  return <View style={styles.chips}>{([['all', 'All days'], ['today', 'Today only']] as const).map(([value, label]) =>
+    <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: day === value }} onPress={() => setDay(value)}
+      style={[styles.chip, day === value && styles.chipOn]}>
+      <Text style={[styles.chipText, day === value && styles.chipTextOn]}>{label}</Text></Pressable>)}</View>;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

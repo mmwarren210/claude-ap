@@ -76,6 +76,7 @@ import { blendPicks, GKR_PLUS_VERSION } from './edge/blend.js';
 import type { GkrSide } from './edge/blend.js';
 import { canonicalMarket } from './edge/market-map.js';
 import { buildSlips } from '@crowniq/edge';
+import { easternDay } from './edge/routes.js';
 import type { EdgePick, EdgePlatform } from '@crowniq/contracts';
 import type { EdgeLedger } from './edge/ledger.js';
 import type { SnapshotStore } from './edge/snapshots.js';
@@ -164,7 +165,8 @@ export interface ServerOptions {
   /** ESPN game logs (soccer, NHL, college football) for History Reads. */
   espnHistory?: { recentValues(target: import('@crowniq/engine').ResearchTarget): Promise<number[] | null>;
     recentFantasy?(target: import('@crowniq/engine').ResearchTarget, app: import('./fantasy-history.js').FantasyApp): Promise<number[] | null>;
-    soccerFixtures?(target: import('@crowniq/engine').ResearchTarget): Promise<import('./soccer-history.js').Fixture[]> } | null;
+    soccerFixtures?(target: import('@crowniq/engine').ResearchTarget): Promise<import('./soccer-history.js').Fixture[]>;
+    recentGames?(target: import('@crowniq/engine').ResearchTarget): Promise<{ date: string; opponent: string | null; value: number }[] | null> } | null;
   /** CrownIQ's own archive of game logs, graded results and lines. */
   historyArchive?: HistoryArchive | null;
   /** Reads The Odds API's credit balance (a free call), for the owner. */
@@ -1401,7 +1403,7 @@ export function buildServer(options: ServerOptions = {}) {
       });
       owner.get('/',async(request,reply)=>{
         const query=z.object({platform:z.enum(EDGE_PLATFORMS as [EdgePlatform,...EdgePlatform[]]).default('prizepicks'),
-          limit:z.coerce.number().int().min(1).max(500).default(150)}).safeParse(request.query);
+          limit:z.coerce.number().int().min(1).max(500).default(150),day:z.enum(['all','today']).default('all')}).safeParse(request.query);
         if(!query.success)return reply.code(400).send({code:'INVALID_QUERY'});
         const result=await gkrPlus(query.data.platform);
         if(!result)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
@@ -1411,7 +1413,8 @@ export function buildServer(options: ServerOptions = {}) {
         const nowMs=now().getTime(),live=result.picks.filter((pick)=>Date.parse(pick.eventStartTime)>nowMs+5*60_000);
         const ranked=live.filter((pick)=>pick.edge!==null&&pick.rating!=='NONE');
         return {...result.snapshot.response,picks:ranked.slice(0,query.data.limit),
-          slips:buildSlips(ranked,result.snapshot.response.entries,{minEvents:result.snapshot.minEvents}),
+          slips:buildSlips(query.data.day==='today'?ranked.filter((pick)=>easternDay(new Date(pick.eventStartTime))===easternDay(new Date(nowMs))):ranked,
+            result.snapshot.response.entries,{minEvents:result.snapshot.minEvents}),
           counts:{...result.snapshot.response.counts,positiveEdge:ranked.length},modelVersion:GKR_PLUS_VERSION};
       });
       owner.get('/record',async(_request,reply)=>gkrPlusLedger?{model:GKR_PLUS_VERSION,grading:gkrPlusWorker?.status()??null,
@@ -1816,7 +1819,15 @@ export function buildServer(options: ServerOptions = {}) {
     // Tennis and esports: the last matches from free public history.
     const free=line&&options.playerHistory?.supports(parsed.data.sport)
       ?await options.playerHistory.gameLog(parsed.data.sport,parsed.data.playerId,line.playerName,parsed.data.market).catch(()=>null):null;
-    return free&&free.games.length?free:reply.code(404).send({code:'NO_HISTORY'});
+    if(free&&free.games.length)return free;
+    // College football, NHL, soccer and WNBA: the ESPN game logs GKR and History Read already read (the page showed
+    // "no games" for players GKR had 15 games on).
+    const espn=line&&options.espnHistory?.recentGames?await options.espnHistory.recentGames({eventId:line.eventId,eventName:line.eventName,
+      eventStartTime:line.eventStartTime,league:line.league,playerId:line.playerId,playerName:line.playerName,team:line.team,
+      opponent:line.opponent,homeTeam:line.homeTeam??null,awayTeam:line.awayTeam??null,market:parsed.data.market,sport:line.sport,
+      sourceSportKey:line.sourceSportKey??null}).catch(()=>null):null;
+    return espn&&espn.length?{sport:line!.sport,playerId:parsed.data.playerId,playerName:line!.playerName,market:parsed.data.market,
+      source:'FREE_PUBLIC_HISTORY',unit:null,games:espn}:reply.code(404).send({code:'NO_HISTORY'});
   };
   app.get('/v1/players/:sport/:playerId/:market/games', gameLog);
   app.get('/v1/demo/players/:sport/:playerId/:market/games', gameLog);
