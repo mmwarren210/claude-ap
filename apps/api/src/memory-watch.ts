@@ -3,7 +3,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { capped } from './context/sharp-props.js';
 // Memory watch: the container is killed without a trace when memory passes its cap, so past 3 GB this logs the
 // process's memory every few seconds with the requests in flight (host and path) to show which job is growing.
-const BIG = 20 * 1_048_576;
+const BIG = 20 * 1_048_576, REFUSE = 200 * 1_048_576;
 const inFlight = new Map<number, { what: string; since: number }>();
 let nextId = 0;
 
@@ -52,6 +52,14 @@ function watchFiles() {
   const promises = fs.promises as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
   const readFile = promises.readFile!.bind(fs.promises), writeFile = promises.writeFile!.bind(fs.promises);
   promises.readFile = async (...args: unknown[]) => {
+    // A file of hundreds of MB read whole (2026-10-07: a 2 GB read crashed the server every minute) is refused and named.
+    if (typeof args[0] === 'string' || args[0] instanceof URL) {
+      const size = await fs.promises.stat(args[0]).then((info) => info.size).catch(() => 0);
+      if (size > REFUSE) {
+        console.warn(`[memory] refused reading ${Math.round(size / 1_048_576)} MB ${String(args[0])} from ${new Error().stack?.split('\n').slice(2, 7).map((line) => line.trim()).join(' < ')}`);
+        throw Object.assign(new Error(`FILE_TOO_LARGE ${String(args[0])}`), { code: 'EFBIG' });
+      }
+    }
     const value = await readFile(...args) as string | Buffer;
     if (value.length > BIG) console.warn(`[memory] file read ${Math.round(value.length / 1_048_576)} MB ${String(args[0])}`);
     return value;
