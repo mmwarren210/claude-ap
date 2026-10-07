@@ -46,6 +46,13 @@ const cfbReceive = (value: (r: Row) => number | null, unit: string) => spec(valu
   target_share: (r) => n(r, 'receivingTargets') ?? n(r, 'receptions'),
   receiving_efficiency: (r) => ratio(n(r, 'receivingYards'), n(r, 'receptions')), historical_volume: value });
 
+/** College touchdowns (rushing + receiving) and scrimmage yards, with the touches behind them. */
+const touchesOf = (r: Row) => sum(n(r, 'rushingAttempts') ?? 0, n(r, 'receptions') ?? 0);
+const cfbTouchdowns = spec((r) => sum(n(r, 'rushingTouchdowns') ?? 0, n(r, 'receivingTouchdowns') ?? 0), 'touchdowns', {
+  expected_touches: touchesOf, historical_volume: (r) => sum(n(r, 'rushingTouchdowns') ?? 0, n(r, 'receivingTouchdowns') ?? 0) });
+const cfbScrimmage = spec((r) => sum(n(r, 'rushingYards') ?? 0, n(r, 'receivingYards') ?? 0), 'yards', {
+  expected_touches: touchesOf, historical_volume: (r) => sum(n(r, 'rushingYards') ?? 0, n(r, 'receivingYards') ?? 0) });
+
 /** WNBA box-score stats under every key the apps' labels become (PrizePicks, Underdog and DK Pick'em name them differently). */
 function wnbaSpecs(): Record<string, HistorySpec> {
   const minutes = (r: Row) => n(r, 'minutes');
@@ -58,11 +65,13 @@ function wnbaSpecs(): Record<string, HistorySpec> {
   const table: [readonly string[], (r: Row) => number | null, string][] = [
     [['player_points', 'points'], pts, 'points'], [['player_rebounds', 'rebounds'], reb, 'rebounds'],
     [['player_assists', 'assists'], ast, 'assists'],
-    [['player_points_rebounds_assists', 'pts_plus_rebs_plus_asts', 'pra'], (r) => sum(pts(r), reb(r), ast(r)), 'points+rebounds+assists'],
-    [['player_points_rebounds', 'pts_plus_rebs'], (r) => sum(pts(r), reb(r)), 'points+rebounds'],
-    [['player_points_assists', 'pts_plus_asts'], (r) => sum(pts(r), ast(r)), 'points+assists'],
-    [['player_rebounds_assists', 'rebs_plus_asts'], (r) => sum(reb(r), ast(r)), 'rebounds+assists'],
-    [['player_threes', '3_pointers_made', '3_pt_made', 'threes'], made('threePointFieldGoals'), 'threes'],
+    [['player_points_rebounds_assists', 'pts_plus_rebs_plus_asts', 'pra', 'player_points_plus_rebounds_plus_assists',
+      'points_plus_rebounds_plus_assists'], (r) => sum(pts(r), reb(r), ast(r)), 'points+rebounds+assists'],
+    [['player_points_rebounds', 'pts_plus_rebs', 'player_points_plus_rebounds', 'points_plus_rebounds'], (r) => sum(pts(r), reb(r)), 'points+rebounds'],
+    [['player_points_assists', 'pts_plus_asts', 'player_points_plus_assists', 'points_plus_assists'], (r) => sum(pts(r), ast(r)), 'points+assists'],
+    [['player_rebounds_assists', 'rebs_plus_asts', 'player_rebounds_plus_assists', 'rebounds_plus_assists', 'assists_plus_rebounds'],
+      (r) => sum(reb(r), ast(r)), 'rebounds+assists'],
+    [['player_threes', '3_pointers_made', '3_pt_made', 'threes', '3ptm', 'player_made_threes'], made('threePointFieldGoals'), 'threes'],
     [['3_pt_attempted', '3_pointers_attempted', 'player_threes_attempted'], tried('threePointFieldGoals'), 'three attempts'],
     [['steals', 'player_steals'], stl, 'steals'], [['blocked_shots', 'blocks', 'player_blocks'], blk, 'blocks'],
     [['blks_plus_stls', 'blocks_plus_steals', 'player_blocks_steals', 'stocks'], (r) => sum(blk(r), stl(r)), 'blocks+steals'],
@@ -78,11 +87,8 @@ function wnbaSpecs(): Record<string, HistorySpec> {
  * Stats the player page shows that no GKR model reads from ESPN (touchdowns): kept apart from espnSpecs so GKR's
  * evidence never changes. Each is a plain value from the game-log row.
  */
-const td = (r: Row) => sum(n(r, 'rushingTouchdowns') ?? 0, n(r, 'receivingTouchdowns') ?? 0);
 export const displaySpecs: Readonly<Record<string, Readonly<Record<string, (r: Row) => number | null>>>> = {
-  NCAAFB: { anytime_tds: td, rush_plus_rec_td_scorer: td, rec_tds: (r) => n(r, 'receivingTouchdowns'),
-    rush_tds: (r) => n(r, 'rushingTouchdowns'), pass_tds: (r) => n(r, 'passingTouchdowns'),
-    recs: (r) => n(r, 'receptions'), player_rush_rec_yds: (r) => sum(n(r, 'rushingYards') ?? 0, n(r, 'receivingYards') ?? 0) },
+  NCAAFB: { player_rush_rec_yds: (r) => sum(n(r, 'rushingYards') ?? 0, n(r, 'receivingYards') ?? 0) },
 };
 
 /** ESPN game-log columns behind each market. Stats ESPN's logs don't carry (hits, faceoffs, tackles) aren't listed. */
@@ -104,7 +110,7 @@ export const espnSpecs: Readonly<Record<string, Readonly<Record<string, HistoryS
     goalie_saves: spec((r) => n(r, 'saves'), 'saves', { historical_volume: (r) => n(r, 'saves'),
       expected_shots_against: (r) => n(r, 'shotsFaced') }),
   },
-  // WNBA feeds History Read and Edge's history only: no WNBA key is an approved GKR model, so `supports` keeps it out of GKR.
+  // WNBA: History Read and Edge, and GKR's stat-history set 4 models (owner approved 2026-10-07).
   WNBA: wnbaSpecs(),
   NCAAFB: {
     passing_yards: cfbPass((r) => n(r, 'passingYards'), 'yards'),
@@ -115,6 +121,17 @@ export const espnSpecs: Readonly<Record<string, Readonly<Record<string, HistoryS
     player_rush_attempts: cfbRush((r) => n(r, 'rushingAttempts'), 'attempts'),
     player_reception_yds: cfbReceive((r) => n(r, 'receivingYards'), 'yards'),
     player_receptions: cfbReceive((r) => n(r, 'receptions'), 'receptions'),
+    // Stat-history set 4 (owner approved 2026-10-07: "expand GKR history to other sports").
+    recs: cfbReceive((r) => n(r, 'receptions'), 'receptions'),
+    anytime_tds: cfbTouchdowns, rush_plus_rec_td_scorer: cfbTouchdowns,
+    rec_tds: cfbReceive((r) => n(r, 'receivingTouchdowns'), 'touchdowns'),
+    rush_tds: cfbRush((r) => n(r, 'rushingTouchdowns'), 'touchdowns'),
+    pass_tds: cfbPass((r) => n(r, 'passingTouchdowns'), 'touchdowns'),
+    int: cfbPass((r) => n(r, 'interceptions'), 'interceptions'),
+    player_pass_interceptions: cfbPass((r) => n(r, 'interceptions'), 'interceptions'),
+    rush_plus_rec_yds: cfbScrimmage, player_rush_reception_yds: cfbScrimmage,
+    longest_rec: cfbReceive((r) => n(r, 'longReception'), 'yards'),
+    longest_rush: cfbRush((r) => n(r, 'longRushing'), 'yards'),
   },
 };
 

@@ -3,7 +3,7 @@ import { marketDefinitions } from './definitions.js';
 import { lessAwareDefinition } from './less-aware.js';
 import { createMarketModule } from './scoring.js';
 
-export { marketDefinitions, statHistoryReadyVersions, statHistoryV2Versions, statHistoryV3Versions } from './definitions.js';
+export { marketDefinitions, statHistoryReadyVersions, statHistoryV2Versions, statHistoryV3Versions, statHistoryV4Versions } from './definitions.js';
 export type { MarketDefinition } from './definitions.js';
 export { createMarketModule } from './scoring.js';
 export { flipsForLess, lessAwareDefinition, lessAwareVersion, reliabilityFactors } from './less-aware.js';

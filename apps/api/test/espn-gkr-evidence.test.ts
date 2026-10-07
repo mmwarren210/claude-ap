@@ -82,12 +82,12 @@ test('WNBA: made-attempted columns split, and every app label reads the right bo
   assert.equal(value('free_throws_made'), 3);
 });
 
-test('game log rows carry the opponent; touchdowns are display-only stats, never GKR evidence', async () => {
+test('game log rows carry the opponent; college touchdowns read from ESPN (stat-history set 4)', async () => {
   const { displaySpecs } = await import('../src/espn-gkr-evidence.js');
   const [row] = gameLogRows({ names: ['rushingYards', 'rushingTouchdowns', 'receivingTouchdowns'],
     events: { g1: { gameDate: '2030-09-01T23:00:00Z', atVs: '@', opponent: { abbreviation: 'UGA' } } },
     seasonTypes: [{ displayName: '2030 Regular Season', categories: [{ events: [{ eventId: 'g1', stats: ['86', '1', '1'] }] }] }] });
   assert.equal(row!.opponent, '@ UGA');
-  assert.equal(displaySpecs.NCAAFB!.anytime_tds!(row!), 2);
-  assert.equal(espnSpecs.NCAAFB!.anytime_tds, undefined, 'GKR reads no touchdown spec from ESPN');
+  assert.equal(espnSpecs.NCAAFB!.anytime_tds!.value(row!), 2);
+  assert.equal(displaySpecs.NCAAFB!.player_rush_rec_yds!(row!), 86);
 });

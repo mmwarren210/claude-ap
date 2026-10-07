@@ -147,6 +147,48 @@ const statHistoryV3: readonly MarketDefinition[] = [
 /** The stat-history set 3 versions (CS2 and tennis). */
 export const statHistoryV3Versions = statHistoryV3.map((definition) => definition.version);
 
+/**
+ * Stat-history set 4 (owner approved 2026-10-07: "expand GKR history to other sports"): WNBA from ESPN box scores
+ * (minutes and the stat itself, gated on the ESPN roster's availability), college football touchdowns, receptions,
+ * interceptions, scrimmage and longest-play lines from ESPN game logs, and the tennis lines the other sets missed.
+ * New versions only: every model already approved keeps its version and score.
+ */
+const sh4 = (sport: Sport, markets: readonly string[], factors: readonly WeightedFactor[],
+  options: Partial<Pick<MarketDefinition, 'criticalKinds' | 'hardCriticalKinds' | 'highVariance' | 'blowoutMode'>> = {}) =>
+  markets.map((market) => define(sport, market, factors, { partialCoverageNormalization: true, ...options,
+    version: `GKR-${sport}-${market.toUpperCase().replace(/_/g, '-')}-SH4-1.0` }));
+const hoops: readonly WeightedFactor[] = [['historical_volume',50],['minutes',30],['stability',20]];
+const wnba = { ...espnPlayer, blowoutMode: 'ROTATION' as const };
+const statHistoryV4: readonly MarketDefinition[] = [
+  ...sh4('WNBA', ['player_points', 'points'], hoops, wnba),
+  ...sh4('WNBA', ['player_rebounds', 'rebounds'], hoops, wnba),
+  ...sh4('WNBA', ['player_assists', 'assists'], hoops, wnba),
+  ...sh4('WNBA', ['player_points_rebounds_assists', 'pts_plus_rebs_plus_asts', 'pra', 'player_points_plus_rebounds_plus_assists',
+    'points_plus_rebounds_plus_assists'], hoops, wnba),
+  ...sh4('WNBA', ['player_points_rebounds', 'pts_plus_rebs', 'player_points_plus_rebounds', 'points_plus_rebounds'], hoops, wnba),
+  ...sh4('WNBA', ['player_points_assists', 'pts_plus_asts', 'player_points_plus_assists', 'points_plus_assists'], hoops, wnba),
+  ...sh4('WNBA', ['player_rebounds_assists', 'rebs_plus_asts', 'player_rebounds_plus_assists', 'rebounds_plus_assists',
+    'assists_plus_rebounds'], hoops, wnba),
+  ...sh4('WNBA', ['player_threes', '3_pointers_made', '3_pt_made', 'threes', '3ptm', 'player_made_threes'], hoops, { ...wnba, highVariance: true }),
+  ...sh4('WNBA', ['steals', 'player_steals'], hoops, { ...wnba, highVariance: true }),
+  ...sh4('WNBA', ['blocked_shots', 'blocks', 'player_blocks'], hoops, { ...wnba, highVariance: true }),
+  ...sh4('WNBA', ['blks_plus_stls', 'blocks_plus_steals', 'player_blocks_steals', 'stocks'], hoops, { ...wnba, highVariance: true }),
+  ...sh4('WNBA', ['turnovers', 'player_turnovers'], hoops, { ...wnba, highVariance: true }),
+  ...sh4('NCAAFB', ['anytime_tds', 'rush_plus_rec_td_scorer'], [['expected_touches',40],['historical_volume',45],['stability',15]], { ...espnPlayer, highVariance: true }),
+  ...sh4('NCAAFB', ['recs'], [['target_share',45],['historical_volume',40],['receiving_efficiency',10],['stability',5]], espnPlayer),
+  ...sh4('NCAAFB', ['rec_tds'], [['target_share',35],['historical_volume',50],['stability',15]], { ...espnPlayer, highVariance: true }),
+  ...sh4('NCAAFB', ['rush_tds'], [['expected_carries',35],['historical_volume',50],['stability',15]], { ...espnPlayer, highVariance: true }),
+  ...sh4('NCAAFB', ['pass_tds'], [['expected_attempts',30],['efficiency',20],['historical_volume',40],['stability',10]], { ...espnPlayer, highVariance: true }),
+  ...sh4('NCAAFB', ['int', 'player_pass_interceptions'], [['expected_attempts',35],['historical_volume',50],['stability',15]], { ...espnPlayer, highVariance: true }),
+  ...sh4('NCAAFB', ['rush_plus_rec_yds', 'player_rush_reception_yds'], [['expected_touches',40],['historical_volume',45],['stability',15]], espnPlayer),
+  ...sh4('NCAAFB', ['longest_rec'], [['target_share',30],['historical_volume',50],['stability',20]], { ...espnPlayer, highVariance: true }),
+  ...sh4('NCAAFB', ['longest_rush'], [['expected_carries',30],['historical_volume',50],['stability',20]], { ...espnPlayer, highVariance: true }),
+  ...sh4('TENNIS', ['player_double_faults'], [['historical_volume',60],['stability',40]], { highVariance: true }),
+  ...sh4('TENNIS', ['total_sets'], [['historical_volume',60],['stability',40]]),
+];
+/** The stat-history set 4 versions (WNBA, more college football, the rest of tennis). */
+export const statHistoryV4Versions = statHistoryV4.map((definition) => definition.version);
+
 export const marketDefinitions: readonly MarketDefinition[] = [
   define('NFL','passing_yards', [['expected_attempts',25],['efficiency_environment',20],['protection_pressure',15],['game_script',15],['personnel',10],['historical_current_form',10],['stability',5]], {version:'GKR-NFL-PASSING-YARDS-1.2',criticalKinds:['status:qb_available','status:weather_clear','status:protection_confirmed'],hardCriticalKinds:['status:qb_available'],partialCoverageNormalization:true,blowoutMode:'VOLUME_LOSS'}),
   define('NFL','player_pass_attempts', [['game_script',30],['expected_offensive_plays',20],['pass_rate',20],['qb_role_security',10],['opponent_run_pass_funnel',10],['historical_volume',5],['stability',5]], {version:'GKR-NFL-PLAYER-PASS-ATTEMPTS-1.2',criticalKinds:['status:qb_available'],partialCoverageNormalization:true,blowoutMode:'VOLUME_LOSS'}),
@@ -212,6 +254,7 @@ export const marketDefinitions: readonly MarketDefinition[] = [
       { criticalKinds: ['status:fantasy_scenarios_confirmed'] })),
   // Last, so lookups by sport and market find the older definition unless set 3 is approved.
   ...statHistoryV3,
+  ...statHistoryV4,
 ];
 
 

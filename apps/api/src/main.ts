@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegistry, lessAwareVersion, marketDefinitions,
-  statHistoryReadyVersions, statHistoryV2Versions, statHistoryV3Versions } from '@crowniq/engine';
+  statHistoryReadyVersions, statHistoryV2Versions, statHistoryV3Versions, statHistoryV4Versions } from '@crowniq/engine';
 import type { OddsProvider } from '@crowniq/engine';
 import { buildServer } from './server.js';
 import { consensusFairPrices, FullPrizePicksProvider } from './full-prizepicks-provider.js';
@@ -233,7 +233,9 @@ const configuredModelVersions=(process.env.GKR_APPROVED_MODEL_VERSIONS??'')
 const approvedModelVersions=[...new Set(modelPreset==='stat_history_v2'
   ? [...configuredModelVersions,...statHistoryReadyVersions,...statHistoryV2Versions,
     // Stat-history set 3, CS2 and tennis from player history (owner approved 2026-10-05); GKR_SH3=false leaves it out.
-    ...(process.env.GKR_SH3==='false'?[]:statHistoryV3Versions)]
+    ...(process.env.GKR_SH3==='false'?[]:statHistoryV3Versions),
+    // Stat-history set 4, WNBA, more college football and tennis (owner approved 2026-10-07); GKR_SH4=false leaves it out.
+    ...(process.env.GKR_SH4==='false'?[]:statHistoryV4Versions)]
   : modelPreset==='stat_history_v1' ? [...configuredModelVersions,...statHistoryReadyVersions]
     : configuredModelVersions)];
 const models=createGkrRegistry(approvedModelVersions);

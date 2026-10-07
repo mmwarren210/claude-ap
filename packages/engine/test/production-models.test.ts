@@ -4,7 +4,7 @@ import type { Evidence, PropLine } from '@crowniq/contracts';
 import { boardSchema, evidenceSchema } from '@crowniq/contracts';
 import { auditCrown, buildAutoCrown, createGkrRegistry, evaluateBoard, fantasyDistribution,
   fantasyRules, marketDefinitions, prizepicksFantasyRegistryV1, reviewManualCrown,
-  scoreBand, scoreFantasyStats, snapshotSelection, statHistoryReadyVersions, statHistoryV2Versions, statHistoryV3Versions, lessAwareDefinition, lessAwareVersion,
+  scoreBand, scoreFantasyStats, snapshotSelection, statHistoryReadyVersions, statHistoryV2Versions, statHistoryV3Versions, statHistoryV4Versions, lessAwareDefinition, lessAwareVersion,
   flipsForLess, reliabilityFactors } from '../src/index.js';
 import { fixtureAnalysis, fixtureLine, now } from './fixtures.js';
 
@@ -32,9 +32,9 @@ function run(lines: PropLine[], evidence: Evidence[]) {
     evidence, createGkrRegistry(marketDefinitions.map((item) => item.version)), now);
 }
 
-test('140 versioned market definitions have auditable weights and never score missing live inputs', () => {
+test('195 versioned market definitions have auditable weights and never score missing live inputs', () => {
   const registry = createGkrRegistry();
-  assert.equal(marketDefinitions.length, 140);
+  assert.equal(marketDefinitions.length, 195);
   const seen = new Set<string>();
   for (const definition of marketDefinitions) {
     assert.equal(definition.factors.reduce((sum, [, weight]) => sum + weight, 0), 100);
@@ -430,4 +430,19 @@ test('score components carry structured fields that match their numbers', () => 
   assert.ok((analysis.lineAdjustments ?? []).every((item) => item.kind === 'LINE_ADJUSTMENT' || item.kind === 'CLAMP'));
   const total = [...analysis.contextBreakdown ?? [], ...analysis.lineAdjustments ?? []].reduce((sum, item) => sum + item.contribution, 0);
   assert.equal(Math.round(total * 100) / 100, analysis.score);
+});
+
+test('stat-history set 4: new versions for WNBA, more college football and tennis; approved models keep theirs', () => {
+  const registry = createGkrRegistry([...statHistoryV2Versions, ...statHistoryV3Versions, ...statHistoryV4Versions]);
+  assert.equal(registry.resolve({ sport: 'WNBA', market: 'player_points' })?.version, 'GKR-WNBA-PLAYER-POINTS-SH4-1.0');
+  assert.equal(registry.resolve({ sport: 'WNBA', market: 'pra' })?.version, 'GKR-WNBA-PRA-SH4-1.0');
+  assert.equal(registry.resolve({ sport: 'NCAAFB', market: 'anytime_tds' })?.version, 'GKR-NCAAFB-ANYTIME-TDS-SH4-1.0');
+  assert.equal(registry.resolve({ sport: 'TENNIS', market: 'total_sets' })?.version, 'GKR-TENNIS-TOTAL-SETS-SH4-1.0');
+  // Unchanged: models approved before set 4.
+  assert.equal(registry.resolve({ sport: 'NCAAFB', market: 'player_rush_yds' })?.version, 'GKR-NCAAFB-PLAYER-RUSH-YDS-SH2-1.1');
+  assert.equal(registry.resolve({ sport: 'TENNIS', market: 'aces' })?.version, 'GKR-TENNIS-ACES-SH3-1.0');
+  assert.ok(statHistoryV4Versions.every((version) => version.endsWith('-SH4-1.0')));
+  // Without set 4's approval, WNBA has no approved model.
+  const before = createGkrRegistry([...statHistoryV2Versions, ...statHistoryV3Versions]);
+  assert.notEqual(before.resolve({ sport: 'WNBA', market: 'player_points' })?.version, 'GKR-WNBA-PLAYER-POINTS-SH4-1.0');
 });
