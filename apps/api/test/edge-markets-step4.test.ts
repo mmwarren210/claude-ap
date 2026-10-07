@@ -148,3 +148,18 @@ test('TD totals: an Odds API total fills a game SharpAPI has not totaled; SharpA
   const both = scorerFairPrices(rows, [...totalsFromOdds(event(47.5), 'nfl'), sharp('over'), sharp('under')]);
   assert.ok(both[0]!.fairOver < filled[0]!.fairOver, 'fewer expected points, lower TD chances');
 });
+
+test('TD totals: team names that differ between sources still find their one game that day', async () => {
+  const { totalsFromOdds } = await import('../src/context/odds-api-totals.js');
+  const odds = totalsFromOdds([{ id: 'x', commence_time: start, home_team: 'Detroit Lions', away_team: 'Arizona Cardinals',
+    bookmakers: [{ key: 'fanduel', markets: [{ key: 'totals', outcomes: [{ name: 'Over', price: 1.91, point: 47.5 }, { name: 'Under', price: 1.91, point: 47.5 }] }] }] }], 'nfl');
+  const rates = Array.from({ length: 24 }, (_, index) => .05 + .5 * ((index * 5) % 24) / 24);
+  const scale = 47.5 * .105 / rates.reduce((a, b) => a + b, 0), fair = rates.map((rate) => 1 - Math.exp(-rate * scale));
+  const rows = fair.map((p, index) => row({ event_id: 'nfl_cardinals_lions_b2', home_team: 'Detroit Lions', away_team: 'ARI Cardinals',
+    market_type: 'anytime_touchdown_scorer', selection_type: 'other', line: null, player_name: `Player ${index}`, odds_probability: Math.min(.95, p * 1.3) }));
+  assert.equal(scorerFairPrices(rows, odds).length, 24);
+  const college = rows.map((item) => ({ ...item, home_team: 'Georgia', away_team: 'Duke' }));
+  assert.equal(scorerFairPrices(college, totalsFromOdds([{ id: 'y', commence_time: start, home_team: 'Georgia Tech Yellow Jackets',
+    away_team: 'Clemson Tigers', bookmakers: [{ key: 'fanduel', markets: [{ key: 'totals', outcomes: [{ name: 'Over', price: 1.91, point: 47.5 },
+      { name: 'Under', price: 1.91, point: 47.5 }] }] }] }], 'ncaaf')).length, 0, 'Georgia is not Georgia Tech when the other team differs');
+});

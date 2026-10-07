@@ -1372,6 +1372,9 @@ export function buildServer(options: ServerOptions = {}) {
         if(!query.success)return reply.code(400).send({code:'INVALID_QUERY'});
         const result=await gkrPlus(query.data.platform);
         if(!result)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+        // A platform Edge holds (side-bias alarm, or a new feed not yet cleared) is held here too.
+        if(edge.sideBiasFlagged(query.data.platform)||(heldPlatforms.has(query.data.platform)&&!edge.sideBiasCleared(query.data.platform)))
+          return {...result.snapshot.response,picks:[],slips:[],counts:{...result.snapshot.response.counts,positiveEdge:0},modelVersion:GKR_PLUS_VERSION};
         const nowMs=now().getTime(),live=result.picks.filter((pick)=>Date.parse(pick.eventStartTime)>nowMs+5*60_000);
         const ranked=live.filter((pick)=>pick.edge!==null&&pick.rating!=='NONE');
         return {...result.snapshot.response,picks:ranked.slice(0,query.data.limit),

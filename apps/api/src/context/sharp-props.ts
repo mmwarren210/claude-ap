@@ -359,6 +359,18 @@ export function scorerFairPrices(rows: readonly unknown[], games: readonly GameP
   };
   const goalGames = games.filter((game) => game.league === 'nhl'), pointGames = games.filter((game) => game.league === 'nfl' || game.league === 'ncaaf');
   const goalTotals = rekey(goalGames, expectedGoals(goalGames)), pointTotals = rekey(pointGames, expectedPoints(pointGames));
+  // Sources name teams differently ("ari cardinals" / "Arizona Cardinals", "california" / "California Golden Bears"): a
+  // group with no exact key takes the one game that day whose two teams both loosely match.
+  const loose = (totals: Map<string, number>, teams: string) => {
+    const [home, away, date] = teams.split('|');
+    const same = (a: string, b: string) => { const x = a.split(' '), y = b.split(' ');
+      if (!x[0] || !y[0]) return false;
+      const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+      return x.at(-1) === y.at(-1) && x.length > 1 && y.length > 1 || short.every((word, index) => long[index] === word); };
+    const hits = [...totals].filter(([key]) => { const [h, a, d] = key.split('|');
+      return d === date && h !== undefined && a !== undefined && (same(h, home!) && same(a, away!) || same(h, away!) && same(a, home!)); });
+    return hits.length === 1 ? hits[0]![1] : 0;
+  };
   const groups = new Map<string, Row[]>();
   for (const value of rows) {
     const row = value as Row;
@@ -380,7 +392,7 @@ export function scorerFairPrices(rows: readonly unknown[], games: readonly GameP
     const teams = byGame({ home: typeof list[0]!.home_team === 'string' ? list[0]!.home_team : null,
       away: typeof list[0]!.away_team === 'string' ? list[0]!.away_team : null, startTime: String(list[0]!.event_start_time) });
     // Expected scoring events in the game: NHL goals less ~3% own goals; football rush + receiving TDs from the points.
-    const totals = kind === 'goals' ? goalTotals : pointTotals, total = totals.get(event) ?? totals.get(teams) ?? 0;
+    const totals = kind === 'goals' ? goalTotals : pointTotals, total = totals.get(event) ?? totals.get(teams) ?? loose(totals, teams);
     const expected = kind === 'goals' ? total * .97 : total * TDS_PER_POINT;
     if (!expected) {
       scorerSkips.noTotal++;
