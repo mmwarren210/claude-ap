@@ -191,7 +191,8 @@ export class EspnGkrEvidence implements ResearchAdapter {
   }
 
   /** The ESPN game for this event and the two teams' rosters (for soccer, the league comes from the game). */
-  private async rosters(first: ResearchTarget, counters: { searches: number; cacheHits: number }) {
+  /** The board game's ESPN event (by date and teams), or null. */
+  private async boardGame(first: ResearchTarget, counters: { searches: number; cacheHits: number }) {
     const path = paths[first.sport], start = Date.parse(first.eventStartTime);
     const days = [...new Set([new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(start)),
       new Date(start).toISOString().slice(0, 10)])];
@@ -211,6 +212,12 @@ export class EspnGkrEvidence implements ResearchAdapter {
     }
     const game = matchGame(first as unknown as PropLine, [...new Map(games.map((item) => [item.id, item])).values()]) as
       (Game & { teams: string[] }) | null;
+    return game;
+  }
+
+  private async rosters(first: ResearchTarget, counters: { searches: number; cacheHits: number }) {
+    const path = paths[first.sport];
+    const game = await this.boardGame(first, counters);
     if (!game) return null;
     let rosterPath = path;
     const starters = new Map<string, boolean>();
@@ -269,6 +276,34 @@ export class EspnGkrEvidence implements ResearchAdapter {
     return log.rows.filter((row) => !row.occurredAt || Date.parse(row.occurredAt) < before)
       .sort((a, b) => (b.occurredAt ?? '').localeCompare(a.occurredAt ?? ''))
       .map((row) => spec.value(row)).filter((value): value is number => value !== null && Number.isFinite(value)).slice(0, 15);
+  }
+
+  /**
+   * Both teams' last finished fixtures before a soccer line's game (ESPN team schedules), newest first: the matches to
+   * look up for players' full stats.
+   */
+  async soccerFixtures(target: ResearchTarget, perTeam = 6): Promise<{ date: string; home: string; away: string }[]> {
+    if (target.sport !== 'SOCCER') return [];
+    const counters = { searches: 0, cacheHits: 0 };
+    const game = await this.boardGame(target, counters);
+    if (!game) return [];
+    const summary = obj(await this.json(`${SITE}/soccer/all/summary?event=${game.id}`, 6 * 3600_000, counters));
+    const league = str(obj(obj(summary?.header)?.league)?.slug);
+    if (!league) return [];
+    const before = Date.parse(target.eventStartTime), out = new Map<string, { date: string; home: string; away: string }>();
+    for (const teamId of game.teams) {
+      const schedule = obj(await this.json(`${SITE}/soccer/${league}/teams/${teamId}/schedule`, 12 * 3600_000, counters).catch(() => null));
+      const finished = arr(schedule?.events).flatMap((value) => {
+        const event = obj(value), competition = obj(arr(event?.competitions)[0]), date = str(event?.date);
+        if (obj(obj(competition?.status)?.type)?.completed !== true || !(Date.parse(date) < before)) return [];
+        const sides = arr(competition?.competitors).map((item) => obj(item));
+        const home = sides.find((side) => side?.homeAway === 'home'), away = sides.find((side) => side?.homeAway === 'away');
+        const name = (side: Json | null | undefined) => str(obj(side?.team)?.displayName);
+        return home && away && name(home) && name(away) ? [{ date, home: name(home), away: name(away) }] : [];
+      }).sort((a, b) => b.date.localeCompare(a.date)).slice(0, perTeam);
+      for (const fixture of finished) out.set(`${fixture.date}|${fixture.home}`, fixture);
+    }
+    return [...out.values()].sort((a, b) => b.date.localeCompare(a.date));
   }
 
   /** A player's last 15 fantasy scores before this game, scored by one app's chart (History Read and Edge). */

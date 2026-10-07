@@ -60,6 +60,8 @@ import { SleeperNflIdentitySource } from './identity/sleeper-nfl.js';
 import { JsonCache } from './identity/types.js';
 import { CurrentContextResearch } from './current-context.js';
 import { OddsApiTotals } from './context/odds-api-totals.js';
+import { UfcHistory } from './ufc-history.js';
+import { SoccerHistory } from './soccer-history.js';
 
 // Where the server keeps its data files. On a host, point this at a permanent disk.
 const dataDir=(process.env.CROWNIQ_DATA_DIR ?? 'tmp').replace(/\/$/,'');
@@ -118,6 +120,23 @@ const playerHistory=process.env.CROWNIQ_FREE_HISTORY==='false'?null
     // Slow first load (one request a second), so last.
     new OpenDotaHistory(),new LeaguepediaHistory()],historyArchive);
 playerHistory?.start();
+// UFC fight history from UFCStats (about 3.5 cents a fighter, each fighter at most weekly, under the shared scraper cap).
+const ufcHistory=process.env.APIFY_TOKEN?.trim()?new UfcHistory(async(lastName)=>{
+  if(await scraperBudget.remaining()<0.25)return null;
+  const run=await apify.runActor('parseforge/ufcstats-scraper',{searchQuery:lastName,maxItems:5,includeFightHistory:true},
+    {maxChargeUsd:0.25,timeoutSecs:300});
+  await scraperBudget.record(run.usageUsd);
+  return run.status==='SUCCEEDED'?await apify.datasetItems(run.datasetId):null;
+},`${dataDir}/ufc-history.json`):null;
+// Soccer match stats from Sofascore (about a third of a cent a match, batched, under the shared scraper cap).
+const soccerHistory=process.env.APIFY_TOKEN?.trim()?new SoccerHistory(async(queries)=>{
+  if(await scraperBudget.remaining()<0.5)return null;
+  const run=await apify.runActor('abotapi/sofascore-scraper',{mode:'search',searchQueries:queries,searchType:'match',
+    maxItems:queries.length*2,includeLineups:true,includeStatistics:false,includeIncidents:false,includeOdds:false},
+    {maxChargeUsd:0.5,timeoutSecs:600});
+  await scraperBudget.record(run.usageUsd);
+  return run.status==='SUCCEEDED'?await apify.datasetItems(run.datasetId):null;
+},`${dataDir}/soccer-history.json`):null;
 // Step 5a: the Odds API PrizePicks pull also asks for up to nine sportsbooks (one region, so no extra credits per market).
 // Pinnacle first: the Step 2 probe confirmed it returns player props through The Odds API. CROWNIQ_ODDS_CONSENSUS_BOOKS overrides.
 const oddsPrizePicks=apiKey?new FullPrizePicksProvider({apiKey,maxEvents,maxCreditsPerRefresh,quotesFile:`${dataDir}/odds-consensus.json`,
@@ -384,7 +403,7 @@ const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',dispersion:edgeDisp
   pick6PayoutsConfirmed:process.env.EDGE_PICK6_PAYOUTS_CONFIRMED!=='false',
   alertsFile:`${dataDir}/edge/alerts.json`,staleLogFile:`${dataDir}/edge/stale-events.jsonl`};
 
-const app = buildServer({ oddsConsensus:oddsPrizePicks?()=>consensusFairPrices(oddsPrizePicks.consensusQuotes()):undefined, adminToken: process.env.ADMIN_TOKEN, playerHistory, espnHistory: espnEvidence, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
+const app = buildServer({ ufcHistory, soccerHistory, oddsConsensus:oddsPrizePicks?()=>consensusFairPrices(oddsPrizePicks.consensusQuotes()):undefined, adminToken: process.env.ADMIN_TOKEN, playerHistory, espnHistory: espnEvidence, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
   webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,
   autoGradingEnabled:!!autoGrade,autoGradingStatus:()=>autoGrade?.status()??null,
   requireProfiles:true,identityVerifier,

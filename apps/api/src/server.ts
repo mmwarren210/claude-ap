@@ -157,9 +157,14 @@ export interface ServerOptions {
   feedback?: FeedbackStore | null;
   /** Free public history (ESPN tennis, OpenDota, Leaguepedia) for the cards' game logs. */
   playerHistory?: PlayerHistory | null;
+  /** UFC fighters' fight history (UFCStats) for History Read and Edge on PrizePicks' UFC lines. */
+  ufcHistory?: import('./ufc-history.js').UfcHistory | null;
+  /** Soccer players' full match stats (Sofascore) for lines ESPN's logs can't read, fantasy score included. */
+  soccerHistory?: import('./soccer-history.js').SoccerHistory | null;
   /** ESPN game logs (soccer, NHL, college football) for History Reads. */
   espnHistory?: { recentValues(target: import('@crowniq/engine').ResearchTarget): Promise<number[] | null>;
-    recentFantasy?(target: import('@crowniq/engine').ResearchTarget, app: import('./fantasy-history.js').FantasyApp): Promise<number[] | null> } | null;
+    recentFantasy?(target: import('@crowniq/engine').ResearchTarget, app: import('./fantasy-history.js').FantasyApp): Promise<number[] | null>;
+    soccerFixtures?(target: import('@crowniq/engine').ResearchTarget): Promise<import('./soccer-history.js').Fixture[]> } | null;
   /** CrownIQ's own archive of game logs, graded results and lines. */
   historyArchive?: HistoryArchive | null;
   /** Reads The Odds API's credit balance (a free call), for the owner. */
@@ -1264,7 +1269,26 @@ export function buildServer(options: ServerOptions = {}) {
   });
   // History Reads: a free More/Less from each player's recent results (CrownIQ's history, then the free public
   // sources) on lines GKR doesn't play, with the books' no-vig chance blended in where there is one.
+  // Soccer from Sofascore: queues both teams' recent fixtures for lookup, and reads what's already stored.
+  const soccerValues=async(line:PropLine)=>{
+    if(!options.soccerHistory)return null;
+    const target={eventId:line.eventId,eventName:line.eventName,eventStartTime:line.eventStartTime,league:line.league,
+      playerId:line.playerId,playerName:line.playerName,team:line.team,opponent:line.opponent,homeTeam:line.homeTeam??null,
+      awayTeam:line.awayTeam??null,market:line.market,sport:line.sport,sourceSportKey:line.sourceSportKey??null};
+    const fixtures=await options.espnHistory?.soccerFixtures?.(target).catch(()=>[])??[];
+    options.soccerHistory.queue(fixtures);
+    const found=await options.soccerHistory.values(line.playerName,line.market,line.eventStartTime).catch(()=>null);
+    return found&&found.values.length>=5?found:null;
+  };
   const historyReads=new HistoryReads(async(line)=>{
+    // Soccer fantasy score: PrizePicks' chart over Sofascore's full match stats (PrizePicks only).
+    if(line.sport==='SOCCER'&&isFantasyMarket(line.market))return fantasyApp(line)==='prizepicks'?soccerValues(line):null;
+    // UFC: each fighter's past fights from UFCStats (fantasy on PrizePicks' MMA chart, strikes, takedowns, rounds).
+    if(/^(UFC|MMA)/i.test(line.league)){
+      if(!options.ufcHistory)return null;
+      const found=await options.ufcHistory.values(line.playerName,line.market).catch(()=>null);
+      return found&&found.values.length>=4?found:null;
+    }
     // Fantasy score: each app's own chart over ESPN's box scores (DK Pick'em's chart isn't confirmed: no read).
     if(isFantasyMarket(line.market)){
       const app=fantasyApp(line);
@@ -1297,6 +1321,8 @@ export function buildServer(options: ServerOptions = {}) {
         sourceSportKey:line.sourceSportKey??null}).catch(()=>null);
       if(values&&values.length>=5)return {values,source:'ESPN game logs'};
     }
+    // Soccer stats ESPN doesn't carry (tackles, passes, clearances...) or players it couldn't find: Sofascore.
+    if(line.sport==='SOCCER'){const sofascore=await soccerValues(line);if(sofascore)return sofascore;}
     const free=options.playerHistory?.supports(line.sport)?await options.playerHistory.values(line.sport,line.playerName,line.market).catch(()=>null):null;
     if(!free||(free.perMap&&twoMaps(line.market)))return null;
     return {values:free.values.map((game)=>game.value),source:free.source};
