@@ -11,7 +11,7 @@ import { twoMaps } from './player-history.js';
 import type { PlayerHistory } from './player-history.js';
 import { FeedbackStore } from './feedback.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import Fastify from 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -2004,6 +2004,15 @@ export function buildServer(options: ServerOptions = {}) {
     });
     // Step 7: the last 7 days of stale alerts replayed against the closing line.
     admin.get('/edge/stale',async(_request,reply)=>edge?edge.staleReplay(7):reply.code(503).send({code:'EDGE_UNAVAILABLE'}));
+    // The data volume's largest files (it is small: a full volume fails every save, tips included).
+    admin.get('/disk',async()=>{
+      const root=(process.env.CROWNIQ_DATA_DIR??'tmp').replace(/\/$/,'');
+      const files=await readdir(root,{recursive:true}).catch(()=>[] as string[]);
+      const sized=(await Promise.all(files.map(async(name)=>{const info=await stat(`${root}/${name}`).catch(()=>null);
+        return info?.isFile()?{name,mb:Math.round(info.size/1e4)/100}:null;}))).filter((item)=>item!==null);
+      sized.sort((a,b)=>b.mb-a.mb);
+      return {root,files:sized.length,totalMb:Math.round(sized.reduce((sum,item)=>sum+item.mb,0)),largest:sized.slice(0,40)};
+    });
     admin.get('/edge/side-bias',async(_request,reply)=>edge?edge.sideBias():reply.code(503).send({code:'EDGE_UNAVAILABLE'}));
     admin.get('/edge/status',async(_request,reply)=>edge?{status:edge.status(),grading:edgeWorker?.status()??null,
       snapshots:options.edge?.snapshots?.status()??null}:reply.code(503).send({code:'EDGE_DISABLED'}));
