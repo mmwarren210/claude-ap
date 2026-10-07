@@ -32,9 +32,13 @@ const statusColor: { [status in Status]: string } = { PENDING: palette.muted, WO
 const books = [{ name: 'DraftKings', url: 'https://sportsbook.draftkings.com' }, { name: 'FanDuel', url: 'https://sportsbook.fanduel.com' },
   { name: 'Hard Rock', url: 'https://app.hardrock.bet' }];
 
-/** Picks an image on the web and shrinks it to at most 1600px as JPEG, returning base64 without the data: prefix. */
+/**
+ * Picks an image on the web and shrinks it to at most 1600px as JPEG, returning base64 without the data: prefix. Null when
+ * nothing was chosen; an Error saying what went wrong when the picture can't be opened.
+ */
 function pickImage(): Promise<{ data: string; mediaType: 'image/jpeg' } | null> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    if (typeof document === 'undefined') { reject(new Error('Adding a picture works in the web app (open CrownIQ in Safari).')); return; }
     const input = document.createElement('input');
     input.type = 'file'; input.accept = 'image/*';
     input.onchange = () => {
@@ -47,12 +51,17 @@ function pickImage(): Promise<{ data: string; mediaType: 'image/jpeg' } | null> 
           const scale = Math.min(1, 1600 / Math.max(image.width, image.height));
           const canvas = document.createElement('canvas');
           canvas.width = Math.round(image.width * scale); canvas.height = Math.round(image.height * scale);
-          canvas.getContext('2d')?.drawImage(image, 0, 0, canvas.width, canvas.height);
-          resolve({ data: canvas.toDataURL('image/jpeg', .85).split(',')[1] ?? '', mediaType: 'image/jpeg' });
+          const context = canvas.getContext('2d');
+          if (!context) { reject(new Error('This browser couldn’t prepare the picture. Paste the text instead.')); return; }
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          const data = canvas.toDataURL('image/jpeg', .85).split(',')[1] ?? '';
+          if (data.length < 100) { reject(new Error('That picture came out empty. Try a screenshot instead.')); return; }
+          resolve({ data, mediaType: 'image/jpeg' });
         };
-        image.onerror = () => resolve(null);
+        image.onerror = () => reject(new Error('That picture’s format couldn’t be opened. Try a screenshot (PNG or JPEG).'));
         image.src = String(reader.result);
       };
+      reader.onerror = () => reject(new Error('Couldn’t read that file from your phone. Try again.'));
       reader.readAsDataURL(file);
     };
     input.click();
@@ -98,7 +107,9 @@ export default function TipsScreen() {
         const code = (await response.json().catch(() => null) as { code?: string } | null)?.code;
         setMessage(response.status === 422 ? 'No picks found in that.' : response.status === 429 ? 'Daily upload limit reached (30).'
           : code === 'AI_CREDITS_EXHAUSTED' ? 'CrownIQ’s AI is out of credits right now, so it can’t read picks. The owner needs to top up the Claude account.'
-          : response.status === 503 ? 'Reading screenshots isn’t set up on the server yet.' : 'Could not read that. Try again or paste the text.');
+          : response.status === 503 ? 'Reading screenshots isn’t set up on the server yet.'
+          : response.status === 400 ? 'The server turned that picture down (format or size). Try a screenshot, or paste the text.'
+          : `Could not read that (error ${response.status}). Try again or paste the text.`);
       }
     } catch { setMessage('Could not upload. Check your connection.'); }
     finally { setBusy(false); }
@@ -134,7 +145,8 @@ export default function TipsScreen() {
       <TextInput value={source} onChangeText={setSource} placeholder="Service name (optional; read from the post)" maxLength={60}
         placeholderTextColor={palette.muted} style={styles.input} />
       {web && <Pressable accessibilityRole="button" disabled={busy} style={styles.button}
-        onPress={() => void pickImage().then((image) => image?.data ? upload({ image }) : undefined)}>
+        onPress={() => void pickImage().then((image) => image?.data ? upload({ image }) : undefined)
+          .catch((error: unknown) => setMessage(error instanceof Error ? error.message : 'Couldn’t open that picture.'))}>
         {busy ? <ActivityIndicator color={palette.background} /> : <Text style={styles.buttonText}>📷 Upload a screenshot</Text>}
       </Pressable>}
       <TextInput value={text} onChangeText={setText} multiline placeholder="…or paste the picks here" maxLength={4000}

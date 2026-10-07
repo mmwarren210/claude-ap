@@ -587,11 +587,17 @@ export function buildServer(options: ServerOptions = {}) {
       mediaType:z.enum(['image/png','image/jpeg','image/webp','image/gif'])}).optional(),
       text:z.string().trim().min(2).max(4000).optional(),source:z.string().trim().min(1).max(60).optional()})
       .strict().refine((value)=>value.image||value.text).safeParse(request.body);
-    if(!input.success)return reply.code(400).send({code:'INVALID_TIPS_UPLOAD'});
+    // Every attempt is logged (size and outcome, never the picture) so a failing upload can be traced.
+    const body=request.body as {image?:{data?:unknown;mediaType?:unknown};text?:unknown}|null;
+    const attempt=`image ${typeof body?.image?.data==='string'?Math.round(body.image.data.length/1024)+'KB':'none'} ${String(body?.image?.mediaType??'')} text ${typeof body?.text==='string'?body.text.length:0}`;
+    if(!input.success){console.warn(`[tips] upload rejected (${attempt}): ${input.error.issues.map((issue)=>`${issue.path.join('.')} ${issue.message}`).join('; ').slice(0,300)}`);
+      return reply.code(400).send({code:'INVALID_TIPS_UPLOAD'});}
+    console.log(`[tips] upload (${attempt})`);
     if(await options.tips.store.uploadsToday(user.accountId)>=DAILY_TIP_UPLOADS)return reply.code(429).send({code:'DAILY_LIMIT'});
     try{
       const read=await options.tips.reader.read({...input.data.image?{image:input.data.image}:{},...input.data.text?{text:input.data.text}:{},
         today:now().toISOString().slice(0,10)});
+      console.log(`[tips] read ${read.tips.length} picks`);
       if(!read.tips.length)return reply.code(422).send({code:'NO_TIPS_FOUND'});
       const lines=options.contextFeeds?(await options.contextFeeds.items<GameLine>('pinnacle')).items:[];
       const from=now().getTime();
