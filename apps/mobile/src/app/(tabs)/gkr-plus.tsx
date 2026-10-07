@@ -4,6 +4,7 @@ import { EdgePickCard } from '../../components/EdgePickCard';
 import { EdgeRecord } from '../../components/EdgeRecord';
 import { EdgeSlipPanel, SlipSummary, StakePicker } from '../../components/EdgeSlipPanel';
 import { Notice, Screen } from '../../components/Screen';
+import { PlayerSearch } from '../../components/PlayerSearch';
 import { sportsFrom, upcomingPicks } from '../../edge-format';
 import { edgePlatform, EDGE_PLATFORMS, isBook, platformLabel, useEdgePlatform } from '../../edge-platform';
 import { useEdgeSlip } from '../../edge-slip';
@@ -23,7 +24,9 @@ export default function GkrPlusScreen() {
   const platform = useEdgePlatform(), book = isBook(platform);
   const [sport, setSport] = useState<string | null>(null);
   const [day, setDay] = useState<'all' | 'today'>('all');
-  const { status, data, message, retry } = useEdge('edges', 'gkr-plus', day);
+  const [query, setQuery] = useState('');
+  const searching = query.trim().length >= 2;
+  const { status, data, message, retry } = useEdge('edges', 'gkr-plus', day, query);
   const slip = useEdgeSlip();
   const { nowMs } = useBoard();
   if (!owner) return <Screen eyebrow="CROWNIQ  /  GKR+" title="GKR+"><Notice title="Not available" detail="This tab is for the owner." /></Screen>;
@@ -41,6 +44,7 @@ export default function GkrPlusScreen() {
       accessibilityState={{ selected: section === item.key }} onPress={() => setSection(item.key)}
       style={[styles.segment, section === item.key && styles.segmentOn]}>
       <Text style={[styles.segmentText, section === item.key && styles.segmentTextOn]}>{item.label}</Text></Pressable>)}</View>
+    {section === 'top' && <PlayerSearch onSearch={setQuery} />}
     {section === 'record' ? <EdgeRecord path="/v1/owner/gkr-plus/record" name="GKR+" /> : !data ? <>
       <Notice title={status === 'loading' ? 'Blending the board' : 'GKR+ pending'} detail={message || 'Reading Edge, history and GKR.'} />
       <Pressable accessibilityRole="button" onPress={retry}><Text style={styles.link}>Retry</Text></Pressable>
@@ -57,7 +61,7 @@ export default function GkrPlusScreen() {
           <Text style={[styles.chipText, sport === item && styles.chipTextOn]}>{item ?? 'All'}</Text></Pressable>)}
       </View>}
       <EdgeSlipPanel entries={data.entries} />
-      {<View style={styles.section}>
+      {!searching && <View style={styles.section}>
         <Text style={styles.sectionTitle}>BEST ENTRIES</Text>
         <Text style={styles.sectionDetail}>Highest expected value from GKR+&apos;s strongest legs, one per player and at most two per game.</Text>
         {!data.slips.length && <Text style={styles.sectionDetail}>{day === 'today' ? 'No entry clears the bar with today’s games alone.' : 'No entry clears the bar right now.'}</Text>}
@@ -66,9 +70,11 @@ export default function GkrPlusScreen() {
           <SlipSummary slip={item} /></View>)}
       </View>}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>{book ? 'BETS WITH POSITIVE EV' : 'PICKS ABOVE BREAK-EVEN'}</Text>
-        <Text style={styles.sectionDetail}>Each card shows GKR+&apos;s chance; its first lines say how Edge, history and GKR moved it.</Text>
-        {picks.length ? picks.map((pick, index) => <EdgePickCard key={pick.key + pick.side} pick={pick} rank={index + 1} inSlip={inSlip.has(pick.lineId)} />)
+        <Text style={styles.sectionTitle}>{searching ? `SEARCH · ${picks.length} LINE${picks.length === 1 ? '' : 'S'}` : book ? 'BETS WITH POSITIVE EV' : 'PICKS ABOVE BREAK-EVEN'}</Text>
+        <Text style={styles.sectionDetail}>{searching ? 'Every upcoming line for that player on this platform, blended by GKR+, plays or not.'
+          : 'Each card shows GKR+\u2019s chance; its first lines say how Edge, history and GKR moved it.'}</Text>
+        {picks.length ? picks.map((pick, index) => <EdgePickCard key={pick.key + pick.side} pick={pick} rank={searching ? undefined : index + 1} inSlip={inSlip.has(pick.lineId)} />)
+          : searching ? <Notice title="No lines found" detail={`No upcoming line on ${platformLabel(platform)} for “${query.trim()}”.`} />
           : <Notice title="Nothing qualifies right now" detail="No lines clear the bar after blending. No edge is a valid result." />}
       </View>
       <Pressable accessibilityRole="button" onPress={retry}><Text style={styles.link}>Refresh GKR+</Text></Pressable>

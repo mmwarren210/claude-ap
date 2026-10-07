@@ -784,6 +784,18 @@ export function pickForLine(snapshot: EdgeSnapshot, lineId: string): EdgePick | 
     reasons: [`Opposite side of the Edge pick ${pick.side} ${pick.threshold}.`], warnings: pick.warnings };
 }
 
+/**
+ * Player search (Edge and GKR+ tabs): every line Edge read for a player whose name contains the text, plays or not, games not
+ * yet started; the strongest edge first, then the likeliest side.
+ */
+export function searchPicks(snapshot: EdgeSnapshot, text: string, nowMs: number, limit: number): EdgePick[] {
+  const wanted = normalizedName(text).replace(/[^a-z0-9 ]/g, '').trim();
+  if (wanted.length < 2) return [];
+  return [...snapshot.byLine.values()].filter((pick) => Date.parse(pick.eventStartTime) > nowMs + 5 * 60_000 &&
+    normalizedName(pick.playerName).replace(/[^a-z0-9 ]/g, '').includes(wanted))
+    .sort((a, b) => (b.edge ?? -1) - (a.edge ?? -1) || b.probability - a.probability).slice(0, limit);
+}
+
 export function viewPicks(snapshot: EdgeSnapshot, view: EdgeView, filters: { sport?: string; limit: number;
   minProbability?: number; market?: string; nowMs: number }): EdgePick[] {
   const inView = (pick: EdgePick) => view === 'all' ? true

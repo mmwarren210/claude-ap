@@ -5,6 +5,7 @@ import { EdgeGenView } from '../../components/EdgeGenView';
 import { EdgePickCard } from '../../components/EdgePickCard';
 import { EdgeSlipPanel, SlipSummary, StakePicker } from '../../components/EdgeSlipPanel';
 import { Notice, Screen } from '../../components/Screen';
+import { PlayerSearch } from '../../components/PlayerSearch';
 import { pct, sportsFrom, upcomingPicks } from '../../edge-format';
 import { useEdgeSlip } from '../../edge-slip';
 import { palette } from '../../theme';
@@ -31,7 +32,9 @@ export default function EdgeScreen() {
   const view: EdgeView = platform === 'prizepicks' ? chosenView : 'edges';
   const [sport, setSport] = useState<string | null>(null);
   const [day, setDay] = useState<'all' | 'today'>('all');
-  const { status, data, message, retry } = useEdge(view, 'edge', day);
+  const [query, setQuery] = useState('');
+  const searching = query.trim().length >= 2;
+  const { status, data, message, retry } = useEdge(view, 'edge', day, query);
   const slip = useEdgeSlip();
   const { nowMs } = useBoard();
   const live = upcomingPicks(data?.picks ?? [], nowMs, day);
@@ -55,6 +58,7 @@ export default function EdgeScreen() {
     {platform === 'prizepicks' && <View style={styles.chips}>{views.map((item) => <Pressable key={item.key} accessibilityRole="button"
       onPress={() => setView(item.key)} style={[styles.chip, view === item.key && styles.chipOn]}>
       <Text style={[styles.chipText, view === item.key && styles.chipTextOn]}>{item.label}</Text></Pressable>)}</View>}
+    <PlayerSearch onSearch={setQuery} />
     {!data ? <>
       <Notice title={status === 'loading' ? 'Pricing the board' : 'Edge pending'}
         detail={message || 'Reading the saved board and sportsbook prices.'} />
@@ -80,7 +84,7 @@ export default function EdgeScreen() {
       </View>}
       <EdgeAlerts platform={platform} />
       <EdgeSlipPanel entries={data.entries} />
-      {view === 'edges' && <View style={styles.section}>
+      {view === 'edges' && !searching && <View style={styles.section}>
         <Text style={styles.sectionTitle}>BEST ENTRIES</Text>
         <Text style={styles.sectionDetail}>Highest expected value using the strongest legs, one per player and at most two per game.</Text>
         {!data.slips.length && <Text style={styles.sectionDetail}>{day === 'today' ? 'No entry clears the bar with today’s games alone.' : 'No entry clears the bar right now.'}</Text>}
@@ -89,14 +93,15 @@ export default function EdgeScreen() {
           <SlipSummary slip={item} /></View>)}
       </View>}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>{view === 'edges' ? book ? 'BETS WITH POSITIVE EV' : 'PICKS ABOVE BREAK-EVEN' : 'ALTERNATE LINES BY HIT PROBABILITY'}</Text>
-        <Text style={styles.sectionDetail}>{view === 'edges'
+        <Text style={styles.sectionTitle}>{searching ? `SEARCH · ${picks.length} LINE${picks.length === 1 ? '' : 'S'}` : view === 'edges' ? book ? 'BETS WITH POSITIVE EV' : 'PICKS ABOVE BREAK-EVEN' : 'ALTERNATE LINES BY HIT PROBABILITY'}</Text>
+        <Text style={styles.sectionDetail}>{searching ? 'Every upcoming line Edge read for that player on this platform, plays or not; the strongest edge first.' : view === 'edges'
           ? book ? 'Every rung the book posts, held against its own odds. Stake shown is a quarter-Kelly share of your bankroll, capped at 2%.'
             : platform === 'pick6' ? 'DK Pick’em publishes no payout chart, so Edge shows each pick’s chance; edges appear once the payouts are confirmed.'
             : 'Picks whose hit probability beats the break-even. Edge is shown in percentage points.'
           : 'No source gives PrizePicks’ Goblin/Demon payout factors, so Edge shows each leg’s hit chance and the minimum payout factor that makes it worth it.'}</Text>
         {picks.length ? picks.map((pick, index) => <EdgePickCard key={pick.key + pick.side} pick={pick}
-          rank={view === 'edges' ? index + 1 : undefined} inSlip={inSlip.has(pick.lineId)} />)
+          rank={view === 'edges' && !searching ? index + 1 : undefined} inSlip={inSlip.has(pick.lineId)} />)
+          : searching ? <Notice title="No lines found" detail={`No upcoming line on ${platformLabel(platform)} for “${query.trim()}”.`} />
           : <Notice title="Nothing qualifies right now" detail="No lines clear the bar on the saved board. No edge is a valid result." />}
       </View>
       <Pressable accessibilityRole="button" onPress={retry}><Text style={styles.link}>Refresh Edge</Text></Pressable>

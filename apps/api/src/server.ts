@@ -71,7 +71,7 @@ import type { HistoryArchive } from './history-archive.js';
 import type { ShadowPick, ShadowRecord } from './shadow-record.js';
 import type { BookPick, Sportsbook } from './book-picks.js';
 import { serveWebApp } from './web-app.js';
-import { EDGE_PLATFORMS, EdgeResultsWorker, EdgeService } from './edge/service.js';
+import { EDGE_PLATFORMS, EdgeResultsWorker, EdgeService, searchPicks } from './edge/service.js';
 import { blendPick, blendPicks, GKR_PLUS_VERSION } from './edge/blend.js';
 import type { GkrSide } from './edge/blend.js';
 import { canonicalMarket } from './edge/market-map.js';
@@ -1442,7 +1442,8 @@ export function buildServer(options: ServerOptions = {}) {
       });
       owner.get('/',async(request,reply)=>{
         const query=z.object({platform:z.enum(EDGE_PLATFORMS as [EdgePlatform,...EdgePlatform[]]).default('prizepicks'),
-          limit:z.coerce.number().int().min(1).max(500).default(150),day:z.enum(['all','today']).default('all')}).safeParse(request.query);
+          limit:z.coerce.number().int().min(1).max(500).default(150),day:z.enum(['all','today']).default('all'),
+          q:z.string().trim().max(60).optional()}).safeParse(request.query);
         if(!query.success)return reply.code(400).send({code:'INVALID_QUERY'});
         const result=await gkrPlus(query.data.platform);
         if(!result)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
@@ -1452,6 +1453,13 @@ export function buildServer(options: ServerOptions = {}) {
         if(edge.sideBiasFlagged(query.data.platform)||(heldPlatforms.has(query.data.platform)&&!edge.sideBiasCleared(query.data.platform)))
           return {...result.snapshot.response,picks:[],slips:[],counts:{...result.snapshot.response.counts,positiveEdge:0},modelVersion:GKR_PLUS_VERSION};
         const nowMs=now().getTime(),live=result.picks.filter((pick)=>Date.parse(pick.eventStartTime)>nowMs+5*60_000);
+        // Player search: every line Edge read for the player, blended, plays or not.
+        if(query.data.q){
+          const sides=await gkrSides(query.data.platform).catch(()=>()=>null);
+          const found=blendPicks(searchPicks(result.snapshot,query.data.q,nowMs,query.data.limit),sides)
+            .filter((pick)=>query.data.day!=='today'||easternDay(new Date(pick.eventStartTime))===easternDay(new Date(nowMs)));
+          return {...result.snapshot.response,picks:found,slips:[],modelVersion:GKR_PLUS_VERSION};
+        }
         // Today only covers the whole page: picks and entries from today's games (Eastern).
         const ranked=live.filter((pick)=>pick.edge!==null&&pick.rating!=='NONE'&&
           (query.data.day!=='today'||easternDay(new Date(pick.eventStartTime))===easternDay(new Date(nowMs))));

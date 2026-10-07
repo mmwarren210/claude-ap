@@ -6,7 +6,7 @@ import { cdf, makeDistribution } from '@crowniq/edge';
 import { canonicalMarket, playerKey } from './market-map.js';
 import type { InternalHistoryStore } from '../internal-history.js';
 import type { EdgeLedger } from './ledger.js';
-import { backtestHistory, boardPage, customSlip, EDGE_PLATFORMS, pickForLine, viewPicks } from './service.js';
+import { backtestHistory, boardPage, customSlip, EDGE_PLATFORMS, pickForLine, searchPicks, viewPicks } from './service.js';
 import type { EdgeResultsWorker, EdgeService } from './service.js';
 import type { SnapshotStore } from './snapshots.js';
 
@@ -71,7 +71,9 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     limit: z.coerce.number().int().min(1).max(500).default(150),
     minProbability: z.coerce.number().min(0).max(1).optional(),
     /** Best entries from today's games only (Eastern date), or any upcoming game. */
-    day: z.enum(['all', 'today']).default('all') }).strict();
+    day: z.enum(['all', 'today']).default('all'),
+    /** Player search: every line Edge read for players whose name contains this, plays or not. */
+    q: z.string().trim().max(60).optional() }).strict();
 
   app.get('/v1/edge', async (request, reply) => {
     const query = edgeQuery.safeParse(request.query);
@@ -90,6 +92,7 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     const today = query.data.day === 'today' ? easternDay(new Date(nowMs)) : null;
     const onDay = (pick: { eventStartTime: string }) => !today || easternDay(new Date(pick.eventStartTime)) === today;
     // Today only covers the whole page: the top picks are taken from today's games, not cut first and filtered after.
+    if (query.data.q) return { ...snapshot.response, picks: searchPicks(snapshot, query.data.q, nowMs, query.data.limit).filter(onDay), slips: [] };
     const picks = today ? viewPicks(snapshot, query.data.view, { ...filters, limit: 5000 }).filter(onDay).slice(0, query.data.limit)
       : viewPicks(snapshot, query.data.view, filters);
     const live = (slip: { legs: { lineId: string }[] }) => slip.legs.every((leg) => {
