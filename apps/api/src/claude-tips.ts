@@ -63,7 +63,8 @@ const analyzeInstructions = 'You are CrownIQ\'s betting analyst. A member got th
   'the market (pinnacleNoVigChance when given). PLAY only when the pick looks clearly better than its price, LEAN when slightly, ' +
   'PASS when it is fairly priced or too uncertain, FADE when the other side looks better. "ML or Draw" (DOUBLE_CHANCE) wins on a ' +
   'win or a draw; a spread adds the line to the team\'s score. Be concise and never invent odds, injuries or results.';
-const readInstructions = 'You read sports betting tips from a screenshot or text a user received from a tip service. List every ' +
+const readInstructions = 'You read sports betting tips from a screenshot or text a user received from a tip service. Always answer by ' +
+  'calling the report_tips tool (never plain text). List every ' +
   'pick exactly once. Use only what the post shows: never invent odds, dates or opponents. "ML or Draw" is DOUBLE_CHANCE on that ' +
   'team. A "+1.5"/"-1.5" next to a team is a SPREAD with that line. Ignore ads, captions and emojis.';
 const gradeInstructions = 'You settle sports betting tips after the games. For each pick, search for the final score or stat of ' +
@@ -84,11 +85,18 @@ export class ClaudeTipReader implements TipReader {
     if (input.image) content.push({ type: 'image', source: { type: 'base64',
       media_type: input.image.mediaType as 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif', data: input.image.data } });
     content.push({ type: 'text', text: `Today is ${input.today}.${input.text ? `\n\nPost:\n${input.text}` : ''}\n\nCall report_tips once.` });
-    const response = await this.client.messages.create({ model: this.model, max_tokens: 4000,
-      system: [{ type: 'text', text: readInstructions, cache_control: { type: 'ephemeral' } }],
-      tools: [readTool], tool_choice: { type: 'tool', name: 'report_tips' }, messages: [{ role: 'user', content }] });
-    logClaudeUsage('tips', response.usage);
-    const block = response.content.find((item) => item.type === 'tool_use' && item.name === 'report_tips');
+    // Forced tool_choice ('tool'/'any') is rejected by this model (400), so the tool is offered with 'auto', the prompt says
+    // to call it, and strict keeps its arguments schema-valid. One reminder if the first answer skips the tool.
+    const messages: Anthropic.MessageParam[] = [{ role: 'user', content }];
+    let block: Anthropic.ContentBlock | undefined;
+    for (let turn = 0; turn < 2 && !block; turn++) {
+      const response = await this.client.messages.create({ model: this.model, max_tokens: 16000,
+        system: [{ type: 'text', text: readInstructions, cache_control: { type: 'ephemeral' } }],
+        tools: [readTool], tool_choice: { type: 'auto' }, messages });
+      logClaudeUsage('tips', response.usage);
+      block = response.content.find((item) => item.type === 'tool_use' && item.name === 'report_tips');
+      if (!block) messages.push({ role: 'assistant', content: response.content }, { role: 'user', content: 'Call report_tips now with every pick in the post.' });
+    }
     if (!block || block.type !== 'tool_use') throw new Error('TIPS_NOT_READ');
     const output = block.input as { source: string | null; tips: TipDraft[] };
     return { source: output.source?.trim() || null, tips: (output.tips ?? []).filter((tip) => tip.selection?.trim()).slice(0, 40) };

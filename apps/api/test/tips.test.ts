@@ -104,7 +104,8 @@ test('Claude tip reader sends the screenshot and reads the strict tool output', 
   assert.equal(read.source, 'bookie___bandit');
   assert.deepEqual(read.tips.map((tip) => tip.selection), ['Spain'], 'blank rows dropped');
   assert.equal(sent!.messages[0]!.content[0]!.type, 'image');
-  assert.deepEqual(sent!.tool_choice, { type: 'tool', name: 'report_tips' });
+  // Forced tool_choice is a 400 on this model (the owner's uploads failed with it): auto, with the prompt naming the tool.
+  assert.deepEqual(sent!.tool_choice, { type: 'auto' });
   // Strict tools reject an enum next to a ['string', 'null'] type (a nullable enum must be anyOf): walk the schema.
   const walk = (node: unknown): void => {
     if (!node || typeof node !== 'object') return;
@@ -114,4 +115,11 @@ test('Claude tip reader sends the screenshot and reads the strict tool output', 
   };
   walk((sent as unknown as { tools: unknown[] }).tools);
   assert.deepEqual(await reader.grade([], '2030-10-08'), []);
+  // A first answer that skips the tool gets one reminder, then the picks.
+  let calls = 0;
+  const shy = { messages: { create: async () => (++calls === 1 ? { content: [{ type: 'text', text: 'Here are the picks.' }] }
+    : { content: [{ type: 'tool_use', name: 'report_tips', input: { source: null, tips: [draft('Spain', 'MONEYLINE')] } }] }) },
+    beta: client.beta };
+  assert.equal((await new ClaudeTipReader({ client: shy as never }).read({ text: 'Spain ML', today: '2030-10-07' })).tips.length, 1);
+  assert.equal(calls, 2);
 });
