@@ -42,7 +42,7 @@ import { ApifyClient } from './scrapers/apify-client.js';
 import { ScrapedLineStore } from './scrapers/line-store.js';
 import { ScrapedPrizePicksProvider } from './scrapers/scraped-prizepicks-provider.js';
 import { lergassy } from './scrapers/lergassy.js';
-import { oddsApiSource } from './scrapers/odds-api-source.js';
+import { oddsApiSource, regularKey } from './scrapers/odds-api-source.js';
 import { ScraperPuller } from './scrapers/scraper-puller.js';
 import { zenPrizePicks, zenUnderdog, zenPick6 } from './scrapers/zen-studio.js';
 import { DailySpendBudget } from './scrapers/spend-budget.js';
@@ -115,13 +115,17 @@ const playerHistory=process.env.CROWNIQ_FREE_HISTORY==='false'?null
     new OpenDotaHistory(),new LeaguepediaHistory()],historyArchive);
 playerHistory?.start();
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
-  [{source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9,12,15,18')},
+  // Step 0f: SharpAPI is the primary PrizePicks source (hourly), so this scraper is backup duty: twice a day (~$1.80/day).
+  [{source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9,15')},
     {source:lergassy,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_LERGASSY','12')},
     {source:zenUnderdog,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_UNDERDOG','9,12,15,18')},
     {source:zenPick6,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PICK6','9,12,15,18')},
     // The Odds API alongside the scrapers as a third check. It spends Odds API credits, so by default
     // it runs only when the owner pulls (CROWNIQ_SCRAPER_HOURS_ODDS_API adds a schedule).
-    ...(apiKey?[{source:oddsApiSource(new FullPrizePicksProvider({apiKey,maxEvents,maxCreditsPerRefresh})),
+    ...(apiKey?[{source:oddsApiSource(new FullPrizePicksProvider({apiKey,maxEvents,maxCreditsPerRefresh}),undefined,
+      // Step 0b: Goblins/Demons the Odds API pull can't place are classified against SharpAPI's regular PrizePicks line.
+      async()=>new Map((await sharpProps.pickemLines()).lines.filter((line)=>line.sport&&line.market)
+        .map((line)=>[regularKey(line.sport!,line.player,line.market!,new Date(line.startTime).toISOString()),line.line]))),
       hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ODDS_API','')}]:[])],
   {maxRunUsd:nonNegativeNumber('CROWNIQ_SCRAPER_MAX_RUN_USD',5),slots:scraperSlots}):null;
 // Display-only game context (never scored): injuries and Pinnacle game lines.

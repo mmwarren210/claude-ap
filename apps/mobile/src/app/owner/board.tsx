@@ -55,6 +55,11 @@ type Diagnostics={
   reasonCounts?:Record<string,number>;
   outcomeCounts?:Record<string,number>;
   funnel?:Funnel;
+  lineSources?:{
+    prizePicksFeed:{ok:boolean;rows:number;lines:number;at:string;error:string|null}|null;
+    board:{primary:{sharpapi:number;oddsApi:number;scraper:number};goblins:number;demons:number;unconfirmed:number;
+      disagreements:Record<string,number>}|null;
+  };
 };
 type ReanalyzeResult={
   builtAt:string;lineCount:number;rankedCount:number;research:string;evidenceCount:number;
@@ -272,6 +277,20 @@ export default function OwnerBoardScreen(){
           <Text style={styles.hint}>Board fetched {new Date(diagnostics.boardFetchedAt).toLocaleString()}</Text>
           <Text style={styles.hint}>Analysis built {new Date(diagnostics.builtAt).toLocaleString()}</Text>
         </View>
+        {diagnostics.lineSources&&<View style={styles.card}>
+          <Text style={styles.heading}>LINE SOURCES</Text>
+          {diagnostics.lineSources.prizePicksFeed
+            ?diagnostics.lineSources.prizePicksFeed.ok
+              ?<Text style={styles.row}>SharpAPI PrizePicks: {diagnostics.lineSources.prizePicksFeed.lines.toLocaleString()} lines · {new Date(diagnostics.lineSources.prizePicksFeed.at).toLocaleString()}</Text>
+              :<Text style={styles.error}>SharpAPI PrizePicks feed down ({(diagnostics.lineSources.prizePicksFeed.error??'').replace(/_/g,' ').toLowerCase()}): the board is on The Odds API and the scrapers.</Text>
+            :<Text style={styles.hint}>SharpAPI PrizePicks: no pass yet since the server started.</Text>}
+          {diagnostics.lineSources.board&&<>
+            <Text style={styles.row}>From SharpAPI: {diagnostics.lineSources.board.primary.sharpapi.toLocaleString()} · The Odds API: {diagnostics.lineSources.board.primary.oddsApi.toLocaleString()} · Scrapers: {diagnostics.lineSources.board.primary.scraper.toLocaleString()}</Text>
+            <Text style={styles.row}>Goblins: {diagnostics.lineSources.board.goblins.toLocaleString()} · Demons: {diagnostics.lineSources.board.demons.toLocaleString()}</Text>
+            <Text style={styles.hint}>Unconfirmed (one source): {diagnostics.lineSources.board.unconfirmed.toLocaleString()}{Object.keys(diagnostics.lineSources.board.disagreements).length
+              ?` · Sources disagreed: ${Object.entries(diagnostics.lineSources.board.disagreements).map(([sport,count])=>`${sport} ${count}`).join(', ')}`:''}</Text>
+          </>}
+        </View>}
         {diagnostics.lineTypes&&<View style={styles.card}>
           <Text style={styles.heading}>LINE TYPE HEALTH</Text>
           <Text style={styles.row}>Regular: {diagnostics.lineTypes.counts.REGULAR.toLocaleString()}</Text>

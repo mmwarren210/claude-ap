@@ -3,6 +3,8 @@ import type { PlayableDirection, PropLine } from '@crowniq/contracts';
 import type { OddsProvider } from '@crowniq/engine';
 import { classifyPrizePicksLineTypes } from '../prizepicks-line-types.js';
 import { leagueLabel } from './markets.js';
+import { normalizedName } from '../context/match.js';
+import { canonicalMarket } from '../edge/market-map.js';
 import type { ReadResult, ScraperSource } from './scraped-line.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 24);
@@ -12,12 +14,33 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
  * (guarded by the provider's own credit limits), so by default it runs only when the owner pulls.
  * Its separate Over and Under outcomes are joined back into one line per player, market and number.
  */
-export function oddsApiSource(provider: OddsProvider, clock: () => Date = () => new Date()): ScraperSource {
+/** The key that ties an Odds API alternate to SharpAPI's regular line for the same player, stat and day. */
+export const regularKey = (sport: string, player: string, market: string, startTime: string) =>
+  `${sport}|${normalizedName(player)}|${canonicalMarket(sport, market)}|${startTime.slice(0, 10)}`;
+
+/**
+ * Step 0b: an alternate the Odds API's own pull can't place (no regular line beside it) is classified against SharpAPI's
+ * regular PrizePicks line for the same player, stat and day: harder for its side = Demon, easier = Goblin. Without a
+ * reference it is still left out, never guessed.
+ */
+export function classifyAgainst(lines: readonly PropLine[], regulars: ReadonlyMap<string, number>): PropLine[] {
+  return lines.map((line) => {
+    if (line.lineType !== 'UNKNOWN_ALTERNATE' || line.availableDirections.length !== 1) return line;
+    const reference = regulars.get(regularKey(line.sport, line.playerName, line.market, line.eventStartTime));
+    if (reference === undefined || reference === line.threshold) return line;
+    const harder = line.availableDirections[0] === 'MORE' ? line.threshold > reference : line.threshold < reference;
+    return { ...line, lineType: harder ? 'DEMON' : 'GOBLIN' };
+  });
+}
+
+export function oddsApiSource(provider: OddsProvider, clock: () => Date = () => new Date(),
+  regulars: () => Promise<ReadonlyMap<string, number>> = async () => new Map()): ScraperSource {
   return {
     id: 'the-odds-api', actor: null, apps: ['prizepicks'], rowCap: null, input: () => null,
     async run() {
       const fetchedAt = clock().toISOString();
-      const lines = classifyPrizePicksLineTypes((await provider.fetchPrizePicksLines()).map((raw) => provider.normalize(raw, fetchedAt)));
+      const lines = classifyAgainst(classifyPrizePicksLineTypes((await provider.fetchPrizePicksLines()).map((raw) => provider.normalize(raw, fetchedAt))),
+        await regulars().catch(() => new Map<string, number>()));
       const groups = new Map<string, PropLine[]>();
       for (const line of lines) {
         // Alternates whose tier cannot be told from the Regular line are left out rather than guessed.

@@ -310,6 +310,8 @@ export interface SharpPropsStatus {
   readonly configured: boolean; readonly fetchedAt: string | null; readonly prices: number;
   readonly lastError: string | null; readonly requests: number;
   readonly overOnly?: number; readonly games?: number; readonly pickem?: number;
+  /** SharpAPI's PrizePicks pass: ok, rows and lines read, when, and the error when it failed (the board then uses the backups). */
+  readonly prizePicksFeed?: { ok: boolean; rows: number; lines: number; at: string; error: string | null } | null;
 }
 
 /**
@@ -328,6 +330,9 @@ export class SharpPropsFeed {
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<SharpPropsStatus> | null = null;
   private onRefreshed: ((prices: readonly FairPrice[], at: Date) => unknown)[] = [];
+  private onPickem: ((lines: readonly PickemLine[], ok: boolean, at: Date) => unknown)[] = [];
+  /** The PrizePicks pass: whether it worked, rows and lines it read, when, and why not. */
+  private pickemStatus: { ok: boolean; rows: number; lines: number; at: string; error: string | null } | null = null;
   constructor(private readonly apiKey: string | null, private readonly file: string | null,
     private readonly options: { books?: readonly string[]; leagues?: readonly string[]; maxPagesPerLeague?: number;
       /** Pause between requests; SharpAPI's Hobby plan allows 120 a minute. */
@@ -346,14 +351,22 @@ export class SharpPropsFeed {
     if (!this.file) return;
     try {
       const saved = JSON.parse(await readFile(this.file, 'utf8')) as { fetchedAt: string; prices: FairPrice[];
-        overOnly?: OverOnlyPrice[]; games?: GamePrice[]; pickem?: PickemLine[] };
+        overOnly?: OverOnlyPrice[]; games?: GamePrice[]; pickem?: PickemLine[]; pickemAt?: string };
       this.prices = saved.prices; this.fetchedAt = saved.fetchedAt; this.overOnly = saved.overOnly ?? []; this.games = saved.games ?? [];
-      this.pickem = saved.pickem ?? [];
+      // PrizePicks lines come back after a restart only when the pass is under 90 minutes old (one refresh); older ones wait
+      // for a live pass, so stale lines never show as current.
+      const at = saved.pickemAt ?? saved.fetchedAt;
+      if (saved.pickem?.length && this.clock().getTime() - Date.parse(at) < 90 * 60_000) {
+        this.pickem = saved.pickem;
+        this.pickemStatus = { ok: true, rows: saved.pickem.length, lines: saved.pickem.length, at, error: null };
+      }
     } catch { /* first run */ }
   }
 
   /** Called after each successful refresh (the server keeps a history of the books' view of the board). */
   whenRefreshed(callback: (prices: readonly FairPrice[], at: Date) => unknown): void { this.onRefreshed.push(callback); }
+  /** Called after each PrizePicks pass with its lines, or with none and ok = false when it failed (fail closed). */
+  whenPickem(callback: (lines: readonly PickemLine[], ok: boolean, at: Date) => unknown): void { this.onPickem.push(callback); }
 
   async current(): Promise<{ fetchedAt: string | null; prices: FairPrice[] }> {
     await this.load();
@@ -369,14 +382,14 @@ export class SharpPropsFeed {
   /** PrizePicks lines from the same refresh (SharpAPI's pick'em books). */
   async pickemLines(): Promise<{ fetchedAt: string | null; lines: PickemLine[] }> {
     await this.load();
-    return { fetchedAt: this.fetchedAt, lines: this.pickem };
+    return { fetchedAt: this.pickemStatus?.at ?? null, lines: this.pickem };
   }
 
   async status(): Promise<SharpPropsStatus> {
     await this.load();
     return { configured: !!this.apiKey, fetchedAt: this.fetchedAt, prices: this.prices.length, lastError: this.lastError,
       requests: this.requests, overOnly: this.overOnly.length, games: this.games.length,
-      pickem: this.pickem.length };
+      pickem: this.pickem.length, prizePicksFeed: this.pickemStatus };
   }
 
   /** One refresh at a time: a second call waits for the running one instead of doubling the requests. */
@@ -385,67 +398,104 @@ export class SharpPropsFeed {
     return this.running;
   }
 
+  /** Pages through one league's rows for these query parameters; `capped` when the page cap stopped it early. */
+  private async pages(league: string, params: Record<string, string>, cap: number): Promise<{ rows: unknown[]; capped: boolean }> {
+    const rows: unknown[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < cap; page++) {
+      const url = new URL(`${API}/odds`);
+      url.searchParams.set('league', league);
+      for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+      url.searchParams.set('is_live', 'false');
+      url.searchParams.set('limit', '200');
+      if (cursor) url.searchParams.set('cursor', cursor);
+      if (this.requests++ > 0) await new Promise((resolve) => setTimeout(resolve, this.options.requestGapMs ?? 700));
+      const response = await this.fetchRetrying(url);
+      if (response.status === 404 || response.status === 400) return { rows, capped: false }; // league not offered
+      if (!response.ok) throw new Error(`SHARPAPI_HTTP_${response.status}`);
+      const body = await response.json() as { data?: unknown[]; pagination?: { has_more?: boolean; next_cursor?: string } };
+      rows.push(...(body.data ?? []).map(normalizeRow));
+      if (!body.pagination?.has_more || !body.pagination.next_cursor) return { rows, capped: false };
+      cursor = body.pagination.next_cursor;
+    }
+    return { rows, capped: true };
+  }
+
   private async refreshNow(): Promise<SharpPropsStatus> {
     await this.load();
     if (!this.apiKey) { this.lastError = 'SHARPAPI_KEY_MISSING'; return this.status(); }
     const rows: unknown[] = [], gameRows: unknown[] = [];
-    const books = this.options.books ?? ['draftkings', 'hardrock', 'fanduel'];
+    const requested = this.options.books ?? ['draftkings', 'hardrock', 'fanduel'];
+    // Pick'em apps get their own pass (step 0): mixed into the books' requests they were cut off by the page cap.
+    const books = requested.filter((book) => !/^(prizepicks|underdog|pick6|sleeper|dabble|betr)/.test(book));
+    const wantsPrizePicks = requested.some((book) => book.startsWith('prizepicks'));
     // Player props for the leagues CrownIQ covers. (Full-game lines were only for Kalshi, removed 2026-10-06.)
     const leagues = this.options.leagues ?? sharpLeagues;
-    // NHL game goal totals: they set the scale that takes the cut out of anytime-scorer prices.
-    const jobs = [...leagues.map((league) => ({ league, props: true })),
-      ...leagues.filter((league) => league === 'nhl').map((league) => ({ league, props: false }))];
+    const cap = this.options.maxPagesPerLeague ?? 60;
+    let booksOk = false;
     try {
-      for (const { league, props } of jobs) {
-        let cursor: string | null = null;
-        for (let page = 0; page < (props ? this.options.maxPagesPerLeague ?? 60 : 10); page++) {
-          const url = new URL(`${API}/odds`);
-          url.searchParams.set('sportsbooks', books.join(','));
-          url.searchParams.set('league', league);
-          if (props) url.searchParams.set('is_player_prop', 'true');
-          else url.searchParams.set('market_type', 'total_goals');
-          url.searchParams.set('is_live', 'false');
-          url.searchParams.set('limit', '200');
-          if (cursor) url.searchParams.set('cursor', cursor);
-          if (this.requests++ > 0) await new Promise((resolve) => setTimeout(resolve, this.options.requestGapMs ?? 700));
-          const response = await this.fetchRetrying(url);
-          if (response.status === 404 || response.status === 400) break; // league not offered
-          if (!response.ok) throw new Error(`SHARPAPI_HTTP_${response.status}`);
-          const body = await response.json() as { data?: unknown[]; pagination?: { has_more?: boolean; next_cursor?: string } };
-          (props ? rows : gameRows).push(...(body.data ?? []).map(normalizeRow));
-          if (!body.pagination?.has_more || !body.pagination.next_cursor) break;
-          cursor = body.pagination.next_cursor;
-        }
+      for (const league of leagues) {
+        if (books.length) rows.push(...(await this.pages(league, { sportsbooks: books.join(','), is_player_prop: 'true' }, cap)).rows);
+        // NHL game goal totals: they set the scale that takes the cut out of anytime-scorer prices.
+        if (league === 'nhl' && books.length) gameRows.push(...(await this.pages(league, { sportsbooks: books.join(','), market_type: 'total_goals' }, 10)).rows);
       }
+      booksOk = true;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : 'SHARPAPI_FAILED';
       console.warn(`[sharp] refresh failed after ${this.requests} requests: ${this.lastError}`);
       // The rows fetched before the failure still feed the market audit; the saved prices stay as they were.
       this.auditMarkets(rows.filter((row) => !isPickemRow(row)));
-      return this.status();
     }
-    console.log(`[sharp] refresh fetched ${rows.length} prop rows in ${this.requests} requests`);
-    // Pick'em rows (PrizePicks) are lines, not prices: kept apart so they never count toward a fair price.
-    const bookRows = rows.filter((row) => !isPickemRow(row));
-    const games = gamePrices(gameRows.filter((row) => !isPickemRow(row)));
-    const scorers = scorerFairPrices(bookRows, games);
-    if (scorers.length || rows.some((row) => (row as Row).market_type === 'anytime_goal_scorer'))
-      console.log(`[sharp] anytime scorer: ${scorers.length} goals prices from ${expectedGoals(games).size} game totals; ${JSON.stringify(scorerSkips)}; total event ids e.g. ${[...expectedGoals(games).keys()].slice(0, 2).join(', ')}`);
-    const prices = [...fairPrices(bookRows), ...scorers];
-    this.auditMarkets(bookRows);
-    if (!prices.length) { this.lastError = 'NO_PRICES'; return this.status(); }
-    this.prices = prices; this.overOnly = overOnlyPrices(bookRows); this.games = games;
-    this.pickem = pickemLines(rows);
-    this.fetchedAt = this.clock().toISOString(); this.lastError = null;
-    if (this.file) {
-      await mkdir(dirname(this.file), { recursive: true });
-      const temporary = `${this.file}.${randomUUID()}.tmp`;
-      await writeFile(temporary, JSON.stringify({ fetchedAt: this.fetchedAt, prices, overOnly: this.overOnly, games: this.games,
-        pickem: this.pickem }));
-      await rename(temporary, this.file);
+    if (booksOk) {
+      console.log(`[sharp] refresh fetched ${rows.length} prop rows in ${this.requests} requests`);
+      // Pick'em rows (PrizePicks) are lines, not prices: kept apart so they never count toward a fair price.
+      const bookRows = rows.filter((row) => !isPickemRow(row));
+      const games = gamePrices(gameRows.filter((row) => !isPickemRow(row)));
+      const scorers = scorerFairPrices(bookRows, games);
+      if (scorers.length || rows.some((row) => (row as Row).market_type === 'anytime_goal_scorer'))
+        console.log(`[sharp] anytime scorer: ${scorers.length} goals prices from ${expectedGoals(games).size} game totals; ${JSON.stringify(scorerSkips)}`);
+      const prices = [...fairPrices(bookRows), ...scorers];
+      this.auditMarkets(bookRows);
+      if (!prices.length) this.lastError = 'NO_PRICES';
+      else {
+        this.prices = prices; this.overOnly = overOnlyPrices(bookRows); this.games = games;
+        this.fetchedAt = this.clock().toISOString(); this.lastError = null;
+        await this.save();
+        for (const callback of this.onRefreshed) { try { await callback(prices, this.clock()); } catch { /* best effort */ } }
+      }
     }
-    for (const callback of this.onRefreshed) { try { await callback(prices, this.clock()); } catch { /* best effort */ } }
+    if (wantsPrizePicks) await this.refreshPrizePicks(leagues, cap);
     return this.status();
+  }
+
+  /**
+   * PrizePicks' regular lines from SharpAPI (step 0: the primary source; scrapers and The Odds API back it up). Fails closed:
+   * a failed or empty pass clears the lines rather than keeping old ones as current, and the listeners hear it.
+   */
+  private async refreshPrizePicks(leagues: readonly string[], cap: number): Promise<void> {
+    const rows: unknown[] = [];
+    let error: string | null = null;
+    try {
+      for (const league of leagues) rows.push(...(await this.pages(league, { sportsbooks: 'prizepicks', is_player_prop: 'true' }, cap)).rows);
+    } catch (failure) { error = failure instanceof Error ? failure.message : 'SHARPAPI_FAILED'; }
+    const lines = error ? [] : pickemLines(rows).filter((line) => line.book.startsWith('prizepicks'));
+    if (!error && !lines.length) error = 'NO_PRIZEPICKS_ROWS';
+    const at = this.clock().toISOString();
+    this.pickem = error ? [] : lines;
+    this.pickemStatus = { ok: !error, rows: rows.length, lines: lines.length, at, error };
+    if (error) console.warn(`[sharp] PrizePicks feed down (${error}); the board falls back to The Odds API and the scrapers`);
+    else console.log(`[sharp] PrizePicks ${lines.length} lines from ${rows.length} rows`);
+    await this.save();
+    for (const callback of this.onPickem) { try { await callback(this.pickem, !error, this.clock()); } catch { /* best effort */ } }
+  }
+
+  private async save(): Promise<void> {
+    if (!this.file) return;
+    await mkdir(dirname(this.file), { recursive: true });
+    const temporary = `${this.file}.${randomUUID()}.tmp`;
+    await writeFile(temporary, JSON.stringify({ fetchedAt: this.fetchedAt, prices: this.prices, overOnly: this.overOnly,
+      games: this.games, pickem: this.pickem, pickemAt: this.pickemStatus?.at ?? null }));
+    await rename(temporary, this.file);
   }
 
   /** Market audit: the player-prop market types CrownIQ doesn't map yet, per league (a missing mapping means no book prices). */

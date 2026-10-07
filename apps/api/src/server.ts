@@ -48,6 +48,8 @@ import type { ScraperPuller } from './scrapers/scraper-puller.js';
 import type { ContextRefreshOptions, DailyLookupBudget } from './context-refresh.js';
 import type { ProviderName } from './provider-identity.js';
 import { ProviderIdentityVerifier } from './provider-identity.js';
+import { SHARP_SOURCE, sharpPrizePicksScraped } from './scrapers/sharp-prizepicks.js';
+import type { BoardSourceReport } from './scrapers/scraped-prizepicks-provider.js';
 import { StatApiOwnerError, StatApiOwnerResearch } from './stat-api-owner-research.js';
 import { OwnerResearchNotebook } from './owner-research-notebook.js';
 import { rankingCards, secondLookWatchlist } from './ranking-cards.js';
@@ -224,6 +226,18 @@ export function buildServer(options: ServerOptions = {}) {
     contextScheduler?.start();
     // After a scraper pull changes lines, rebuild the board through the owner job (free; tracks picks).
     options.scraperPuller?.whenLinesChange(()=>startOwnerBoardRefresh());
+    // Step 0: SharpAPI's PrizePicks lines are the primary source in the line store. A failed or empty pass ingests nothing
+    // as a complete pull, so lines only SharpAPI listed leave the board (fail closed) and the backups carry it.
+    if(options.scrapedLines&&options.sharpProps&&!options.clock){
+      const store=options.scrapedLines;
+      options.sharpProps.whenPickem(async(pickem,ok)=>{
+        const {lines,unmapped}=sharpPrizePicksScraped(pickem);
+        const report=await store.ingest(SHARP_SOURCE,ok?lines:[],{complete:true,apps:['prizepicks']});
+        console.log(`[sharp-prizepicks] ${ok?'ok':'DOWN, board on backups'}: ${lines.length} lines in, ${JSON.stringify(report)}`+
+          (unmapped.size?`, unmapped ${[...unmapped].sort((a,b)=>b[1]-a[1]).slice(0,15).map(([key,count])=>`${key}(${count})`).join(' ')}`:''));
+        if(report.added||report.moved||report.removed)startOwnerBoardRefresh();
+      });
+    }
     options.scraperPuller?.start();
     options.tips?.grader?.start();
     options.contextFeeds?.start();
@@ -731,6 +745,8 @@ export function buildServer(options: ServerOptions = {}) {
         scrapers:await options.scraperPuller?.status()??null,
         contextFeeds:await options.contextFeeds?.status()??null,
         sharpProps:await options.sharpProps?.status()??null,
+        lineSources:{prizePicksFeed:(await options.sharpProps?.status())?.prizePicksFeed??null,
+          board:(options.provider as {lastReport?:BoardSourceReport|null}|null|undefined)?.lastReport??null},
         researchHealth:status.researchHealth,secondLook:status.secondLook,
         freshContext:status.freshContext,lineTypes:auditPrizePicksLineTypes(snapshot.board.lines),
         modelSupport:{supported,unsupported:snapshot.board.lines.length-supported,

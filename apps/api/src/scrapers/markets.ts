@@ -1,5 +1,6 @@
 import type { Sport } from '@crowniq/contracts';
 import type { DfsApp, ScrapedLine } from './scraped-line.js';
+import { canonicalMarket } from '../edge/market-map.js';
 
 /** PrizePicks league labels to CrownIQ sports and the matching Odds API sport keys (keeps player ids identical). */
 export const leagues: Readonly<Record<string, { sport: Sport; key: string }>> = {
@@ -98,6 +99,12 @@ export const lineMarket = (line: Pick<ScrapedLine, 'league' | 'stat' | 'marketKe
   line.marketKey ?? marketKey(leagueInfo(line.league).sport, line.stat, line.app);
 
 /** The same line across sources that use different ids: app, league, player, market, number, tier. */
-export const sameLineKey = (line: ScrapedLine) => JSON.stringify([line.app, line.league,
+export const sameLineKey = (line: ScrapedLine) => JSON.stringify([line.app, sportGroup(line.league), segmentOf(line.league),
   line.player.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, ''),
-  lineMarket(line), line.line, line.tier]);
+  canonicalMarket(leagueInfo(line.league).sport, lineMarket(line)), line.line, line.tier]);
+
+/** The sport for a known league (so LA LIGA and SOCCER lines meet), else the label itself. */
+const sportGroup = (league: string) => { const sport = leagueInfo(league).sport; return sport === 'OTHER' ? league.trim().toUpperCase() : sport; };
+
+/** A partial-game board's segment from its league label (NFL1H, NHL1P), so a 1st-half line never joins a full-game one. */
+export const segmentOf = (league: string) => /(1H|2H|1Q|2Q|3Q|4Q|1P|2P|3P)$/.exec(league.trim().toUpperCase())?.[1] ?? '';

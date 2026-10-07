@@ -46,6 +46,10 @@ export const propLineSchema = z.object({
   payoutMultiplier: z.number().positive().finite().optional(),
   /** Player headshot the line source supplied, when it has one. Display only. */
   playerImageUrl: z.url().optional(),
+  /** The feeds that reported this exact line (sharpapi, odds-api, scrapers), when the board knows. */
+  sources: z.array(identifier).optional(),
+  /** False when only one source reports this number for the player and stat (the two-source rule); unset when unknown. */
+  confirmed: z.boolean().optional(),
 });
 
 // A sportsbook quote (SharpAPI) as Edge reads it: one book's decimal prices for one player, stat and number, exactly as

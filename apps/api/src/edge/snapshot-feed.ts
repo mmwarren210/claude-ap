@@ -21,7 +21,8 @@ export function bookRows(prices: readonly FairPrice[], at: string): SnapshotRow[
 /** SharpAPI's PrizePicks lines: the number and sides offered (their price is the app's payout, kept as the price). */
 export function pickemRows(lines: readonly PickemLine[], at: string): SnapshotRow[] {
   return lines.flatMap((line) => line.sides.map((side) => ({ observedAt: at, source: 'sharpapi' as const,
-    platform: line.book, eventKey: eventKey(line.sport ?? line.league, line.home, line.away, line.startTime),
+    // PrizePicks Flex lists the same lines: one platform, so stale checks see every PrizePicks observation.
+    platform: line.book.startsWith('prizepicks') ? 'prizepicks' : line.book, eventKey: eventKey(line.sport ?? line.league, line.home, line.away, line.startTime),
     playerKey: playerKey(line.sport ?? line.league, line.player), market: line.market ?? line.marketType, number: line.line, side,
     lineType: line.alternate ? 'ALTERNATE' : 'REGULAR', price: decimalOdds(line.american),
     startTime: new Date(line.startTime).toISOString() })));
