@@ -16,7 +16,7 @@ import type { OddsProvider } from '@crowniq/engine';
 import { buildServer } from './server.js';
 import { FullPrizePicksProvider } from './full-prizepicks-provider.js';
 import { TheOddsApiProvider } from './the-odds-api-provider.js';
-import { probeOddsApiOnce } from './edge/odds-api-probe.js';
+import { PROBES_V2, probeOddsApiOnce } from './edge/odds-api-probe.js';
 import { EdgeLedger } from './edge/ledger.js';
 import { SnapshotStore } from './edge/snapshots.js';
 import { BookWeightStore } from './edge/book-weights.js';
@@ -412,6 +412,8 @@ const app = buildServer({ adminToken: process.env.ADMIN_TOKEN, playerHistory, es
 autoGrade?.start();
 // Edge 2.0 data check (spec §1.1b), once per data disk.
 setTimeout(()=>{void probeOddsApiOnce(apiKey,`${dataDir}/edge/odds-api-probe.json`).catch(()=>undefined);},20_000).unref();
+// Steps 2a and 5b: Pinnacle props, AFL and soccer player markets, once per data disk (~4 credits), logged as [edge-probe].
+setTimeout(()=>{void probeOddsApiOnce(apiKey,`${dataDir}/edge/odds-api-probe-v2.json`,PROBES_V2).catch(()=>undefined);},40_000).unref();
 // A first grading pass shortly after startup, so a deploy doesn't wait an hour for results.
 if(autoGrade)setTimeout(()=>{void autoGrade.runOnce().catch(()=>undefined);},2*60_000).unref();
 app.addHook('onClose',async()=>autoGrade?.stop());
