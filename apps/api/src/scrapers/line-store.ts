@@ -47,13 +47,21 @@ export class ScrapedLineStore {
     /** New lines and number moves also go to CrownIQ's own archive, which keeps them after this store lets them go. */
     private readonly archive: HistoryArchive | null = null) {}
 
-  private async load() {
-    if (this.loaded || !this.file) { this.loaded = true; return; }
-    try {
-      const saved = JSON.parse(await readFile(this.file, 'utf8')) as { lines?: StoredLine[] };
-      for (const line of saved.lines ?? []) this.lines.set(key(line), line);
-    } catch { /* first run */ }
-    this.loaded = true;
+  private loading: Promise<void> | null = null;
+  /**
+   * One read of the file, shared by every caller: concurrent callers right after a restart used to each read and parse
+   * the 46 MB file, and dozens at once ran the server out of memory (2026-10-07 crash loop).
+   */
+  private load(): Promise<void> {
+    if (this.loaded || !this.file) { this.loaded = true; return Promise.resolve(); }
+    this.loading ??= (async () => {
+      try {
+        const saved = JSON.parse(await readFile(this.file!, 'utf8')) as { lines?: StoredLine[] };
+        for (const line of saved.lines ?? []) this.lines.set(key(line), line);
+      } catch { /* first run */ }
+      this.loaded = true;
+    })();
+    return this.loading;
   }
 
   private async save() {
