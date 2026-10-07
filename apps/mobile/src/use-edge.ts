@@ -10,12 +10,12 @@ export type EdgeView = 'edges' | 'alternates';
 type EdgeState = { status: 'loading' | 'available' | 'unavailable'; data: EdgeBoardResponse | null; message: string };
 
 /** Reads the server's saved Edge pricing. Opening or refreshing never pulls odds. */
-export function useEdge(view: EdgeView): EdgeState & { retry: () => void } {
+export function useEdge(view: EdgeView, source: 'edge' | 'gkr-plus' = 'edge'): EdgeState & { retry: () => void } {
   const { request } = useAuth();
   const platform = useEdgePlatform();
   const [attempt, setAttempt] = useState(0);
   const [focused, setFocused] = useState(false);
-  const requestKey = JSON.stringify([platform, view, attempt]);
+  const requestKey = JSON.stringify([platform, view, attempt, source]);
   const [state, setState] = useState<EdgeState & { requestKey: string; view?: string }>({ status: 'loading', data: null, message: '', requestKey: '' });
   useFocusEffect(useCallback(() => {
     setFocused(true); setAttempt((value) => value + 1);
@@ -27,7 +27,9 @@ export function useEdge(view: EdgeView): EdgeState & { retry: () => void } {
     let active = true; const controller = new AbortController();
     void (async () => {
       try {
-        const response = await request(`/v1/edge?platform=${platform}&view=${view}&limit=300`, { signal: controller.signal });
+        // GKR+ (owner only) answers in the same shape as Edge, from its own route.
+        const path = source === 'gkr-plus' ? `/v1/owner/gkr-plus?platform=${platform}&limit=300` : `/v1/edge?platform=${platform}&view=${view}&limit=300`;
+        const response = await request(path, { signal: controller.signal });
         if (!active) return;
         if (!response.ok) {
           setState({ status: 'unavailable', data: null, requestKey,
@@ -35,7 +37,7 @@ export function useEdge(view: EdgeView): EdgeState & { retry: () => void } {
           return;
         }
         const data = edgeBoardResponseSchema.parse(await response.json());
-        if (active) setState({ status: 'available', data, message: '', requestKey, view: `${platform}|${view}` });
+        if (active) setState({ status: 'available', data, message: '', requestKey, view: `${platform}|${view}|${source}` });
       } catch (error) {
         if (!active || controller.signal.aborted) return;
         reportMobileFailure('edge', error);
@@ -44,8 +46,8 @@ export function useEdge(view: EdgeView): EdgeState & { retry: () => void } {
       }
     })();
     return () => { active = false; controller.abort(); };
-  }, [request, requestKey, focused, view, platform]);
+  }, [request, requestKey, focused, view, platform, source]);
   // Keep showing the previous data while a background refresh is in flight.
-  const visible = state.requestKey === requestKey || (state.data && state.view === `${platform}|${view}`) ? state : { status: 'loading' as const, data: null, message: '' };
+  const visible = state.requestKey === requestKey || (state.data && state.view === `${platform}|${view}|${source}`) ? state : { status: 'loading' as const, data: null, message: '' };
   return { status: visible.status, data: visible.data, message: visible.message, retry: () => setAttempt((value) => value + 1) };
 }

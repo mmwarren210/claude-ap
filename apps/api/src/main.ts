@@ -376,6 +376,7 @@ const edgeBookWeights=new BookWeightStore(`${dataDir}/edge/edge-book-weights-v1.
 await edgeBookWeights.load();
 const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',dispersion:edgeDispersion,bookWeights:edgeBookWeights,
   ledger:new EdgeLedger(process.env.CROWNIQ_EDGE_LEDGER_FILE ?? `${dataDir}/edge/ledger.json`),
+  gkrPlusLedger:new EdgeLedger(`${dataDir}/edge/gkr-plus-ledger.json`),
   snapshots:edgeSnapshots,alternateFactors:edgeAlternateFactors,alternateCurve:edgeAlternateCurve,
   boxScores:new BoxScoreResults(fetch,undefined,historyArchive),
   valuesCacheFile:`${dataDir}/edge/history-values.json`,

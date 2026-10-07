@@ -19,18 +19,18 @@ const range = (interval: Interval, points = false) => !interval ? '—'
     : `${pct(interval.value)} (${pct(interval.low, 0)}–${pct(interval.high, 0)})`;
 
 /** Edge's track record (spec §8–9): closing-line value first, then hit rate vs break-even, ROI and calibration. */
-export function EdgeRecord() {
+export function EdgeRecord({ path = '/v1/edge/performance', name = 'Edge' }: { path?: string; name?: string } = {}) {
   const { request } = useAuth();
   const [data, setData] = useState<Performance | null | 'error'>(null);
   useFocusEffect(useCallback(() => {
     let active = true;
-    void request('/v1/edge/performance').then(async (response) => {
+    void request(path).then(async (response) => {
       const body = response.ok ? await response.json() as Performance : null;
       if (active) setData(body ?? 'error');
     }).catch(() => { if (active) setData('error'); });
     return () => { active = false; };
-  }, [request]));
-  if (data === null) return <Notice title="Loading the record" detail="Reading Edge’s graded picks." />;
+  }, [request, path]));
+  if (data === null) return <Notice title="Loading the record" detail={`Reading ${name}’s graded picks.`} />;
   if (data === 'error') return <Notice title="Record unavailable" detail="Try again in a minute." />;
   const row = (label: string, value: Evaluation) => <View key={label} style={styles.card}>
     <Text style={styles.label}>{label} · {value.graded} graded</Text>
@@ -40,8 +40,8 @@ export function EdgeRecord() {
       {value.brierSkill === null || value.brierSkill === undefined ? '' : ` · skill vs close ${value.brierSkill >= 0 ? '+' : ''}${value.brierSkill.toFixed(3)}`}</Text>
   </View>;
   return <View style={styles.wrap}>
-    <Text style={styles.intro}>Every rated Edge pick is saved before its game and graded from box scores. Closing-line value is the main test:
-      Edge&apos;s chance at the close minus what the pick needed when it was shown. Ranges are 95%. {data.pending} picks are waiting on results.</Text>
+    <Text style={styles.intro}>Every rated {name} pick is saved before its game and graded from box scores. Closing-line value is the main test:
+      {' '}{name}&apos;s chance at the close minus what the pick needed when it was shown. Ranges are 95%. {data.pending} picks are waiting on results.</Text>
     {data.evaluation.graded === 0 ? <Notice title="No graded picks yet" detail="The record fills in as games finish." /> : <>
       {row('All standard picks', data.evaluation)}
       <Text style={styles.section}>BY PLATFORM</Text>
@@ -52,7 +52,7 @@ export function EdgeRecord() {
         {Object.entries(data.bySport).map(([sport, value]) => row(sport, value))}</>}
       <Text style={styles.section}>CALIBRATION</Text>
       <View style={styles.card}>
-        <Text style={styles.muted}>Bar = how often picks hit · line = the chance Edge gave them. A calibrated engine has the bar end at the line.</Text>
+        <Text style={styles.muted}>Bar = how often picks hit · line = the chance {name} gave them. A calibrated engine has the bar end at the line.</Text>
         {data.evaluation.calibration.map((bucket) => <View key={bucket.from} style={styles.calRow}>
           <Text style={styles.calLabel}>{pct(bucket.from, 0)}–{pct(bucket.to, 0)}</Text>
           <View style={styles.track}>

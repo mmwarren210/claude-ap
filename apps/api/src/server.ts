@@ -71,7 +71,12 @@ import type { HistoryArchive } from './history-archive.js';
 import type { ShadowPick, ShadowRecord } from './shadow-record.js';
 import type { BookPick, Sportsbook } from './book-picks.js';
 import { serveWebApp } from './web-app.js';
-import { EdgeResultsWorker, EdgeService } from './edge/service.js';
+import { EDGE_PLATFORMS, EdgeResultsWorker, EdgeService } from './edge/service.js';
+import { blendPicks, GKR_PLUS_VERSION } from './edge/blend.js';
+import type { GkrSide } from './edge/blend.js';
+import { canonicalMarket } from './edge/market-map.js';
+import { buildSlips } from '@crowniq/edge';
+import type { EdgePick, EdgePlatform } from '@crowniq/contracts';
 import type { EdgeLedger } from './edge/ledger.js';
 import type { SnapshotStore } from './edge/snapshots.js';
 import type { BookWeightStore } from './edge/book-weights.js';
@@ -161,6 +166,8 @@ export interface ServerOptions {
   oddsApiQuota?: (() => Promise<{ status: number; remaining: number | null; used: number | null }>) | null;
   /** CrownIQ Edge: a standalone probability engine with its own Top Picks, Board and Gen; never reads or changes GKR. */
   edge?: { enabled?: boolean; ledger?: EdgeLedger | null; snapshots?: SnapshotStore | null;
+    /** GKR+ (owner-only): its own ledger, graded like Edge's. */
+    gkrPlusLedger?: EdgeLedger | null;
     alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>; alternateCurve?: Partial<Record<'GOBLIN' | 'DEMON', number>>; boxScores?: BoxScoreResults | null;
     valuesCacheFile?: string | null; pick6PayoutsConfirmed?: boolean; alertsFile?: string | null;
     staleLogFile?: string | null; dispersion?: DispersionStore | null;
@@ -1326,6 +1333,70 @@ export function buildServer(options: ServerOptions = {}) {
         scrapers:options.scraperPuller?await options.scraperPuller.status():null,
         contextFeeds:options.contextFeeds?await options.contextFeeds.status():null,
         oddsApi:options.oddsApiQuota?await options.oddsApiQuota().catch(()=>null):null})});
+    // GKR+ (owner only): Edge's read blended with history at the number and GKR's side, on every platform; its own ledger.
+    const gkrPlusLedger=options.edge?.gkrPlusLedger??null;
+    const gkrPlusWorker=gkrPlusLedger?new EdgeResultsWorker(gkrPlusLedger,options.internalHistory??null,options.edge?.boxScores??null,()=>now(),
+      options.playerHistory?(sport,playerName,market)=>options.playerHistory!.values(sport,playerName,market):null):null;
+    const gkrSides=async(platform:EdgePlatform):Promise<(pick:EdgePick)=>GkrSide|null>=>{
+      if(platform==='prizepicks'){
+        const analyses=new Map((service.getBoard()?.analyses??[]).flatMap((item)=>item.direction!=='PASS'&&item.score!==null
+          ?[[item.lineId,{direction:item.direction as 'MORE'|'LESS',score:item.score}] as const]:[]));
+        return (pick)=>analyses.get(pick.lineId)??null;
+      }
+      if(platform==='underdog'||platform==='pick6'){
+        const scores=await scoresFor(platform),prefix=platform==='underdog'?'ud':'p6';
+        return (pick)=>{const score=scores.get(`${prefix}:${pick.lineId.slice(platform.length+1)}`);
+          return score?{direction:score.direction,score:score.score}:null;};
+      }
+      // The books: GKR's side at the book's number, matched by player, stat and number.
+      const picks=(await picksFor(platform).catch(()=>null))?.picks??[];
+      const key=(sport:string,player:string,market:string,line:number)=>`${normalizedName(player)}|${canonicalMarket(sport,market)}|${line}`;
+      const byKey=new Map(picks.filter((item)=>item.gkr).map((item)=>[key(item.sport,item.playerName,item.market,item.line),
+        {direction:item.side,score:item.gkr!.score}] as const));
+      return (pick)=>byKey.get(key(pick.sport,pick.playerName,pick.market,pick.threshold))??null;
+    };
+    const gkrPlus=async(platform:EdgePlatform)=>{
+      const snapshot=await edge.snapshot(platform);
+      if(!snapshot)return null;
+      const picks=blendPicks(snapshot.response.picks,await gkrSides(platform));
+      return {snapshot,picks};
+    };
+    app.register(async(owner)=>{
+      owner.addHook('preHandler',async(request,reply)=>{
+        reply.header('Cache-Control','private, no-store');
+        if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+      });
+      owner.get('/',async(request,reply)=>{
+        const query=z.object({platform:z.enum(EDGE_PLATFORMS as [EdgePlatform,...EdgePlatform[]]).default('prizepicks'),
+          limit:z.coerce.number().int().min(1).max(500).default(150)}).safeParse(request.query);
+        if(!query.success)return reply.code(400).send({code:'INVALID_QUERY'});
+        const result=await gkrPlus(query.data.platform);
+        if(!result)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+        const nowMs=now().getTime(),live=result.picks.filter((pick)=>Date.parse(pick.eventStartTime)>nowMs+5*60_000);
+        const ranked=live.filter((pick)=>pick.edge!==null&&pick.rating!=='NONE');
+        return {...result.snapshot.response,picks:ranked.slice(0,query.data.limit),
+          slips:buildSlips(ranked,result.snapshot.response.entries,{minEvents:result.snapshot.minEvents}),
+          counts:{...result.snapshot.response.counts,positiveEdge:ranked.length},modelVersion:GKR_PLUS_VERSION};
+      });
+      owner.get('/record',async(_request,reply)=>gkrPlusLedger?{model:GKR_PLUS_VERSION,grading:gkrPlusWorker?.status()??null,
+        ...await gkrPlusLedger.report()}:reply.code(503).send({code:'GKR_PLUS_UNCONFIGURED'}));
+    },{prefix:'/v1/owner/gkr-plus'});
+    if(!options.clock){
+      // GKR+ picks are recorded every 15 minutes on every platform and graded hourly, like Edge's.
+      const recordGkrPlus=()=>{void (async()=>{
+        if(!gkrPlusLedger)return;
+        for(const platform of EDGE_PLATFORMS){
+          const result=await gkrPlus(platform).catch(()=>null);
+          if(!result)continue;
+          await gkrPlusLedger.record(result.picks,(lineId)=>{const line=result.snapshot.lines.get(lineId);
+            return {team:line?.team??null,home:line?.homeTeam??null,away:line?.awayTeam??null};});
+        }
+      })().catch((error:unknown)=>console.warn('[gkr-plus] record failed',error instanceof Error?error.message:error));};
+      const firstPlus=setTimeout(recordGkrPlus,4*60_000);firstPlus.unref();
+      const everyPlus=setInterval(recordGkrPlus,15*60_000);everyPlus.unref();
+      gkrPlusWorker?.start();
+      shadowTimers.push(firstPlus,everyPlus);
+    }
     if(!options.clock){
       const warm=()=>{void edge.snapshot().catch(()=>undefined);};
       const first=setTimeout(warm,60_000);first.unref();

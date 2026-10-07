@@ -27,6 +27,8 @@ export default function TabLayout() {
       tabBarBadge: legs.length ? legs.length : undefined }} />
     <Tabs.Screen name="edge" options={{ title: 'Edge', tabBarIcon: icon('diamond-outline', 'diamond') }} />
     <Tabs.Screen name="results" options={{ title: 'Results', tabBarIcon: icon('chart-bar', 'chart-bar') }} />
+    {/* GKR+ (Edge + history + GKR) is an owner-only test model. */}
+    <Tabs.Screen name="gkr-plus" options={{ href: owner ? undefined : null, title: 'GKR+', tabBarIcon: icon('flask-outline', 'flask') }} />
     {/* Tips is owner-only for now; everyone else keeps the Social tab. */}
     <Tabs.Screen name="tips" options={{ href: owner ? undefined : null, title: 'Tips', tabBarIcon: icon('lightbulb-outline', 'lightbulb') }} />
     <Tabs.Screen name="social" options={{ href: owner ? null : undefined, title: 'Social', tabBarIcon: icon('account-group-outline', 'account-group') }} />
