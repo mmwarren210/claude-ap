@@ -90,3 +90,15 @@ test('step 7: the stale replay sums alerts, closing-line value and win rate; a s
   assert.equal(tracker.observe(['draftkings', 'fanduel', 'hardrock'].map((book) => price(book, 23.5)), t0 + 15 * 60_000), 3);
   assert.equal(tracker.summary('NBA', 'Alpha Guard', 'player_points', t0 + 16 * 60_000)?.steam, true);
 });
+
+test('step 8: soccer under any league label, college basketball and Underdog stat names reach a box-score reader; splits never', async () => {
+  const { boxScoreReader } = await import('../src/box-score-results.js');
+  const line = (sport: string, league: string, market: string) => ({ id: 'l', provider: 'prizepicks', sourceLineId: 'l', sourceLineIdIsSynthetic: false,
+    sport, league, eventId: 'e', eventName: 'A @ H', eventStartTime: start, playerId: 'p', playerName: 'P', team: null, opponent: null, market,
+    threshold: 1.5, availableDirections: ['MORE'], lineType: 'REGULAR', fetchedAt: start }) as never;
+  assert.ok(boxScoreReader(line('SOCCER', 'LA LIGA', 'shots')), 'soccer graded whatever the league label');
+  assert.ok(boxScoreReader(line('NCAAB', 'CBB', 'player_points')));
+  assert.ok(boxScoreReader(line('NFL', 'NFL', 'rush_plus_rec_tds')) ?? boxScoreReader(line('NFL', 'NFL', 'anytime_tds')), 'canonical stat name');
+  assert.equal(boxScoreReader(line('NFL', 'NFL1H', 'player_reception_yds')), null, 'a 1st-half board is never graded from full-game stats');
+  assert.equal(boxScoreReader(line('NFL', 'NFL', '1h_player_reception_yds')), null);
+});

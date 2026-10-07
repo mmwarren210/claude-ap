@@ -811,19 +811,20 @@ export class EdgeResultsWorker {
   }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
 
+  /** Step 8: hourly, from 3 hours after each start until graded (box scores, CrownIQ's rows, the free histories). */
   async runOnce() {
     if (this.running) return this.last;
     this.running = true;
     const now = this.clock();
     let graded = 0, waiting = 0, unsupported = 0, error: string | null = null;
     try {
-      const awaiting = await this.ledger.awaitingResults(4);
+      const awaiting = await this.ledger.awaitingResults(3);
       if (this.boxScores && awaiting.length) {
         const report = await this.boxScores.results(awaiting.map(gradeTarget));
         graded += (await this.ledger.grade(report.facts)).graded;
         waiting = report.waiting; unsupported = report.unsupported;
       }
-      const left = (await this.ledger.awaitingResults(4)).filter((pick) => historySports.has(pick.sport));
+      const left = (await this.ledger.awaitingResults(3)).filter((pick) => historySports.has(pick.sport));
       if (this.history && left.length) {
         const players = new Map(left.map((pick) => [playerKey(pick.sport, pick.playerName),
           { key: playerKey(pick.sport, pick.playerName), sport: pick.sport, playerId: pick.playerId, playerName: pick.playerName }]));
@@ -832,7 +833,7 @@ export class EdgeResultsWorker {
           dedupeRows(rows.get(playerKey(pick.sport, pick.playerName)) ?? []))).graded;
       }
       // Tennis and esports from the free public history sources (box scores don't cover them).
-      const free = this.freeHistory ? (await this.ledger.awaitingResults(4)).filter((pick) => freeGradedSports.has(pick.sport)) : [];
+      const free = this.freeHistory ? (await this.ledger.awaitingResults(3)).filter((pick) => freeGradedSports.has(pick.sport)) : [];
       if (free.length) {
         const facts: EdgeResultFact[] = [];
         for (const pick of free.slice(0, 300)) {

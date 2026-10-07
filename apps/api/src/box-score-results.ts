@@ -7,6 +7,8 @@ import type { ResultFact } from './product-ledger.js';
 // A pick is graded only when its game is final and the player matches exactly one box-score row; anything less
 // stays pending. A DNP is recorded only when the box score itself says the player did not play.
 
+import { canonicalMarket } from './edge/market-map.js';
+
 const ESPN = 'https://site.api.espn.com/apis/site/v2/sports';
 const MLB = 'https://statsapi.mlb.com/api/v1';
 /** Box scores settle a little after the final whistle; earlier tries only waste requests. */
@@ -109,15 +111,24 @@ const baseball: Readonly<Record<string, Read>> = {
 
 /** ESPN sport path per CrownIQ sport, for full-game player stats only. */
 const espnPaths: Readonly<Partial<Record<string, string>>> = { NFL: 'football/nfl', NCAAFB: 'football/college-football',
-  NBA: 'basketball/nba', WNBA: 'basketball/wnba', NHL: 'hockey/nhl', SOCCER: 'soccer/all' };
+  NBA: 'basketball/nba', WNBA: 'basketball/wnba', NHL: 'hockey/nhl', SOCCER: 'soccer/all',
+  NCAAB: 'basketball/mens-college-basketball', NCAAW: 'basketball/womens-college-basketball' };
 const readers: Readonly<Partial<Record<string, Readonly<Record<string, Read>>>>> = { NFL: football, NCAAFB: football,
-  NBA: basketball, WNBA: basketball, NHL: hockey, SOCCER: soccer, MLB: baseball };
-/** Full-game leagues only: a league like NFL1Q or NHL1P is a split that box scores do not break out. */
-const fullGame = (line: PropLine) => line.league.toUpperCase() === line.sport ||
-  (line.sport === 'NCAAFB' && ['NCAAF', 'CFB', 'NCAAFB'].includes(line.league.toUpperCase()));
+  NBA: basketball, WNBA: basketball, NHL: hockey, SOCCER: soccer, MLB: baseball, NCAAB: basketball, NCAAW: basketball };
+/**
+ * Full-game leagues only: a league like NFL1Q or NHL1P (or a 1h_/1q_ market) is a split that box scores do not break out.
+ * Soccer's leagues all count (LA LIGA, EPL, SOCCER), as do the college labels.
+ */
+const fullGame = (line: PropLine) => !/(1H|2H|1Q|2Q|3Q|4Q|1P|2P|3P)$/i.test(line.league.trim()) && !/^(1h|2h|1q|2q|3q|4q|1p|2p|3p)_/.test(line.market) &&
+  (line.league.toUpperCase() === line.sport || line.sport === 'SOCCER' ||
+  (line.sport === 'NCAAFB' && ['NCAAF', 'CFB', 'NCAAFB'].includes(line.league.toUpperCase())) ||
+  (line.sport === 'NCAAB' && ['CBB', 'NCAAB'].includes(line.league.toUpperCase())) ||
+  (line.sport === 'NCAAW' && ['WCBB', 'NCAAW'].includes(line.league.toUpperCase())));
 
+/** The box-score stat for a line: its own market key, else the canonical one (Underdog and Pick6 name some stats differently). */
 export function boxScoreReader(line: PropLine): Read | null {
-  return fullGame(line) ? readers[line.sport]?.[line.market] ?? null : null;
+  if (!fullGame(line)) return null;
+  return readers[line.sport]?.[line.market] ?? readers[line.sport]?.[canonicalMarket(line.sport, line.market)] ?? null;
 }
 
 const nickname = (value: string) => normalizedPlayer(value).split(' ').at(-1) ?? '';
