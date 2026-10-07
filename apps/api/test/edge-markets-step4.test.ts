@@ -128,3 +128,23 @@ test('step 9: lopsided +EV two refreshes running flags a platform; two balanced 
   assert.equal(read!.rating, 'NONE');
   assert.ok(read!.warnings.some((warning) => warning.includes('two humps')));
 });
+
+test('TD totals: an Odds API total fills a game SharpAPI has not totaled; SharpAPI wins where both exist', async () => {
+  const { totalsFromOdds } = await import('../src/context/odds-api-totals.js');
+  const event = (point: number) => [{ id: 'abc', commence_time: start, home_team: 'Home', away_team: 'Away',
+    bookmakers: [{ key: 'fanduel', markets: [{ key: 'totals', outcomes: [{ name: 'Over', price: 1.91, point }, { name: 'Under', price: 1.91, point }] }] }] }];
+  const odds = totalsFromOdds(event(47.5), 'nfl');
+  assert.deepEqual(odds.map((game) => [game.side, game.line, game.eventId]), [['over', 47.5, 'odds-api:abc'], ['under', 47.5, 'odds-api:abc']]);
+  const rates = Array.from({ length: 24 }, (_, index) => .05 + .5 * ((index * 5) % 24) / 24);
+  const scale = 47.5 * .105 / rates.reduce((a, b) => a + b, 0), fair = rates.map((rate) => 1 - Math.exp(-rate * scale));
+  const rows = fair.map((p, index) => row({ market_type: 'anytime_touchdown_scorer', selection_type: 'other', line: null,
+    player_name: `Player ${index}`, odds_probability: Math.min(.95, p * 1.3) }));
+  const filled = scorerFairPrices(rows, odds);
+  assert.equal(filled.length, 24, 'the Odds API total prices the game');
+  for (const [index, price] of filled.entries()) assert.ok(Math.abs(price.fairOver - fair[index]!) < .01);
+  // A SharpAPI total of 40.5 for the same game outranks the Odds API's 47.5 (listed after it).
+  const sharp = (side: 'over' | 'under'): GamePrice => ({ book: 'draftkings', league: 'nfl', sport: 'football', eventId: 'g1', home: 'Home',
+    away: 'Away', startTime: start, market: 'total', line: 40.5, side, probability: .524, american: -110 });
+  const both = scorerFairPrices(rows, [...totalsFromOdds(event(47.5), 'nfl'), sharp('over'), sharp('under')]);
+  assert.ok(both[0]!.fairOver < filled[0]!.fairOver, 'fewer expected points, lower TD chances');
+});

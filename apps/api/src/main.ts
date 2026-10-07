@@ -59,6 +59,7 @@ import { PlayerIdentityResearch } from './identity/player-identity.js';
 import { SleeperNflIdentitySource } from './identity/sleeper-nfl.js';
 import { JsonCache } from './identity/types.js';
 import { CurrentContextResearch } from './current-context.js';
+import { OddsApiTotals } from './context/odds-api-totals.js';
 
 // Where the server keeps its data files. On a host, point this at a permanent disk.
 const dataDir=(process.env.CROWNIQ_DATA_DIR ?? 'tmp').replace(/\/$/,'');
@@ -149,7 +150,7 @@ process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`,undefi
 const sharpProps=new SharpPropsFeed((process.env.SHARPAPI_KEY ?? process.env.sharp_api)?.trim()||null,
   process.env.CROWNIQ_SHARP_PROPS_FILE ?? `${dataDir}/sharp-props.json`,
   {books:(process.env.CROWNIQ_SHARP_BOOKS??'draftkings,fanduel,hardrock,betmgm,prizepicks').split(',').map((book)=>book.trim()).filter(Boolean),
-    maxPagesPerLeague:100,
+    maxPagesPerLeague:100,extraTotals:apiKey?(()=>{const totals=new OddsApiTotals(apiKey);return ()=>totals.games();})():undefined,
     ...(process.env.CROWNIQ_SHARP_LEAGUES?.trim()?{leagues:process.env.CROWNIQ_SHARP_LEAGUES.split(',').map((league)=>league.trim()).filter(Boolean)}:{})});
 // A bad CROWNIQ_PAYOUTS falls back to the defaults rather than stopping the server.
 const payouts=mergePayouts((()=>{try{return JSON.parse(process.env.CROWNIQ_PAYOUTS??'null');}catch{return null;}})());

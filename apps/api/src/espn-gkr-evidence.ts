@@ -14,7 +14,8 @@ import type { HistorySpec } from './stat-api-gkr-evidence.js';
 
 const SITE = 'https://site.api.espn.com/apis/site/v2/sports';
 const COMMON = 'https://site.api.espn.com/apis/common/v3/sports';
-const paths: Readonly<Record<string, string>> = { NHL: 'hockey/nhl', NCAAFB: 'football/college-football', SOCCER: 'soccer/all' };
+const paths: Readonly<Record<string, string>> = { NHL: 'hockey/nhl', NCAAFB: 'football/college-football', SOCCER: 'soccer/all',
+  WNBA: 'basketball/wnba' };
 
 type Row = { occurredAt: string | null; metrics: Readonly<Record<string, number>> };
 const n = (row: Row, key: string) => Number.isFinite(row.metrics[key]) ? row.metrics[key] : null;
@@ -41,6 +42,34 @@ const cfbReceive = (value: (r: Row) => number | null, unit: string) => spec(valu
   target_share: (r) => n(r, 'receivingTargets') ?? n(r, 'receptions'),
   receiving_efficiency: (r) => ratio(n(r, 'receivingYards'), n(r, 'receptions')), historical_volume: value });
 
+/** WNBA box-score stats under every key the apps' labels become (PrizePicks, Underdog and DK Pick'em name them differently). */
+function wnbaSpecs(): Record<string, HistorySpec> {
+  const minutes = (r: Row) => n(r, 'minutes');
+  const hoops = (value: (r: Row) => number | null, unit: string) => spec(value, unit, { minutes, historical_volume: value });
+  const pts = (r: Row) => n(r, 'points'), reb = (r: Row) => n(r, 'totalRebounds'), ast = (r: Row) => n(r, 'assists');
+  const stl = (r: Row) => n(r, 'steals'), blk = (r: Row) => n(r, 'blocks');
+  const made = (name: string) => (r: Row) => n(r, `${name}Made`), tried = (name: string) => (r: Row) => n(r, `${name}Attempted`);
+  const twos = (r: Row) => { const all = n(r, 'fieldGoalsMade'), threes = n(r, 'threePointFieldGoalsMade');
+    return all !== null && threes !== null ? all - threes : null; };
+  const table: [readonly string[], (r: Row) => number | null, string][] = [
+    [['player_points', 'points'], pts, 'points'], [['player_rebounds', 'rebounds'], reb, 'rebounds'],
+    [['player_assists', 'assists'], ast, 'assists'],
+    [['player_points_rebounds_assists', 'pts_plus_rebs_plus_asts', 'pra'], (r) => sum(pts(r), reb(r), ast(r)), 'points+rebounds+assists'],
+    [['player_points_rebounds', 'pts_plus_rebs'], (r) => sum(pts(r), reb(r)), 'points+rebounds'],
+    [['player_points_assists', 'pts_plus_asts'], (r) => sum(pts(r), ast(r)), 'points+assists'],
+    [['player_rebounds_assists', 'rebs_plus_asts'], (r) => sum(reb(r), ast(r)), 'rebounds+assists'],
+    [['player_threes', '3_pointers_made', '3_pt_made', 'threes'], made('threePointFieldGoals'), 'threes'],
+    [['3_pt_attempted', '3_pointers_attempted', 'player_threes_attempted'], tried('threePointFieldGoals'), 'three attempts'],
+    [['steals', 'player_steals'], stl, 'steals'], [['blocked_shots', 'blocks', 'player_blocks'], blk, 'blocks'],
+    [['blks_plus_stls', 'blocks_plus_steals', 'player_blocks_steals', 'stocks'], (r) => sum(blk(r), stl(r)), 'blocks+steals'],
+    [['turnovers', 'player_turnovers'], (r) => n(r, 'turnovers'), 'turnovers'],
+    [['fg_made', 'field_goals_made'], made('fieldGoals'), 'field goals'], [['fg_attempted', 'field_goals_attempted'], tried('fieldGoals'), 'shots'],
+    [['free_throws_made', 'ft_made'], made('freeThrows'), 'free throws'], [['free_throws_attempted', 'ft_attempted'], tried('freeThrows'), 'free throw attempts'],
+    [['two_pointers_made'], twos, 'two-pointers'], [['personal_fouls', 'fouls'], (r) => n(r, 'fouls'), 'fouls'],
+  ];
+  return Object.fromEntries(table.flatMap(([keys, value, unit]) => keys.map((key) => [key, hoops(value, unit)])));
+}
+
 /** ESPN game-log columns behind each market. Stats ESPN's logs don't carry (hits, faceoffs, tackles) aren't listed. */
 export const espnSpecs: Readonly<Record<string, Readonly<Record<string, HistorySpec>>>> = {
   NHL: {
@@ -60,6 +89,8 @@ export const espnSpecs: Readonly<Record<string, Readonly<Record<string, HistoryS
     goalie_saves: spec((r) => n(r, 'saves'), 'saves', { historical_volume: (r) => n(r, 'saves'),
       expected_shots_against: (r) => n(r, 'shotsFaced') }),
   },
+  // WNBA feeds History Read and Edge's history only: no WNBA key is an approved GKR model, so `supports` keeps it out of GKR.
+  WNBA: wnbaSpecs(),
   NCAAFB: {
     passing_yards: cfbPass((r) => n(r, 'passingYards'), 'yards'),
     player_pass_attempts: cfbPass((r) => n(r, 'passingAttempts'), 'attempts'),
@@ -95,7 +126,12 @@ export function gameLogRows(log: unknown): Row[] {
       const entry = obj(value), id = str(entry?.eventId), stats = arr(entry?.stats);
       if (!id || rows.has(id)) continue;
       const metrics: Record<string, number> = {};
-      names.forEach((name, index) => { const number = cell(stats[index]); if (name && number !== null) metrics[name] = number; });
+      names.forEach((name, index) => {
+        // Basketball pairs made and attempted in one column: "fieldGoalsMade-fieldGoalsAttempted" = "2-5".
+        const pair = /^(\w+)-(\w+)$/.exec(name), cells = /^(\d+)-(\d+)$/.exec(str(stats[index]).trim());
+        if (pair && cells) { metrics[pair[1]!] = Number(cells[1]); metrics[pair[2]!] = Number(cells[2]); return; }
+        const number = cell(stats[index]); if (name && number !== null) metrics[name] = number;
+      });
       const date = str(obj(events[id])?.gameDate);
       rows.set(id, { occurredAt: date && Number.isFinite(Date.parse(date)) ? new Date(date).toISOString() : null, metrics });
     }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ResearchTarget } from '@crowniq/engine';
-import { EspnGkrEvidence, gameLogRows } from '../src/espn-gkr-evidence.js';
+import { EspnGkrEvidence, espnSpecs, gameLogRows } from '../src/espn-gkr-evidence.js';
 
 const now = new Date('2030-10-04T12:00:00Z');
 const target = (playerName: string, market: string, playerId = playerName): ResearchTarget => ({ eventId: 'pp-game:1',
@@ -62,4 +62,22 @@ test('a name on both rosters resolves to the player on the line team', async () 
   const evidence = await new EspnGkrEvidence(fetchFn, { clock: () => now }).research([target('Sam Twin', 'shots_on_goal')]);
   assert.equal(evidence.find((item) => item.kind === 'status:player_available')?.numeric?.value, 1, 'the Blackhawks Sam Twin');
   assert.ok(evidence.some((item) => item.kind === 'projection:shots_on_goal'));
+});
+
+test('WNBA: made-attempted columns split, and every app label reads the right box-score stat', () => {
+  const rows = gameLogRows({ names: ['minutes', 'points', 'totalRebounds', 'assists', 'steals', 'blocks', 'turnovers',
+    'fieldGoalsMade-fieldGoalsAttempted', 'threePointFieldGoalsMade-threePointFieldGoalsAttempted', 'freeThrowsMade-freeThrowsAttempted', 'fouls'],
+  events: { g1: { gameDate: '2026-09-01T23:00:00Z' } },
+  seasonTypes: [{ displayName: '2026 Regular Season', categories: [{ events: [{ eventId: 'g1',
+    stats: ['30', '21', '7', '4', '2', '1', '3', '8-15', '2-6', '3-4', '2'] }] }] }] });
+  const row = rows[0]!, wnba = espnSpecs.WNBA!;
+  const value = (key: string) => wnba[key]!.value(row);
+  assert.equal(value('player_points'), 21);
+  assert.equal(value('pts_plus_rebs_plus_asts'), 32);
+  assert.equal(value('player_threes'), 2);
+  assert.equal(value('3_pt_attempted'), 6);
+  assert.equal(value('fg_attempted'), 15);
+  assert.equal(value('two_pointers_made'), 6);
+  assert.equal(value('blks_plus_stls'), 3);
+  assert.equal(value('free_throws_made'), 3);
 });
