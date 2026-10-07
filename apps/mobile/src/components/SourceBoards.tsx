@@ -38,17 +38,17 @@ const impliedOf = (american: number | null) => american === null ? null
   : american < 0 ? -american / (-american + 100) : 100 / (american + 100);
 
 /** Loads one picks route when the screen is focused; demo mode shows a sign-in notice instead. */
-export function usePicks<T>(path: string): { picks: T[]; fetchedAt: string | null; state: 'loading' | 'ready' | 'error' | 'demo' } {
+export function usePicks<T>(path: string): { picks: T[]; fetchedAt: string | null; state: 'loading' | 'ready' | 'error' | 'demo'; feedNote?: string } {
   const { request, demo } = useAuth();
-  const [value, setValue] = useState<{ picks: T[]; fetchedAt: string | null; state: 'loading' | 'ready' | 'error' | 'demo' }>(
+  const [value, setValue] = useState<{ picks: T[]; fetchedAt: string | null; state: 'loading' | 'ready' | 'error' | 'demo'; feedNote?: string }>(
     { picks: [], fetchedAt: null, state: 'loading' });
   useFocusEffect(useCallback(() => {
     if (demo) { setValue({ picks: [], fetchedAt: null, state: 'demo' }); return; }
     let active = true;
     setValue((current) => ({ ...current, state: 'loading' }));
     void request(path).then(async (response) => {
-      const body = response.ok ? await response.json() as { picks?: T[]; fetchedAt?: string | null } : null;
-      if (active) setValue(body ? { picks: body.picks ?? [], fetchedAt: body.fetchedAt ?? null, state: 'ready' }
+      const body = response.ok ? await response.json() as { picks?: T[]; fetchedAt?: string | null; feedNote?: string } : null;
+      if (active) setValue(body ? { picks: body.picks ?? [], fetchedAt: body.fetchedAt ?? null, state: 'ready', ...(body.feedNote ? { feedNote: body.feedNote } : {}) }
         : { picks: [], fetchedAt: null, state: 'error' });
     }).catch(() => { if (active) setValue({ picks: [], fetchedAt: null, state: 'error' }); });
     return () => { active = false; };
@@ -174,7 +174,7 @@ function CrownCount({ provider, name, count, message }: { provider: CrownProvide
 
 /** DraftKings or Hard Rock: every prop with a backed side (GKR, History or Value) at the book's own number. */
 export function BookBoard({ book, onSource }: { book: Sportsbook; onSource: (source: BoardSource) => void }) {
-  const { picks, fetchedAt, state } = usePicks<BookPick>(`/v1/books/${book}/picks`);
+  const { picks, fetchedAt, state, feedNote } = usePicks<BookPick>(`/v1/books/${book}/picks`);
   const { shown, chips } = useLeagueFilter(picks);
   const [legs] = useCrownLegs<BookPick>(book);
   const [message, setMessage] = useState('');
@@ -201,8 +201,8 @@ export function BookBoard({ book, onSource }: { book: Sportsbook; onSource: (sou
       ListFooterComponent={shown.length ? <GhostButton label={`Open ${sourceNames[book]}`} icon="open-in-new"
         onPress={() => openExternal(bookUrls[book])} /> : null}
       ListEmptyComponent={<Notice title={state === 'demo' ? 'Sign in to see sportsbook picks' : state === 'loading'
-        ? 'Loading picks' : state === 'error' ? 'Picks unavailable' : `No ${sourceNames[book]} picks right now`}
-        detail={state === 'demo' ? 'The demo shows PrizePicks only.' : state === 'error'
+        ? 'Loading picks' : state === 'error' ? 'Picks unavailable' : feedNote ? `${sourceNames[book]} feed down` : `No ${sourceNames[book]} picks right now`}
+        detail={state === 'demo' ? 'The demo shows PrizePicks only.' : feedNote ? feedNote : state === 'error'
           ? 'Could not reach CrownIQ. Try again in a moment.'
           : 'Picks show once the book’s prices load (every hour) and GKR, History or Value backs a side.'} />} />
   </SafeAreaView>;

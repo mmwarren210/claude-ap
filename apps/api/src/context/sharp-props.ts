@@ -501,6 +501,8 @@ export interface SharpPropsStatus {
   readonly selectedButEmpty?: readonly string[];
   /** The plan's selected books, when SharpAPI answered book_not_selected. */
   readonly planSelects?: readonly string[];
+  /** Books SharpAPI answers "book_unavailable" for (its feed for that book is down), from the last refresh's check. */
+  readonly unavailable?: readonly string[];
 }
 
 /**
@@ -526,6 +528,7 @@ export class SharpPropsFeed {
   private requestTimes: number[] = [];
   private emptyStreaks = new Map<string, number>();
   private notSelected: string[] | null = null;
+  private unavailable: string[] = [];
   /** Partial-game market types SharpAPI has listed (from the PrizePicks pass), the only ones the books' partial pass asks for. */
   private readonly knownPartials = new Set<string>();
   constructor(private readonly apiKey: string | null, private readonly file: string | null,
@@ -588,7 +591,7 @@ export class SharpPropsFeed {
       requests: this.requests, overOnly: this.overOnly.length, games: this.games.length,
       pickem: this.pickem.length, prizePicksFeed: this.pickemStatus, requestsLastHour: this.requestsLastHour(),
       selectedButEmpty: [...this.emptyStreaks].filter(([, streak]) => streak >= 2).map(([book]) => book),
-      ...(this.notSelected ? { planSelects: this.notSelected } : {}) };
+      ...(this.notSelected ? { planSelects: this.notSelected } : {}), unavailable: this.unavailable };
   }
 
   /** One refresh at a time: a second call waits for the running one instead of doubling the requests. */
@@ -682,6 +685,13 @@ export class SharpPropsFeed {
       // The rows fetched before the failure still feed the market audit; the saved prices stay as they were.
       this.auditMarkets(rows.filter((row) => !isPickemRow(row)));
     }
+    // A requested book with no rows: one probe each says whether SharpAPI's feed for it is down ("book_unavailable").
+    const empty = books.filter((book) => !rows.some((row) => (row as Row).sportsbook === book));
+    if (empty.length) {
+      const probe = await this.probeBooks(empty).catch(() => null);
+      this.unavailable = Object.entries((probe?.books ?? {}) as Record<string, { code: string | null }>).filter(([, item]) => item.code === 'book_unavailable').map(([book]) => book);
+      if (this.unavailable.length) console.warn(`[sharp] SharpAPI reports ${this.unavailable.join(', ')} unavailable (its feed for the book is down)`);
+    } else this.unavailable = [];
     if (booksOk) {
       console.log(`[sharp] refresh fetched ${rows.length} prop rows in ${this.requests} requests`);
       // Pick'em rows (PrizePicks) are lines, not prices: kept apart so they never count toward a fair price.

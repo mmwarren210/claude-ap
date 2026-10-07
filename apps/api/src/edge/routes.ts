@@ -25,6 +25,8 @@ export interface EdgeRouteDeps {
   readonly health?: () => Promise<Record<string, unknown>>;
   /** Platforms whose ranked picks and entries are held (a new feed not yet cleared by the side-bias check). */
   readonly held?: (platform: string) => boolean;
+  /** A note when a sportsbook's feed is down at the provider (its tab is empty for that reason). */
+  readonly feedNote?: (platform: string) => Promise<string | null>;
 }
 
 /** A time's calendar date in Eastern time ("today" for the slate). */
@@ -76,6 +78,8 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     if (!query.success) return reply.code(400).send({ code: 'INVALID_EDGE_QUERY' });
     const snapshot = await edge.snapshot(query.data.platform);
     if (!snapshot) return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
+    const note = await deps.feedNote?.(query.data.platform).catch(() => null) ?? null;
+    if (note) return { ...snapshot.response, picks: [], slips: [], feedNote: note };
     const nowMs = now().getTime();
     const filters = { nowMs, limit: query.data.limit, ...(query.data.sport ? { sport: query.data.sport } : {}),
       ...(query.data.market ? { market: query.data.market } : {}),

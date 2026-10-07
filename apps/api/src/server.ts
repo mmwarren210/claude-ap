@@ -1361,7 +1361,13 @@ export function buildServer(options: ServerOptions = {}) {
     const heldPlatforms=new Set((process.env.CROWNIQ_EDGE_HOLD??'hardrock').split(',').map((item)=>item.trim()).filter(Boolean));
     // A platform is held while its +EV picks are lopsided (step 9), and a new feed (CROWNIQ_EDGE_HOLD) until it has passed the
     // side-bias check two refreshes running.
-    registerEdgeRoutes(app,{edge,held:(platform)=>edge.sideBiasFlagged(platform)||(heldPlatforms.has(platform)&&!edge.sideBiasCleared(platform)),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
+    // A book whose SharpAPI feed is down ("book_unavailable") says so on its tabs instead of looking empty.
+    const feedNote=async(platform:string)=>{
+      if(platform!=='draftkings'&&platform!=='hardrock'||!options.sharpProps)return null;
+      const status=await options.sharpProps.status();
+      return status.unavailable?.includes(platform)?`${platform==='hardrock'?'Hard Rock':'DraftKings'} prices aren't coming from our odds provider right now (it reports the book unavailable). Picks come back as soon as it does.`:null;
+    };
+    registerEdgeRoutes(app,{edge,feedNote,held:(platform)=>edge.sideBiasFlagged(platform)||(heldPlatforms.has(platform)&&!edge.sideBiasCleared(platform)),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
       internalHistory:options.internalHistory??null,isOwner:(request)=>isOwner(request),now,
       health:async()=>({board:{fetchedAt:service.getBoard()?.board.fetchedAt??null},
         sharpApi:options.sharpProps?await options.sharpProps.status():null,
@@ -1407,6 +1413,8 @@ export function buildServer(options: ServerOptions = {}) {
         if(!query.success)return reply.code(400).send({code:'INVALID_QUERY'});
         const result=await gkrPlus(query.data.platform);
         if(!result)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+        const note=await feedNote(query.data.platform);
+        if(note)return {...result.snapshot.response,picks:[],slips:[],feedNote:note,modelVersion:GKR_PLUS_VERSION};
         // A platform Edge holds (side-bias alarm, or a new feed not yet cleared) is held here too.
         if(edge.sideBiasFlagged(query.data.platform)||(heldPlatforms.has(query.data.platform)&&!edge.sideBiasCleared(query.data.platform)))
           return {...result.snapshot.response,picks:[],slips:[],counts:{...result.snapshot.response.counts,positiveEdge:0},modelVersion:GKR_PLUS_VERSION};
@@ -1739,7 +1747,9 @@ export function buildServer(options: ServerOptions = {}) {
     const picks=await Promise.all(result.picks.map(async(pick)=>{const line=result.lines.get(pick.id);
       const read=line&&options.aiPicks?await options.aiPicks.readFor(line):null;
       return {...pick,scout:read?aiView(read):null};}));
-    return {book:parsed.data.book,name:sportsbookNames[parsed.data.book],fetchedAt:result.fetchedAt,picks};
+    const feedDown=await options.sharpProps?.status().then((status)=>status.unavailable?.includes(parsed.data.book)).catch(()=>false);
+    return {book:parsed.data.book,name:sportsbookNames[parsed.data.book],fetchedAt:result.fetchedAt,picks,
+      ...(feedDown?{feedNote:`${sportsbookNames[parsed.data.book]} prices aren't coming from our odds provider right now (it reports the book unavailable). Picks come back as soon as it does.`}:{})};
   });
   // Keep the book picks warm so the tabs open fast.
   const warmPicks=()=>{for(const book of sportsbooks)void picksFor(book).catch(()=>undefined);};

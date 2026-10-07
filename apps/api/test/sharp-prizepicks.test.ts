@@ -151,3 +151,17 @@ test('the books’ partial-game pass asks only for partial types SharpAPI has na
   const partial = asked.find((url) => url.searchParams.get('sportsbooks') === 'draftkings' && url.searchParams.get('market_type')?.startsWith('1st_'));
   assert.equal(partial?.searchParams.get('market_type'), '1st_half_player_receiving_yards');
 });
+
+test('a requested book SharpAPI answers book_unavailable for is reported as down', async () => {
+  const fetchFn = (async (input: URL | string) => {
+    const url = new URL(String(input));
+    if (url.searchParams.get('sportsbooks') === 'hardrock') return new Response(JSON.stringify({ error: { code: 'book_unavailable' } }), { status: 503 });
+    const data = url.searchParams.get('sportsbooks')?.includes('draftkings')
+      ? [{ sportsbook: 'draftkings', league: 'nfl', market_type: 'player_receiving_yards', selection_type: 'over', line: 50.5, odds_american: -110,
+        player_name: 'Test Receiver', event_id: 'e1', event_start_time: start, is_live: false, is_active: true }] : [];
+    return new Response(JSON.stringify({ data, pagination: { has_more: false } }));
+  }) as typeof fetch;
+  const feed = new SharpPropsFeed('key', null, { leagues: ['nfl'], books: ['draftkings', 'hardrock'], requestGapMs: 0, retryScale: 0 }, fetchFn, () => now);
+  await feed.refresh();
+  assert.deepEqual((await feed.status()).unavailable, ['hardrock']);
+});

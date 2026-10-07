@@ -435,6 +435,8 @@ export const edgeBoardResponseSchema = z.object({
     brier: z.number().nullable(), hitRate: z.number().nullable() }),
   picks: z.array(edgePickSchema),
   slips: z.array(edgeSlipSchema),
+  /** Why a sportsbook's tab is empty when its feed is down at the provider ("book unavailable"). */
+  feedNote: z.string().optional(),
 });
 
 export const edgeUnpricedLineSchema = z.object({

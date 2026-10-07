@@ -60,6 +60,7 @@ export default function EdgeScreen() {
         detail={message || 'Reading the saved board and sportsbook prices.'} />
       <Pressable accessibilityRole="button" onPress={retry}><Text style={styles.link}>Retry</Text></Pressable>
     </> : <>
+      {!!data.feedNote && <Notice title="Feed down" detail={data.feedNote} />}
       <View style={styles.stats}>
         <Stat label="Priced" value={String(data.counts.linesPriced)} />
         <Stat label="+EV lines" value={String(data.counts.positiveEdge)} />

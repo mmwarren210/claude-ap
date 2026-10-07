@@ -45,6 +45,7 @@ export default function GkrPlusScreen() {
       <Notice title={status === 'loading' ? 'Blending the board' : 'GKR+ pending'} detail={message || 'Reading Edge, history and GKR.'} />
       <Pressable accessibilityRole="button" onPress={retry}><Text style={styles.link}>Retry</Text></Pressable>
     </> : <>
+      {!!data.feedNote && <Notice title="Feed down" detail={data.feedNote} />}
       <View style={styles.stats}>
         <Stat label="Priced" value={String(data.counts.linesPriced)} />
         <Stat label="+EV picks" value={String(data.counts.positiveEdge)} />
