@@ -32,7 +32,7 @@ test('MLB: hitters and pitchers on each app’s chart', () => {
 });
 
 test('not read: NHL, segments; the app comes from the line id; ESPN decisions become wins', () => {
-  assert.equal(fantasyValue('prizepicks', 'NHL', 'player_fantasy_points', row({ goals: 1 })), null);
+  assert.equal(fantasyValue('prizepicks', 'NHL', 'player_fantasy_points', row({ goals: 1 })), null, 'skaters: no hits or blocks');
   assert.equal(isFantasyMarket('1h_player_fantasy_points'), false);
   assert.equal(isFantasyMarket('hitter_fantasy_score'), true);
   assert.equal(fantasyApp({ id: 'underdog:abc' }), 'underdog');
@@ -46,7 +46,7 @@ test('not read: NHL, segments; the app comes from the line id; ESPN decisions be
 test('tennis: PrizePicks chart over a match, with the player’s average aces and double faults', async () => {
   const { tennisFantasy } = await import('../src/fantasy-history.js');
   // Won 6-4 3-6 6-3: 15 games won, 13 lost, 2 sets won of 3; 6 aces and 2 double faults on average.
-  assert.equal(tennisFantasy({ gamesWon: 15, gamesLost: 13, setsWon: 2, totalSets: 3 }, 6, 2), 10 + 15 - 13 + 6 - 3 + 6 - 2);
+  assert.equal(tennisFantasy({ gamesWon: 15, gamesLost: 13, setsWon: 2, totalSets: 3 }, 6, 2), 10 + 15 - 13 + 6 - 3 + 3 - 1);
   assert.equal(tennisFantasy({ gamesWon: 15 }, 6, 2), null);
   const { PlayerHistory } = await import('../src/player-history.js');
   const espn = { name: 'espn', sports: ['TENNIS'], refresh: async () => 0, games: async () => ({ source: 'ESPN', url: null, perMap: false,
@@ -55,5 +55,16 @@ test('tennis: PrizePicks chart over a match, with the player’s average aces an
     valuesFor: async (_name: string, market: string) => ({ source: 'Sleeper', url: null,
       values: [{ date: '2030-01-01', opponent: null, value: market === 'aces' ? 4 : 1 }] }) };
   const history = new PlayerHistory([espn, sleeper] as never);
-  assert.deepEqual((await history.tennisFantasy('Test Player'))?.values, [10 + 12 - 6 + 6 + 4 - 1]);
+  assert.deepEqual((await history.tennisFantasy('Test Player'))?.values, [10 + 12 - 6 + 6 + 2 - .5]);
+});
+
+test('kickers on PrizePicks’ chart; NHL goalies on both apps', () => {
+  const [kick] = gameLogRows({ names: ['fieldGoalsMade1_19-fieldGoalAttempts1_19', 'fieldGoalsMade20_29-fieldGoalAttempts20_29',
+    'fieldGoalsMade30_39-fieldGoalAttempts30_39', 'fieldGoalsMade40_49-fieldGoalAttempts40_49', 'fieldGoalsMade50-fieldGoalAttempts50',
+    'fieldGoalsMade-fieldGoalAttempts', 'extraPointsMade-extraPointAttempts'], events: {},
+  seasonTypes: [{ displayName: '2026 Regular Season', categories: [{ events: [{ eventId: 'k', stats: ['0-0', '1-1', '1-1', '1-2', '1-1', '4-5', '3-4'] }] }] }] });
+  // 3 + 3 + 4 + 5 for field goals, 3 extra points, -1 missed field goal, -1 missed extra point.
+  assert.equal(fantasyValue('prizepicks', 'NFL', 'player_fantasy_points', kick!), 3 + 3 + 4 + 5 + 3 - 1 - 1);
+  assert.equal(fantasyValue('underdog', 'NFL', 'player_fantasy_points', kick!), null);
+  assert.equal(fantasyValue('underdog', 'NHL', 'player_fantasy_points', row({ wins: 1, saves: 30, goalsAgainst: 2 })), 6 + 18 - 6);
 });

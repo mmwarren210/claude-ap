@@ -13,11 +13,15 @@ import type { PropLine } from '@crowniq/contracts';
 //   Underdog the same except walk 3, hit by pitch 3, steal 4 (and double 5).
 // - MLB pitchers: PrizePicks win 6, quality start 4, earned run -3, strikeout 3, out 1; Underdog win 5, quality start 5,
 //   earned run -3, strikeout 3, inning 3 (1 per out).
-// - PrizePicks tennis: 10 for playing the match, +1 per game won, -1 per game lost, +3 per set won, -3 per set lost, +1 per
-//   ace, -1 per double fault (Rotowire's PrizePicks guide). ESPN's results give games and sets per match; aces and double
+// - PrizePicks tennis: 10 for playing the match, +1 per game won, -1 per game lost, +3 per set won, -3 per set lost, +0.5
+//   per ace, -0.5 per double fault (PrizePicks' scoring chart, owner screenshots 2026-10-07). ESPN's results give games and sets per match; aces and double
 //   faults come from Sleeper's recent values as the player's average (so a match's spread is slightly understated).
 //   Underdog tennis fantasy isn't read (its chart isn't confirmed).
-// Not read: NHL (both apps score blocked shots and hits, which ESPN's logs don't carry), DK Pick'em (its chart isn't
+// - PrizePicks kickers: field goal 3 (0-39 yards), 4 (40-49), 5 (50+), extra point 1, -1 per missed field goal or extra
+//   point. Underdog kickers aren't read.
+// - NHL goalies, both apps: win 6, save 0.6, goal against -3.
+// Not read: NHL skaters (both apps score blocked shots and hits, which ESPN's logs don't carry), soccer (PrizePicks scores
+// passes, tackles, clearances, dribbles and crosses, which aren't in ESPN's logs), UFC, DK Pick'em (its chart isn't
 // confirmed), and any segment line (1st half, 1st quarter). ESPN's logs carry no two-point conversions, and a
 // quarterback's log no fumbles lost, so those count 0 (a slight overstatement; receivers' and backs' fumbles count).
 
@@ -27,7 +31,21 @@ type Row = { metrics: Readonly<Record<string, number>> };
 const v = (row: Row, key: string) => row.metrics[key] ?? 0;
 const has = (row: Row, ...keys: string[]) => keys.some((key) => Number.isFinite(row.metrics[key]));
 
+function kicker(row: Row, app: FantasyApp): number | null {
+  if (app !== 'prizepicks' || !has(row, 'fieldGoalsMade', 'extraPointsMade')) return null;
+  const made = (range: string) => v(row, `fieldGoalsMade${range}`);
+  const short = made('1_19') + made('20_29') + made('30_39'), mid = made('40_49'), long = made('50');
+  const missedFg = v(row, 'fieldGoalAttempts') - v(row, 'fieldGoalsMade'), missedXp = v(row, 'extraPointAttempts') - v(row, 'extraPointsMade');
+  return short * 3 + mid * 4 + long * 5 + v(row, 'extraPointsMade') - missedFg - missedXp;
+}
+
+function goalie(row: Row): number | null {
+  if (!has(row, 'saves') || !has(row, 'goalsAgainst')) return null;
+  return v(row, 'wins') * 6 + v(row, 'saves') * .6 - v(row, 'goalsAgainst') * 3;
+}
+
 function football(row: Row, app: FantasyApp): number | null {
+  if (has(row, 'fieldGoalsMade', 'extraPointsMade')) return kicker(row, app);
   if (!has(row, 'passingYards', 'rushingYards', 'receivingYards', 'receptions')) return null;
   return v(row, 'passingYards') * .04 + v(row, 'passingTouchdowns') * 4 - v(row, 'interceptions')
     + (v(row, 'rushingYards') + v(row, 'receivingYards')) * .1 + (v(row, 'rushingTouchdowns') + v(row, 'receivingTouchdowns')) * 6
@@ -76,6 +94,7 @@ export const isFantasyMarket = (market: string) => /fantasy/.test(market) && !/^
  */
 export function fantasyValue(app: FantasyApp, sport: string, market: string, row: Row): number | null {
   if (sport === 'NFL' || sport === 'NCAAFB') return football(row, app);
+  if (sport === 'NHL') return goalie(row);
   if (['NBA', 'WNBA', 'NCAAB', 'NCAAW'].includes(sport)) return basketball(row);
   if (sport === 'MLB') {
     if (/pitcher/.test(market)) return pitcher(row, app);
@@ -89,5 +108,5 @@ export function fantasyValue(app: FantasyApp, sport: string, market: string, row
 export function tennisFantasy(stats: Readonly<Record<string, number>>, aces: number, doubleFaults: number): number | null {
   const { gamesWon, gamesLost, setsWon, totalSets } = stats;
   if (![gamesWon, gamesLost, setsWon, totalSets].every((value) => Number.isFinite(value))) return null;
-  return 10 + gamesWon! - gamesLost! + 3 * setsWon! - 3 * (totalSets! - setsWon!) + aces - doubleFaults;
+  return 10 + gamesWon! - gamesLost! + 3 * setsWon! - 3 * (totalSets! - setsWon!) + .5 * aces - .5 * doubleFaults;
 }
