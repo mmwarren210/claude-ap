@@ -249,3 +249,13 @@ test('one fair price across apps: another app’s regular line is a weak read; a
   const priced = priceBoard({ lines: [line('p1', 24.5)], quotes: [quote('fanduel', 1.6, 2.4)], now }).picks[0]!;
   assert.equal(priced.sources.ladder?.weight, 0);
 });
+
+test('Step 9: a sportsbook bet on the favorite takes the lower of the power and proportional de-vig', () => {
+  const quotes = [quote('pinnacle', 3.4, 1.3), quote('fanduel', 3.3, 1.32)];
+  const priced = (kind: 'ODDS' | 'ENTRY') => priceBoard({ lines: [line('u', 24.5, { availableDirections: ['LESS'] })], quotes, now,
+    sidePayout: () => kind === 'ODDS' ? { kind: 'ODDS', decimal: 1.3 } : { kind: 'ENTRY', multiplier: 1 } }).picks
+    .find((pick) => pick.side === 'LESS')!.probability;
+  const proportional = (1 / 1.3) / (1 / 3.4 + 1 / 1.3);
+  assert.ok(priced('ODDS') < priced('ENTRY'), 'the power de-vig gives the favorite more than proportional splitting');
+  assert.ok(Math.abs(priced('ODDS') - proportional) < 0.03);
+});

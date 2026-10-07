@@ -225,12 +225,13 @@ const anchorKey = (line: Pick<PropLine, 'sport' | 'league' | 'playerName' | 'mar
   `${line.sport === 'OTHER' ? line.league.toUpperCase() : line.sport}|${normalizedName(line.playerName)}|${canonicalMarket(line.sport, line.market)}|${line.eventStartTime.slice(0, 10)}`;
 
 /** Step 3: the pick'em apps' regular lines, indexed so each platform can read the others'. */
-export function dfsAnchors(sets: readonly { platform: string; lines: readonly PropLine[] }[]): AnchorIndex {
+export function dfsAnchors(sets: readonly { platform: string; lines: readonly PropLine[];
+  promos?: ReadonlyMap<string, number | null> }[]): AnchorIndex {
   const index: AnchorIndex = new Map();
   for (const set of sets) {
     if (!isPickem(set.platform)) continue;
     for (const line of set.lines) {
-      if (line.lineType !== 'REGULAR') continue;
+      if (line.lineType !== 'REGULAR' || set.promos?.has(line.id)) continue;
       const byPlatform = index.get(anchorKey(line)) ?? new Map<string, number[]>();
       const numbers = byPlatform.get(set.platform) ?? [];
       if (!numbers.includes(line.threshold)) numbers.push(line.threshold);
@@ -282,6 +283,8 @@ interface PlatformSet {
   readonly entries: EntryDefinition[];
   readonly minEvents: number;
   readonly sharpApi?: EdgeReport['sharpApi'];
+  /** Promo lines (id → the number before the promo moved it, or null): never anchors, checked at the original number. */
+  readonly promos?: ReadonlyMap<string, number | null>;
 }
 
 export class EdgeService {
@@ -418,8 +421,10 @@ export class EdgeService {
       sharpApi: { lines: extra.total, confirmed: extra.confirmed, added: extra.added.length } }];
     for (const app of ['underdog', 'pick6'] as const) {
       const stored = await this.options.appBoards?.active(app).catch(() => []) ?? [];
-      const { lines, payouts } = appLines(stored, app, nowIso);
-      sets.push({ platform: app, lines: lines.filter(open), payouts, entries: this.entriesFor(app), minEvents: 2 });
+      const { lines, payouts, promos } = appLines(stored, app, nowIso);
+      if (promos.size) console.log(`[edge-promo] ${app} ${promos.size} promo lines: ${JSON.stringify(lines.filter((line) => promos.has(line.id))
+        .slice(0, 5).map((line) => `${line.playerName} ${line.market} ${line.threshold} (was ${promos.get(line.id) ?? '?'})`))}`);
+      sets.push({ platform: app, lines: lines.filter(open), payouts, promos, entries: this.entriesFor(app), minEvents: 2 });
     }
     for (const book of ['draftkings', 'hardrock'] as const) {
       const { lines, payouts } = bookLines(prices, book, nowIso);
@@ -519,7 +524,7 @@ export class EdgeService {
     alerts: EdgeAlert[] = [], anchors: AnchorIndex = new Map()): EdgeSnapshot {
     // A platform's own book never prices it, and pick'em apps' rows are payouts, never prices.
     const nowIso = now.toISOString(), own = [...new Set([...ownBooks[set.platform], 'prizepicks', 'prizepicks_flex', 'underdog', 'pick6'])];
-    const matched = prices.length && set.lines.length ? matchBookPrices(set.lines, prices, nowIso, own) : null;
+    const matched = prices.length && set.lines.length ? matchBookPrices(set.lines, prices, nowIso, own, set.promos) : null;
     // DK Pick'em's entry chart isn't public: until the owner confirms it, its picks get a chance but no edge.
     const unconfirmed = set.platform === 'pick6' && !this.options.pick6PayoutsConfirmed;
     const sidePayout = set.payouts ? (line: PropLine, side: PlayableDirection): SidePayout => {

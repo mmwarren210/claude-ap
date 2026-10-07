@@ -9,7 +9,8 @@ import { decimalOdds, eventKey } from './market-map.js';
 
 // Each platform's lines in the one board-line shape Edge prices, with each side's own payout (spec §4):
 // - Underdog and DK Pick'em: their scraped boards, each side carrying its payout multiplier (a side with no multiplier is
-//   not offered). A Pick6 "gimme" is a promo: its chance shows but it is never ranked as an edge.
+//   not offered). A Pick6 promo (a "gimme", or a line a promo moved off its original number) shows its chance but is never
+//   ranked as an edge, never anchors another app, and books are checked against its original number, not the promo one.
 // - DraftKings and Hard Rock: their SharpAPI prices, every rung each book posts, each side at its own decimal odds.
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 24);
@@ -18,7 +19,7 @@ export type PayoutBook = Map<string, Partial<Record<PlayableDirection, SidePayou
 
 /** Underdog / DK Pick'em board lines from the scraped store, with each side's multiplier. */
 export function appLines(stored: readonly StoredLine[], app: 'underdog' | 'pick6', fetchedAt: string) {
-  const lines: PropLine[] = [], payouts: PayoutBook = new Map();
+  const lines: PropLine[] = [], payouts: PayoutBook = new Map(), promos = new Map<string, number | null>();
   for (const line of stored) {
     if (line.app !== app || line.removedAt) continue;
     const league = leagueInfo(line.league);
@@ -34,11 +35,13 @@ export function appLines(stored: readonly StoredLine[], app: 'underdog' | 'pick6
       team: line.teamName ?? line.team, opponent: line.opponent, homeTeam: home, awayTeam: away,
       market: lineMarket(line), threshold: line.line, availableDirections: sides, lineType: 'REGULAR', fetchedAt,
       ...(line.imageUrl ? { playerImageUrl: line.imageUrl } : {}) });
-    const gimme = line.promo?.gimme ? 'A DK Pick’em promo pick: its payout is promotional, so it is never ranked as an edge.' : undefined;
+    const moved = line.promo?.originalLine != null && line.promo.originalLine !== line.line;
+    if (line.promo?.gimme || moved) promos.set(id, moved ? line.promo!.originalLine : null);
+    const blocked = promos.has(id) ? 'A DK Pick’em promo pick: its payout is promotional, so it is never ranked as an edge.' : undefined;
     payouts.set(id, Object.fromEntries(sides.map((side) => [side, { kind: 'ENTRY', multiplier: line.multipliers?.[side] ?? 1,
-      ...(gimme ? { blocked: gimme } : {}) } satisfies SidePayout])));
+      ...(blocked ? { blocked } : {}) } satisfies SidePayout])));
   }
-  return { lines, payouts };
+  return { lines, payouts, promos };
 }
 
 /** A sportsbook's SharpAPI prices as board lines, every rung it posts, each side at its decimal odds. */

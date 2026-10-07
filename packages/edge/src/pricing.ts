@@ -230,6 +230,12 @@ export function priceBoard(input: PricingInput): PricingResult {
     const fair = paired.map((item) => item.fair);
     quotesUsed += fair.length;
     const market = marketSource(fair, profile, referencePoint);
+    // Step 9: the same quotes de-vigged proportionally. The power method puts most of a book's margin on the longshot, so a
+    // favorite comes out a little likelier than proportional splitting says; a sportsbook bet must clear both (DraftKings'
+    // +EV picks were almost all short-priced unders).
+    const proportional = paired.map(({ quote, fair: item }) => quote.overPrice && quote.underPrice
+      ? { ...item, fairOver: (1 / quote.overPrice) / (1 / quote.overPrice + 1 / quote.underPrice) } : item);
+    const marketProportional = market ? marketSource(proportional, profile, referencePoint) : null;
     const bookRows = paired.map(({ quote, fair: item }) => ({ bookmaker: quote.bookmaker, point: quote.point,
       overPrice: quote.overPrice, underPrice: quote.underPrice, fairOver: round(item.fairOver),
       twoSided: item.twoSided })).sort((a, b) => a.point - b.point || a.bookmaker.localeCompare(b.bookmaker));
@@ -308,6 +314,8 @@ export function priceBoard(input: PricingInput): PricingResult {
       const own = isRegular && distOut && blendOut;
       const dist = own ? distOut : distAll, blend = own ? blendOut : blendAll;
       const fairLine = edgeLine(dist);
+      const distProportional = marketProportional ? distOf(combine([marketProportional, statSource, own ? null : ladder, anchor])) : null;
+      const overProportional = distProportional ? conditionalOver(distProportional, threshold) : null;
       const outcome = outcomeAt(dist, threshold);
       const over = conditionalOver(dist, threshold);
       const sides = thresholdLines.map((line) => line.availableDirections.map((side) => ({ line, side })))
@@ -315,8 +323,10 @@ export function priceBoard(input: PricingInput): PricingResult {
       const payoutOf = (line: PropLine, side: PlayableDirection): SidePayout => input.sidePayout?.(line, side)
         ?? { kind: 'ENTRY', multiplier: line.lineType === 'REGULAR' ? 1 : altFactor(line, side) };
       const scored = sides.map(({ line, side }) => {
-        const probability = applyCalibration(input.calibration, line.sport, side === 'MORE' ? over : 1 - over);
         const payout = payoutOf(line, side);
+        const raw = side === 'MORE' ? over : 1 - over;
+        const rawProportional = overProportional === null ? raw : side === 'MORE' ? overProportional : 1 - overProportional;
+        const probability = applyCalibration(input.calibration, line.sport, payout.kind === 'ODDS' ? Math.min(raw, rawProportional) : raw);
         // Each side against its own bar: a pick'em leg needs the entry's break-even divided by its multiplier; a sportsbook
         // bet needs 1 / decimal odds.
         const breakEven = payout.kind === 'ODDS' ? 1 / payout.decimal

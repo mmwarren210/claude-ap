@@ -85,7 +85,7 @@ export function teamsMatch(a: string, b: string): boolean {
  * platform being priced). Returns the quotes and the match report.
  */
 export function matchBookPrices(lines: readonly PropLine[], prices: readonly FairPrice[], fetchedAt: string,
-  exclude: readonly string[] = []): { quotes: MarketQuote[]; report: MatchReport } {
+  exclude: readonly string[] = [], promos: ReadonlyMap<string, number | null> = new Map()): { quotes: MarketQuote[]; report: MatchReport } {
   const byPlayer = new Map<string, PropLine[]>();
   for (const line of lines) {
     const key = `${playerKey(line.sport, line.playerName)}|${canonicalMarket(line.sport, line.market)}`;
@@ -135,7 +135,7 @@ export function matchBookPrices(lines: readonly PropLine[], prices: readonly Fai
       market: line.market, playerName: line.playerName, point: price.line, overPrice: over, underPrice: under, fetchedAt,
       ...(price.observedAt ? { observedAt: new Date(price.observedAt).toISOString() } : {}) });
   }
-  const { kept, mismatches, samples, byMarket } = rejectMismatches(lines, quotes);
+  const { kept, mismatches, samples, byMarket } = rejectMismatches(lines, quotes, promos);
   const regularGroups = new Set(lines.filter((line) => line.lineType === 'REGULAR')
     .map((line) => `${playerKey(line.sport, line.playerName)}|${canonicalMarket(line.sport, line.market)}`));
   return { quotes: kept, report: { prices: considered, matched: kept.length, ambiguous, noEvent,
@@ -144,8 +144,12 @@ export function matchBookPrices(lines: readonly PropLine[], prices: readonly Fai
     mismatches, mismatchSamples: samples, mismatchByMarket: byMarket, noEventSamples } };
 }
 
-/** Drops quotes whose implied mean is more than 3 SD from the board's regular line for the same player and stat. */
-export function rejectMismatches(lines: readonly PropLine[], quotes: readonly MarketQuote[]) {
+/**
+ * Drops quotes whose implied mean is more than 3 SD from the board's regular line for the same player and stat.
+ * A promo line (DK Pick'em moving Dak Prescott's passing yards to 0.5) is checked at its original number, or not at all without one.
+ */
+export function rejectMismatches(lines: readonly PropLine[], quotes: readonly MarketQuote[],
+  promos: ReadonlyMap<string, number | null> = new Map()) {
   const regular = new Map<string, PropLine>();
   for (const line of lines) if (line.lineType === 'REGULAR') regular.set(`${line.eventId}|${normalizedName(line.playerName)}|${line.market}`, line);
   const kept: MarketQuote[] = [], samples: MatchReport['mismatchSamples'][number][] = [];
@@ -153,12 +157,13 @@ export function rejectMismatches(lines: readonly PropLine[], quotes: readonly Ma
   let mismatches = 0;
   for (const quote of quotes) {
     const line = regular.get(`${quote.eventId}|${normalizedName(quote.playerName)}|${quote.market}`);
-    if (!line) { kept.push(quote); continue; }
+    // A promo with no original number can't be checked; it isn't a mislabeled stat, and its payout is blocked anyway.
+    if (!line || promos.get(line.id) === null) { kept.push(quote); continue; }
     const profile = profileFor(line.sport, line.market);
     const fairOver = quote.overPrice && quote.underPrice
       ? (1 / quote.overPrice) / (1 / quote.overPrice + 1 / quote.underPrice) : 0.5;
     const quoteMean = fitMean(profile.family, profile.variance, quote.point, fairOver, profile.discrete);
-    const boardMean = fitMean(profile.family, profile.variance, line.threshold, 0.5, profile.discrete);
+    const boardMean = fitMean(profile.family, profile.variance, promos.get(line.id) ?? line.threshold, 0.5, profile.discrete);
     const sd = Math.sqrt(varianceAt(profile.variance, boardMean));
     if (Math.abs(quoteMean - boardMean) > 3 * sd) {
       mismatches++;

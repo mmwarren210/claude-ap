@@ -57,6 +57,30 @@ test('identity: one market table, events within 6 hours with a matching team, am
   assert.equal(far.quotes.length, 0);
 });
 
+test('9b: a promo line is checked at its original number, or not at all without one; it never anchors another app', async () => {
+  const promo = line('p6', { threshold: 0.5 });
+  const moved = matchBookPrices([promo], [price({ line: 9.5 })], start, [], new Map([['p6', 9.5]]));
+  assert.equal(moved.report.mismatches, 0);
+  assert.equal(moved.quotes.length, 1);
+  assert.equal(matchBookPrices([promo], [price({ line: 9.5 })], start, [], new Map([['p6', 0.25]])).report.mismatches, 1,
+    'a book far from the original number is still a mismatch');
+  assert.equal(matchBookPrices([promo], [price({ line: 9.5 })], start, [], new Map([['p6', null]])).report.mismatches, 0);
+  assert.equal(matchBookPrices([promo], [price({ line: 9.5 })], start).report.mismatches, 1, 'without the promo flag it is a mismatch');
+  const { appLines } = await import('../src/edge/platform-lines.js');
+  const { dfsAnchors } = await import('../src/edge/service.js');
+  const stored = (id: string, value: number, promoLine?: number) => ({ app: 'pick6', appLineId: id, league: 'NFL', gameId: 'g1',
+    player: 'Dak Prescott', team: 'DAL', teamName: null, opponent: 'PHI', stat: 'Passing Yards', line: value, tier: 'REGULAR',
+    directions: ['MORE', 'LESS'], startTime: start, imageUrl: null, home: { abbreviation: 'DAL', name: 'Dallas Cowboys' },
+    away: { abbreviation: 'PHI', name: 'Philadelphia Eagles' }, multipliers: { MORE: 1.8, LESS: 1.8 },
+    ...(promoLine !== undefined ? { promo: { gimme: false, originalLine: promoLine } } : {}) });
+  const built = appLines([stored('a', 0.5, 265.5), stored('b', 265.5)] as never, 'pick6', start);
+  assert.deepEqual([...built.promos], [['pick6:a', 265.5]]);
+  assert.match(String((built.payouts.get('pick6:a')?.MORE as { blocked?: string } | undefined)?.blocked), /promo/);
+  assert.equal((built.payouts.get('pick6:b')?.MORE as { blocked?: string } | undefined)?.blocked, undefined);
+  const anchors = dfsAnchors([{ platform: 'pick6', lines: built.lines, promos: built.promos }]);
+  assert.deepEqual([...anchors.values()].flatMap((byApp) => [...byApp.values()].flat()), [265.5]);
+});
+
 test('identity: board abbreviations match full names; one game within 3 hours matches when teams can’t be compared', async () => {
   const { teamsMatch } = await import('../src/edge/market-map.js');
   assert.equal(teamsMatch('NYY', 'New York Yankees'), true);
