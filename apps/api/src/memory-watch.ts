@@ -6,6 +6,7 @@ import { capped } from './context/sharp-props.js';
 // Memory watch: the container is killed without a trace when memory passes its cap, so past 3 GB this logs the
 // process's memory every few seconds with the requests in flight (host and path) to show which job is growing.
 const BIG = 20 * 1_048_576, REFUSE = 200 * 1_048_576;
+const fileOps = new Map<string, number>();
 const inFlight = new Map<number, { what: string; since: number }>();
 let nextId = 0;
 
@@ -53,7 +54,7 @@ export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000): NodeJS.Tim
     const served = [...incoming.values()].map((item) => `${item.what} ${Math.round((Date.now() - item.since) / 1000)}s`).slice(0, 10);
     const resources: Record<string, number> = {};
     for (const name of process.getActiveResourcesInfo()) resources[name] = (resources[name] ?? 0) + 1;
-    console.warn(`[memory] rss ${mb(memory.rss)} MB, heap ${mb(memory.heapUsed)} MB, external ${mb(memory.external)} MB, buffers ${mb(memory.arrayBuffers)} MB | in flight ${JSON.stringify(requests)} | serving ${JSON.stringify(served)} | resources ${JSON.stringify(resources)}`);
+    console.warn(`[memory] rss ${mb(memory.rss)} MB, heap ${mb(memory.heapUsed)} MB, external ${mb(memory.external)} MB, buffers ${mb(memory.arrayBuffers)} MB | in flight ${JSON.stringify(requests)} | serving ${JSON.stringify(served)} | resources ${JSON.stringify(resources)} | file ops ${JSON.stringify([...fileOps].sort((a, b) => b[1] - a[1]).slice(0, 6))}`);
   }, everyMs);
   timer.unref();
   return timer;
@@ -62,7 +63,16 @@ export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000): NodeJS.Tim
 /** Logs file reads and writes over 20 MB with their path (a store that grew past what it should be). */
 function watchFiles() {
   const promises = fs.promises as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
-  const readFile = promises.readFile!.bind(fs.promises), writeFile = promises.writeFile!.bind(fs.promises);
+  // Every fs.promises call in flight, counted by function and path, for the memory log.
+  for (const name of ['stat', 'open', 'access', 'readdir', 'appendFile', 'rename', 'rm', 'mkdir', 'readFile', 'writeFile']) {
+    const inner = promises[name]!.bind(fs.promises);
+    promises[name] = async (...args: unknown[]) => {
+      const key = `${name} ${String(args[0]).replace(/[0-9a-f-]{36}/g, '*')}`;
+      fileOps.set(key, (fileOps.get(key) ?? 0) + 1);
+      try { return await inner(...args); } finally { fileOps.set(key, fileOps.get(key)! - 1); if (!fileOps.get(key)) fileOps.delete(key); }
+    };
+  }
+  const readFile = promises.readFile!, writeFile = promises.writeFile!;
   promises.readFile = async (...args: unknown[]) => {
     // A file of hundreds of MB read whole (2026-10-07: a 2 GB read crashed the server every minute) is refused and named.
     if (typeof args[0] === 'string' || args[0] instanceof URL) {
