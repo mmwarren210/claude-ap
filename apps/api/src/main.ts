@@ -364,7 +364,9 @@ const edgeFactor=(name:string)=>{
 const edgeAlternateFactors=Object.fromEntries(([['GOBLIN',edgeFactor('EDGE_GOBLIN_FACTOR')],['DEMON',edgeFactor('EDGE_DEMON_FACTOR')]] as const)
   .filter((entry):entry is readonly ['GOBLIN'|'DEMON',number]=>entry[1]!==undefined)) as Partial<Record<'GOBLIN'|'DEMON',number>>;
 const edgeSnapshots=process.env.EDGE_ENGINE==='false'?null:(()=>{
-  try{return new SnapshotStore(process.env.CROWNIQ_EDGE_SNAPSHOTS_FILE ?? `${dataDir}/edge/snapshots.sqlite`);}
+  // v2 keys series by a short hash; the v1 file (full-text keys, 172 MB on 2026-10-07) is removed.
+  for(const suffix of ['','-wal','-shm','.compact'])rmSync(`${dataDir}/edge/snapshots.sqlite${suffix}`,{force:true});
+  try{return new SnapshotStore(process.env.CROWNIQ_EDGE_SNAPSHOTS_FILE ?? `${dataDir}/edge/snapshots-v2.sqlite`);}
   catch(error){console.error('[edge-snapshots] unavailable',error instanceof Error?error.message:error);return null;}
 })();
 const edgeDispersion=new DispersionStore(`${dataDir}/edge/edge-dispersion-v1.json`);

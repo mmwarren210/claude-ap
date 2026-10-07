@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync, renameSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -38,8 +39,9 @@ export interface SnapshotRow {
 
 export interface ClosingRow extends SnapshotRow { readonly closedAt: string }
 
-const keyOf = (row: SnapshotRow) => JSON.stringify([row.source, row.platform, row.eventKey, row.playerKey, row.market,
-  row.number, row.side, row.lineType ?? null]);
+// A short hash of everything that identifies a series (the full text, repeated in the key index, made rows ~1.2 KB).
+const keyOf = (row: SnapshotRow) => createHash('sha1').update(JSON.stringify([row.source, row.platform, row.eventKey,
+  row.playerKey, row.market, row.number, row.side, row.lineType ?? null])).digest('base64url').slice(0, 16);
 const valueOf = (row: SnapshotRow) => JSON.stringify([row.price ?? null, row.probability ?? null, row.multiplier ?? null]);
 
 export class SnapshotStore {
