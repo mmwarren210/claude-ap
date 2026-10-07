@@ -42,3 +42,18 @@ test('not read: NHL, segments; the app comes from the line id; ESPN decisions be
     seasonTypes: [{ displayName: '2026 Regular Season', categories: [{ events: [{ eventId: 'g', stats: ['7.0', '1', '9', 'W(12-4)'] }] }] }] });
   assert.equal(won!.metrics.win, 1);
 });
+
+test('tennis: PrizePicks chart over a match, with the player’s average aces and double faults', async () => {
+  const { tennisFantasy } = await import('../src/fantasy-history.js');
+  // Won 6-4 3-6 6-3: 15 games won, 13 lost, 2 sets won of 3; 6 aces and 2 double faults on average.
+  assert.equal(tennisFantasy({ gamesWon: 15, gamesLost: 13, setsWon: 2, totalSets: 3 }, 6, 2), 10 + 15 - 13 + 6 - 3 + 6 - 2);
+  assert.equal(tennisFantasy({ gamesWon: 15 }, 6, 2), null);
+  const { PlayerHistory } = await import('../src/player-history.js');
+  const espn = { name: 'espn', sports: ['TENNIS'], refresh: async () => 0, games: async () => ({ source: 'ESPN', url: null, perMap: false,
+    games: [{ date: '2030-01-02', opponent: null, stats: { gamesWon: 12, gamesLost: 6, setsWon: 2, totalSets: 2 } }] }) };
+  const sleeper = { name: 'sleeper', sports: ['TENNIS'], refresh: async () => 0, games: async () => null,
+    valuesFor: async (_name: string, market: string) => ({ source: 'Sleeper', url: null,
+      values: [{ date: '2030-01-01', opponent: null, value: market === 'aces' ? 4 : 1 }] }) };
+  const history = new PlayerHistory([espn, sleeper] as never);
+  assert.deepEqual((await history.tennisFantasy('Test Player'))?.values, [10 + 12 - 6 + 6 + 4 - 1]);
+});

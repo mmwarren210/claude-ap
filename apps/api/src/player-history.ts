@@ -1,3 +1,4 @@
+import { tennisFantasy } from './fantasy-history.js';
 import type { PlayerGameLog, PropLine } from '@crowniq/contracts';
 import { normalizedName } from './context/match.js';
 import { mapsCovered, seriesTotals } from './free-history-grading.js';
@@ -451,6 +452,25 @@ export class PlayerHistory {
         if (totals.length) return { values: totals, source: result.source, url: result.url, perMap: false };
       }
       if (values.length) return { values, source: result.source, url: result.url, perMap: result.perMap };
+    }
+    return null;
+  }
+
+  /**
+   * A tennis player's recent PrizePicks fantasy scores (newest first): each finished match's games and sets, plus the
+   * player's average aces and double faults. Null without both match results and ace/double-fault history.
+   */
+  async tennisFantasy(playerName: string): Promise<{ values: number[]; source: string } | null> {
+    const [aces, faults] = await Promise.all([this.values('TENNIS', playerName, 'aces'), this.values('TENNIS', playerName, 'double_faults')]);
+    if (!aces?.values.length || !faults?.values.length) return null;
+    const mean = (list: readonly { value: number }[]) => list.reduce((sum, item) => sum + item.value, 0) / list.length;
+    for (const source of this.sourcesFor('TENNIS')) {
+      if (source.valuesFor) continue;
+      const result = await source.games(playerName).catch(() => null);
+      if (!result?.games.length) continue;
+      const values = result.games.map((game) => tennisFantasy(game.stats, mean(aces.values), mean(faults.values)))
+        .filter((value): value is number => value !== null);
+      if (values.length) return { values, source: `${result.source} with ${aces.source} aces and double faults` };
     }
     return null;
   }

@@ -13,6 +13,10 @@ import type { PropLine } from '@crowniq/contracts';
 //   Underdog the same except walk 3, hit by pitch 3, steal 4 (and double 5).
 // - MLB pitchers: PrizePicks win 6, quality start 4, earned run -3, strikeout 3, out 1; Underdog win 5, quality start 5,
 //   earned run -3, strikeout 3, inning 3 (1 per out).
+// - PrizePicks tennis: 10 for playing the match, +1 per game won, -1 per game lost, +3 per set won, -3 per set lost, +1 per
+//   ace, -1 per double fault (Rotowire's PrizePicks guide). ESPN's results give games and sets per match; aces and double
+//   faults come from Sleeper's recent values as the player's average (so a match's spread is slightly understated).
+//   Underdog tennis fantasy isn't read (its chart isn't confirmed).
 // Not read: NHL (both apps score blocked shots and hits, which ESPN's logs don't carry), DK Pick'em (its chart isn't
 // confirmed), and any segment line (1st half, 1st quarter). ESPN's logs carry no two-point conversions, and a
 // quarterback's log no fumbles lost, so those count 0 (a slight overstatement; receivers' and backs' fumbles count).
@@ -79,4 +83,11 @@ export function fantasyValue(app: FantasyApp, sport: string, market: string, row
     return has(row, 'innings') ? pitcher(row, app) : hitter(row, app);
   }
   return null;
+}
+
+/** One tennis match on PrizePicks' chart, with the player's average aces and double faults. */
+export function tennisFantasy(stats: Readonly<Record<string, number>>, aces: number, doubleFaults: number): number | null {
+  const { gamesWon, gamesLost, setsWon, totalSets } = stats;
+  if (![gamesWon, gamesLost, setsWon, totalSets].every((value) => Number.isFinite(value))) return null;
+  return 10 + gamesWon! - gamesLost! + 3 * setsWon! - 3 * (totalSets! - setsWon!) + aces - doubleFaults;
 }

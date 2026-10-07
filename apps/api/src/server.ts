@@ -1268,6 +1268,11 @@ export function buildServer(options: ServerOptions = {}) {
     // Fantasy score: each app's own chart over ESPN's box scores (DK Pick'em's chart isn't confirmed: no read).
     if(isFantasyMarket(line.market)){
       const app=fantasyApp(line);
+      if(line.sport==='TENNIS'){
+        if(app!=='prizepicks'||!options.playerHistory?.tennisFantasy)return null;
+        const found=await options.playerHistory.tennisFantasy(line.playerName).catch(()=>null);
+        return found&&found.values.length>=5?found:null;
+      }
       if(app==='pick6'||!options.espnHistory?.recentFantasy)return null;
       const values=await options.espnHistory.recentFantasy({eventId:line.eventId,eventName:line.eventName,eventStartTime:line.eventStartTime,
         league:line.league,playerId:line.playerId,playerName:line.playerName,team:line.team,opponent:line.opponent,
