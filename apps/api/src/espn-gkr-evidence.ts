@@ -6,6 +6,8 @@ import type { ResearchAdapter, ResearchHealth, ResearchTarget } from '@crowniq/e
 import { matchGame, normalizedPlayer, sharedName } from './box-score-results.js';
 import type { Game } from './box-score-results.js';
 import { historyEvidence } from './stat-api-gkr-evidence.js';
+import { fantasyValue } from './fantasy-history.js';
+import type { FantasyApp } from './fantasy-history.js';
 import type { HistorySpec } from './stat-api-gkr-evidence.js';
 
 // GKR history for the sports the Stat API doesn't cover (owner approved 2026-10-04: "GKR should score everything"):
@@ -15,7 +17,9 @@ import type { HistorySpec } from './stat-api-gkr-evidence.js';
 const SITE = 'https://site.api.espn.com/apis/site/v2/sports';
 const COMMON = 'https://site.api.espn.com/apis/common/v3/sports';
 const paths: Readonly<Record<string, string>> = { NHL: 'hockey/nhl', NCAAFB: 'football/college-football', SOCCER: 'soccer/all',
-  WNBA: 'basketball/wnba' };
+  WNBA: 'basketball/wnba',
+  // Fantasy score lines only (History Read and Edge): these sports have no ESPN spec, so GKR never reads them here.
+  NFL: 'football/nfl', NBA: 'basketball/nba', MLB: 'baseball/mlb' };
 
 type Row = { occurredAt: string | null; metrics: Readonly<Record<string, number>> };
 const n = (row: Row, key: string) => Number.isFinite(row.metrics[key]) ? row.metrics[key] : null;
@@ -130,6 +134,8 @@ export function gameLogRows(log: unknown): Row[] {
         // Basketball pairs made and attempted in one column: "fieldGoalsMade-fieldGoalsAttempted" = "2-5".
         const pair = /^(\w+)-(\w+)$/.exec(name), cells = /^(\d+)-(\d+)$/.exec(str(stats[index]).trim());
         if (pair && cells) { metrics[pair[1]!] = Number(cells[1]); metrics[pair[2]!] = Number(cells[2]); return; }
+        // A pitcher's decision: "W(2-1)", "L(0-1)" or "-".
+        if (name === 'wins-losses') { metrics.win = /^W/.test(str(stats[index]).trim()) ? 1 : 0; return; }
         const number = cell(stats[index]); if (name && number !== null) metrics[name] = number;
       });
       const date = str(obj(events[id])?.gameDate);
@@ -263,6 +269,23 @@ export class EspnGkrEvidence implements ResearchAdapter {
     return log.rows.filter((row) => !row.occurredAt || Date.parse(row.occurredAt) < before)
       .sort((a, b) => (b.occurredAt ?? '').localeCompare(a.occurredAt ?? ''))
       .map((row) => spec.value(row)).filter((value): value is number => value !== null && Number.isFinite(value)).slice(0, 15);
+  }
+
+  /** A player's last 15 fantasy scores before this game, scored by one app's chart (History Read and Edge). */
+  async recentFantasy(target: ResearchTarget, app: FantasyApp): Promise<number[] | null> {
+    if (!paths[target.sport]) return null;
+    const counters = { searches: 0, cacheHits: 0 };
+    const rosters = await this.rosters(target, counters);
+    if (!rosters) return null;
+    const matches = sharedName(rosters.athletes.filter((athlete) => normalizedPlayer(athlete.name) === normalizedPlayer(target.playerName)),
+      target.team, (athlete) => athlete.team);
+    if (matches.length !== 1) return null;
+    const log = await this.gameLog(target.sport, matches[0].id, counters);
+    const before = Date.parse(target.eventStartTime);
+    return log.rows.filter((row) => !row.occurredAt || Date.parse(row.occurredAt) < before)
+      .sort((a, b) => (b.occurredAt ?? '').localeCompare(a.occurredAt ?? ''))
+      .map((row) => fantasyValue(app, target.sport, target.market, row))
+      .filter((value): value is number => value !== null && Number.isFinite(value)).slice(0, 15);
   }
 
   async research(targets: readonly ResearchTarget[]): Promise<readonly Evidence[]> {

@@ -5,6 +5,7 @@ import { bookLines } from './book-picks.js';
 import type { BookFallback } from './book-picks.js';
 import type { ShopEntry, ShopPick } from './line-shop.js';
 import { HistoryReads } from './history-read.js';
+import { fantasyApp, isFantasyMarket } from './fantasy-history.js';
 import { statApiValueFor } from './stat-api-gkr-evidence.js';
 import type { HistoryRead } from './history-read.js';
 import { twoMaps } from './player-history.js';
@@ -152,7 +153,8 @@ export interface ServerOptions {
   /** Free public history (ESPN tennis, OpenDota, Leaguepedia) for the cards' game logs. */
   playerHistory?: PlayerHistory | null;
   /** ESPN game logs (soccer, NHL, college football) for History Reads. */
-  espnHistory?: { recentValues(target: import('@crowniq/engine').ResearchTarget): Promise<number[] | null> } | null;
+  espnHistory?: { recentValues(target: import('@crowniq/engine').ResearchTarget): Promise<number[] | null>;
+    recentFantasy?(target: import('@crowniq/engine').ResearchTarget, app: import('./fantasy-history.js').FantasyApp): Promise<number[] | null> } | null;
   /** CrownIQ's own archive of game logs, graded results and lines. */
   historyArchive?: HistoryArchive | null;
   /** Reads The Odds API's credit balance (a free call), for the owner. */
@@ -1256,6 +1258,16 @@ export function buildServer(options: ServerOptions = {}) {
   // History Reads: a free More/Less from each player's recent results (CrownIQ's history, then the free public
   // sources) on lines GKR doesn't play, with the books' no-vig chance blended in where there is one.
   const historyReads=new HistoryReads(async(line)=>{
+    // Fantasy score: each app's own chart over ESPN's box scores (DK Pick'em's chart isn't confirmed: no read).
+    if(isFantasyMarket(line.market)){
+      const app=fantasyApp(line);
+      if(app==='pick6'||!options.espnHistory?.recentFantasy)return null;
+      const values=await options.espnHistory.recentFantasy({eventId:line.eventId,eventName:line.eventName,eventStartTime:line.eventStartTime,
+        league:line.league,playerId:line.playerId,playerName:line.playerName,team:line.team,opponent:line.opponent,
+        homeTeam:line.homeTeam??null,awayTeam:line.awayTeam??null,market:line.market,sport:line.sport,
+        sourceSportKey:line.sourceSportKey??null},app).catch(()=>null);
+      return values&&values.length>=5?{values,source:`ESPN box scores, ${app==='underdog'?'Underdog':'PrizePicks'} fantasy scoring`}:null;
+    }
     const log=options.internalHistory?await options.internalHistory.gameLog(line.sport,line.playerId,line.playerName,line.market,
       new Date(line.eventStartTime)).catch(()=>null):null;
     if(log&&log.games.length>=5)return {values:log.games.map((game)=>game.value),source:'CrownIQ history'};

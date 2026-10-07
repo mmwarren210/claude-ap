@@ -231,7 +231,8 @@ export function dfsAnchors(sets: readonly { platform: string; lines: readonly Pr
   for (const set of sets) {
     if (!isPickem(set.platform)) continue;
     for (const line of set.lines) {
-      if (line.lineType !== 'REGULAR' || set.promos?.has(line.id)) continue;
+      // Fantasy score is scored differently per app (PrizePicks full PPR, Underdog half PPR), so it never anchors across apps.
+      if (line.lineType !== 'REGULAR' || set.promos?.has(line.id) || /fantasy/.test(line.market)) continue;
       const byPlatform = index.get(anchorKey(line)) ?? new Map<string, number[]>();
       const numbers = byPlatform.get(set.platform) ?? [];
       if (!numbers.includes(line.threshold)) numbers.push(line.threshold);

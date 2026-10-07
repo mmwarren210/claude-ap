@@ -66,7 +66,9 @@ export class HistoryReads {
   valuesFor(line: PropLine) { return this.values(line); }
 
   private values(line: PropLine) {
-    const key = `${line.sport}|${line.playerId}|${line.market}`, now = this.clock().getTime(), cached = this.cache.get(key);
+    // Fantasy score differs by app (PrizePicks full PPR, Underdog half PPR...), so its values are cached per app.
+    const app = /fantasy/.test(line.market) ? `|${line.id.split(':')[0]}` : '';
+    const key = `${line.sport}|${line.playerId}|${line.market}${app}`, now = this.clock().getTime(), cached = this.cache.get(key);
     if (cached && cached.until > now) return cached.value;
     const value = this.lookup(line).catch(() => null);
     this.cache.set(key, { until: now + 10 * 60_000, value });
