@@ -120,11 +120,12 @@ const playerHistory=process.env.CROWNIQ_FREE_HISTORY==='false'?null
     // Slow first load (one request a second), so last.
     new OpenDotaHistory(),new LeaguepediaHistory()],historyArchive);
 playerHistory?.start();
-// UFC fight history from UFCStats (about 3.5 cents a fighter, each fighter at most weekly, under the shared scraper cap).
-const ufcHistory=process.env.APIFY_TOKEN?.trim()?new UfcHistory(async(lastName)=>{
-  if(await scraperBudget.remaining()<0.25)return null;
-  const run=await apify.runActor('parseforge/ufcstats-scraper',{searchQuery:lastName,maxItems:5,includeFightHistory:true},
-    {maxChargeUsd:0.25,timeoutSecs:300});
+// UFC fight history from UFCStats (a new fighter about 13 cents; known fighters refreshed every 21 days in one batched run).
+const ufcHistory=process.env.APIFY_TOKEN?.trim()?new UfcHistory(async(input)=>{
+  if(await scraperBudget.remaining()<0.5)return null;
+  const run=await apify.runActor('parseforge/ufcstats-scraper','urls' in input
+    ?{startUrls:input.urls.map((url)=>({url})),maxItems:input.urls.length,includeFightHistory:true}
+    :{searchQuery:input.lastName,maxItems:5,includeFightHistory:true},{maxChargeUsd:'urls' in input?2:0.25,timeoutSecs:600});
   await scraperBudget.record(run.usageUsd);
   return run.status==='SUCCEEDED'?await apify.datasetItems(run.datasetId):null;
 },`${dataDir}/ufc-history.json`):null;

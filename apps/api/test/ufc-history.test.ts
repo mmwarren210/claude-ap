@@ -28,7 +28,7 @@ test('UFC: PrizePicks’ MMA chart, rounds as a decimal, no-contests left out', 
 
 test('UFC: an unknown fighter is fetched once in the background, then read', async () => {
   let runs = 0;
-  const history = new UfcHistory(async (last) => { runs++; assert.equal(last, 'Jauregui'); return [row]; }, null);
+  const history = new UfcHistory(async (input) => { runs++; assert.deepEqual(input, { lastName: 'Jauregui' }); return [row]; }, null);
   assert.equal(await history.values('Yazmin Jauregui', 'fantasy_score'), null, 'nothing yet: the fetch starts');
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.deepEqual((await history.values('Yazmin Jauregui', 'fantasy_score'))?.values.length, 3);

@@ -4,7 +4,8 @@ import { normalizedName } from './context/match.js';
 
 // UFC fighters' fight-by-fight history from UFCStats (Apify actor parseforge/ufcstats-scraper, about 3.5 cents a fighter),
 // for History Read and Edge on PrizePicks' UFC lines: Fantasy Score, Significant Strikes, Takedowns and Total Rounds.
-// Each fighter on the board is fetched once, then again after 7 days; the record is saved so a restart doesn't refetch.
+// A new fighter is found by last name (one run each, about 13 cents with the run's start fee); known fighters are
+// refreshed every 21 days, batched into one run by their saved UFCStats links. Saved so a restart doesn't refetch.
 //
 // PrizePicks' MMA chart (owner screenshots 2026-10-07): significant strike 0.5, submission attempt 4, takedown 5,
 // knockdown 10; a win in round 1 / 2 / 3 / 4 / 5 adds 50 / 40 / 30 / 20 / 20, a decision win 10, a draw 0.
@@ -13,10 +14,11 @@ export interface UfcFight {
   readonly date: string; readonly result: string; readonly method: string; readonly round: number; readonly time: string;
   readonly knockdowns: number; readonly strikes: number; readonly takedowns: number; readonly submissions: number;
 }
-type Fighter = { fetchedAt: string; name: string; fights: UfcFight[] };
-export type UfcRunner = (lastName: string) => Promise<unknown[] | null>;
+type Fighter = { fetchedAt: string; name: string; url?: string | null; fights: UfcFight[] };
+/** One run: a last-name search, or a batch of known fighters' UFCStats links. */
+export type UfcRunner = (input: { lastName: string } | { urls: string[] }) => Promise<unknown[] | null>;
 
-const WEEK = 7 * 86_400_000;
+const REFRESH = 21 * 86_400_000;
 const num = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : 0;
 const text = (value: unknown) => typeof value === 'string' ? value : '';
 
@@ -80,19 +82,44 @@ export class UfcHistory {
     await writeFile(this.file, JSON.stringify([...this.fighters.values()]));
   }
 
-  /** Fetches a fighter when unknown or a week old (in the background; one fetch per fighter at a time). */
+  private stale = new Set<string>();
+  private refreshTimer: NodeJS.Timeout | null = null;
+
+  /** New fighters are searched now; known ones past 21 days wait a minute and go in one batched run by link. */
   private ensure(name: string) {
     const key = normalizedName(name), known = this.fighters.get(key);
-    if (!this.runner || (known && this.clock().getTime() - Date.parse(known.fetchedAt) < WEEK) || this.fetching.has(key)) return;
+    if (!this.runner || this.fetching.has(key)) return;
+    if (known && this.clock().getTime() - Date.parse(known.fetchedAt) < REFRESH) return;
+    if (known?.url) {
+      this.stale.add(key);
+      this.refreshTimer ??= setTimeout(() => { this.refreshTimer = null; void this.refreshStale().catch(() => undefined); }, 60_000);
+      this.refreshTimer.unref?.();
+      return;
+    }
     const last = name.trim().split(/\s+/).at(-1) ?? name;
     const run = (async () => {
-      const rows = await this.runner!(last).catch(() => null);
+      const rows = await this.runner!({ lastName: last }).catch(() => null);
       if (!rows) return;
-      const match = rows.find((row) => normalizedName(text((row as { fullName?: unknown }).fullName)) === key);
-      this.fighters.set(key, { fetchedAt: this.clock().toISOString(), name, fights: match ? fightsFrom(match) : [] });
+      const match = rows.find((row) => normalizedName(text((row as { fullName?: unknown }).fullName)) === key) as { url?: unknown } | undefined;
+      this.fighters.set(key, { fetchedAt: this.clock().toISOString(), name, url: match ? text(match.url) || null : null,
+        fights: match ? fightsFrom(match) : [] });
       await this.save().catch(() => undefined);
     })().finally(() => this.fetching.delete(key));
     this.fetching.set(key, run);
+  }
+
+  private async refreshStale() {
+    const keys = [...this.stale].slice(0, 40);
+    for (const key of keys) this.stale.delete(key);
+    const urls = keys.map((key) => this.fighters.get(key)?.url).filter((url): url is string => !!url);
+    if (!urls.length || !this.runner) return;
+    const rows = await this.runner({ urls }).catch(() => null);
+    if (!rows) return;
+    for (const row of rows) {
+      const key = normalizedName(text((row as { fullName?: unknown }).fullName)), known = this.fighters.get(key);
+      if (known) this.fighters.set(key, { ...known, fetchedAt: this.clock().toISOString(), fights: fightsFrom(row) });
+    }
+    await this.save().catch(() => undefined);
   }
 
   /** A fighter's recent values for a UFC line (newest first), or null while unknown; unknown fighters are fetched. */
