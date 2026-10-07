@@ -68,15 +68,26 @@ test('Dota from OpenDota: recent pro matches, each match’s listed pros, kept a
   assert.ok(urls.length > calls);
 });
 
-test('League of Legends from Leaguepedia: a player’s last pro games by page or in-game name', async () => {
-  let asked = '';
-  const fetchFn: typeof fetch = async (input) => { asked = String(input); return json({ cargoquery: [
-    { title: { Kills: '4', Deaths: '2', Assists: '6', CS: '310', Date: '2030-10-01 09:00:00', Team: 'FLY' } },
-    { title: { Kills: '1', Deaths: '3', Assists: '2', CS: '280', Date: '2030-09-30 09:00:00', Team: 'FLY' } }] }); };
-  const history = new PlayerHistory([new LeaguepediaHistory(fetchFn, () => now)], null, () => now);
+test('League of Legends from Leaguepedia: recent pro games in bulk, by in-game or page name, refreshed every 30 minutes', async () => {
+  const asked: string[] = [];
+  let clock = now;
+  const fetchFn: typeof fetch = async (input) => { asked.push(decodeURIComponent(String(input).replace(/\+/g, ' '))); return json({ cargoquery: [
+    { title: { Name: 'Massu', Link: 'Massu (Fahad Abdulmalek)', Team: 'FLY', GameId: 'g1', Kills: '4', Deaths: '2', Assists: '6', CS: '310', Date: '2030-10-01 09:00:00' } },
+    { title: { Name: 'Rival', Link: 'Rival', Team: 'C9', GameId: 'g1', Kills: '2', Deaths: '4', Assists: '1', CS: '250', Date: '2030-10-01 09:00:00' } },
+    { title: { Name: 'Massu', Link: 'Massu (Fahad Abdulmalek)', Team: 'FLY', GameId: 'g0', Kills: '1', Deaths: '3', Assists: '2', CS: '280', Date: '2030-09-30 09:00:00' } }] }); };
+  const source = new LeaguepediaHistory(fetchFn, () => clock, async () => undefined);
+  const history = new PlayerHistory([source], null, () => clock);
   const log = await history.gameLog('LOL', 'LOL:m', 'Massu', 'creep_score');
   assert.deepEqual(log?.games.map((game) => game.value), [310, 280]);
-  assert.ok(decodeURIComponent(asked).includes('ScoreboardPlayers.Link="Massu"'));
+  assert.equal((await source.games('Massu'))?.games[0]?.opponent, 'C9');
+  assert.equal(asked.length, 1, 'one bulk query, not one per player');
+  assert.ok(asked[0]!.includes('ScoreboardPlayers.DateTime_UTC >='));
+  await source.games('Rival');
+  assert.equal(asked.length, 1, 'answered from memory');
+  clock = new Date(now.getTime() + 31 * 60_000);
+  await source.games('Massu');
+  await source.refresh();
+  assert.equal(asked.length, 2, 'reloaded after 30 minutes');
 });
 
 test('Sleeper: each line’s recent performance for that exact stat; matched across stat spellings; refreshed at most twice a day', async () => {

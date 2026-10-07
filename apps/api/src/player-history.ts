@@ -174,8 +174,9 @@ export class OpenDotaHistory implements HistorySource {
     }
     throw new Error('OPENDOTA_HTTP_429');
   }
+  private loadedAt = 0;
   refresh(): Promise<number> {
-    this.refreshing ??= this.load().finally(() => { this.refreshing = null; });
+    this.refreshing ??= this.load().finally(() => { this.refreshing = null; this.loadedAt = Date.now(); });
     return this.refreshing;
   }
   private async load(): Promise<number> {
@@ -224,38 +225,101 @@ export class OpenDotaHistory implements HistorySource {
     return this.players.size;
   }
   async games(playerName: string): Promise<HistoryResult | null> {
+    // New pro matches hourly (only unseen ones load), so finished picks find their maps without waiting for the 12-hour timer.
+    if (this.loadedAt && Date.now() - this.loadedAt > 3600_000) void this.refresh().catch(() => undefined);
     const games = this.players.get(normalizedName(playerName));
     if (!games?.length && !this.players.size && !this.lastError) this.lastError = 'NOT_LOADED_YET';
     return games?.length ? { games, source: this.name, url: 'https://www.opendota.com/matches/pro', perMap: true } : null;
   }
 }
 
-/** League of Legends from Leaguepedia's free data: a player's last 20 pro games (kills, deaths, assists, creep score). */
-export class LeaguepediaHistory extends CachedSource {
+/**
+ * League of Legends from Leaguepedia's free data, loaded in bulk like OpenDota: every pro game's scoreboard rows (kills,
+ * deaths, assists, creep score) for the last 21 days, then the last 48 hours again every 30 minutes, since scoreboards are
+ * often entered hours after the game. Asking per player was rate-limited from Railway and cached results from before a
+ * game for six hours, so finished picks never found their game (LoL grading sat at 0%, 2026-10-06).
+ */
+export class LeaguepediaHistory implements HistorySource {
   readonly name = 'Leaguepedia pro games';
   readonly sports = ['LOL'];
-  protected async load(playerName: string): Promise<HistoryResult | null> {
-    const name = playerName.replace(/["\\]/g, '');
-    const params = new URLSearchParams({ action: 'cargoquery', format: 'json', tables: 'ScoreboardPlayers',
-      fields: 'ScoreboardPlayers.Kills=Kills,ScoreboardPlayers.Deaths=Deaths,ScoreboardPlayers.Assists=Assists,' +
-        'ScoreboardPlayers.CS=CS,ScoreboardPlayers.DateTime_UTC=Date,ScoreboardPlayers.Team=Team',
-      where: `ScoreboardPlayers.Link="${name}" OR ScoreboardPlayers.Name="${name}"`,
-      order_by: 'ScoreboardPlayers.DateTime_UTC DESC', limit: String(KEEP) });
-    let body: Json | null = null;
-    // Leaguepedia throttles shared cloud servers; two slower tries before giving up for now.
-    for (const wait of [0, 4000, 12000]) {
-      if (wait) await new Promise<void>((done) => { const timer = setTimeout(done, wait); timer.unref?.(); });
-      body = obj(await this.json(`https://lol.fandom.com/api.php?${params}`));
-      if (String(obj(body?.error)?.code ?? '') !== 'ratelimited') break;
+  lastError: string | null = null;
+  private players = new Map<string, Map<string, HistoryGame>>();
+  private loadedAt = 0;
+  private refreshing: Promise<number> | null = null;
+  constructor(private readonly fetchFn: typeof fetch = fetch, private readonly clock: () => Date = () => new Date(),
+    private readonly pause = (ms: number) => new Promise<void>((done) => { const timer = setTimeout(done, ms); timer.unref?.(); }),
+    private readonly days = 21, private readonly everyMinutes = 30) {}
+
+  refresh(): Promise<number> {
+    this.refreshing ??= this.load().finally(() => { this.refreshing = null; });
+    return this.refreshing;
+  }
+
+  private async query(params: URLSearchParams): Promise<Json[]> {
+    for (const wait of [0, 5000, 15_000, 45_000]) {
+      if (wait) await this.pause(wait);
+      const response = await this.fetchFn(`https://lol.fandom.com/api.php?${params}`, { headers: { accept: 'application/json',
+        'user-agent': 'CrownIQ/1.0 (pick research; contact via crowniq.up.railway.app)' }, signal: AbortSignal.timeout(30_000) });
+      if (response.status === 429) continue;
+      if (!response.ok) throw new Error(`HISTORY_HTTP_${response.status}`);
+      const body = obj(await response.json());
+      const code = String(obj(body?.error)?.code ?? '');
+      if (code === 'ratelimited') continue;
+      if (code) throw new Error(`CARGO_${code.slice(0, 40)}`);
+      return arr(body?.cargoquery).map((value) => obj(obj(value)?.title) ?? {});
     }
-    if (body?.error) { this.lastError = `CARGO_${String(obj(body.error)?.code ?? 'ERROR').slice(0, 40)}`; throw new Error(this.lastError); }
-    const games = arr(body?.cargoquery).flatMap((value) => {
-      const row = obj(obj(value)?.title), date = String(row?.Date ?? '');
-      if (!Number.isFinite(Date.parse(date.replace(' ', 'T') + 'Z'))) return [];
-      return [{ date: new Date(date.replace(' ', 'T') + 'Z').toISOString(), opponent: null, stats: { kills: num(row?.Kills) ?? NaN,
-        deaths: num(row?.Deaths) ?? NaN, assists: num(row?.Assists) ?? NaN, cs: num(row?.CS) ?? NaN } }];
-    });
-    return games.length ? { games, source: this.name, url: `https://lol.fandom.com/wiki/${encodeURIComponent(name)}`, perMap: true } : null;
+    throw new Error('CARGO_ratelimited');
+  }
+
+  private async load(): Promise<number> {
+    const now = this.clock().getTime();
+    const since = new Date(now - (this.loadedAt ? 2 : this.days) * 86_400_000).toISOString().slice(0, 19).replace('T', ' ');
+    try {
+      const rows: Json[] = [];
+      for (let page = 0; page < 80; page++) {
+        const batch = await this.query(new URLSearchParams({ action: 'cargoquery', format: 'json', tables: 'ScoreboardPlayers',
+          fields: 'ScoreboardPlayers.Name=Name,ScoreboardPlayers.Link=Link,ScoreboardPlayers.Team=Team,ScoreboardPlayers.GameId=GameId,' +
+            'ScoreboardPlayers.Kills=Kills,ScoreboardPlayers.Deaths=Deaths,ScoreboardPlayers.Assists=Assists,ScoreboardPlayers.CS=CS,' +
+            'ScoreboardPlayers.DateTime_UTC=Date',
+          where: `ScoreboardPlayers.DateTime_UTC >= "${since}"`, order_by: 'ScoreboardPlayers.DateTime_UTC ASC',
+          limit: '500', offset: String(page * 500) }));
+        rows.push(...batch);
+        if (batch.length < 500) break;
+        await this.pause(2000);
+      }
+      // Each game's teams, so a player's row carries the opponent.
+      const teams = new Map<string, Set<string>>();
+      for (const row of rows) { const id = String(row.GameId ?? ''); if (id && row.Team) teams.set(id, (teams.get(id) ?? new Set()).add(String(row.Team))); }
+      for (const row of rows) {
+        const date = String(row.Date ?? ''), at = Date.parse(date.replace(' ', 'T') + 'Z'), id = String(row.GameId ?? '');
+        if (!Number.isFinite(at) || !id) continue;
+        const opponent = [...teams.get(id) ?? []].find((team) => team !== String(row.Team)) ?? null;
+        const game: HistoryGame = { date: new Date(at).toISOString(), opponent, stats: { kills: num(row.Kills) ?? NaN,
+          deaths: num(row.Deaths) ?? NaN, assists: num(row.Assists) ?? NaN, cs: num(row.CS) ?? NaN } };
+        // By in-game name and by page name without its disambiguation ("Doran (Choi Hyeon-joon)" → "Doran").
+        for (const name of new Set([String(row.Name ?? ''), String(row.Link ?? '').replace(/\s*\(.*\)\s*$/, '')])) {
+          if (!name.trim()) continue;
+          const key = normalizedName(name), games = this.players.get(key) ?? new Map<string, HistoryGame>();
+          games.set(id, game); this.players.set(key, games);
+        }
+      }
+      // Keep each player's newest games only.
+      for (const [key, games] of this.players) {
+        if (games.size > KEEP) this.players.set(key, new Map([...games].sort((a, b) => b[1].date.localeCompare(a[1].date)).slice(0, KEEP)));
+      }
+      this.loadedAt = now; this.lastError = null;
+    } catch (error) { this.lastError = String(error instanceof Error ? error.message : error).slice(0, 120); }
+    return this.players.size;
+  }
+
+  async games(playerName: string): Promise<HistoryResult | null> {
+    // Stale (or never loaded): refresh in the background; a first load is awaited so the first answer isn't empty.
+    if (this.clock().getTime() - this.loadedAt > this.everyMinutes * 60_000) {
+      const loading = this.refresh();
+      if (!this.loadedAt) await loading;
+    }
+    const games = [...this.players.get(normalizedName(playerName))?.values() ?? []].sort((a, b) => b.date.localeCompare(a.date));
+    return games.length ? { games, source: this.name, url: `https://lol.fandom.com/wiki/${encodeURIComponent(playerName)}`, perMap: true } : null;
   }
 }
 
