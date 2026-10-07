@@ -450,6 +450,9 @@ export class EdgeService {
         if (line.playerImageUrl && !photos.has(normalizedName(line.playerName))) photos.set(normalizedName(line.playerName), line.playerImageUrl);
       this.photos = photos;
       const allLines = sets.flatMap((set) => set.lines);
+      const absurd = allLines.filter((line) => !(line.threshold <= 5000));
+      if (absurd.length) console.warn(`[edge] lines with a threshold over 5,000: ${JSON.stringify(absurd.slice(0, 5).map((line) =>
+        [line.id, line.sport, line.market, line.playerName, line.threshold]))}`);
       const players = new Map<string, { key: string; sport: string; playerId: string; playerName: string }>();
       for (const line of allLines) {
         if (!historySports.has(line.sport) || !profileFor(line.sport, line.market).stat) continue;

@@ -49,6 +49,8 @@ export function makeDistribution(family: Family, mean: number, variance: number,
   return { family: 'NEGBIN', mean: m, variance, discrete: true };
 }
 
+const MAX_COUNT_TERMS = 5000;
+
 /** Probability mass for k = 0..limit of a discrete family. */
 function countPmf(dist: Distribution, limit: number): number[] {
   const out: number[] = new Array(limit + 1).fill(0);
@@ -79,6 +81,10 @@ export function cdf(dist: Distribution, k: number): number {
     return normalCdf(((dist.discrete ? Math.floor(k) + .5 : k) - dist.mean) / sd);
   }
   if (k < 0) return 0;
+  // The mass is summed term by term up to k, so a nonsense threshold (hundreds of millions) would build an array that
+  // size and exhaust memory (2026-10-07 crash loop). Past 5,000 the normal approximation answers instead; no real count
+  // line comes near that.
+  if (!Number.isFinite(k) || k > MAX_COUNT_TERMS) return normalCdf((Math.floor(k) + .5 - dist.mean) / Math.sqrt(dist.variance));
   const pmf = countPmf(dist, Math.floor(k));
   return Math.min(1, pmf.reduce((sum, value) => sum + value, 0));
 }
