@@ -505,6 +505,35 @@ export interface SharpPropsStatus {
   readonly unavailable?: readonly string[];
 }
 
+/** The most a SharpAPI response may be: a 200-row page is well under 2 MB. */
+const MAX_BODY_BYTES = 32 * 1_048_576;
+
+/**
+ * Reads a response's body with a size cap and hands back an equivalent response. A runaway body (2026-10-07: one grew
+ * past 2 GB) is cut off and fails that request instead of exhausting the container's memory.
+ */
+export async function capped(response: Response, url: URL, maxBytes = MAX_BODY_BYTES): Promise<Response> {
+  if (!response.body) return response;
+  const declared = Number(response.headers.get('content-length'));
+  const reader = response.body.getReader(), chunks: Uint8Array[] = [];
+  let size = 0;
+  if (declared > maxBytes) { await reader.cancel().catch(() => undefined); throw tooLarge(url, declared); }
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) { await reader.cancel().catch(() => undefined); throw tooLarge(url, size); }
+    chunks.push(value);
+  }
+  return new Response(Buffer.concat(chunks), { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
+function tooLarge(url: URL, bytes: number): Error {
+  const where = `${url.pathname}?${[...url.searchParams].filter(([key]) => key !== 'cursor').map(([key, value]) => `${key}=${value}`).join('&')}`;
+  console.warn(`[fetch] response over ${Math.round(bytes / 1_048_576)} MB cut off: ${where}`);
+  return new Error('SHARPAPI_RESPONSE_TOO_LARGE');
+}
+
 /**
  * Why a sportsbook's prices are missing, for its tab: SharpAPI reports the book down ("book_unavailable"), or the plan's
  * selected books leave it out ("book_not_selected"). Null when neither applies.
@@ -807,7 +836,7 @@ export class SharpPropsFeed {
   private async fetchRetrying(url: URL): Promise<Response> {
     for (let attempt = 0; ; attempt++) {
       const response = await this.fetchFn(url, { headers: { 'X-API-Key': this.apiKey! }, signal: AbortSignal.timeout(30_000) });
-      if (response.status !== 429 || attempt >= 3) return response;
+      if (response.status !== 429 || attempt >= 3) return await capped(response, url);
       const after = Number(response.headers.get('retry-after'));
       const waitMs = Math.min(120_000, Number.isFinite(after) && after > 0 ? after * 1000 : 15_000 * 2 ** attempt) * (this.options.retryScale ?? 1);
       console.warn(`[sharp] rate limited; retrying in ${Math.round(waitMs / 1000)}s`);

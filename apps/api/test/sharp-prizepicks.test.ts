@@ -181,3 +181,13 @@ test('a book the plan no longer selects gets its own note; a working book gets n
   assert.equal(bookFeedNote(status, 'draftkings', 'DraftKings'), null);
   assert.match(bookFeedNote({ unavailable: ['hardrock'] }, 'hardrock', 'Hard Rock') ?? '', /reports the book unavailable/);
 });
+
+test('a runaway SharpAPI body is cut off instead of read into memory', async () => {
+  const { capped } = await import('../src/context/sharp-props.js');
+  let sent = 0;
+  const endless = new ReadableStream<Uint8Array>({ pull(controller) { sent++; controller.enqueue(new Uint8Array(1024)); } });
+  await assert.rejects(capped(new Response(endless), new URL('https://example.test/odds?league=nfl'), 64 * 1024), /TOO_LARGE/);
+  assert.ok(sent < 200, 'stops reading at the cap');
+  const ok = await capped(new Response(JSON.stringify({ data: [1] }), { status: 200 }), new URL('https://example.test/odds'));
+  assert.deepEqual(await ok.json(), { data: [1] });
+});

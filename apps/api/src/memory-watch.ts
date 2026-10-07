@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
+import { capped } from './context/sharp-props.js';
 // Memory watch: the container is killed without a trace when memory passes its cap, so past 3 GB this logs the
 // process's memory every few seconds with the requests in flight (host and path) to show which job is growing.
 const BIG = 20 * 1_048_576;
@@ -15,7 +16,8 @@ export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000): NodeJS.Tim
     try { const url = new URL(input instanceof Request ? input.url : String(input)); what = url.host + url.pathname; } catch { /* keep the default */ }
     inFlight.set(id, { what, since: Date.now() });
     try {
-      const response = await original(input, init);
+      // Every body is read under a 256 MB cap: a runaway response fails its request instead of killing the server.
+      const response = await capped(await original(input, init), new URL(input instanceof Request ? input.url : String(input)), 256 * 1_048_576);
       // Large bodies: logged with their address once read (fetch resolves at the headers, before the body arrives).
       for (const method of ['text', 'json', 'arrayBuffer'] as const) {
         const read = response[method].bind(response) as () => Promise<unknown>;
