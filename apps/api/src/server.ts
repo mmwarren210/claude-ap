@@ -1419,9 +1419,11 @@ export function buildServer(options: ServerOptions = {}) {
         if(edge.sideBiasFlagged(query.data.platform)||(heldPlatforms.has(query.data.platform)&&!edge.sideBiasCleared(query.data.platform)))
           return {...result.snapshot.response,picks:[],slips:[],counts:{...result.snapshot.response.counts,positiveEdge:0},modelVersion:GKR_PLUS_VERSION};
         const nowMs=now().getTime(),live=result.picks.filter((pick)=>Date.parse(pick.eventStartTime)>nowMs+5*60_000);
-        const ranked=live.filter((pick)=>pick.edge!==null&&pick.rating!=='NONE');
+        // Today only covers the whole page: picks and entries from today's games (Eastern).
+        const ranked=live.filter((pick)=>pick.edge!==null&&pick.rating!=='NONE'&&
+          (query.data.day!=='today'||easternDay(new Date(pick.eventStartTime))===easternDay(new Date(nowMs))));
         return {...result.snapshot.response,picks:ranked.slice(0,query.data.limit),
-          slips:buildSlips(query.data.day==='today'?ranked.filter((pick)=>easternDay(new Date(pick.eventStartTime))===easternDay(new Date(nowMs))):ranked,
+          slips:buildSlips(ranked,
             result.snapshot.response.entries,{minEvents:result.snapshot.minEvents}),
           counts:{...result.snapshot.response.counts,positiveEdge:ranked.length},modelVersion:GKR_PLUS_VERSION};
       });

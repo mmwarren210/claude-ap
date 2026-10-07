@@ -5,7 +5,7 @@ import { EdgeGenView } from '../../components/EdgeGenView';
 import { EdgePickCard } from '../../components/EdgePickCard';
 import { EdgeSlipPanel, SlipSummary, StakePicker } from '../../components/EdgeSlipPanel';
 import { Notice, Screen } from '../../components/Screen';
-import { pct, sportsFrom } from '../../edge-format';
+import { pct, sportsFrom, upcomingPicks } from '../../edge-format';
 import { useEdgeSlip } from '../../edge-slip';
 import { palette } from '../../theme';
 import { useBoard } from '../../use-board';
@@ -34,7 +34,7 @@ export default function EdgeScreen() {
   const { status, data, message, retry } = useEdge(view, 'edge', day);
   const slip = useEdgeSlip();
   const { nowMs } = useBoard();
-  const live = data?.picks.filter((pick) => Date.parse(pick.eventStartTime) > nowMs) ?? [];
+  const live = upcomingPicks(data?.picks ?? [], nowMs, day);
   const sports = sportsFrom(live);
   const picks = live.filter((pick) => !sport || pick.sport === sport).slice(0, 100);
   const inSlip = new Set(slip.map((leg) => leg.lineId));
@@ -72,6 +72,7 @@ export default function EdgeScreen() {
         {' '}{data.calibration.status === 'CALIBRATED' ? `Calibrated on ${data.calibration.graded} graded picks.`
           : `Uncalibrated: ${data.calibration.graded} graded picks so far (calibration starts at 150).`}
         {data.counts.quotes === 0 ? ' No sportsbook prices on this board yet; picks are model/ladder only.' : ''}</Text>
+      <DayChips day={day} setDay={setDay} />
       {sports.length > 1 && <View style={styles.chips}>
         {[null, ...sports].map((item) => <Pressable key={item ?? 'all'} accessibilityRole="button"
           onPress={() => setSport(item)} style={[styles.chip, sport === item && styles.chipOn]}>
@@ -82,7 +83,6 @@ export default function EdgeScreen() {
       {view === 'edges' && <View style={styles.section}>
         <Text style={styles.sectionTitle}>BEST ENTRIES</Text>
         <Text style={styles.sectionDetail}>Highest expected value using the strongest legs, one per player and at most two per game.</Text>
-        <DayChips day={day} setDay={setDay} />
         {!data.slips.length && <Text style={styles.sectionDetail}>{day === 'today' ? 'No entry clears the bar with today’s games alone.' : 'No entry clears the bar right now.'}</Text>}
         <StakePicker />
         {data.slips.slice(0, 2).map((item) => <View key={item.entry.type + item.entry.size + item.legs.map((leg) => leg.lineId).join()} style={styles.card}>
@@ -105,7 +105,7 @@ export default function EdgeScreen() {
   </Screen>;
 }
 
-/** Best entries from any upcoming game, or today's games only (an entry settles when its last game ends). */
+/** The whole page (picks and best entries) from any upcoming game, or today's games only (Eastern). */
 function DayChips({ day, setDay }: { day: 'all' | 'today'; setDay: (day: 'all' | 'today') => void }) {
   return <View style={styles.chips}>{([['all', 'All days'], ['today', 'Today only']] as const).map(([value, label]) =>
     <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: day === value }} onPress={() => setDay(value)}

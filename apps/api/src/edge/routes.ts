@@ -87,12 +87,15 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     // A platform on hold (a new feed not yet cleared by the side-bias check, 9b) shows no ranked picks or entries; its
     // Board still lists every line with Edge's read.
     if (held(query.data.platform) && query.data.view !== 'all') return { ...snapshot.response, picks: [], slips: [] };
-    const picks = viewPicks(snapshot, query.data.view, filters);
+    const today = query.data.day === 'today' ? easternDay(new Date(nowMs)) : null;
+    const onDay = (pick: { eventStartTime: string }) => !today || easternDay(new Date(pick.eventStartTime)) === today;
+    // Today only covers the whole page: the top picks are taken from today's games, not cut first and filtered after.
+    const picks = today ? viewPicks(snapshot, query.data.view, { ...filters, limit: 5000 }).filter(onDay).slice(0, query.data.limit)
+      : viewPicks(snapshot, query.data.view, filters);
     const live = (slip: { legs: { lineId: string }[] }) => slip.legs.every((leg) => {
       const pick = snapshot.byLine.get(leg.lineId); return !!pick && Date.parse(pick.eventStartTime) > nowMs; });
-    const today = query.data.day === 'today' ? easternDay(new Date(nowMs)) : null;
     const slips = query.data.sport || query.data.market || today
-      ? buildSlips(viewPicks(snapshot, 'edges', { ...filters, limit: 500 }).filter((pick) => !today || easternDay(new Date(pick.eventStartTime)) === today),
+      ? buildSlips(viewPicks(snapshot, 'edges', { ...filters, limit: 500 }).filter(onDay),
         snapshot.response.entries, { minEvents: snapshot.minEvents })
       : snapshot.response.slips.filter(live);
     return { ...snapshot.response, picks, slips };

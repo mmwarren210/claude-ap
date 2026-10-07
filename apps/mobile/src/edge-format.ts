@@ -114,3 +114,12 @@ export function slipDollars(slip: { expectedReturn: number; entry: { size: numbe
     payouts: Object.entries(slip.entry.payouts).sort((a, b) => Number(b[0]) - Number(a[0]))
       .map(([hits, multiple]) => ({ hits: Number(hits), amount: multiple * stake })) };
 }
+
+/** A time's calendar date in Eastern time, the slate's "today" (matches the server's Today-only entries). */
+export const easternDay = (time: Date | number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(time);
+
+/** Picks still to start, and only today's (Eastern) when the Today-only switch is on. */
+export function upcomingPicks<T extends { eventStartTime: string }>(picks: readonly T[], nowMs: number, day: 'all' | 'today'): T[] {
+  const today = easternDay(nowMs);
+  return picks.filter((pick) => Date.parse(pick.eventStartTime) > nowMs && (day === 'all' || easternDay(Date.parse(pick.eventStartTime)) === today));
+}

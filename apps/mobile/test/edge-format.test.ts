@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { edgePickSchema } from '@crowniq/contracts';
-import { dayRange, edgeSummary, lineComparison, marketLabel, signedPoints, sportsFrom, toggleSlipLeg } from '../src/edge-format.js';
+import { dayRange, edgeSummary, lineComparison, marketLabel, signedPoints, sportsFrom, toggleSlipLeg, upcomingPicks } from '../src/edge-format.js';
 
 const base = edgePickSchema.parse({ key: 'k1', lineId: 'l1', oppositeLineId: null, sport: 'NBA', league: 'NBA',
   eventId: 'e1', eventName: 'A @ B', eventStartTime: '2030-01-02T00:00:00Z', playerId: 'p1', playerName: 'Fixture',
@@ -52,4 +52,12 @@ test('expected returns in dollars for the chosen entry', async () => {
   assert.ok(Math.abs(dollars.back - 11.2) < 1e-9);
   assert.ok(Math.abs(dollars.profit - 1.2) < 1e-9);
   assert.deepEqual(dollars.payouts.map((payout) => [payout.hits, payout.amount]), [[6, 250], [5, 20], [4, 4]]);
+});
+
+test('Today only keeps upcoming picks from today’s Eastern date; All days keeps every upcoming pick', () => {
+  const now = Date.parse('2026-10-07T17:00:00Z'); // 1 PM ET
+  const picks = [{ eventStartTime: '2026-10-07T23:00:00Z' }, { eventStartTime: '2026-10-08T03:30:00Z' }, // 7 PM and 11:30 PM ET
+    { eventStartTime: '2026-10-08T21:30:00Z' }, { eventStartTime: '2026-10-07T16:00:00Z' }]; // Thursday; already started
+  assert.equal(upcomingPicks(picks, now, 'today').length, 2);
+  assert.equal(upcomingPicks(picks, now, 'all').length, 3);
 });
