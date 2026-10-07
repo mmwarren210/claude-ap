@@ -84,6 +84,10 @@ const appStatKeys: Readonly<Partial<Record<DfsApp, Readonly<Partial<Record<Sport
 export function marketKey(sport: Sport, stat: string, app?: DfsApp): string {
   const own = app ? appStatKeys[app]?.[sport]?.[stat] : undefined;
   if (own) return own;
+  // Step 4c: a partial-game stat ("1H Rec Yards") is the full-game key with its segment in front (1h_player_reception_yds),
+  // so a 1st-half line meets the books' 1st-half price and never the full-game one.
+  const segmented = /^(1H|2H|1Q|2Q|3Q|4Q|1P|2P|3P)\s+(.+)$/i.exec(stat.trim());
+  if (segmented) return `${segmented[1]!.toLowerCase()}_${marketKey(sport, segmented[2]!, app)}`;
   return statKeys[sport]?.[stat] ?? stat.toLowerCase().replace(/\+/g, ' plus ').replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
@@ -98,8 +102,21 @@ export function leagueLabel(sport: Sport): string {
 }
 
 /** The model market key of a stored line, whichever source supplied it. */
-export const lineMarket = (line: Pick<ScrapedLine, 'league' | 'stat' | 'marketKey'> & { app?: DfsApp }) =>
-  line.marketKey ?? marketKey(leagueInfo(line.league).sport, line.stat, line.app);
+export const lineMarket = (line: Pick<ScrapedLine, 'league' | 'stat' | 'marketKey'> & { app?: DfsApp }) => {
+  if (line.marketKey) return line.marketKey;
+  // PrizePicks' partial-game boards (NFL1H, NHL1P): the base league's key with the segment in front.
+  const base = segmentBase(line.league);
+  if (base) return `${base.segment.toLowerCase()}_${marketKey(base.sport, line.stat, line.app)}`;
+  return marketKey(leagueInfo(line.league).sport, line.stat, line.app);
+};
+
+/** A partial-game board's base sport and segment (NFL1H → NFL, 1H), or null for a full-game league. */
+export function segmentBase(league: string): { sport: Sport; segment: string } | null {
+  const segment = segmentOf(league);
+  if (!segment || leagueInfo(league).sport !== 'OTHER') return null;
+  const sport = leagueInfo(league.trim().toUpperCase().slice(0, -segment.length)).sport;
+  return sport === 'OTHER' ? null : { sport, segment };
+}
 
 /** The same line across sources that use different ids: app, league, player, market, number, tier. */
 export const sameLineKey = (line: ScrapedLine) => JSON.stringify([line.app, sportGroup(line.league), segmentOf(line.league),

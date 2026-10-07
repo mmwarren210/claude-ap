@@ -86,7 +86,7 @@ test('SharpAPI feed: PrizePicks gets its own pass; a failed pass clears its line
     return new Response(JSON.stringify({ data: [row('draftkings', 'over', { odds_probability: .55 }), row('draftkings', 'under', { odds_probability: .5 })],
       pagination: { has_more: false } }));
   }) as typeof fetch;
-  const feed = new SharpPropsFeed('key', null, { leagues: ['nfl'], books: ['draftkings', 'prizepicks'], requestGapMs: 0 }, fetchFn, () => now);
+  const feed = new SharpPropsFeed('key', null, { leagues: ['mlb'], books: ['draftkings', 'prizepicks'], requestGapMs: 0 }, fetchFn, () => now);
   const heard: [number, boolean][] = [];
   feed.whenPickem((lines, ok) => { heard.push([lines.length, ok]); });
   await feed.refresh();

@@ -33,12 +33,14 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
     player_receiving_yards: 'player_reception_yds', player_receptions: 'player_receptions',
     player_kicking_points: 'player_kicking_points', player_sacks: 'player_sacks',
     'player_tackles_+_assists': 'player_tackles_assists', 'player_passing_+_rushing_yards': 'pass_plus_rush_yds',
-    'player_rushing_+_receiving_yards': 'rush_plus_rec_yds' },
+    'player_rushing_+_receiving_yards': 'rush_plus_rec_yds', player_longest_reception: 'player_reception_longest',
+    player_longest_rush: 'player_rush_longest', player_longest_passing_completion: 'player_pass_longest_completion' },
   NCAAFB: { player_passing_yards: 'passing_yards', player_rushing_yards: 'player_rush_yds',
     player_receiving_yards: 'player_reception_yds', player_receptions: 'player_receptions',
     'player_passing_+_rushing_yards': 'pass_plus_rush_yds', player_passing_touchdowns: 'player_pass_tds',
     player_passing_attempts: 'player_pass_attempts', player_passing_completions: 'player_pass_completions',
-    player_rushing_attempts: 'player_rush_attempts' },
+    player_rushing_attempts: 'player_rush_attempts', player_longest_reception: 'player_reception_longest',
+    player_longest_rush: 'player_rush_longest' },
   MLB: { player_hits: 'batter_hits', 'player_hits_+_runs_+_rbis': 'batter_hits_runs_rbis', player_home_runs: 'batter_home_runs',
     player_total_bases: 'batter_total_bases', player_walks: 'batter_walks', player_rbis: 'rbis', player_runs: 'runs',
     player_strikeouts: 'pitcher_strikeouts', player_singles: 'singles', player_doubles: 'doubles',
@@ -60,7 +62,30 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
 export function fullGameTypes(sport: Sport | undefined): string[] {
   if (!sport) return [];
   const scorer = sport === 'NHL' || sport === 'SOCCER' ? ['anytime_goal_scorer'] : sport === 'NFL' || sport === 'NCAAFB' ? ['anytime_touchdown_scorer'] : [];
-  return [...Object.keys(marketKeys[sport] ?? {}), ...scorer];
+  // Asked for but not mapped until confirmed (4e): NHL "player_shots" is compared with shots on goal in the market audit.
+  const audit = sport === 'NHL' ? ['player_shots'] : [];
+  return [...Object.keys(marketKeys[sport] ?? {}), ...scorer, ...audit];
+}
+
+/**
+ * Step 4e: whether NHL "player_shots" means shots on goal. For each player both are listed for, the gap between the two
+ * markets' main numbers; a median near 0 means the same stat (mapped once confirmed in the log).
+ */
+export function shotsAudit(rows: readonly unknown[]): { players: number; medianGap: number | null; sample: string[] } {
+  const lines = new Map<string, { shots: number[]; sog: number[] }>();
+  for (const value of rows) {
+    const row = value as Row;
+    if (leagueSports[String(row.league)] !== 'NHL' || typeof row.line !== 'number' || typeof row.player_name !== 'string' || row.selection_type !== 'over') continue;
+    const kind = row.market_type === 'player_shots' ? 'shots' : row.market_type === 'player_shots_on_goal' ? 'sog' : null;
+    if (!kind) continue;
+    const entry = lines.get(normalizedName(row.player_name)) ?? { shots: [], sog: [] };
+    entry[kind].push(row.line); lines.set(normalizedName(row.player_name), entry);
+  }
+  const middle = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]!;
+  const gaps = [...lines].filter(([, entry]) => entry.shots.length && entry.sog.length)
+    .map(([player, entry]) => ({ player, gap: middle(entry.shots) - middle(entry.sog), shots: middle(entry.shots), sog: middle(entry.sog) }));
+  return { players: gaps.length, medianGap: gaps.length ? middle(gaps.map((item) => item.gap)) : null,
+    sample: gaps.slice(0, 5).map((item) => `${item.player} shots ${item.shots} / SOG ${item.sog}`) };
 }
 
 /** Partial-game (1st half, quarter, period) market types, read in their own pass (step 4c fills these in). */
@@ -69,7 +94,10 @@ export function partialTypes(sport: Sport | undefined): string[] {
 }
 
 /** SharpAPI partial-game market types to CrownIQ keys; the segment stays in the key (step 4c). */
-const partialKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>>>>> = {};
+const partialKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>>>>> = Object.fromEntries(
+  (['NFL', 'NCAAFB', 'NBA', 'WNBA', 'NCAAB', 'NCAAW', 'NHL'] as const).map((sport) => [sport, Object.fromEntries(
+    Object.entries(marketKeys[sport] ?? {}).flatMap(([type, key]) => sport === 'NHL'
+      ? [[`1st_period_${type}`, `1p_${key}`]] : [[`1st_half_${type}`, `1h_${key}`], [`1st_quarter_${type}`, `1q_${key}`]]))]));
 
 /** Yes/no scorer markets: "Yes" is the over of 0.5 (one or more), "No" the under. */
 const scorerMarkets = new Set(['anytime_goal_scorer', 'anytime_touchdown_scorer']);
@@ -94,7 +122,7 @@ function bookMarket(sport: Sport, book: string, type: string): string | undefine
   // (A'ja Wilson 37.5) and DraftKings' "walks allowed" carries strikeout numbers (Chris Sale 7.5). Both are left out.
   if (book === 'fanduel' && type === 'player_rebounds_+_assists') return undefined;
   if (book === 'draftkings' && sport === 'MLB' && type === 'player_walks_allowed') return undefined;
-  return marketKeys[sport]?.[type];
+  return marketKeys[sport]?.[type] ?? partialKeys[sport]?.[type];
 }
 
 /** One book's de-vigged price for one player, stat and number. */
@@ -273,41 +301,84 @@ export function expectedGoals(games: readonly GamePrice[]): Map<string, number> 
 }
 
 /**
- * Anytime goal scorer (NHL). SharpAPI sends one "Yes" price per player (selection "other", no line) and no "No"
+ * Anytime goal scorer (NHL) and anytime touchdown scorer (NFL, college). SharpAPI sends one "Yes" price per player (selection "other", no line) and no "No"
  * side, so the book's cut can't be removed player by player. Instead, per book and game: player goals are close to Poisson,
- * so the fair chances must satisfy sum(-ln(1 - p)) = the game's expected goals (from the no-vig total, less ~3% own goals).
+ * so the fair chances must satisfy sum(-ln(1 - p)) = the game's expected goals (from the no-vig total, less ~3% own goals);
+ * touchdowns the same way against the game's expected rush + receiving TDs (0.105 per expected point).
  * Each Yes is divided by the one factor k that makes that hold. Games without a total, or with k outside 1.0–MAX_CUT (an
- * incomplete player list), are left out rather than guessed. The result is the over of 0.5 goals.
+ * incomplete player list), are left out rather than guessed. The result is the over of 0.5 goals or touchdowns.
  */
 /** The most a book's Yes prices may be shaded (FanDuel's NHL anytime Yes runs ~1.3–1.6× fair); beyond it, skip the game. */
 const MAX_CUT = 1.8;
 export const scorerSkips = { groups: 0, noTotal: 0, few: 0, low: 0, high: 0, priced: 0, samples: [] as string[] };
 
+/** The standard normal quantile (Acklam's approximation, |error| < 1e-8 in the middle, enough for a de-vigged total). */
+function normalQuantile(p: number): number {
+  const a = [-39.6968302866538, 220.946098424521, -275.928510446969, 138.357751867269, -30.6647980661472, 2.50662827745924];
+  const b = [-54.4760987982241, 161.585836858041, -155.698979859887, 66.8013118877197, -13.2806815528857];
+  const c = [-0.00778489400243029, -0.322396458041136, -2.40075827716184, -2.54973253934373, 4.37466414146497, 2.93816398269878];
+  const d = [0.00778469570904146, 0.32246712907004, 2.445134137143, 3.75440866190742];
+  const q = Math.min(1 - 1e-9, Math.max(1e-9, p));
+  if (q < .02425) { const r = Math.sqrt(-2 * Math.log(q)); return (((((c[0]! * r + c[1]!) * r + c[2]!) * r + c[3]!) * r + c[4]!) * r + c[5]!) / ((((d[0]! * r + d[1]!) * r + d[2]!) * r + d[3]!) * r + 1); }
+  if (q > 1 - .02425) return -normalQuantile(1 - q);
+  const r = q - .5, t = r * r;
+  return (((((a[0]! * t + a[1]!) * t + a[2]!) * t + a[3]!) * t + a[4]!) * t + a[5]!) * r / (((((b[0]! * t + b[1]!) * t + b[2]!) * t + b[3]!) * t + b[4]!) * t + 1);
+}
+
+/**
+ * Each football game's expected total points: the median over books of the total line moved by its no-vig lean (points
+ * spread ~13.5 around the mean, so mean = line + 13.5 × z).
+ */
+export function expectedPoints(games: readonly GamePrice[]): Map<string, number> {
+  const sides = new Map<string, { over?: number; under?: number; line: number; event: string }>();
+  for (const game of games) {
+    if (game.market !== 'total' || game.line === null) continue;
+    const key = `${game.book}|${game.eventId}|${game.line}`;
+    const entry = sides.get(key) ?? { line: game.line, event: game.eventId };
+    entry[game.side as 'over' | 'under'] = game.probability; sides.set(key, entry);
+  }
+  const means = new Map<string, number[]>();
+  for (const { over, under, line, event } of sides.values()) {
+    if (!over || !under) continue;
+    means.set(event, [...(means.get(event) ?? []), line + 13.5 * normalQuantile(over / (over + under))]);
+  }
+  return new Map([...means].map(([event, list]) => { const sorted = list.sort((a, b) => a - b); return [event, sorted[Math.floor(sorted.length / 2)]!]; }));
+}
+
+/** Rush + receiving touchdowns per point scored (NFL and college: about 2.45 offensive TDs on 23 points a team). */
+const TDS_PER_POINT = .105;
+
 export function scorerFairPrices(rows: readonly unknown[], games: readonly GamePrice[]): FairPrice[] {
   Object.assign(scorerSkips, { groups: 0, noTotal: 0, few: 0, low: 0, high: 0, priced: 0, samples: [] });
-  const totals = expectedGoals(games);
+  const goalTotals = expectedGoals(games.filter((game) => game.league === 'nhl'));
+  const pointTotals = expectedPoints(games.filter((game) => game.league === 'nfl' || game.league === 'ncaaf'));
   const groups = new Map<string, Row[]>();
   for (const value of rows) {
     const row = value as Row;
-    if (row.market_type !== 'anytime_goal_scorer' || row.selection_type !== 'other' || row.is_live === true || row.is_active === false ||
+    const sport = leagueSports[String(row.league)];
+    const kind = row.market_type === 'anytime_goal_scorer' && sport === 'NHL' ? 'goals'
+      : row.market_type === 'anytime_touchdown_scorer' && (sport === 'NFL' || sport === 'NCAAFB') ? 'tds' : null;
+    if (!kind || row.selection_type !== 'other' || row.is_live === true || row.is_active === false ||
       typeof row.player_name !== 'string' || !(Number(row.odds_probability) > 0 && Number(row.odds_probability) < 1)) continue;
-    // NHL only: soccer books price whole squads, bench included, so the chances can't be scaled to the game's goals. And
-    // DraftKings' "anytime" rows carry first-goal prices (audit 2026-10-06: Eichel +550 at DraftKings, +155 at FanDuel).
-    if (leagueSports[String(row.league)] !== 'NHL' || row.sportsbook === 'draftkings') continue;
-    const key = `${String(row.sportsbook)}|${String(row.event_id)}`;
+    // Soccer is left out: books price whole squads, bench included, so the chances can't be scaled to the game's goals. And
+    // DraftKings' NHL "anytime" rows carry first-goal prices (audit 2026-10-06: Eichel +550 at DraftKings, +155 at FanDuel).
+    if (kind === 'goals' && row.sportsbook === 'draftkings') continue;
+    const key = `${kind}|${String(row.sportsbook)}|${String(row.event_id)}`;
     groups.set(key, [...(groups.get(key) ?? []), row]);
   }
   const out: FairPrice[] = [];
-  for (const list of groups.values()) {
+  for (const [key, list] of groups) {
     scorerSkips.groups++;
-    const goals = totals.get(String(list[0]!.event_id));
-    if (!goals) { scorerSkips.noTotal++; if (scorerSkips.samples.length < 3) scorerSkips.samples.push(`no total ${String(list[0]!.event_id)} ${String(list[0]!.home_team)}`); continue; }
-    if (list.length < 10) { scorerSkips.few++; continue; }
-    const target = goals * 0.97, implied = list.map((row) => Number(row.odds_probability));
+    const kind = key.split('|')[0]!, event = String(list[0]!.event_id);
+    // Expected scoring events in the game: NHL goals less ~3% own goals; football rush + receiving TDs from the points.
+    const expected = kind === 'goals' ? (goalTotals.get(event) ?? 0) * .97 : (pointTotals.get(event) ?? 0) * TDS_PER_POINT;
+    if (!expected) { scorerSkips.noTotal++; if (scorerSkips.samples.length < 3) scorerSkips.samples.push(`no total ${kind} ${event}`); continue; }
+    if (list.length < (kind === 'goals' ? 10 : 15)) { scorerSkips.few++; continue; }
+    const target = expected, implied = list.map((row) => Number(row.odds_probability));
     const sum = (k: number) => implied.reduce((total, p) => total - Math.log(1 - Math.min(p / k, 0.99)), 0);
     if (sum(1) < target || sum(MAX_CUT) > target) {
       if (sum(1) < target) scorerSkips.low++; else scorerSkips.high++;
-      if (scorerSkips.samples.length < 4) scorerSkips.samples.push(`${String(list[0]!.sportsbook)} ${String(list[0]!.league)} n=${list.length} sum=${sum(1).toFixed(2)} goals=${goals.toFixed(2)}`);
+      if (scorerSkips.samples.length < 6) scorerSkips.samples.push(`${String(list[0]!.sportsbook)} ${String(list[0]!.league)} n=${list.length} sum=${sum(1).toFixed(2)} expected=${expected.toFixed(2)}`);
       continue;
     }
     scorerSkips.priced++;
@@ -315,13 +386,36 @@ export function scorerFairPrices(rows: readonly unknown[], games: readonly GameP
     for (let i = 0; i < 50; i++) { const mid = (lo + hi) / 2; if (sum(mid) > target) lo = mid; else hi = mid; }
     const k = (lo + hi) / 2;
     for (const row of list) {
-      out.push({ book: String(row.sportsbook), sport: 'NHL', player: String(row.player_name), market: 'goals', line: 0.5,
+      out.push({ book: String(row.sportsbook), sport: leagueSports[String(row.league)]!, player: String(row.player_name),
+        market: kind === 'goals' ? 'goals' : 'anytime_tds', line: 0.5,
         fairOver: Math.round(Number(row.odds_probability) / k * 10_000) / 10_000,
         overAmerican: typeof row.odds_american === 'number' ? row.odds_american : null, underAmerican: null,
         startTime: String(row.event_start_time), home: typeof row.home_team === 'string' ? row.home_team : null,
         away: typeof row.away_team === 'string' ? row.away_team : null,
         ...(row.is_stale_pregame_price === true ? { stale: true } : {}), ...(typeof row.timestamp === 'string' ? { observedAt: row.timestamp } : {}) });
     }
+  }
+  return out;
+}
+
+/**
+ * Step 4d: a tennis match's total games, from each book's no-vig game total, as both players' "Total Games" line (the
+ * PrizePicks stat is the match's games, not the player's).
+ */
+export function tennisTotalPrices(games: readonly GamePrice[]): FairPrice[] {
+  const pairs = new Map<string, { over?: GamePrice; under?: GamePrice }>();
+  for (const game of games) {
+    if (game.market !== 'total' || game.line === null || leagueSports[game.league] !== 'TENNIS') continue;
+    const key = `${game.book}|${game.eventId}|${game.line}`;
+    const pair = pairs.get(key) ?? {};
+    pair[game.side as 'over' | 'under'] = game; pairs.set(key, pair);
+  }
+  const out: FairPrice[] = [];
+  for (const { over, under } of pairs.values()) {
+    if (!over || !under || over.probability + under.probability < .95) continue;
+    const fairOver = Math.round(over.probability / (over.probability + under.probability) * 10_000) / 10_000;
+    for (const player of [over.home, over.away]) out.push({ book: over.book, sport: 'TENNIS', player, market: 'total_games', line: over.line!,
+      fairOver, overAmerican: over.american, underAmerican: under.american, startTime: over.startTime, home: over.home, away: over.away });
   }
   return out;
 }
@@ -488,8 +582,10 @@ export class SharpPropsFeed {
           if (pass.capped) capped.push(league);
           for (const value of pass.rows) { const book = String((value as Row).sportsbook); (perLeague[league] ??= {})[book] = (perLeague[league]?.[book] ?? 0) + 1; }
         }
-        // NHL game goal totals: they set the scale that takes the cut out of anytime-scorer prices.
-        if (league === 'nhl' && books.length) gameRows.push(...(await this.pages(league, { sportsbooks: books.join(','), market_type: 'total_goals' }, 10)).rows);
+        // Game totals: NHL goals and football points set the scale that takes the cut out of anytime-scorer prices (4a);
+        // tennis total games price PrizePicks' "Total Games" lines (4d).
+        const totalType = { nhl: 'total_goals', nfl: 'total_points', ncaaf: 'total_points', atp: 'total_games', wta: 'total_games', atp_challenger: 'total_games' }[league];
+        if (totalType && books.length) gameRows.push(...(await this.pages(league, { sportsbooks: books.join(','), market_type: totalType }, 10)).rows);
       }
       booksOk = true;
       console.log(`[sharp-books] rows per league and book ${JSON.stringify(perLeague)}; page cap hit: ${capped.join(', ') || 'none'}; ` +
@@ -511,10 +607,12 @@ export class SharpPropsFeed {
       const bookRows = rows.filter((row) => !isPickemRow(row));
       const games = gamePrices(gameRows.filter((row) => !isPickemRow(row)));
       const scorers = scorerFairPrices(bookRows, games);
-      if (scorers.length || rows.some((row) => (row as Row).market_type === 'anytime_goal_scorer'))
-        console.log(`[sharp] anytime scorer: ${scorers.length} goals prices from ${expectedGoals(games).size} game totals; ${JSON.stringify(scorerSkips)}`);
-      const prices = [...fairPrices(bookRows), ...scorers];
+      if (scorers.length || rows.some((row) => scorerMarkets.has(String((row as Row).market_type))))
+        console.log(`[sharp] anytime scorer: ${scorers.filter((price) => price.market === 'goals').length} goals and ${scorers.filter((price) => price.market === 'anytime_tds').length} TD prices; ${JSON.stringify(scorerSkips)}; tennis total games ${tennisTotalPrices(games).length}`);
+      const prices = [...fairPrices(bookRows), ...scorers, ...tennisTotalPrices(games)];
       this.auditMarkets(bookRows);
+      const shots = shotsAudit(bookRows);
+      if (shots.players) console.log(`[sharp-audit] NHL player_shots vs shots on goal: ${JSON.stringify(shots)}`);
       if (!prices.length) this.lastError = 'NO_PRICES';
       else {
         this.prices = prices; this.overOnly = overOnlyPrices(bookRows); this.games = games;

@@ -13,7 +13,8 @@ import { sameTeam } from '../team-match.js';
 /** Every source's market key → the board's key (the scraped PrizePicks key), where they differ. */
 const marketAliases: Readonly<Record<string, string>> = {
   'NFL:pass_plus_rush_yds': 'player_pass_rush_yds', 'NFL:rush_plus_rec_yds': 'player_rush_reception_yds',
-  'NFL:rush_rec_tds': 'anytime_tds', 'NFL:rush_plus_rec_tds': 'anytime_tds',
+  'NFL:rush_rec_tds': 'anytime_tds', 'NFL:rush_plus_rec_tds': 'anytime_tds', 'NFL:rush_plus_rec_td_scorer': 'anytime_tds',
+  'NCAAFB:rush_rec_tds': 'anytime_tds', 'NCAAFB:rush_plus_rec_tds': 'anytime_tds', 'NCAAFB:rush_plus_rec_td_scorer': 'anytime_tds',
   'NCAAFB:pass_plus_rush_yds': 'player_pass_rush_yds', 'NCAAFB:rush_plus_rec_yds': 'player_rush_reception_yds',
   'MLB:earned_runs': 'pitcher_earned_runs', 'MLB:earned_runs_allowed': 'pitcher_earned_runs', 'MLB:stolen_bases': 'sb',
   'MLB:pitcher_hits_allowed': 'hits_allowed',
@@ -33,7 +34,12 @@ const marketAliases: Readonly<Record<string, string>> = {
 };
 
 /** The one market key every source maps into. */
-export const canonicalMarket = (sport: string, market: string) => marketAliases[`${sport}:${market}`] ?? market;
+export const canonicalMarket = (sport: string, market: string): string => {
+  // A partial-game key keeps its segment and canonicalizes the rest (1h_rec_tds and 1h_player_reception_tds meet).
+  const segmented = /^(1h|2h|1q|2q|3q|4q|1p|2p|3p)_(.+)$/.exec(market);
+  if (segmented) return `${segmented[1]}_${canonicalMarket(sport, segmented[2]!)}`;
+  return marketAliases[`${sport}:${market}`] ?? market;
+};
 export const playerKey = (sport: string, name: string) => `${sport}|${normalizedName(name)}`;
 /** An event's key for the snapshot store: sport, the two teams and the UTC start hour. */
 export const eventKey = (sport: string, home: string | null | undefined, away: string | null | undefined, startTime: string) =>

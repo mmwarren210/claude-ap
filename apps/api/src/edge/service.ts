@@ -13,7 +13,7 @@ import type { FairPrice, PickemLine } from '../context/sharp-props.js';
 import { normalizedName } from '../context/match.js';
 import type { InternalHistoryRow, InternalHistoryStore } from '../internal-history.js';
 import type { StoredLine } from '../scrapers/line-store.js';
-import { leagueLabel } from '../scrapers/markets.js';
+import { leagueLabel, segmentBase } from '../scrapers/markets.js';
 import { appLines, bookLines } from './platform-lines.js';
 import type { MovementTracker } from './movement.js';
 import type { GameLine } from '../context/feeds.js';
@@ -348,7 +348,12 @@ export class EdgeService {
   private async platformSets(board: BoardResponse, prices: readonly FairPrice[], pickem: readonly PickemLine[],
     now: Date): Promise<PlatformSet[]> {
     const nowIso = now.toISOString(), open = (line: PropLine) => Date.parse(line.eventStartTime) > now.getTime();
-    const boardLines = board.board.lines.filter(open);
+    // PrizePicks' partial-game boards (NFL1H, NHL1P) are read as their base sport, so a 1st-half line meets the books'
+    // 1st-half prices and the other apps' 1st-half lines (the board itself, and GKR, still see sport OTHER).
+    const boardLines = board.board.lines.filter(open).map((line) => {
+      const base = line.sport === 'OTHER' ? segmentBase(line.league) : null;
+      return base ? { ...line, sport: base.sport } : line;
+    });
     const extra = sharpPrizePicksLines(boardLines, pickem, nowIso);
     const sets: PlatformSet[] = [{ platform: 'prizepicks', lines: [...boardLines, ...extra.added.filter(open)], payouts: null,
       entries: this.entriesFor('prizepicks'), minEvents: 2,

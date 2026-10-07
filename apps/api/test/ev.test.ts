@@ -15,7 +15,7 @@ const row = (book: string, side: 'over' | 'under', probability: number, override
 test('a book’s Over and Under at the same number are paired and the vig removed; lone sides and live rows are skipped', () => {
   const prices = fairPrices([row('draftkings', 'over', 0.6, {}), row('draftkings', 'under', 0.45),
     row('hardrock', 'over', 0.62), row('hardrock', 'under', 0.43, { line: 250.5 }),
-    row('draftkings', 'over', 0.5, { market_type: 'player_longest_rush' }), row('draftkings', 'under', 0.5, { market_type: 'player_longest_rush' }),
+    row('draftkings', 'over', 0.5, { market_type: 'most_points_player' }), row('draftkings', 'under', 0.5, { market_type: 'most_points_player' }),
     row('draftkings', 'over', 0.5, { player_name: 'Live Player', is_live: true }), row('draftkings', 'under', 0.5, { player_name: 'Live Player', is_live: true })]);
   assert.equal(prices.length, 1, 'only DraftKings has both sides at 249.5 on a mapped market');
   assert.deepEqual([prices[0].book, prices[0].market, prices[0].fairOver], ['draftkings', 'passing_yards', 0.5714]);
@@ -58,7 +58,7 @@ test('the SharpAPI feed pages with the cursor, sends the key, and keeps old pric
     return new Response(JSON.stringify({ data: first ? [row('draftkings', 'over', 0.6)] : [row('draftkings', 'under', 0.45)],
       pagination: { has_more: first, next_cursor: first ? 'next' : undefined } }), { status: 200 });
   }) as typeof fetch;
-  const feed = new SharpPropsFeed('key', null, { leagues: ['nfl'], requestGapMs: 0 }, fetchFn, () => now);
+  const feed = new SharpPropsFeed('key', null, { leagues: ['mlb'], requestGapMs: 0 }, fetchFn, () => now);
   let reported = 0;
   feed.whenRefreshed((prices) => { reported = prices.length; });
   const status = await feed.refresh();
@@ -119,7 +119,7 @@ test('the SharpAPI feed waits out a 429 and keeps going instead of dropping the 
     return new Response(JSON.stringify({ data: [row('draftkings', 'over', 0.6), row('draftkings', 'under', 0.45)],
       pagination: { has_more: false } }), { status: 200 });
   }) as typeof fetch;
-  const status = await new SharpPropsFeed('key', null, { leagues: ['nfl'], requestGapMs: 0, retryScale: 0 }, fetchFn, () => now).refresh();
+  const status = await new SharpPropsFeed('key', null, { leagues: ['mlb'], requestGapMs: 0, retryScale: 0 }, fetchFn, () => now).refresh();
   assert.equal(calls, 2);
   assert.deepEqual([status.prices, status.lastError], [1, null]);
 });
