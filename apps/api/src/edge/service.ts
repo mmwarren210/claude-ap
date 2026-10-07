@@ -182,6 +182,18 @@ export function dedupeRows(rows: readonly InternalHistoryRow[]): StatRow[] {
 const lineKey = (sport: string, player: string, market: string, threshold: number) =>
   `${sport}|${normalizedName(player)}|${canonicalMarket(sport, market)}|${threshold}`;
 
+/**
+ * Step 7: the stale replay in one line: alerts, how many reached the close, the average closing-line value (the close's
+ * chance for the alerted side minus Edge's chance at the alert), and the graded win rate.
+ */
+export function staleSummary(events: readonly { probability: number; closeProbability: number | null; outcome: string | null }[]) {
+  const closed = events.filter((event) => event.closeProbability !== null);
+  const graded = events.filter((event) => event.outcome === 'WIN' || event.outcome === 'LOSS');
+  return { alerts: events.length, closed: closed.length,
+    averageClv: closed.length ? Math.round(closed.reduce((sum, event) => sum + event.closeProbability! - event.probability, 0) / closed.length * 10_000) / 10_000 : null,
+    graded: graded.length, winRate: graded.length ? Math.round(graded.filter((event) => event.outcome === 'WIN').length / graded.length * 1000) / 1000 : null };
+}
+
 /** Golf (DataGolf declined by the owner), darts, F1, NASCAR, NPB and cricket: no sportsbook props and no free stats source. */
 export const uncoveredSport = (line: Pick<PropLine, 'sport' | 'league'>) =>
   line.sport === 'DARTS' || /GOLF|PGA|LPGA|LIV|^F1|FORMULA|NASCAR|INDYCAR|NPB|CRICKET|IPL/i.test(line.league);
@@ -532,6 +544,7 @@ export class EdgeService {
   private enrich(set: PlatformSet, picks: readonly EdgePick[], now: Date, injured: ReadonlyMap<string, string>,
     alerts: EdgeAlert[]): EdgePick[] {
     const nowMs = now.getTime(), dfs = set.platform === 'prizepicks' || set.platform === 'underdog' || set.platform === 'pick6';
+    const staleWhy = { noMove: 0, againstTheLine: 0, sideNotOffered: 0, noAppHistory: 0, appChangedAfterMove: 0, gapUnderHalfSd: 0 };
     const out = picks.map((source) => {
       let pick: EdgePick = source;
       const status = injured.get(normalizedName(pick.playerName));
@@ -539,10 +552,21 @@ export class EdgeService {
         warnings: [...pick.warnings, `On the injury report: ${status}. Not ranked.`] };
       const moved = this.options.movement?.summary(pick.sport, pick.playerName, pick.market, nowMs);
       if (moved?.steam) pick = { ...pick, steam: true };
+      // Step 7: every stale candidate (a book-priced pick'em line) is counted, with why it isn't stale when it isn't.
+      if (dfs && pick.sources.market) {
+        if (!moved) staleWhy.noMove++;
+      }
       if (dfs && moved && pick.sources.market) {
         const appChanged = this.options.snapshots?.lastChange(set.platform, playerKey(pick.sport, pick.playerName), pick.market);
         const gap = pick.sources.market.mean - pick.threshold;
+        const favored = moved.direction === 'UP' ? 'MORE' : 'LESS';
         const favors = (moved.direction === 'UP' && pick.side === 'MORE' && gap > 0) || (moved.direction === 'DOWN' && pick.side === 'LESS' && gap < 0);
+        const offered = set.lines.find((line) => line.id === pick.lineId)?.availableDirections.includes(favored) ?? true;
+        if (!offered) staleWhy.sideNotOffered++;
+        else if (!favors) staleWhy.againstTheLine++;
+        else if (appChanged === null || appChanged === undefined) staleWhy.noAppHistory++;
+        else if (appChanged >= moved.lastMoveAt) staleWhy.appChangedAfterMove++;
+        else if (Math.abs(gap) < .5 * pick.projection.sd) staleWhy.gapUnderHalfSd++;
         if (favors && appChanged !== null && appChanged !== undefined && appChanged < moved.lastMoveAt &&
           Math.abs(gap) >= .5 * pick.projection.sd) {
           const minutesAgo = Math.max(0, Math.round((nowMs - moved.lastMoveAt) / 60_000));
@@ -557,6 +581,8 @@ export class EdgeService {
     });
     out.sort((a, b) => (b.rank ?? -1) - (a.rank ?? -1) || b.probability - a.probability);
     capGameKelly(out);
+    if (dfs) console.log(`[edge-stale] ${set.platform}: ${out.filter((pick) => pick.stale).length} stale, ${out.filter((pick) => pick.steam).length} steam; ` +
+      `candidates not stale ${JSON.stringify(staleWhy)}`);
     const events: StaleEvent[] = [];
     for (const pick of out) {
       if (!pick.stale || !pick.sources.market) continue;
@@ -588,18 +614,20 @@ export class EdgeService {
   }
 
   /** STALE events from the last `days` days, each with Edge's view at the close and the result once graded. */
-  async staleReplay(days = 7): Promise<{ events: (StaleEvent & { closeProbability: number | null; outcome: string | null })[] }> {
-    if (!this.options.staleLogFile) return { events: [] };
+  async staleReplay(days = 7): Promise<{ events: (StaleEvent & { closeProbability: number | null; outcome: string | null })[];
+    summary?: ReturnType<typeof staleSummary> }> {
+    if (!this.options.staleLogFile) return { events: [], summary: staleSummary([]) };
     const cutoff = this.clock().getTime() - days * 86_400_000;
     let text = '';
-    try { text = await readFile(this.options.staleLogFile, 'utf8'); } catch { return { events: [] }; }
+    try { text = await readFile(this.options.staleLogFile, 'utf8'); } catch { return { events: [], summary: staleSummary([]) }; }
     const events = text.split('\n').filter(Boolean).flatMap((row) => { try { return [JSON.parse(row) as StaleEvent]; } catch { return []; } })
       .filter((event) => Date.parse(event.at) >= cutoff);
     const tracked = await this.options.ledger?.byIds(events.map((event) => `${event.platform}|${event.key}|${event.side}`)) ?? new Map();
-    return { events: events.map((event) => {
+    const replayed = events.map((event) => {
       const pick = tracked.get(`${event.platform}|${event.key}|${event.side}`);
       return { ...event, closeProbability: pick?.probability ?? null, outcome: pick?.outcome ?? null };
-    }) };
+    });
+    return { events: replayed, summary: staleSummary(replayed) };
   }
 
   /** Recent alerts, newest first, for games that haven't started. */

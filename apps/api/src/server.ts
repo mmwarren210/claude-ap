@@ -1278,6 +1278,10 @@ export function buildServer(options: ServerOptions = {}) {
   },()=>now());
   // CrownIQ Edge (Edge 2.0): its own reads of every platform, warmed in the background like the app boards.
   const movement=new MovementTracker();
+  // Step 7: the tracker starts from the last saved book prices, so the first refresh after a restart can see moves
+  // (it only remembered prices in memory, and every deploy reset it: stale and steam stayed at 0).
+  if(options.sharpProps&&!options.clock)void options.sharpProps.current().then(({prices,fetchedAt})=>{
+    if(prices.length&&fetchedAt)movement.observe(prices,Date.parse(fetchedAt));}).catch(()=>undefined);
   const edge=options.edge&&options.edge.enabled!==false?new EdgeService({board:()=>service.getBoard(),
     // SharpAPI's book prices plus the Odds API consensus books from the PrizePicks pull (step 5a; their age discounts them).
     sharp:options.sharpProps?{prices:async()=>[...(await options.sharpProps!.current()).prices,...(options.oddsConsensus?.()??[])],
@@ -1995,6 +1999,8 @@ export function buildServer(options: ServerOptions = {}) {
       if(!parsed.success)return reply.code(400).send({code:'INVALID_RESULTS'});
       return options.edge.ledger.grade(parsed.data.results);
     });
+    // Step 7: the last 7 days of stale alerts replayed against the closing line.
+    admin.get('/edge/stale',async(_request,reply)=>edge?edge.staleReplay(7):reply.code(503).send({code:'EDGE_UNAVAILABLE'}));
     admin.get('/edge/status',async(_request,reply)=>edge?{status:edge.status(),grading:edgeWorker?.status()??null,
       snapshots:options.edge?.snapshots?.status()??null}:reply.code(503).send({code:'EDGE_DISABLED'}));
     admin.post('/tracked-results',async(request,reply)=>{

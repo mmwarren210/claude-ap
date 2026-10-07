@@ -74,3 +74,19 @@ test('step 6: UFC total rounds for both fighters; KBO totals and run lines as ga
   assert.ok(uncoveredSport({ sport: 'OTHER', league: 'EUROGOLF' }) && uncoveredSport({ sport: 'OTHER', league: 'NPB' }) && uncoveredSport({ sport: 'DARTS', league: 'PDC' }));
   assert.equal(uncoveredSport({ sport: 'OTHER', league: 'UFC' }), false);
 });
+
+test('step 7: the stale replay sums alerts, closing-line value and win rate; a seeded tracker sees the first refresh’s move', async () => {
+  const { staleSummary } = await import('../src/edge/service.js');
+  assert.deepEqual(staleSummary([{ probability: .6, closeProbability: .64, outcome: 'WIN' }, { probability: .58, closeProbability: .56, outcome: 'LOSS' },
+    { probability: .61, closeProbability: null, outcome: null }]), { alerts: 3, closed: 2, averageClv: .01, graded: 2, winRate: .5 });
+  assert.deepEqual(staleSummary([]), { alerts: 0, closed: 0, averageClv: null, graded: 0, winRate: null });
+  const { MovementTracker } = await import('../src/edge/movement.js');
+  const tracker = new MovementTracker();
+  const price = (book: string, line: number) => ({ book, sport: 'NBA' as const, player: 'Alpha Guard', market: 'player_points', line, fairOver: .5,
+    overAmerican: -110, underAmerican: -110, startTime: start, home: 'Home', away: 'Away' });
+  const t0 = Date.parse('2030-10-07T20:00:00Z');
+  // The saved prices seed the tracker at startup; the first live refresh then shows three books moving: steam.
+  tracker.observe(['draftkings', 'fanduel', 'hardrock'].map((book) => price(book, 20.5)), t0);
+  assert.equal(tracker.observe(['draftkings', 'fanduel', 'hardrock'].map((book) => price(book, 23.5)), t0 + 15 * 60_000), 3);
+  assert.equal(tracker.summary('NBA', 'Alpha Guard', 'player_points', t0 + 16 * 60_000)?.steam, true);
+});
