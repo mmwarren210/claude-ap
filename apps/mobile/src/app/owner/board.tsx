@@ -55,6 +55,7 @@ type Diagnostics={
   reasonCounts?:Record<string,number>;
   outcomeCounts?:Record<string,number>;
   funnel?:Funnel;
+  sideBias?:Record<string,{flagged:boolean;share:number|null;side:'MORE'|'LESS'|null;plusEv:number;markets:Record<string,number>}>|null;
   lineSources?:{
     prizePicksFeed:{ok:boolean;rows:number;lines:number;at:string;error:string|null}|null;
     books?:{selectedButEmpty:string[];planSelects:string[]|null;requestsLastHour:number}|null;
@@ -292,6 +293,8 @@ export default function OwnerBoardScreen(){
               <Text style={styles.error}>SharpAPI says a requested book is not on the plan; the plan selects {diagnostics.lineSources.books.planSelects.join(', ')}.</Text>}
             <Text style={styles.hint}>SharpAPI requests in the last hour: {diagnostics.lineSources.books.requestsLastHour.toLocaleString()}</Text>
           </>}
+          {diagnostics.sideBias&&Object.entries(diagnostics.sideBias).filter(([,bias])=>bias.flagged).map(([platform,bias])=>
+            <Text key={platform} style={styles.error}>Side bias: {platform} has {Math.round((bias.share??0)*100)}% of {bias.plusEv} +EV picks on {bias.side} (held from Top Picks and Gen) · {Object.entries(bias.markets).slice(0,3).map(([market,count])=>`${market.replace(/_/g,' ')} ${count}`).join(', ')}</Text>)}
           {diagnostics.lineSources.board&&<>
             <Text style={styles.row}>From SharpAPI: {diagnostics.lineSources.board.primary.sharpapi.toLocaleString()} · The Odds API: {diagnostics.lineSources.board.primary.oddsApi.toLocaleString()} · Scrapers: {diagnostics.lineSources.board.primary.scraper.toLocaleString()}</Text>
             <Text style={styles.row}>Goblins: {diagnostics.lineSources.board.goblins.toLocaleString()} · Demons: {diagnostics.lineSources.board.demons.toLocaleString()}</Text>

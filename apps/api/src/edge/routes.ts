@@ -213,7 +213,7 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
         matchRate: report.match && report.match.linesWithBookPrice ? Math.round(report.match.linesMatched / report.match.linesWithBookPrice * 1000) / 1000 : null,
         marketMismatch: report.match?.mismatches ?? 0, ambiguous: report.match?.ambiguous ?? 0, noEvent: report.match?.noEvent ?? 0 }]));
       return { checkedAt: now().toISOString(), edge: { computedAt: status.computedAt, lastError: status.lastError, platforms,
-        weakTiers: status.weakTiers }, snapshots: deps.snapshots?.status() ?? null,
+        weakTiers: status.weakTiers, sideBias: edge.sideBias() }, snapshots: deps.snapshots?.status() ?? null,
         grading: deps.worker?.status() ?? null, gradingCoverage: deps.ledger ? (await deps.ledger.report()).gradingCoverage : null,
         dispersion: status.dispersion ? { fittedAt: status.dispersion.fittedAt, markets: Object.keys(status.dispersion.markets).length } : null,
         bookWeights: status.bookWeights ? { fittedAt: status.bookWeights.fittedAt, scores: status.bookWeights.scores } : null,

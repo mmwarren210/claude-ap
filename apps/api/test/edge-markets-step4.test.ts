@@ -102,3 +102,29 @@ test('step 8: soccer under any league label, college basketball and Underdog sta
   assert.equal(boxScoreReader(line('NFL', 'NFL1H', 'player_reception_yds')), null, 'a 1st-half board is never graded from full-game stats');
   assert.equal(boxScoreReader(line('NFL', 'NFL', '1h_player_reception_yds')), null);
 });
+
+test('step 9: lopsided +EV two refreshes running flags a platform; two balanced ones clear it; tennis games rungs off the books’ numbers aren’t ranked', async () => {
+  const { nextSideBias } = await import('../src/edge/service.js');
+  const pick = (side: 'MORE' | 'LESS', market = 'total_games') => ({ edge: .05, rating: 'VALUE' as const, side, sport: 'TENNIS' as const, market });
+  const lopsided = [...Array.from({ length: 9 }, () => pick('LESS')), pick('MORE')];
+  let bias = nextSideBias(null, lopsided);
+  assert.deepEqual([bias.streak, bias.side, bias.share], [1, 'LESS', .9]);
+  bias = nextSideBias(bias, lopsided);
+  assert.equal(bias.streak, 2, 'flagged');
+  assert.deepEqual(bias.markets, { 'TENNIS:total_games': 9 });
+  const balanced = [...Array.from({ length: 6 }, () => pick('LESS')), ...Array.from({ length: 5 }, () => pick('MORE'))];
+  bias = nextSideBias(nextSideBias(bias, balanced), balanced);
+  assert.deepEqual([bias.streak, bias.clean], [0, 2], 'cleared after two balanced refreshes');
+  assert.equal(nextSideBias(null, [pick('LESS')]).share, null, 'too few +EV picks to judge');
+
+  const { priceBoard } = await import('@crowniq/edge');
+  const tennis = { id: 't', provider: 'prizepicks', sourceLineId: 't', sourceLineIdIsSynthetic: false, sport: 'TENNIS', league: 'TENNIS', eventId: 'm',
+    eventName: 'A vs B', eventStartTime: start, playerId: 'p', playerName: 'Ana Player', team: null, opponent: null, market: 'total_games', threshold: 26.5,
+    availableDirections: ['MORE', 'LESS'], lineType: 'REGULAR', fetchedAt: '2030-10-07T12:00:00Z' } as never;
+  const quote = (book: string) => ({ bookmaker: book, sport: 'TENNIS', eventId: 'm', sourceMarketKey: 'total_games', market: 'total_games',
+    playerName: 'Ana Player', point: 22.5, overPrice: 1.91, underPrice: 1.91, fetchedAt: '2030-10-07T12:00:00Z' }) as never;
+  const [read] = priceBoard({ lines: [tennis], quotes: [quote('fanduel'), quote('draftkings')], now: new Date('2030-10-07T12:00:00Z'),
+    platform: 'hardrock', sidePayout: () => ({ kind: 'ODDS', decimal: 1.4 }) }).picks;
+  assert.equal(read!.rating, 'NONE');
+  assert.ok(read!.warnings.some((warning) => warning.includes('two humps')));
+});

@@ -198,6 +198,26 @@ export function staleSummary(events: readonly { probability: number; closeProbab
 export const uncoveredSport = (line: Pick<PropLine, 'sport' | 'league'>) =>
   line.sport === 'DARTS' || /GOLF|PGA|LPGA|LIV|^F1|FORMULA|NASCAR|INDYCAR|NPB|CRICKET|IPL/i.test(line.league);
 
+/** One platform's side-bias state: lopsided and balanced refreshes running, the latest share and side, and its markets. */
+export interface SideBias {
+  readonly streak: number; readonly clean: number; readonly share: number | null; readonly side: 'MORE' | 'LESS' | null;
+  readonly plusEv: number; readonly markets: Readonly<Record<string, number>>; readonly checks: number;
+}
+
+/** One refresh of the side-bias check: lopsided (> 80% one side, 10+ +EV picks) or balanced, counted in a row. */
+export function nextSideBias(previous: SideBias | null, picks: readonly Pick<EdgePick, 'edge' | 'rating' | 'side' | 'sport' | 'market'>[]): SideBias {
+  const prior = previous ?? { streak: 0, clean: 0, share: null, side: null, plusEv: 0, markets: {}, checks: 0 };
+  const plusEv = picks.filter((pick) => pick.edge !== null && pick.edge > 0 && pick.rating !== 'NONE');
+  if (plusEv.length < 10) return { ...prior, share: prior.share, plusEv: plusEv.length, checks: prior.checks + 1 };
+  const more = plusEv.filter((pick) => pick.side === 'MORE').length;
+  const side = more >= plusEv.length - more ? 'MORE' : 'LESS', share = Math.max(more, plusEv.length - more) / plusEv.length;
+  const markets: Record<string, number> = {};
+  for (const pick of plusEv) if (pick.side === side) markets[`${pick.sport}:${pick.market}`] = (markets[`${pick.sport}:${pick.market}`] ?? 0) + 1;
+  const lopsided = share > .8;
+  return { streak: lopsided ? prior.streak + 1 : 0, clean: lopsided ? 0 : prior.clean + 1, share: Math.round(share * 1000) / 1000, side,
+    plusEv: plusEv.length, markets: Object.fromEntries(Object.entries(markets).sort((a, b) => b[1] - a[1]).slice(0, 6)), checks: prior.checks + 1 };
+}
+
 /** Every pick'em app's regular numbers by canonical player, stat and game day: platform → numbers. */
 export type AnchorIndex = Map<string, Map<string, number[]>>;
 const isPickem = (platform: string) => platform === 'prizepicks' || platform === 'underdog' || platform === 'pick6';
@@ -297,6 +317,28 @@ export class EdgeService {
   private entriesFor(platform: EdgePlatform): EntryDefinition[] {
     if (platform === 'draftkings' || platform === 'hardrock') return parlayEntries(parlayMax[platform]!);
     return entriesFromTables(this.options.payouts[platform]);
+  }
+
+  private readonly bias = new Map<string, SideBias>();
+  /**
+   * Step 9 side-bias alarm: more than 80% of a platform's +EV picks on one side (MORE or LESS), two refreshes running, is
+   * flagged here, in the log and on the owner pages, with the markets driving it; a flagged platform's ranked picks and
+   * entries are held. Ten or more +EV picks are needed to judge.
+   */
+  private checkSideBias(snapshot: EdgeSnapshot) {
+    const next = nextSideBias(this.bias.get(snapshot.platform) ?? null, snapshot.response.picks);
+    this.bias.set(snapshot.platform, next);
+    if (next.share === null) return;
+    if (next.streak > 0) console.warn(`[edge-bias] ${snapshot.platform}: ${Math.round(next.share * 100)}% of ${next.plusEv} +EV picks are ${next.side}` +
+      `${next.streak >= 2 ? ' (FLAGGED: held from Top Picks and Gen)' : ''}; markets ${JSON.stringify(next.markets)}`);
+    else console.log(`[edge-bias] ${snapshot.platform}: ${next.side} ${Math.round(next.share * 100)}% of ${next.plusEv} +EV picks, ok`);
+  }
+  /** Whether a platform's +EV picks have been lopsided two refreshes running. */
+  sideBiasFlagged(platform: string): boolean { return (this.bias.get(platform)?.streak ?? 0) >= 2; }
+  /** Whether a platform has passed the side-bias check two refreshes running (a new feed is released only then). */
+  sideBiasCleared(platform: string): boolean { return (this.bias.get(platform)?.clean ?? 0) >= 2; }
+  sideBias(): Record<string, SideBias & { flagged: boolean }> {
+    return Object.fromEntries([...this.bias].map(([platform, bias]) => [platform, { ...bias, flagged: bias.streak >= 2 }]));
   }
 
   status() {
@@ -450,6 +492,7 @@ export class EdgeService {
       for (const snapshot of priced) {
         this.current.set(snapshot.platform, snapshot);
         this.log(snapshot);
+        this.checkSideBias(snapshot);
         void this.options.ledger?.record(snapshot.response.picks, (lineId) => {
           const line = snapshot.lines.get(lineId);
           return { team: line?.team ?? null, home: line?.homeTeam ?? null, away: line?.awayTeam ?? null };
@@ -664,6 +707,8 @@ export class EdgeService {
     console.log(`[edge-audit] ${snapshot.platform} sports ${JSON.stringify(Object.fromEntries(sports))} · OTHER leagues ${JSON.stringify(Object.fromEntries(otherLeagues))}`);
     const mismatches = snapshot.report.match?.mismatchSamples ?? [];
     if (mismatches.length) console.log(`[edge-audit] ${snapshot.platform} MARKET_MISMATCH samples: ${JSON.stringify(mismatches.slice(0, 8))}`);
+    const byMarket = Object.entries(snapshot.report.match?.mismatchByMarket ?? {}).sort((a, b) => b[1].count - a[1].count).slice(0, 12);
+    if (byMarket.length) console.log(`[edge-audit] ${snapshot.platform} MARKET_MISMATCH by market (board stat | book market): ${JSON.stringify(Object.fromEntries(byMarket))}`);
     console.log(`[edge-audit] ${snapshot.platform} generic model: ${generic.join(' ') || 'none'} | books cover the sport but none priced: ${unpriced.join(' ') || 'none'}`);
   }
 

@@ -339,7 +339,10 @@ export function priceBoard(input: PricingInput): PricingResult {
       // Yardage is right-skewed and Edge prices it with a symmetric normal: away from the numbers other books actually post,
       // the normal understates big games (high-rung unders look too good). Those rungs aren't ranked either.
       const nearestQuote = paired.reduce((best, item) => Math.min(best, Math.abs(item.quote.point - threshold)), Infinity);
-      const skewed = best.payout.kind === 'ODDS' && profile.family === 'NORMAL' && /yds|yards/.test(first.market) && nearestQuote > .75 * sd;
+      // Tennis games are two-humped (straight sets vs three), which a single bell curve misprices away from the books' own numbers
+      // (9: DraftKings' +EV picks were 88 of 89 LESS, 70 of them tennis games rungs). Ranked only within half a game of a quote.
+      const twoHumped = best.payout.kind === 'ODDS' && first.sport === 'TENNIS' && /games|total_games/.test(first.market) && nearestQuote > .5;
+      const skewed = twoHumped || (best.payout.kind === 'ODDS' && profile.family === 'NORMAL' && /yds|yards/.test(first.market) && nearestQuote > .75 * sd);
       const tail = best.payout.kind === 'ODDS' && (Math.abs(threshold - dist.mean) > 1.5 * sd || skewed);
       const edge = best.edge;
       // Plus/minus piles up at 0 and swings on the whole team; no model here reads it well enough to rank.
@@ -381,7 +384,8 @@ export function priceBoard(input: PricingInput): PricingResult {
       }
       if (anchor && !market) reasons.push(`Other apps list ${anchor.thresholds.map(fmt).join(' / ')} for this player and stat (a weak read, counted as 50/50).`);
       if (ladder && !isRegular && !market) reasons.push(`Priced from the ${appName} regular line ${fmt(ladder.regularThreshold)} using the ${profile.family === 'NORMAL' ? 'normal' : 'count'} distribution.`);
-      if (tail && !unbacked) warnings.push(skewed && Math.abs(threshold - dist.mean) <= 1.5 * sd
+      if (tail && !unbacked && twoHumped) warnings.push('A tennis games rung away from where other books price it: games come in two humps (straight sets or three), so Edge’s curve is shown but not ranked here.');
+      else if (tail && !unbacked) warnings.push(skewed && Math.abs(threshold - dist.mean) <= 1.5 * sd
         ? 'A yardage rung away from where other books price it: Edge’s curve is least reliable there (yardage is skewed), so it’s shown but not ranked.'
         : 'A far rung of the book’s ladder (more than 1.5 SD from Edge’s projection): shown but not ranked yet.');
       if (unbacked) warnings.push('No other sportsbook prices this player and stat: a stats-only read against the book’s odds is shown but not ranked.');

@@ -748,6 +748,7 @@ export function buildServer(options: ServerOptions = {}) {
         scrapers:await options.scraperPuller?.status()??null,
         contextFeeds:await options.contextFeeds?.status()??null,
         sharpProps:await options.sharpProps?.status()??null,
+        sideBias:edge?.sideBias()??null,
         lineSources:{prizePicksFeed:(await options.sharpProps?.status())?.prizePicksFeed??null,
           books:options.sharpProps?await options.sharpProps.status().then((sharp)=>({selectedButEmpty:sharp.selectedButEmpty??[],
             planSelects:sharp.planSelects??null,requestsLastHour:sharp.requestsLastHour??0})):null,
@@ -1304,7 +1305,9 @@ export function buildServer(options: ServerOptions = {}) {
   if(edge){
     // Hard Rock joined with the book change (9b): its picks stay out of Top Picks and Gen until the side-bias check clears it.
     const heldPlatforms=new Set((process.env.CROWNIQ_EDGE_HOLD??'hardrock').split(',').map((item)=>item.trim()).filter(Boolean));
-    registerEdgeRoutes(app,{edge,held:(platform)=>heldPlatforms.has(platform),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
+    // A platform is held while its +EV picks are lopsided (step 9), and a new feed (CROWNIQ_EDGE_HOLD) until it has passed the
+    // side-bias check two refreshes running.
+    registerEdgeRoutes(app,{edge,held:(platform)=>edge.sideBiasFlagged(platform)||(heldPlatforms.has(platform)&&!edge.sideBiasCleared(platform)),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
       internalHistory:options.internalHistory??null,isOwner:(request)=>isOwner(request),now,
       health:async()=>({board:{fetchedAt:service.getBoard()?.board.fetchedAt??null},
         sharpApi:options.sharpProps?await options.sharpProps.status():null,
@@ -2001,6 +2004,7 @@ export function buildServer(options: ServerOptions = {}) {
     });
     // Step 7: the last 7 days of stale alerts replayed against the closing line.
     admin.get('/edge/stale',async(_request,reply)=>edge?edge.staleReplay(7):reply.code(503).send({code:'EDGE_UNAVAILABLE'}));
+    admin.get('/edge/side-bias',async(_request,reply)=>edge?edge.sideBias():reply.code(503).send({code:'EDGE_UNAVAILABLE'}));
     admin.get('/edge/status',async(_request,reply)=>edge?{status:edge.status(),grading:edgeWorker?.status()??null,
       snapshots:options.edge?.snapshots?.status()??null}:reply.code(503).send({code:'EDGE_DISABLED'}));
     admin.post('/tracked-results',async(request,reply)=>{

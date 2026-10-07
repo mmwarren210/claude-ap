@@ -61,6 +61,8 @@ export interface MatchReport {
   /** A few prices that found the player and stat but no game, for diagnosing the match rate. */
   readonly noEventSamples: readonly { player: string; book: string; start: string; teams: string; boardStarts: string; boardTeams: string }[];
   readonly mismatchSamples: readonly { player: string; market: string; book: string; bookLine: number; boardLine: number }[];
+  /** 9b: MARKET_MISMATCH rejections per market and book, each with one example of both sources' numbers. */
+  readonly mismatchByMarket?: Readonly<Record<string, { count: number; example: string }>>;
 }
 
 const SIX_HOURS = 6 * 3600_000, THREE_HOURS = 3 * 3600_000;
@@ -133,13 +135,13 @@ export function matchBookPrices(lines: readonly PropLine[], prices: readonly Fai
       market: line.market, playerName: line.playerName, point: price.line, overPrice: over, underPrice: under, fetchedAt,
       ...(price.observedAt ? { observedAt: new Date(price.observedAt).toISOString() } : {}) });
   }
-  const { kept, mismatches, samples } = rejectMismatches(lines, quotes);
+  const { kept, mismatches, samples, byMarket } = rejectMismatches(lines, quotes);
   const regularGroups = new Set(lines.filter((line) => line.lineType === 'REGULAR')
     .map((line) => `${playerKey(line.sport, line.playerName)}|${canonicalMarket(line.sport, line.market)}`));
   return { quotes: kept, report: { prices: considered, matched: kept.length, ambiguous, noEvent,
     linesWithBookPrice: [...pricedGroups].filter((key) => regularGroups.has(key)).length,
     linesMatched: [...matchedGroups].filter((key) => regularGroups.has(key)).length,
-    mismatches, mismatchSamples: samples, noEventSamples } };
+    mismatches, mismatchSamples: samples, mismatchByMarket: byMarket, noEventSamples } };
 }
 
 /** Drops quotes whose implied mean is more than 3 SD from the board's regular line for the same player and stat. */
@@ -147,6 +149,7 @@ export function rejectMismatches(lines: readonly PropLine[], quotes: readonly Ma
   const regular = new Map<string, PropLine>();
   for (const line of lines) if (line.lineType === 'REGULAR') regular.set(`${line.eventId}|${normalizedName(line.playerName)}|${line.market}`, line);
   const kept: MarketQuote[] = [], samples: MatchReport['mismatchSamples'][number][] = [];
+  const byMarket: Record<string, { count: number; example: string }> = {};
   let mismatches = 0;
   for (const quote of quotes) {
     const line = regular.get(`${quote.eventId}|${normalizedName(quote.playerName)}|${quote.market}`);
@@ -161,9 +164,12 @@ export function rejectMismatches(lines: readonly PropLine[], quotes: readonly Ma
       mismatches++;
       if (samples.length < 10) samples.push({ player: line.playerName, market: line.market, book: quote.bookmaker,
         bookLine: quote.point, boardLine: line.threshold });
+      const group = `${line.sport}:${line.market}|${quote.bookmaker}:${quote.sourceMarketKey}`;
+      byMarket[group] = { count: (byMarket[group]?.count ?? 0) + 1,
+        example: byMarket[group]?.example ?? `${line.playerName}: board ${line.threshold}, ${quote.bookmaker} ${quote.point}` };
       continue;
     }
     kept.push(quote);
   }
-  return { kept, mismatches, samples };
+  return { kept, mismatches, samples, byMarket };
 }
