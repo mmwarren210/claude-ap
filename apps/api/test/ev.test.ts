@@ -106,6 +106,9 @@ test('anytime goal scorer: one-sided Yes prices de-vigged per game against the g
   for (const [index, price] of prices.entries()) assert.ok(Math.abs(price.fairOver - fair[index]!) < 0.002, `skater ${index}`);
   assert.equal(scorerFairPrices(rows, []).length, 0, 'no total, no guess');
   assert.equal(scorerFairPrices(rows.slice(0, 5), games).length, 0, 'an incomplete player list is left out');
+  assert.equal(scorerFairPrices(rows.map((row) => ({ ...row, sportsbook: 'draftkings' })), games).length, 0,
+    'DraftKings "anytime" rows carry first-goal prices');
+  assert.equal(scorerFairPrices(rows.map((row) => ({ ...row, league: 'germany_-_bundesliga' })), games).length, 0, 'NHL only');
 });
 
 test('the SharpAPI feed waits out a 429 and keeps going instead of dropping the refresh', async () => {

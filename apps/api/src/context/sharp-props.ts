@@ -48,7 +48,7 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
   TENNIS: { player_total_games: 'games_won', player_games_won: 'games_won', player_aces: 'aces',
     player_double_faults: 'double_faults' },
   SOCCER: { player_shots: 'shots', player_shots_on_target: 'sot', player_assists: 'assists', player_goals: 'goals',
-    player_fouls: 'fouls', player_saves: 'goalie_saves', anytime_goal_scorer: 'goals' },
+    player_fouls: 'fouls', player_saves: 'goalie_saves' },
 };
 
 /** Yes/no scorer markets: "Yes" is the over of 0.5 (one or more), "No" the under. */
@@ -253,12 +253,14 @@ export function expectedGoals(games: readonly GamePrice[]): Map<string, number> 
 }
 
 /**
- * Anytime goal scorer (NHL, soccer). SharpAPI sends one "Yes" price per player (selection "other", no line) and no "No"
+ * Anytime goal scorer (NHL). SharpAPI sends one "Yes" price per player (selection "other", no line) and no "No"
  * side, so the book's cut can't be removed player by player. Instead, per book and game: player goals are close to Poisson,
  * so the fair chances must satisfy sum(-ln(1 - p)) = the game's expected goals (from the no-vig total, less ~3% own goals).
- * Each Yes is divided by the one factor k that makes that hold. Games without a total, or with k outside 1.0–1.6 (an
+ * Each Yes is divided by the one factor k that makes that hold. Games without a total, or with k outside 1.0–MAX_CUT (an
  * incomplete player list), are left out rather than guessed. The result is the over of 0.5 goals.
  */
+/** The most a book's Yes prices may be shaded (FanDuel's NHL anytime Yes runs ~1.3–1.6× fair); beyond it, skip the game. */
+const MAX_CUT = 1.8;
 export const scorerSkips = { groups: 0, noTotal: 0, few: 0, low: 0, high: 0, priced: 0, samples: [] as string[] };
 
 export function scorerFairPrices(rows: readonly unknown[], games: readonly GamePrice[]): FairPrice[] {
@@ -269,8 +271,9 @@ export function scorerFairPrices(rows: readonly unknown[], games: readonly GameP
     const row = value as Row;
     if (row.market_type !== 'anytime_goal_scorer' || row.selection_type !== 'other' || row.is_live === true || row.is_active === false ||
       typeof row.player_name !== 'string' || !(Number(row.odds_probability) > 0 && Number(row.odds_probability) < 1)) continue;
-    const sport = leagueSports[String(row.league)];
-    if (sport !== 'NHL' && sport !== 'SOCCER') continue;
+    // NHL only: soccer books price whole squads, bench included, so the chances can't be scaled to the game's goals. And
+    // DraftKings' "anytime" rows carry first-goal prices (audit 2026-10-06: Eichel +550 at DraftKings, +155 at FanDuel).
+    if (leagueSports[String(row.league)] !== 'NHL' || row.sportsbook === 'draftkings') continue;
     const key = `${String(row.sportsbook)}|${String(row.event_id)}`;
     groups.set(key, [...(groups.get(key) ?? []), row]);
   }
@@ -282,22 +285,17 @@ export function scorerFairPrices(rows: readonly unknown[], games: readonly GameP
     if (list.length < 10) { scorerSkips.few++; continue; }
     const target = goals * 0.97, implied = list.map((row) => Number(row.odds_probability));
     const sum = (k: number) => implied.reduce((total, p) => total - Math.log(1 - Math.min(p / k, 0.99)), 0);
-    if (scorerSkips.samples.length < 8 && String(list[0]!.league) === 'nhl') {
-      const top = [...list].sort((a, b) => Number(b.odds_probability) - Number(a.odds_probability)).slice(0, 3);
-      scorerSkips.samples.push(`top ${String(list[0]!.sportsbook)}: ${top.map((row) => `${String(row.player_name)} ${String(row.odds_american)} p=${String(row.odds_probability)} line=${String(row.line)}`).join(' | ')}`);
-    }
-    if (sum(1) < target || sum(1.6) > target) {
+    if (sum(1) < target || sum(MAX_CUT) > target) {
       if (sum(1) < target) scorerSkips.low++; else scorerSkips.high++;
-      if (scorerSkips.samples.length < 6) scorerSkips.samples.push(`${String(list[0]!.sportsbook)} ${String(list[0]!.league)} n=${list.length} sum=${sum(1).toFixed(2)} goals=${goals.toFixed(2)}`);
+      if (scorerSkips.samples.length < 4) scorerSkips.samples.push(`${String(list[0]!.sportsbook)} ${String(list[0]!.league)} n=${list.length} sum=${sum(1).toFixed(2)} goals=${goals.toFixed(2)}`);
       continue;
     }
     scorerSkips.priced++;
-    let lo = 1, hi = 1.6;
+    let lo = 1, hi = MAX_CUT;
     for (let i = 0; i < 50; i++) { const mid = (lo + hi) / 2; if (sum(mid) > target) lo = mid; else hi = mid; }
     const k = (lo + hi) / 2;
     for (const row of list) {
-      const sport = leagueSports[String(row.league)]!;
-      out.push({ book: String(row.sportsbook), sport, player: String(row.player_name), market: 'goals', line: 0.5,
+      out.push({ book: String(row.sportsbook), sport: 'NHL', player: String(row.player_name), market: 'goals', line: 0.5,
         fairOver: Math.round(Number(row.odds_probability) / k * 10_000) / 10_000,
         overAmerican: typeof row.odds_american === 'number' ? row.odds_american : null, underAmerican: null,
         startTime: String(row.event_start_time), home: typeof row.home_team === 'string' ? row.home_team : null,
@@ -394,9 +392,9 @@ export class SharpPropsFeed {
     const books = this.options.books ?? ['draftkings', 'hardrock', 'fanduel'];
     // Player props for the leagues CrownIQ covers. (Full-game lines were only for Kalshi, removed 2026-10-06.)
     const leagues = this.options.leagues ?? sharpLeagues;
-    // Game goal totals for NHL and soccer: they set the scale that takes the cut out of anytime-scorer prices.
+    // NHL game goal totals: they set the scale that takes the cut out of anytime-scorer prices.
     const jobs = [...leagues.map((league) => ({ league, props: true })),
-      ...leagues.filter((league) => league === 'nhl' || leagueSports[league] === 'SOCCER').map((league) => ({ league, props: false }))];
+      ...leagues.filter((league) => league === 'nhl').map((league) => ({ league, props: false }))];
     try {
       for (const { league, props } of jobs) {
         let cursor: string | null = null;
