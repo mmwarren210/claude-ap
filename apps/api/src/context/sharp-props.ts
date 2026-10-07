@@ -382,7 +382,11 @@ export function scorerFairPrices(rows: readonly unknown[], games: readonly GameP
     // Expected scoring events in the game: NHL goals less ~3% own goals; football rush + receiving TDs from the points.
     const totals = kind === 'goals' ? goalTotals : pointTotals, total = totals.get(event) ?? totals.get(teams) ?? 0;
     const expected = kind === 'goals' ? total * .97 : total * TDS_PER_POINT;
-    if (!expected) { scorerSkips.noTotal++; if (scorerSkips.samples.length < 3) scorerSkips.samples.push(`no total ${kind} ${event}`); continue; }
+    if (!expected) {
+      scorerSkips.noTotal++;
+      if (scorerSkips.samples.length < 3) scorerSkips.samples.push(`no total ${kind} ${event} (${teams}); totals for ${[...totals.keys()].filter((item) => item.includes('|')).slice(0, 4).join(', ')}`);
+      continue;
+    }
     if (list.length < (kind === 'goals' ? 10 : 15)) { scorerSkips.few++; continue; }
     const target = expected, implied = list.map((row) => Number(row.odds_probability));
     const sum = (k: number) => implied.reduce((total, p) => total - Math.log(1 - Math.min(p / k, 0.99)), 0);
@@ -466,6 +470,11 @@ export function sharpGameLines(games: readonly GamePrice[]): import('./feeds.js'
     if (!out.has(key)) out.set(key, { league: game.league.toUpperCase(), home: game.home, away: game.away, startTime: game.startTime,
       market: game.market, line: game.line, homePrice: null, awayPrice: null, homeFair: null, awayFair: null, sourceUrl: null });
   }
+  // A game with a total and no run line (SharpAPI lists only KBO totals) splits the total evenly.
+  for (const line of [...out.values()]) {
+    const event = [...out].find(([, value]) => value === line)![0].split('|')[0]!;
+    if (line.market === 'total' && !out.has(`${event}|spread`)) out.set(`${event}|spread`, { ...line, market: 'spread', line: 0 });
+  }
   return [...out.values()];
 }
 
@@ -505,6 +514,8 @@ export class SharpPropsFeed {
   private requestTimes: number[] = [];
   private emptyStreaks = new Map<string, number>();
   private notSelected: string[] | null = null;
+  /** Partial-game market types SharpAPI has listed (from the PrizePicks pass), the only ones the books' partial pass asks for. */
+  private readonly knownPartials = new Set<string>();
   constructor(private readonly apiKey: string | null, private readonly file: string | null,
     private readonly options: { books?: readonly string[]; leagues?: readonly string[]; maxPagesPerLeague?: number;
       /** Pause between requests; SharpAPI's Hobby plan allows 120 a minute. */
@@ -619,13 +630,16 @@ export class SharpPropsFeed {
     const cap = this.options.maxPagesPerLeague ?? 60;
     let booksOk = false;
     this.lastStartedAt = this.clock().getTime();
+    // PrizePicks first: its rows name every partial-game market type SharpAPI really has (a list holding one name it doesn't
+    // know is rejected whole: "invalid_filter"), so the books' partial pass asks only for those.
+    if (wantsPrizePicks) await this.refreshPrizePicks(leagues, cap);
     const perLeague: Record<string, Record<string, number>> = {}, capped: string[] = [], partialRows: Record<string, number> = {};
     try {
       for (const league of leagues) {
         const sport = leagueSports[league];
         // Step 1d: only the market types CrownIQ reads, as one comma-separated list per pass (no page flooding);
         // the partial-game types get their own pass.
-        for (const [index, types] of [fullGameTypes(sport), partialTypes(sport)].entries()) {
+        for (const [index, types] of [fullGameTypes(sport), partialTypes(sport).filter((type) => this.knownPartials.has(type))].entries()) {
           if (!books.length || !types.length) continue;
           const pass = await this.pages(league, { sportsbooks: books.join(','), is_player_prop: 'true', market_type: types.join(',') }, cap);
           rows.push(...pass.rows);
@@ -678,7 +692,6 @@ export class SharpPropsFeed {
         for (const callback of this.onRefreshed) { try { await callback(prices, this.clock()); } catch { /* best effort */ } }
       }
     }
-    if (wantsPrizePicks) await this.refreshPrizePicks(leagues, cap);
     return this.status();
   }
 
@@ -692,6 +705,7 @@ export class SharpPropsFeed {
     try {
       for (const league of leagues) rows.push(...(await this.pages(league, { sportsbooks: 'prizepicks', is_player_prop: 'true' }, cap)).rows);
     } catch (failure) { error = failure instanceof Error ? failure.message : 'SHARPAPI_FAILED'; }
+    for (const value of rows) { const type = String((value as Row).market_type); if (/^1st_(half|quarter|period)_/.test(type)) this.knownPartials.add(type); }
     const lines = error ? [] : pickemLines(rows).filter((line) => line.book.startsWith('prizepicks'));
     if (!error && !lines.length) error = 'NO_PRIZEPICKS_ROWS';
     const at = this.clock().toISOString();

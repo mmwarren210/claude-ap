@@ -90,7 +90,7 @@ test('SharpAPI feed: PrizePicks gets its own pass; a failed pass clears its line
   const heard: [number, boolean][] = [];
   feed.whenPickem((lines, ok) => { heard.push([lines.length, ok]); });
   await feed.refresh();
-  assert.deepEqual(asked, ['draftkings', 'prizepicks'], 'books without PrizePicks, then PrizePicks alone');
+  assert.deepEqual(asked, ['prizepicks', 'draftkings'], 'PrizePicks alone first (its rows name the partial-game types), then the books');
   assert.equal((await feed.pickemLines()).lines.length, 1);
   failPrizePicks = true;
   const status = await feed.refresh();
@@ -136,4 +136,18 @@ test('Step 3: each app reads the other apps’ regular numbers, never its own, a
     { platform: 'pick6', lines: [make('p6a', 50.5), make('p6b', 55.5)] }, { platform: 'draftkings', lines: [make('dk', 60.5)] }]);
   assert.deepEqual(anchorsFor(index, make('x', 52.5), 'underdog'), [54.5], 'PrizePicks only: own excluded, Pick6 ambiguous, books and Goblins never');
   assert.deepEqual(anchorsFor(index, make('x', 54.5), 'prizepicks'), [52.5]);
+});
+
+test('the books’ partial-game pass asks only for partial types SharpAPI has named in the PrizePicks pass', async () => {
+  const asked: URL[] = [];
+  const fetchFn = (async (input: URL | string) => {
+    const url = new URL(String(input)); asked.push(url);
+    const data = url.searchParams.get('sportsbooks') === 'prizepicks'
+      ? [{ sportsbook: 'prizepicks', league: 'nfl', market_type: '1st_half_player_receiving_yards', selection_type: 'over', line: 30.5,
+        player_name: 'Test Receiver', event_id: 'e1', event_start_time: start, is_live: false, is_active: true }] : [];
+    return new Response(JSON.stringify({ data, pagination: { has_more: false } }));
+  }) as typeof fetch;
+  await new SharpPropsFeed('key', null, { leagues: ['nfl'], books: ['draftkings', 'prizepicks'], requestGapMs: 0 }, fetchFn, () => now).refresh();
+  const partial = asked.find((url) => url.searchParams.get('sportsbooks') === 'draftkings' && url.searchParams.get('market_type')?.startsWith('1st_'));
+  assert.equal(partial?.searchParams.get('market_type'), '1st_half_player_receiving_yards');
 });
