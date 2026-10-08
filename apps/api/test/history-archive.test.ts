@@ -33,3 +33,18 @@ test('the archive appends each record once per key, by stream and month, and kee
     assert.equal(await restarted.append('games', [{ key: 'g', record: {} }, { key: 'g2', record: {} }]), 1);
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
+
+test('the archive pauses when the volume runs low, so the app’s own saves keep their room', async () => {
+  const { mkdtemp, readdir, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const folder = await mkdtemp(join(tmpdir(), 'crowniq-archive-low-'));
+  let free = 10e6;
+  try {
+    const archive = new HistoryArchive(folder, () => new Date('2030-10-08T12:00:00Z'), 60e6, async () => free);
+    assert.equal(await archive.append('games', [{ key: 'a', record: { x: 1 } }]), 0, 'under 60 MB free: nothing written');
+    assert.deepEqual(await readdir(folder), []);
+    free = 200e6;
+    assert.equal(await archive.append('games', [{ key: 'a', record: { x: 1 } }]), 1, 'room again: written');
+  } finally { await rm(folder, { recursive: true, force: true }); }
+});

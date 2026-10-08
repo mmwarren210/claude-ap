@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readdir, readFile, stat } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, stat, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 
 // CrownIQ's own archive, for built-in verification and evidence later: every player game log it fetched, every final
@@ -13,7 +13,14 @@ export class HistoryArchive {
   /** Keys already written this run, so repeated fetches of the same game log or result aren't stored twice. */
   private seen = new Map<ArchiveStream, Set<string>>();
   private chain: Promise<unknown> = Promise.resolve();
-  constructor(private readonly dir: string | null, private readonly clock: () => Date = () => new Date()) {}
+  private pausedLogged = false;
+  constructor(private readonly dir: string | null, private readonly clock: () => Date = () => new Date(),
+    private readonly minFreeBytes = 60e6,
+    private readonly freeBytes: () => Promise<number> = async () => {
+      if (!dir) return Infinity;
+      const info = await statfs(dir).catch(() => null);
+      return info ? info.bavail * info.bsize : Infinity;
+    }) {}
 
   /** Appends records not already written (by key). Failures never reach the caller: the archive is best effort. */
   append(stream: ArchiveStream, records: readonly { key: string; record: Record<string, unknown> }[]): Promise<number> {
@@ -38,6 +45,13 @@ export class HistoryArchive {
       const fresh = records.filter(({ key }) => !seen.has(key) && !batch.has(key) && batch.add(key));
       if (!fresh.length) return 0;
       await mkdir(this.dir, { recursive: true });
+      // The archive yields when the volume runs low, so the saves the app needs (picks, prices, ledgers) keep their room.
+      if (await this.freeBytes() < this.minFreeBytes) {
+        if (!this.pausedLogged) console.warn(`[archive] paused: under ${Math.round(this.minFreeBytes / 1e6)} MB free on the volume`);
+        this.pausedLogged = true;
+        return 0;
+      }
+      this.pausedLogged = false;
       await appendFile(join(this.dir, `${stream}-${at.slice(0, 7)}.jsonl`),
         fresh.map(({ key, record }) => JSON.stringify({ key, archivedAt: at, ...record })).join('\n') + '\n');
       for (const { key } of fresh) seen.add(key);
