@@ -6,6 +6,8 @@ import { colors } from '../../theme';
 import { useDraft } from '../../use-draft';
 import { useIsOwner } from '../../use-owner';
 import { useGkrPlusAccess } from '../../use-gkr-plus';
+import { View } from 'react-native';
+import { NoticeBanner } from '../../components/NoticeBanner';
 
 function TabIcon({ name, active, color, focused }: { name: IconName; active: IconName; color: ColorValue;
   focused: boolean }) {
@@ -17,7 +19,7 @@ const icon = (name: IconName, active: IconName) => function tabIcon({ color, foc
 export default function TabLayout() {
   const { legs } = useDraft();
   const owner = useIsOwner(), gkrPlus = useGkrPlusAccess();
-  return <Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.mint,
+  return <View style={{ flex: 1 }}><NoticeBanner /><Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.mint,
     tabBarInactiveTintColor: colors.textMuted,
     tabBarStyle: { backgroundColor: colors.background, borderTopColor: colors.border },
     tabBarLabelStyle: { fontSize: 10, fontWeight: '700' },
@@ -34,5 +36,5 @@ export default function TabLayout() {
     <Tabs.Screen name="tips" options={{ href: owner ? undefined : null, title: 'Tips', tabBarIcon: icon('lightbulb-outline', 'lightbulb') }} />
     <Tabs.Screen name="social" options={{ href: owner ? null : undefined, title: 'Social', tabBarIcon: icon('account-group-outline', 'account-group') }} />
     <Tabs.Screen name="more" options={{ title: 'More', tabBarIcon: icon('menu', 'menu') }} />
-  </Tabs>;
+  </Tabs></View>;
 }

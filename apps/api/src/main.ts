@@ -8,7 +8,7 @@ import { TipGrader, TipStore } from './tips.js';
 import 'dotenv/config';
 import { mergePayouts } from '@crowniq/contracts';
 import { dirname, join } from 'node:path';
-import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegistry, lessAwareVersion, marketDefinitions,
   statHistoryReadyVersions, statHistoryV2Versions, statHistoryV3Versions, statHistoryV4Versions } from '@crowniq/engine';
@@ -82,6 +82,15 @@ setInterval(()=>{try{for(const name of readdirSync(dataDir,{recursive:true}) as 
   if(Date.now()-statSync(path).mtimeMs>15*60_000){rmSync(path,{force:true});console.warn(`[disk] removed a stale half-written save: ${name}`);}
 }}catch{/* nothing to sweep */}},3600_000).unref();
 // CrownIQ's own archive: every game log, graded result and line it has seen, kept for verification and evidence.
+// One-time line reset (owner, 2026-10-08, moving to PropLine): CROWNIQ_CLEAR_LINES_ONCE=<id> deletes the saved PrizePicks board
+// and the line store at startup, once per id (a marker file remembers it). Lines come back from the next pull.
+const clearId=process.env.CROWNIQ_CLEAR_LINES_ONCE?.trim();
+if(clearId&&/^[a-z0-9-]{1,40}$/i.test(clearId)&&!existsSync(`${dataDir}/lines-cleared-${clearId}`)){
+  for(const file of [process.env.CROWNIQ_BOARD_CACHE_FILE ?? `${dataDir}/board-cache.json`,
+    process.env.CROWNIQ_SCRAPED_LINES_FILE ?? `${dataDir}/scraped-lines.json`])rmSync(file,{force:true});
+  try{writeFileSync(`${dataDir}/lines-cleared-${clearId}`,new Date().toISOString());}catch{/* data dir missing */}
+  console.warn(`[startup] saved lines cleared (${clearId})`);
+}
 const historyArchive=new HistoryArchive(`${dataDir}/archive`);
 // Minutes on the app per member; saved every few minutes and on shutdown (a deploy sends SIGTERM first).
 const activityLog=new ActivityLog(`${dataDir}/activity.json`);
