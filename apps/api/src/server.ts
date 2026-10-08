@@ -2306,7 +2306,10 @@ export function buildServer(options: ServerOptions = {}) {
           let shape:unknown=null;
           try{const body=JSON.parse(text) as Record<string,unknown>;
             shape=Object.fromEntries(Object.entries(body).map(([key,value])=>[key,Array.isArray(value)?value.length:typeof value]));}catch{/* not JSON */}
-          return [name,{status:response.status,bytes:text.length,type:response.headers.get('content-type'),shape,
+          // ?sample=1: the first two items of each list, to build a reader from.
+          const sample=(request.query as {sample?:string}).sample==='1'&&shape?Object.fromEntries(Object.entries(JSON.parse(text) as Record<string,unknown>)
+            .flatMap(([key,value])=>Array.isArray(value)?[[key,value.slice(0,2)]]:[])):null;
+          return [name,{status:response.status,bytes:text.length,type:response.headers.get('content-type'),shape,sample,
             start:text.slice(0,300)}] as const;
         }catch(error){return [name,{error:error instanceof Error?error.message:String(error)}] as const;}
       }));
