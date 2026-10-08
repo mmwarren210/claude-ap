@@ -1,4 +1,5 @@
 import type { BaseRates, Trend } from './base-rates.js';
+import { registerCompression } from './compress.js';
 import { lineShop } from './line-shop.js';
 import { sameGame } from './team-match.js';
 import { bookLines } from './book-picks.js';
@@ -199,6 +200,7 @@ function authorized(request: FastifyRequest, token?: string): boolean {
 const serverStartedAt=new Date().toISOString();
 export function buildServer(options: ServerOptions = {}) {
   const app = Fastify({ logger: false });
+  registerCompression(app);
   const service = new BoardService(options.provider ?? null, options.research ?? null,
     options.models ?? new ModelRegistry(), options.clock, options.boardCache,
     options.secondLookResearch ?? null,options.startupResearch ?? null);
