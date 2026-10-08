@@ -207,7 +207,8 @@ function authorized(request: FastifyRequest, token?: string): boolean {
 
 const serverStartedAt=new Date().toISOString();
 export function buildServer(options: ServerOptions = {}) {
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, // Restoring a large saved board (44k lines) at startup takes longer than the 10 s default.
+    pluginTimeout: 300_000 });
   registerCompression(app);
   const service = new BoardService(options.provider ?? null, options.research ?? null,
     options.models ?? new ModelRegistry(), options.clock, options.boardCache,
