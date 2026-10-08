@@ -62,6 +62,7 @@ import { CurrentContextResearch } from './current-context.js';
 import { OddsApiTotals } from './context/odds-api-totals.js';
 import { UfcHistory } from './ufc-history.js';
 import { SoccerHistory } from './soccer-history.js';
+import { SecretUnlocks } from './secrets.js';
 import { startMemoryWatch } from './memory-watch.js';
 
 startMemoryWatch();
@@ -440,6 +441,7 @@ const app = buildServer({ ufcHistory, soccerHistory, oddsConsensus:oddsPrizePick
   historyArchive,
   edge:edgeOptions,
   feedback:new FeedbackStore(`${dataDir}/feedback.json`),
+  secrets:{password:process.env.CROWNIQ_SECRETS_PASSWORD?.trim()||null,unlocks:new SecretUnlocks(`${dataDir}/secret-unlocks.json`)},
   tips:(()=>{const store=new TipStore(`${dataDir}/tips.json`);
     const reader=claudeKey?new ClaudeTipReader({apiKey:claudeKey,model:process.env.CROWNIQ_TIPS_MODEL??'claude-sonnet-5-5'}):null;
     return {store,reader,grader:reader?new TipGrader(store,reader):null};})(),

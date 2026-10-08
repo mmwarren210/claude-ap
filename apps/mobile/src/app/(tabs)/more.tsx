@@ -21,6 +21,7 @@ import { BetaFeedback, FeedbackReview, PatchNotes } from '../../components/Feedb
 import { ScoutQueue } from '../../components/ScoutQueue';
 import { colors, radius } from '../../theme';
 import { useDraft } from '../../use-draft';
+import { gkrPlusAccess, useGkrPlusAccess } from '../../use-gkr-plus';
 import { appCommit, isOutdated } from '../../version';
 
 const helpUrl = 'https://www.ncpgambling.org/help-treatment/about-the-national-problem-gambling-helpline/';
@@ -35,6 +36,33 @@ function Row({ icon, title, detail, onPress, locked, last }: { icon: IconName; t
     <Text style={styles.rowDetail} numberOfLines={1}>{detail}</Text>
     {!locked && onPress && <Icon name="chevron-right" size={22} color={colors.textMuted} />}
   </Pressable>;
+}
+
+/** Secrets: a password that unlocks GKR+ for this account. */
+function SecretsUnlock({ unlocked }: { unlocked: boolean }) {
+  const { request } = useAuth();
+  const [password, setPassword] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  if (unlocked) return <Text style={styles.sheetNote}>GKR+ is unlocked on this account. It&apos;s in the tab bar.</Text>;
+  const unlock = async () => {
+    setBusy(true); setNote('');
+    try {
+      const response = await request('/v1/secrets/unlock', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ password }) });
+      if (response.ok) { setPassword(''); setNote('Unlocked: GKR+ is now in your tab bar.'); gkrPlusAccess.changed(); }
+      else setNote(response.status === 429 ? 'Too many tries. Wait a minute and try again.' : 'That password doesn’t unlock anything.');
+    } catch { setNote('Could not reach CrownIQ. Check your connection.'); }
+    finally { setBusy(false); }
+  };
+  return <>
+    <Text style={styles.sheetLabel}>Password</Text>
+    <TextInput accessibilityLabel="Secrets password" autoCapitalize="none" autoCorrect={false} secureTextEntry value={password}
+      onChangeText={setPassword} onSubmitEditing={() => void unlock()} style={styles.input} placeholder="Enter the password"
+      placeholderTextColor={colors.textFaint} />
+    <PrimaryButton label={busy ? 'Checking…' : 'Unlock'} onPress={() => { if (!busy && password) void unlock(); }} />
+    {!!note && <Text style={styles.sheetNote}>{note}</Text>}
+  </>;
 }
 
 /** The version row: this copy's build against the server's. Tapping it reloads the app (a home-screen copy has no
@@ -59,9 +87,10 @@ export default function MoreScreen() {
   const { profile, logout, request, setUsername, demo } = useAuth();
   const { viewMode, setViewMode, ready, hiddenTips, showAllTips } = useDraft();
   const [owner, setOwner] = useState(false);
+  const gkrPlus = useGkrPlusAccess();
   const [stats, setStats] = useState<{ picks: number; crowns: number; rate: number | null } | null>(null);
   const { feedback: openFeedback } = useLocalSearchParams<{ feedback?: string }>();
-  const [sheet, setSheet] = useState<'account' | 'payouts' | 'feedback' | 'updates' | 'review' | 'scout' | null>(null);
+  const [sheet, setSheet] = useState<'account' | 'payouts' | 'feedback' | 'updates' | 'review' | 'scout' | 'secrets' | null>(null);
   // A "report it" nudge elsewhere in the app opens Beta feedback here.
   const [lastOpen, setLastOpen] = useState<string | undefined>(undefined);
   if (openFeedback && openFeedback !== lastOpen && !demo) { setLastOpen(openFeedback); setSheet('feedback'); }
@@ -146,6 +175,7 @@ export default function MoreScreen() {
           onPress={hiddenTips.length ? showAllTips : undefined} />
         {owner && <Row icon="image-text" title="Tip check" detail="Owner · upload a service's picks" onPress={() => go('/(tabs)/tips')} />}
         <Row icon="account-group-outline" title="Social" detail="Top 10 and Crowns" onPress={() => go('/(tabs)/social')} />
+        <Row icon="key-variant" title="Secrets" detail={gkrPlus ? 'GKR+ unlocked' : 'Enter a password'} onPress={demo ? undefined : () => setSheet('secrets')} />
         <Row icon="lifebuoy" title="Play responsibly" detail="1-800-MY-RESET" last onPress={() => openExternal(helpUrl)} />
       </View>
 
@@ -180,6 +210,7 @@ export default function MoreScreen() {
       {!demo && profile?.plan !== 'GUEST' && <DeleteAccount />}
     </Sheet>
     <Sheet visible={sheet === 'feedback'} title="Beta feedback" onClose={() => { setSheet(null); router.setParams({ feedback: undefined }); }}><BetaFeedback /></Sheet>
+    <Sheet visible={sheet === 'secrets'} title="Secrets" onClose={() => setSheet(null)}>{sheet === 'secrets' && <SecretsUnlock unlocked={gkrPlus} />}</Sheet>
     <Sheet visible={sheet === 'updates'} title="Updates" onClose={() => setSheet(null)}><PatchNotes /></Sheet>
     <Sheet visible={sheet === 'scout'} title="Scout queue" onClose={() => setSheet(null)}>{sheet === 'scout' && <ScoutQueue />}</Sheet>
     <Sheet visible={sheet === 'review'} title="Review feedback" onClose={() => setSheet(null)}><FeedbackReview /></Sheet>

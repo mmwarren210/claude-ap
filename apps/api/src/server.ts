@@ -1,5 +1,7 @@
 import type { BaseRates, Trend } from './base-rates.js';
 import { registerCompression } from './compress.js';
+import { passwordMatches } from './secrets.js';
+import type { SecretUnlocks } from './secrets.js';
 import { gzipSync } from 'node:zlib';
 import { lineShop } from './line-shop.js';
 import { sameGame } from './team-match.js';
@@ -185,6 +187,8 @@ export interface ServerOptions {
     bookWeights?: BookWeightStore | null } | null;
   /** Tips from paid services, read from screenshots by Claude and graded after the games (display-only). */
   tips?: { store: TipStore; reader: TipReader | null; grader: TipGrader | null } | null;
+  /** "Secrets" in the More tab: the password that unlocks GKR+ for an account, and who has unlocked it. */
+  secrets?: { password: string | null; unlocks: SecretUnlocks } | null;
   /** JSON-lines history of the books' view of board lines, one row per line per refresh. */
   booksHistoryFile?: string | null;
 }
@@ -659,6 +663,22 @@ export function buildServer(options: ServerOptions = {}) {
     feedbackIds:z.array(z.string().uuid()).max(100).optional()}).strict();
   const isOwner=async(request:FastifyRequest)=>{const user=await currentUser(request);
     return !!options.ownerPublicId&&user?.publicId===options.ownerPublicId;};
+  // GKR+ is the owner's, plus any account unlocked with the Secrets password.
+  const hasGkrPlus=async(request:FastifyRequest)=>{if(await isOwner(request))return true;
+    const user=await currentUser(request);return !!user&&!!options.secrets&&await options.secrets.unlocks.has(user.accountId);};
+  app.get('/v1/secrets',async(request,reply)=>{
+    if(!await currentUser(request))return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    return {gkrPlus:await hasGkrPlus(request)};
+  });
+  app.post('/v1/secrets/unlock',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(limited(`secrets:${user.accountId}`))return reply.code(429).send({code:'TOO_MANY_TRIES'});
+    const input=z.object({password:z.string().max(200)}).strict().safeParse(request.body);
+    if(!input.success||!options.secrets)return reply.code(400).send({code:'INVALID_PASSWORD'});
+    if(!passwordMatches(input.data.password,options.secrets.password))return reply.code(403).send({code:'WRONG_PASSWORD'});
+    await options.secrets.unlocks.add(user.accountId);
+    return {gkrPlus:true};
+  });
   // "Refresh all now, skip next": every scheduled scraper and context feed pulls now (plus the sportsbook feed), and each one's
   // next scheduled run is marked done so it is skipped (no paying twice). Runs in the background; the result goes to the log.
   let refreshAll:{startedAt:string;finishedAt:string|null;skipped:string[];summary:string|null}|null=null;
@@ -1441,7 +1461,7 @@ export function buildServer(options: ServerOptions = {}) {
     app.register(async(owner)=>{
       owner.addHook('preHandler',async(request,reply)=>{
         reply.header('Cache-Control','private, no-store');
-        if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+        if(!await hasGkrPlus(request))return reply.code(404).send({code:'NOT_FOUND'});
       });
       owner.get('/',async(request,reply)=>{
         const query=z.object({platform:z.enum(EDGE_PLATFORMS as [EdgePlatform,...EdgePlatform[]]).default('prizepicks'),

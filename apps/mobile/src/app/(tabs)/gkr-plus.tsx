@@ -11,7 +11,7 @@ import { useEdgeSlip } from '../../edge-slip';
 import { palette } from '../../theme';
 import { useBoard } from '../../use-board';
 import { useEdge } from '../../use-edge';
-import { useIsOwner } from '../../use-owner';
+import { useGkrPlusAccess } from '../../use-gkr-plus';
 
 // GKR+ (owner only): Edge's read blended with the player's history at the number and GKR's side, on every platform.
 // Same platforms and pick cards as the Edge tab; its own record.
@@ -19,7 +19,7 @@ type Section = 'top' | 'record';
 const sections: { key: Section; label: string }[] = [{ key: 'top', label: 'Top Picks' }, { key: 'record', label: 'Record' }];
 
 export default function GkrPlusScreen() {
-  const owner = useIsOwner();
+  const owner = useGkrPlusAccess();
   const [section, setSection] = useState<Section>('top');
   const platform = useEdgePlatform(), book = isBook(platform);
   const [sport, setSport] = useState<string | null>(null);
@@ -29,7 +29,7 @@ export default function GkrPlusScreen() {
   const { status, data, message, retry } = useEdge('edges', 'gkr-plus', day, query);
   const slip = useEdgeSlip();
   const { nowMs } = useBoard();
-  if (!owner) return <Screen eyebrow="CROWNIQ  /  GKR+" title="GKR+"><Notice title="Not available" detail="This tab is for the owner." /></Screen>;
+  if (!owner) return <Screen eyebrow="CROWNIQ  /  GKR+" title="GKR+"><Notice title="Not available" detail="Unlock it in More › Secrets." /></Screen>;
   const live = upcomingPicks(data?.picks ?? [], nowMs, day);
   const sports = sportsFrom(live);
   const picks = live.filter((pick) => !sport || pick.sport === sport).slice(0, 100);
