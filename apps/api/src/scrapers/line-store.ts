@@ -45,7 +45,10 @@ export class ScrapedLineStore {
   private loaded = false;
   constructor(private readonly file: string | null, private readonly clock: () => Date = () => new Date(),
     /** New lines and number moves also go to CrownIQ's own archive, which keeps them after this store lets them go. */
-    private readonly archive: HistoryArchive | null = null) {}
+    private readonly archive: HistoryArchive | null = null,
+    /** A line no source has seen for this long is treated as gone: a source that stopped running (the lergassy backup was
+     * turned off, owner 2026-10-08) never takes its lines down, and a daily pull re-sees every live line within a day. */
+    private readonly maxUnseenMs = 26 * 3600_000) {}
 
   private loading: Promise<void> | null = null;
   /**
@@ -144,6 +147,6 @@ export class ScrapedLineStore {
     await this.load();
     const now = this.clock().getTime();
     return [...this.lines.values()].filter((line) => !line.removedAt && Date.parse(line.startTime) > now &&
-      (!app || line.app === app));
+      now - Date.parse(line.lastSeenAt) <= this.maxUnseenMs && (!app || line.app === app));
   }
 }

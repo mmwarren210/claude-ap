@@ -29,3 +29,17 @@ test('concurrent callers after a restart share one read of the saved lines file'
     await rm(folder, { recursive: true, force: true });
   }
 });
+
+test('a line no source has seen for 26 hours drops off the active board, even when its source stopped running', async () => {
+  let now = new Date('2030-09-24T12:00:00Z');
+  const store = new ScrapedLineStore(null, () => now);
+  const base = { app: 'underdog' as const, league: 'NFL', gameId: 'g1', team: 'CHI', teamName: 'Chicago Bears', opponent: 'GB',
+    stat: 'Receptions', line: 4.5, tier: 'REGULAR' as const, directions: ['MORE', 'LESS'] as ('MORE' | 'LESS')[],
+    startTime: '2030-09-27T00:00:00.000Z', imageUrl: null };
+  await store.ingest('backup', [{ ...base, appLineId: 'old', player: 'Player A' }], { complete: true, apps: ['underdog'] });
+  now = new Date(now.getTime() + 20 * 3600_000);
+  await store.ingest('daily', [{ ...base, appLineId: 'fresh', player: 'Player B' }], { complete: true, apps: ['underdog'] });
+  assert.deepEqual((await store.active('underdog')).map((line) => line.appLineId).sort(), ['fresh', 'old']);
+  now = new Date(now.getTime() + 7 * 3600_000);
+  assert.deepEqual((await store.active('underdog')).map((line) => line.appLineId), ['fresh']);
+});
