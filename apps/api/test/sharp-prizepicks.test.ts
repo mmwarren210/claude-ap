@@ -203,3 +203,10 @@ test('a dropped SharpAPI request is retried instead of failing the whole refresh
   assert.notEqual(status.lastError, 'fetch failed', 'the dropped request was tried again');
   assert.ok(calls >= 2);
 });
+
+test('a book whose rows come in again gets no feed note, whatever an older plan answer said', async () => {
+  const { bookFeedNote } = await import('../src/context/sharp-props.js');
+  assert.equal(bookFeedNote({ planSelects: ['draftkings', 'caesars'], emptyBooks: [] }, 'hardrock', 'Hard Rock'), null);
+  assert.equal(bookFeedNote({ unavailable: ['hardrock'], emptyBooks: ['draftkings'] }, 'hardrock', 'Hard Rock'), null);
+  assert.match(bookFeedNote({ planSelects: ['draftkings'], emptyBooks: ['hardrock'] }, 'hardrock', 'Hard Rock') ?? '', /isn't available/);
+});

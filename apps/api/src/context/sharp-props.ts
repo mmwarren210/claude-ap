@@ -503,6 +503,8 @@ export interface SharpPropsStatus {
   readonly planSelects?: readonly string[];
   /** Books SharpAPI answers "book_unavailable" for (its feed for that book is down), from the last refresh's check. */
   readonly unavailable?: readonly string[];
+  /** Requested books with no rows in the last refresh (a feed note only shows for these). */
+  readonly emptyBooks?: readonly string[];
 }
 
 /** The most a SharpAPI response may be: a 200-row page is well under 2 MB. */
@@ -538,7 +540,9 @@ function tooLarge(url: URL, bytes: number): Error {
  * Why a sportsbook's prices are missing, for its tab: SharpAPI reports the book down ("book_unavailable"), or the plan's
  * selected books leave it out ("book_not_selected"). Null when neither applies.
  */
-export function bookFeedNote(status: Pick<SharpPropsStatus, 'unavailable' | 'planSelects'>, book: string, name: string): string | null {
+export function bookFeedNote(status: Pick<SharpPropsStatus, 'unavailable' | 'planSelects' | 'emptyBooks'>, book: string, name: string): string | null {
+  // A book whose rows came in is live, whatever an older answer said.
+  if (status.emptyBooks && !status.emptyBooks.includes(book)) return null;
   if (status.unavailable?.includes(book)) return `${name} prices aren't coming from our odds provider right now (it reports the book unavailable). Picks come back as soon as it does.`;
   if (status.planSelects?.length && !status.planSelects.includes(book)) return `${name} isn't available from our odds provider right now, so there are no ${name} prices. Picks come back once it is.`;
   return null;
@@ -568,6 +572,8 @@ export class SharpPropsFeed {
   private emptyStreaks = new Map<string, number>();
   private notSelected: string[] | null = null;
   private unavailable: string[] = [];
+  /** Requested books with no rows in the last refresh. */
+  private emptyBooks: string[] = [];
   /** Partial-game market types SharpAPI has listed (from the PrizePicks pass), the only ones the books' partial pass asks for. */
   private readonly knownPartials = new Set<string>();
   constructor(private readonly apiKey: string | null, private readonly file: string | null,
@@ -630,7 +636,7 @@ export class SharpPropsFeed {
       requests: this.requests, overOnly: this.overOnly.length, games: this.games.length,
       pickem: this.pickem.length, prizePicksFeed: this.pickemStatus, requestsLastHour: this.requestsLastHour(),
       selectedButEmpty: [...this.emptyStreaks].filter(([, streak]) => streak >= 2).map(([book]) => book),
-      ...(this.notSelected ? { planSelects: this.notSelected } : {}), unavailable: this.unavailable };
+      ...(this.notSelected ? { planSelects: this.notSelected } : {}), unavailable: this.unavailable, emptyBooks: this.emptyBooks };
   }
 
   /** One refresh at a time: a second call waits for the running one instead of doubling the requests. */
@@ -732,9 +738,11 @@ export class SharpPropsFeed {
       this.unavailable = answers.filter(([, item]) => item.code === 'book_unavailable').map(([book]) => book);
       // A book the plan no longer selects (the combined request leaves it out silently): keep the plan's list.
       const selected = answers.find(([, item]) => item.code === 'book_not_selected' && Array.isArray(item.selected))?.[1].selected;
-      if (Array.isArray(selected)) this.notSelected = selected.map(String);
+      // The plan list is re-learned every refresh, so a book selected again (Hard Rock, 2026-10-08) isn't held back by an old one.
+      this.notSelected = Array.isArray(selected) ? selected.map(String) : null;
       if (this.unavailable.length) console.warn(`[sharp] SharpAPI reports ${this.unavailable.join(', ')} unavailable (its feed for the book is down)`);
-    } else this.unavailable = [];
+    } else { this.unavailable = []; this.notSelected = null; }
+    this.emptyBooks = empty;
     if (booksOk) {
       console.log(`[sharp] refresh fetched ${rows.length} prop rows in ${this.requests} requests`);
       // Pick'em rows (PrizePicks) are lines, not prices: kept apart so they never count toward a fair price.
