@@ -98,14 +98,16 @@ export class ScraperPuller {
     const { source } = scheduled;
     if (this.running.has(sourceId)) return report({ reason: 'PULL_RUNNING' });
     // Apify runs spend from the shared daily USD cap; other sources spend their own credits (with their own guards).
-    if (source.actor && await this.budget.remaining() < this.options.maxRunUsd) return report({ reason: 'DAILY_BUDGET_REACHED' });
+    // A run may spend what is left of today's cap, up to the per-run limit (a small pull still runs late in the day).
+    const left = source.actor ? Math.min(this.options.maxRunUsd, await this.budget.remaining()) : 0;
+    if (source.actor && left < 0.05) return report({ reason: 'DAILY_BUDGET_REACHED' });
     this.running.add(sourceId);
     try {
       let rows: unknown[], costUsd = 0, capped = false;
       if (source.actor) {
         let run;
         try {
-          run = await this.apify.runActor(source.actor, source.input(), { maxChargeUsd: this.options.maxRunUsd });
+          run = await this.apify.runActor(source.actor, source.input(), { maxChargeUsd: left });
         } catch (error) {
           return report({ status: 'FAILED', reason: error instanceof Error ? error.message : 'APIFY_RUN_FAILED' });
         }

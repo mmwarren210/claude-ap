@@ -51,6 +51,12 @@ export const zenPrizePicks: ScraperSource = {
   },
 };
 
+/** The same actor for esports only (CS2, LoL, Valorant, Dota 2, Rocket League, Call of Duty, plus R6): SharpAPI carries no
+ * PrizePicks esports, and this pull costs cents where the full board costs a dollar or two. */
+export const zenPrizePicksEsports: ScraperSource = {
+  ...zenPrizePicks, id: 'zen-studio-prizepicks-esports', input: () => ({ leagues: ['Esports'], extraLeagues: 'R6' }),
+};
+
 const underdogRow = z.object({
   projection_id: id, line: z.number().finite(), stat: z.string().min(1), stat_display: text, status: text,
   is_live: z.boolean().nullish(), player_name: z.string().min(1), player_team: text, player_team_name: text,

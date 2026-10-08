@@ -44,7 +44,7 @@ import { ScrapedPrizePicksProvider } from './scrapers/scraped-prizepicks-provide
 import { lergassy } from './scrapers/lergassy.js';
 import { oddsApiSource, regularKey } from './scrapers/odds-api-source.js';
 import { ScraperPuller } from './scrapers/scraper-puller.js';
-import { zenPrizePicks, zenUnderdog, zenPick6 } from './scrapers/zen-studio.js';
+import { zenPrizePicks, zenPrizePicksEsports, zenUnderdog, zenPick6 } from './scrapers/zen-studio.js';
 import { DailySpendBudget } from './scrapers/spend-budget.js';
 import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
@@ -115,7 +115,7 @@ const apify=new ApifyClient(process.env.APIFY_TOKEN?.trim()||null);
 // Scheduled slots already run today, saved so a restart or an overlapping deployment never repeats a paid pull.
 const scraperSlots=new SlotLedger(process.env.CROWNIQ_SCRAPER_SLOTS_FILE ?? `${dataDir}/scraper-slots.json`);
 const scraperBudget=new DailySpendBudget(process.env.CROWNIQ_SCRAPER_SPEND_FILE ?? `${dataDir}/scraper-spend.json`,
-  nonNegativeNumber('CROWNIQ_SCRAPER_DAILY_USD',25),()=>new Date(),
+  nonNegativeNumber('CROWNIQ_SCRAPER_DAILY_USD',3.3),()=>new Date(),
   // Apify's own charges since midnight Eastern, so runs started anywhere count against the cap.
   process.env.APIFY_TOKEN?.trim()?(since)=>apify.spentSince(since):null);
 // Player history for tennis and esports: free public sources (ESPN, OpenDota, Leaguepedia) plus Sleeper's recent
@@ -158,11 +158,14 @@ const oddsPrizePicks=apiKey?new FullPrizePicksProvider({apiKey,maxEvents,maxCred
   consensusBookmakers:(process.env.CROWNIQ_ODDS_CONSENSUS_BOOKS??'pinnacle,fanduel,draftkings,betmgm,williamhill_us,espnbet,betonlineag,betrivers,lowvig')
     .split(',').map((book)=>book.trim()).filter(Boolean)}):null;
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
-  // Step 0f: SharpAPI is the primary PrizePicks source (hourly), so this scraper is backup duty: twice a day (~$1.80/day).
-  [{source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9,15')},
-    {source:lergassy,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_LERGASSY','12')},
-    {source:zenUnderdog,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_UNDERDOG','9,12,15,18')},
-    {source:zenPick6,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PICK6','9,12,15,18')},
+  // Apify's plan stops at $100 a month (owner, 2026-10-08), so each full board is pulled once a day and the cap is about
+  // $3.30 a day. Esports run on their own cheap pull (SharpAPI has no PrizePicks esports), first in line, twice a day;
+  // the lergassy backup is off unless CROWNIQ_SCRAPER_HOURS_LERGASSY names hours.
+  [{source:zenPrizePicksEsports,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_ESPORTS','10,16')},
+    {source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9')},
+    {source:lergassy,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_LERGASSY','')},
+    {source:zenUnderdog,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_UNDERDOG','11')},
+    {source:zenPick6,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PICK6','13')},
     // The Odds API alongside the scrapers as a third check. It spends Odds API credits, so by default
     // it runs only when the owner pulls (CROWNIQ_SCRAPER_HOURS_ODDS_API adds a schedule).
     ...(oddsPrizePicks?[{source:oddsApiSource(oddsPrizePicks,undefined,
@@ -173,8 +176,8 @@ const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBud
   {maxRunUsd:nonNegativeNumber('CROWNIQ_SCRAPER_MAX_RUN_USD',5),slots:scraperSlots}):null;
 // Display-only game context (never scored): injuries and Pinnacle game lines.
 const contextFeeds=process.env.APIFY_TOKEN?.trim()?new ContextFeeds(apify,scraperBudget,[
-  {source:injuryReports,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_INJURIES','8,11,14,17')},
-  {source:pinnacleLines,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_PINNACLE','9,15')}],
+  {source:injuryReports,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_INJURIES','8')},
+  {source:pinnacleLines,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_PINNACLE','8')}],
 process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`,undefined,scraperSlots):null;
 // DraftKings, Hard Rock, FanDuel and BetRivers prop prices from SharpAPI (reference odds, +EV and Edge), refreshed hourly.
 // The owner's Railway variable is named `sharp_api`; SHARPAPI_KEY also works.

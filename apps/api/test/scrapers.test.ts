@@ -116,7 +116,11 @@ test('the puller runs each source on its schedule, within one daily spend cap, a
   try {
     let runs = 0, rebuilds = 0, rows: unknown[] = [row(), row({ propId: '1002', player: 'Other Player' })];
     let status = 'SUCCEEDED';
-    const apify = { runActor: async () => { runs++; return { id: 'run', status, datasetId: 'ds', usageUsd: 1.4 }; },
+    const charges: number[] = [];
+    const apify = { runActor: async (_actor: string, _input: unknown, options: { maxChargeUsd: number }) => {
+      runs++; charges.push(options.maxChargeUsd);
+      const usageUsd = Math.min(1.4, options.maxChargeUsd);
+      return { id: 'run', status, datasetId: 'ds', usageUsd }; },
       datasetItems: async () => rows } as unknown as ApifyClient;
     const budget = new DailySpendBudget(join(folder, 'spend.json'), 4.5, () => now);
     const capped = { ...lergassy, rowCap: 2 };
@@ -134,10 +138,12 @@ test('the puller runs each source on its schedule, within one daily spend cap, a
     status = 'ABORTED';
     const aborted = await puller.pull('lergassy');
     assert.deepEqual([aborted.status, aborted.reason, aborted.truncated], ['SUCCEEDED', 'RUN_ABORTED', true]);
-    // 4.20 of 4.50 spent: not enough left for another 1.50 run.
+    // 4.20 of 4.50 spent: the next run may spend only the 0.30 left, and then the cap is reached.
+    await puller.pull('lergassy');
     assert.deepEqual([(await puller.pull('lergassy')).reason, (await puller.pull('nope')).reason], ['DAILY_BUDGET_REACHED', 'UNKNOWN_SOURCE']);
-    assert.equal(runs, 3);
-    assert.equal(await budget.spent(), 4.2);
+    assert.equal(runs, 4);
+    assert.deepEqual(charges.map((charge) => Math.round(charge * 100) / 100), [1.5, 1.5, 1.5, 0.3]);
+    assert.equal(Math.round(await budget.spent() * 100) / 100, 4.5);
     // The schedule: 20:00 UTC is 16:00 Eastern, so only the source scheduled then runs, once.
     const scheduled = new ScraperPuller(apify, new ScrapedLineStore(null, () => now),
       new DailySpendBudget(join(folder, 'spend2.json'), 10, () => now),
@@ -383,4 +389,12 @@ test('the daily budget counts Eastern days and the account real spend, whichever
     const failing = new DailySpendBudget(join(folder, 'spend.json'), 25, () => now, async () => { throw new Error('down'); });
     assert.equal(await failing.spent(), 0, 'a new Eastern day starts at zero; an unreadable Apify falls back to the local count');
   } finally { await rm(folder, { recursive: true, force: true }); }
+});
+
+test('the esports pull asks the PrizePicks actor for esports only and reads rows like the full board', async () => {
+  const { zenPrizePicksEsports, zenPrizePicks: full } = await import('../src/scrapers/zen-studio.js');
+  assert.equal(zenPrizePicksEsports.id, 'zen-studio-prizepicks-esports');
+  assert.equal(zenPrizePicksEsports.actor, full.actor);
+  assert.deepEqual(zenPrizePicksEsports.input(), { leagues: ['Esports'], extraLeagues: 'R6' });
+  assert.equal(zenPrizePicksEsports.read, full.read);
 });

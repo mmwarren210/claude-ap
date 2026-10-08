@@ -2287,6 +2287,28 @@ export function buildServer(options: ServerOptions = {}) {
     });
     // SharpAPI: the feed's status and one probe request per book (why a book's rows stopped coming).
     // ?league= probes another league (e.g. which esports leagues SharpAPI carries for PrizePicks).
+    // Whether the apps' own public feeds answer from this server (free sources in place of Apify scrapers).
+    admin.get('/free-feeds',async()=>{
+      const feeds:Record<string,string>={
+        prizepicks:'https://api.prizepicks.com/projections?per_page=250&single_stat=true',
+        prizepicksLeagues:'https://api.prizepicks.com/leagues',
+        underdog:'https://api.underdogfantasy.com/beta/v5/over_under_lines',
+        underdogV6:'https://api.underdogfantasy.com/beta/v6/over_under_lines',
+        pick6:'https://pick6.draftkings.com/'};
+      const results=await Promise.all(Object.entries(feeds).map(async([name,url])=>{
+        try{
+          const response=await fetch(url,{headers:{accept:'application/json,text/html','user-agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36'},
+            signal:AbortSignal.timeout(20_000)});
+          const text=await response.text();
+          let shape:unknown=null;
+          try{const body=JSON.parse(text) as Record<string,unknown>;
+            shape=Object.fromEntries(Object.entries(body).map(([key,value])=>[key,Array.isArray(value)?value.length:typeof value]));}catch{/* not JSON */}
+          return [name,{status:response.status,bytes:text.length,type:response.headers.get('content-type'),shape,
+            start:shape?null:text.slice(0,160)}] as const;
+        }catch(error){return [name,{error:error instanceof Error?error.message:String(error)}] as const;}
+      }));
+      return Object.fromEntries(results);
+    });
     admin.get('/sharp',async(request,reply)=>{
       if(!options.sharpProps)return reply.code(503).send({code:'SHARPAPI_UNCONFIGURED'});
       const league=z.object({league:z.string().trim().min(2).max(40).regex(/^[a-z0-9_-]+$/).optional()}).safeParse(request.query);
