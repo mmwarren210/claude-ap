@@ -1493,7 +1493,7 @@ export function buildServer(options: ServerOptions = {}) {
       owner.get('/',async(request,reply)=>{
         const query=z.object({platform:z.enum(EDGE_PLATFORMS as [EdgePlatform,...EdgePlatform[]]).default('prizepicks'),
           limit:z.coerce.number().int().min(1).max(500).default(150),day:z.enum(['all','today']).default('all'),
-          q:z.string().trim().max(60).optional()}).safeParse(request.query);
+          q:z.string().trim().max(60).optional(),slipSport:z.string().trim().min(1).max(20).optional()}).safeParse(request.query);
         if(!query.success)return reply.code(400).send({code:'INVALID_QUERY'});
         const result=await gkrPlus(query.data.platform);
         if(!result)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
@@ -1514,7 +1514,8 @@ export function buildServer(options: ServerOptions = {}) {
         const ranked=live.filter((pick)=>pick.edge!==null&&pick.rating!=='NONE'&&
           (query.data.day!=='today'||easternDay(new Date(pick.eventStartTime))===easternDay(new Date(nowMs))));
         return {...result.snapshot.response,picks:ranked.slice(0,query.data.limit),
-          slips:buildSlips(ranked,
+          // The sport chips build entries from that sport's picks only; the pick list stays whole.
+          slips:buildSlips(query.data.slipSport?ranked.filter((pick)=>pick.sport===query.data.slipSport):ranked,
             result.snapshot.response.entries,{minEvents:result.snapshot.minEvents}),
           counts:{...result.snapshot.response.counts,positiveEdge:ranked.length},modelVersion:GKR_PLUS_VERSION};
       });

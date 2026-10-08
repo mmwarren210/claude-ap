@@ -63,6 +63,12 @@ test('Edge routes: every line read or No read, leave-one-out, Gen, slips and own
     const goblin = edge.picks.find((pick) => pick.lineId === 'goblin-0')!;
     assert.equal(goblin.edge, null, 'no payout factor confirmed: hit chance only');
     assert.ok(edge.slips.length > 0);
+    // The sport chips: entries from that sport only, while the pick list stays whole.
+    const sportOnly = edgeBoardResponseSchema.parse((await app.inject(`/v1/edge?slipSport=${edge.picks[0]!.sport}`)).json());
+    assert.ok(sportOnly.slips.length > 0 && sportOnly.slips.every((slip) => slip.legs.every((leg) => leg.sport === edge.picks[0]!.sport)));
+    const otherSport = edgeBoardResponseSchema.parse((await app.inject('/v1/edge?slipSport=NO_SUCH_SPORT')).json());
+    assert.equal(otherSport.slips.length, 0, 'no picks in that sport, no entries');
+    assert.ok(otherSport.picks.length > 0, 'the pick list is not cut by the slip sport');
 
     const page = edgeBoardPageSchema.parse((await app.inject('/v1/edge/board?limit=50')).json());
     assert.equal(page.total, 7, '4 regular lines, a Goblin, the line nothing prices, and the line only SharpAPI lists');

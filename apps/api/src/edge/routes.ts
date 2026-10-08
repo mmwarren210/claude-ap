@@ -73,7 +73,9 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     /** Best entries from today's games only (Eastern date), or any upcoming game. */
     day: z.enum(['all', 'today']).default('all'),
     /** Player search: every line Edge read for players whose name contains this, plays or not. */
-    q: z.string().trim().max(60).optional() }).strict();
+    q: z.string().trim().max(60).optional(),
+    /** Best entries from this sport's picks only (the sport chips); the pick list itself stays whole. */
+    slipSport: z.string().trim().min(1).max(20).optional() }).strict();
 
   app.get('/v1/edge', async (request, reply) => {
     const query = edgeQuery.safeParse(request.query);
@@ -97,8 +99,9 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
       : viewPicks(snapshot, query.data.view, filters);
     const live = (slip: { legs: { lineId: string }[] }) => slip.legs.every((leg) => {
       const pick = snapshot.byLine.get(leg.lineId); return !!pick && Date.parse(pick.eventStartTime) > nowMs; });
-    const slips = query.data.sport || query.data.market || today
-      ? buildSlips(viewPicks(snapshot, 'edges', { ...filters, limit: 500 }).filter(onDay),
+    const slipSport = query.data.slipSport;
+    const slips = query.data.sport || query.data.market || today || slipSport
+      ? buildSlips(viewPicks(snapshot, 'edges', { ...filters, limit: 500, ...(slipSport ? { sport: slipSport } : {}) }).filter(onDay),
         snapshot.response.entries, { minEvents: snapshot.minEvents })
       : snapshot.response.slips.filter(live);
     return { ...snapshot.response, picks, slips };

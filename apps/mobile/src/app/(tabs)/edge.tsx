@@ -34,7 +34,7 @@ export default function EdgeScreen() {
   const [day, setDay] = useState<'all' | 'today'>('all');
   const [query, setQuery] = useState('');
   const searching = query.trim().length >= 2;
-  const { status, data, message, retry } = useEdge(view, 'edge', day, query);
+  const { status, data, message, retry } = useEdge(view, 'edge', day, query, sport);
   const slip = useEdgeSlip();
   const { nowMs } = useBoard();
   const live = upcomingPicks(data?.picks ?? [], nowMs, day);
@@ -87,7 +87,7 @@ export default function EdgeScreen() {
       {view === 'edges' && !searching && <View style={styles.section}>
         <Text style={styles.sectionTitle}>BEST ENTRIES</Text>
         <Text style={styles.sectionDetail}>Highest expected value using the strongest legs, one per player and at most two per game.</Text>
-        {!data.slips.length && <Text style={styles.sectionDetail}>{day === 'today' ? 'No entry clears the bar with today’s games alone.' : 'No entry clears the bar right now.'}</Text>}
+        {!data.slips.length && <Text style={styles.sectionDetail}>{`No ${sport ? `${sport} ` : ''}entry clears the bar${day === 'today' ? ' with today’s games alone' : ' right now'}.`}</Text>}
         <StakePicker />
         {data.slips.slice(0, 2).map((item) => <View key={item.entry.type + item.entry.size + item.legs.map((leg) => leg.lineId).join()} style={styles.card}>
           <SlipSummary slip={item} /></View>)}
