@@ -2307,9 +2307,18 @@ export function buildServer(options: ServerOptions = {}) {
           try{const body=JSON.parse(text) as Record<string,unknown>;
             shape=Object.fromEntries(Object.entries(body).map(([key,value])=>[key,Array.isArray(value)?value.length:typeof value]));}catch{/* not JSON */}
           // ?sample=1: the first two items of each list, to build a reader from.
-          const sample=(request.query as {sample?:string}).sample==='1'&&shape?Object.fromEntries(Object.entries(JSON.parse(text) as Record<string,unknown>)
+          const parsedBody=shape?JSON.parse(text) as Record<string,unknown>:null;
+          const sample=(request.query as {sample?:string}).sample==='1'&&parsedBody?Object.fromEntries(Object.entries(parsedBody)
             .flatMap(([key,value])=>Array.isArray(value)?[[key,value.slice(0,2)]]:[])):null;
+          // A JSON:API body (PrizePicks): one included record per type, and projections per league.
+          const included=Array.isArray(parsedBody?.included)?parsedBody.included as {type:string;id:string;attributes?:{name?:string}}[]:null;
+          const perType=included?Object.fromEntries(included.map((item)=>[item.type,item] as const).reverse()):null;
+          const leagueNames=new Map((included??[]).filter((item)=>item.type==='league').map((item)=>[item.id,item.attributes?.name??item.id]));
+          const byLeague:Record<string,number>={};
+          if(included)for(const item of parsedBody!.data as {relationships?:{league?:{data?:{id?:string}}}}[]){
+            const name=leagueNames.get(item.relationships?.league?.data?.id??'')??'?';byLeague[name]=(byLeague[name]??0)+1;}
           return [name,{status:response.status,bytes:text.length,type:response.headers.get('content-type'),shape,sample,
+            ...(included?{perType,byLeague}:{}),
             start:text.slice(0,300)}] as const;
         }catch(error){return [name,{error:error instanceof Error?error.message:String(error)}] as const;}
       }));
