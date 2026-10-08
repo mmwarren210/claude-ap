@@ -47,6 +47,7 @@ import { ScraperPuller } from './scrapers/scraper-puller.js';
 import { zenPrizePicks, zenPrizePicksEsports, zenUnderdog, zenPick6 } from './scrapers/zen-studio.js';
 import { DailySpendBudget } from './scrapers/spend-budget.js';
 import { underdogDirect } from './scrapers/underdog-direct.js';
+import { prizePicksPartner } from './scrapers/prizepicks-partner.js';
 import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
 import { ProviderIdentityVerifier } from './provider-identity.js';
@@ -162,8 +163,11 @@ const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBud
   // Apify's plan stops at $100 a month (owner, 2026-10-08), so each full board is pulled once a day and the cap is about
   // $3.30 a day. Esports run on their own cheap pull (SharpAPI has no PrizePicks esports), first in line, twice a day;
   // the lergassy backup is off unless CROWNIQ_SCRAPER_HOURS_LERGASSY names hours.
-  [{source:zenPrizePicksEsports,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_ESPORTS','10,16')},
-    {source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9')},
+  // PrizePicks' partner address serves the whole board (esports, Goblins and Demons included) for free, every two hours;
+  // the Apify PrizePicks pulls stay as on-demand backups.
+  [{source:prizePicksPartner(),hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER','7,9,11,13,15,17,19,21,23')},
+    {source:zenPrizePicksEsports,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_ESPORTS','')},
+    {source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','')},
     {source:lergassy,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_LERGASSY','')},
     // Underdog's own feed is free, so it refreshes every two hours; the Apify actor stays as a backup on demand.
     {source:underdogDirect(),hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_UNDERDOG_DIRECT','8,10,12,14,16,18,20,22')},
