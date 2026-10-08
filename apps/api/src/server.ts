@@ -242,7 +242,11 @@ export function buildServer(options: ServerOptions = {}) {
       !await currentUser(request))return reply.code(401).send({code:'PROFILE_REQUIRED'});
   });
   app.addHook('onReady',async()=>{
-    await service.restore();
+    // A large saved board (40k+ lines) takes longer to restore than startup may wait, so startup waits at most 5 s and the
+    // restore finishes in the background; refreshes queue behind it, so they never race it.
+    const restoring=service.restore().catch((error:unknown)=>{
+      console.error('[startup] saved board restore failed',error instanceof Error?error.message:error);return false;});
+    await Promise.race([restoring,new Promise((done)=>{const timer=setTimeout(done,5000);timer.unref();})]);
     const savedJob=await options.ownerJobStore?.load().catch(()=>null);
     if(savedJob){
       // A RUNNING record at startup means the server stopped mid-pull: report it, never hide it.
@@ -254,7 +258,7 @@ export function buildServer(options: ServerOptions = {}) {
     }
     // History reconstruction runs after restore without blocking Fastify startup; the first
     // context refresh follows it, then ticks repeat on the configured interval.
-    void service.recoverStartupEvidence().then(()=>contextScheduler?.tick());
+    void restoring.then(()=>service.recoverStartupEvidence()).then(()=>contextScheduler?.tick());
     contextScheduler?.start();
     // After a scraper pull changes lines, rebuild the board through the owner job (free; tracks picks).
     options.scraperPuller?.whenLinesChange(()=>startOwnerBoardRefresh());

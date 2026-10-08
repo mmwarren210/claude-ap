@@ -74,7 +74,10 @@ export class BoardService {
     private readonly startupResearch: ResearchAdapter | null = null,
   ) {}
 
-  async restore():Promise<boolean>{
+  /** Exclusive, so a refresh started while a large board is still restoring waits for it instead of being overwritten. */
+  async restore():Promise<boolean>{return this.exclusive(()=>this.restoreNow());}
+
+  private async restoreNow():Promise<boolean>{
     const cached=await this.cache?.load();
     if(!cached)return false;
     // Recalculate against the current time and approved model versions. Never

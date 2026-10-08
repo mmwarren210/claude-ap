@@ -48,6 +48,7 @@ import { zenPrizePicks, zenPrizePicksEsports, zenUnderdog, zenPick6 } from './sc
 import { DailySpendBudget } from './scrapers/spend-budget.js';
 import { underdogDirect } from './scrapers/underdog-direct.js';
 import { prizePicksPartner } from './scrapers/prizepicks-partner.js';
+import { PropLineClient, propLineBoard } from './scrapers/propline.js';
 import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
 import { ProviderIdentityVerifier } from './provider-identity.js';
@@ -168,13 +169,18 @@ const soccerHistory=process.env.APIFY_TOKEN?.trim()?new SoccerHistory(async(quer
 const oddsPrizePicks=apiKey?new FullPrizePicksProvider({apiKey,maxEvents,maxCreditsPerRefresh,quotesFile:`${dataDir}/odds-consensus.json`,
   consensusBookmakers:(process.env.CROWNIQ_ODDS_CONSENSUS_BOOKS??'pinnacle,fanduel,draftkings,betmgm,williamhill_us,espnbet,betonlineag,betrivers,lowvig')
     .split(',').map((book)=>book.trim()).filter(Boolean)}):null;
+const propLine=process.env.PROPLINE_API_KEY?.trim()?new PropLineClient(process.env.PROPLINE_API_KEY.trim()):null;
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
   // Apify's plan stops at $100 a month (owner, 2026-10-08), so each full board is pulled once a day and the cap is about
   // $3.30 a day. Esports run on their own cheap pull (SharpAPI has no PrizePicks esports), first in line, twice a day;
   // the lergassy backup is off unless CROWNIQ_SCRAPER_HOURS_LERGASSY names hours.
   // PrizePicks' partner address serves the whole board (esports, Goblins and Demons included) for free, every two hours;
   // the Apify PrizePicks pulls stay as on-demand backups.
-  [{source:prizePicksPartner(),hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER','7,9,11,13,15,17,19,21,23')},
+  [// PropLine (owner, 2026-10-08): the PrizePicks board for every sport it carries, hourly. The free partner feed stays
+    // configured (off by CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER) for comparison.
+    ...(propLine?[{source:propLineBoard(propLine,{app:'prizepicks',bookmaker:'prizepicks'}),
+      hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PROPLINE_PRIZEPICKS',Array.from({length:24},(_,hour)=>hour).join(','))}]:[]),
+    {source:prizePicksPartner(),hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER','7,9,11,13,15,17,19,21,23')},
     {source:zenPrizePicksEsports,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_ESPORTS','')},
     {source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','')},
     {source:lergassy,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_LERGASSY','')},
