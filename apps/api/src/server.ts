@@ -2286,9 +2286,14 @@ export function buildServer(options: ServerOptions = {}) {
       return {root,files:sized.length,totalMb:Math.round(sized.reduce((sum,item)=>sum+item.mb,0)),largest:sized.slice(0,40)};
     });
     // SharpAPI: the feed's status and one probe request per book (why a book's rows stopped coming).
-    admin.get('/sharp',async(_request,reply)=>options.sharpProps?{status:await options.sharpProps.status(),
-      probe:await options.sharpProps.probeBooks(['hardrock','draftkings','fanduel','betmgm','betrivers','prizepicks'])}
-      :reply.code(503).send({code:'SHARPAPI_UNCONFIGURED'}));
+    // ?league= probes another league (e.g. which esports leagues SharpAPI carries for PrizePicks).
+    admin.get('/sharp',async(request,reply)=>{
+      if(!options.sharpProps)return reply.code(503).send({code:'SHARPAPI_UNCONFIGURED'});
+      const league=z.object({league:z.string().trim().min(2).max(40).regex(/^[a-z0-9_-]+$/).optional()}).safeParse(request.query);
+      const name=league.success?league.data.league:undefined;
+      return {status:await options.sharpProps.status(),
+        probe:await options.sharpProps.probeBooks(['hardrock','draftkings','fanduel','betmgm','betrivers','prizepicks'],name??'nfl')};
+    });
     admin.get('/edge/side-bias',async(_request,reply)=>edge?edge.sideBias():reply.code(503).send({code:'EDGE_UNAVAILABLE'}));
     admin.get('/edge/status',async(_request,reply)=>edge?{status:edge.status(),grading:edgeWorker?.status()??null,
       snapshots:options.edge?.snapshots?.status()??null}:reply.code(503).send({code:'EDGE_DISABLED'}));

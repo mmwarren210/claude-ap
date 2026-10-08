@@ -897,10 +897,12 @@ export class EdgeResultsWorker {
     let graded = 0, waiting = 0, unsupported = 0, error: string | null = null;
     try {
       const awaiting = await this.ledger.awaitingResults(3);
+      console.log(`[edge-grading] start: ${awaiting.length} awaiting`);
       if (this.boxScores && awaiting.length) {
         const report = await this.boxScores.results(awaiting.map(gradeTarget));
         graded += (await this.ledger.grade(report.facts)).graded;
         waiting = report.waiting; unsupported = report.unsupported;
+        console.log(`[edge-grading] box scores: ${graded} graded, ${waiting} waiting, ${unsupported} unsupported`);
       }
       const left = (await this.ledger.awaitingResults(3)).filter((pick) => historySports.has(pick.sport));
       if (this.history && left.length) {
@@ -909,6 +911,7 @@ export class EdgeResultsWorker {
         const rows = await this.history.rowsForPlayers([...players.values()], 15);
         graded += (await this.ledger.gradeFromRows((pick: TrackedEdgePick) =>
           dedupeRows(rows.get(playerKey(pick.sport, pick.playerName)) ?? []))).graded;
+        console.log(`[edge-grading] history rows: ${players.size} players, ${graded} graded so far`);
       }
       // Tennis and esports from the free public history sources (box scores don't cover them).
       const free = this.freeHistory ? (await this.ledger.awaitingResults(3)).filter((pick) => freeGradedSports.has(pick.sport)) : [];
@@ -921,6 +924,7 @@ export class EdgeResultsWorker {
             sourceName: found!.source });
         }
         graded += (await this.ledger.grade(facts)).graded;
+        console.log(`[edge-grading] free histories: ${free.length} awaiting, ${facts.length} found`);
       }
     } catch (failure) {
       error = failure instanceof Error ? failure.message : 'EDGE_GRADING_FAILED';
