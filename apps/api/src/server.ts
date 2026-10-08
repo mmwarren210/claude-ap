@@ -2288,8 +2288,11 @@ export function buildServer(options: ServerOptions = {}) {
     // SharpAPI: the feed's status and one probe request per book (why a book's rows stopped coming).
     // ?league= probes another league (e.g. which esports leagues SharpAPI carries for PrizePicks).
     // Whether the apps' own public feeds answer from this server (free sources in place of Apify scrapers).
-    admin.get('/free-feeds',async()=>{
-      const feeds:Record<string,string>={
+    admin.get('/free-feeds',async(request)=>{
+      // ?url= tries one more address on the apps' own hosts (never anywhere else).
+      const extra=(request.query as {url?:string}).url;
+      const allowed=extra&&/^https:\/\/(api\.prizepicks\.com|api\.underdogfantasy\.com|stats\.underdogfantasy\.com|pick6\.draftkings\.com)\//.test(extra);
+      const feeds:Record<string,string>=allowed?{extra:extra!}:{
         prizepicks:'https://api.prizepicks.com/projections?per_page=250&single_stat=true',
         prizepicksLeagues:'https://api.prizepicks.com/leagues',
         underdog:'https://api.underdogfantasy.com/beta/v5/over_under_lines',
@@ -2304,7 +2307,7 @@ export function buildServer(options: ServerOptions = {}) {
           try{const body=JSON.parse(text) as Record<string,unknown>;
             shape=Object.fromEntries(Object.entries(body).map(([key,value])=>[key,Array.isArray(value)?value.length:typeof value]));}catch{/* not JSON */}
           return [name,{status:response.status,bytes:text.length,type:response.headers.get('content-type'),shape,
-            start:shape?null:text.slice(0,160)}] as const;
+            start:text.slice(0,300)}] as const;
         }catch(error){return [name,{error:error instanceof Error?error.message:String(error)}] as const;}
       }));
       return Object.fromEntries(results);
