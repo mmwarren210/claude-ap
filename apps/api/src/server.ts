@@ -2291,7 +2291,7 @@ export function buildServer(options: ServerOptions = {}) {
     admin.get('/free-feeds',async(request)=>{
       // ?url= tries one more address on the apps' own hosts (never anywhere else).
       const extra=(request.query as {url?:string}).url;
-      const allowed=extra&&/^https:\/\/(api\.prizepicks\.com|partner-api\.prizepicks\.com|api\.underdogfantasy\.com|stats\.underdogfantasy\.com|pick6\.draftkings\.com)\//.test(extra);
+      const allowed=extra&&/^https:\/\/(api\.prizepicks\.com|partner-api\.prizepicks\.com|api\.underdogfantasy\.com|stats\.underdogfantasy\.com|pick6\.draftkings\.com|prop-line\.com|api\.prop-line\.com)\//.test(extra);
       const feeds:Record<string,string>=allowed?{extra:extra!}:{
         prizepicks:'https://api.prizepicks.com/projections?per_page=250&single_stat=true',
         prizepicksLeagues:'https://api.prizepicks.com/leagues',
@@ -2319,7 +2319,8 @@ export function buildServer(options: ServerOptions = {}) {
             const name=leagueNames.get(item.relationships?.league?.data?.id??'')??'?';byLeague[name]=(byLeague[name]??0)+1;}
           return [name,{status:response.status,bytes:text.length,type:response.headers.get('content-type'),shape,sample,
             ...(included?{perType,byLeague}:{}),
-            start:text.slice(0,300)}] as const;
+            // ?full=1: the whole text (up to 2 MB), to read an API's documentation pages.
+            start:text.slice(0,(request.query as {full?:string}).full==='1'?2_000_000:300)}] as const;
         }catch(error){return [name,{error:error instanceof Error?error.message:String(error)}] as const;}
       }));
       return Object.fromEntries(results);
