@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from '../auth';
 import { colors } from '../theme';
 import { SetPassword } from '../components/SetPassword';
 import { useAutoUpdate } from '../auto-update';
+import { useActivityBeat } from '../use-activity';
 import { IntroSplash } from '../components/IntroSplash';
 import { useState } from 'react';
 import { View } from 'react-native';
@@ -18,6 +19,7 @@ const crownTheme = {
 
 function ProfileRouter(){
   const {profile}=useAuth();
+  useActivityBeat();
   const navigator=<Stack screenOptions={{headerShown:false}}>
       <Stack.Protected guard={!!profile}>
         <Stack.Screen name="(tabs)" />

@@ -63,6 +63,7 @@ import { OddsApiTotals } from './context/odds-api-totals.js';
 import { UfcHistory } from './ufc-history.js';
 import { SoccerHistory } from './soccer-history.js';
 import { SecretUnlocks } from './secrets.js';
+import { ActivityLog } from './activity.js';
 import { startMemoryWatch } from './memory-watch.js';
 
 startMemoryWatch();
@@ -80,6 +81,9 @@ setInterval(()=>{try{for(const name of readdirSync(dataDir,{recursive:true}) as 
 }}catch{/* nothing to sweep */}},3600_000).unref();
 // CrownIQ's own archive: every game log, graded result and line it has seen, kept for verification and evidence.
 const historyArchive=new HistoryArchive(`${dataDir}/archive`);
+// Minutes on the app per member; saved every few minutes and on shutdown (a deploy sends SIGTERM first).
+const activityLog=new ActivityLog(`${dataDir}/activity.json`);
+process.once('SIGTERM',()=>{void activityLog.flush().catch(()=>undefined).finally(()=>process.exit(0));});
 const apiKey = process.env.THE_ODDS_API_KEY;
 const providerMode = process.env.ODDS_PROVIDER ?? 'auto';
 if (!['auto', 'none', 'the_odds_api', 'scrapers'].includes(providerMode)) {
@@ -441,6 +445,7 @@ const app = buildServer({ ufcHistory, soccerHistory, oddsConsensus:oddsPrizePick
   historyArchive,
   edge:edgeOptions,
   feedback:new FeedbackStore(`${dataDir}/feedback.json`),
+  activity:activityLog,
   secrets:{password:process.env.CROWNIQ_SECRETS_PASSWORD?.trim()||null,unlocks:new SecretUnlocks(`${dataDir}/secret-unlocks.json`)},
   tips:(()=>{const store=new TipStore(`${dataDir}/tips.json`);
     const reader=claudeKey?new ClaudeTipReader({apiKey:claudeKey,model:process.env.CROWNIQ_TIPS_MODEL??'claude-sonnet-5-5'}):null;

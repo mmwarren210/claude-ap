@@ -38,6 +38,39 @@ function Row({ icon, title, detail, onPress, locked, last }: { icon: IconName; t
   </Pressable>;
 }
 
+/** "1 h 5 m" or "12 m". */
+const minutesLabel = (minutes: number) => minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} m` : `${minutes} m`;
+
+/** Member activity (owner): minutes on the app per member today, over 7 days and in all, with their most-used tabs. */
+function MemberActivity() {
+  const { request } = useAuth();
+  type Member = { accountId: string; username: string | null; lastSeen: string; todayMinutes: number; weekMinutes: number;
+    totalMinutes: number; topTabs: { tab: string; minutes: number }[] };
+  const [members, setMembers] = useState<Member[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void request('/v1/owner/activity').then(async (response) => response.ok ? (await response.json() as { members: Member[] }).members : null)
+      .then((list) => { if (!active) return; if (list) setMembers(list); else setFailed(true); })
+      .catch(() => { if (active) setFailed(true); });
+    return () => { active = false; };
+  }, [request]);
+  if (failed) return <Text style={styles.sheetNote}>Could not load activity. Try again.</Text>;
+  if (!members) return <Text style={styles.sheetNote}>Loading…</Text>;
+  if (!members.length) return <Text style={styles.sheetNote}>No activity yet. Minutes count while a signed-in member has the app open on screen.</Text>;
+  return <>
+    <Text style={styles.sheetNote}>Minutes count while a member has the app open on screen (Eastern days). Most recent first.</Text>
+    {members.map((member) => <View key={member.accountId} style={styles.secretRow}>
+      <View style={styles.secretInfo}>
+        <Text style={styles.sheetLabel}>{member.username ?? 'Unknown account'}</Text>
+        <Text style={styles.sheetNote}>Today {minutesLabel(member.todayMinutes)} · 7 days {minutesLabel(member.weekMinutes)} · all {minutesLabel(member.totalMinutes)}</Text>
+        <Text style={styles.sheetNote}>Last seen {new Date(member.lastSeen).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}
+          {member.topTabs.length ? ` · most on ${member.topTabs.map((item) => item.tab).join(', ')}` : ''}</Text>
+      </View>
+    </View>)}
+  </>;
+}
+
 /** Secrets, owner view: every account that unlocked GKR+, each with Remove (it loses GKR+ on its next load). */
 function SecretsOwner() {
   const { request } = useAuth();
@@ -128,7 +161,7 @@ export default function MoreScreen() {
   const gkrPlus = useGkrPlusAccess();
   const [stats, setStats] = useState<{ picks: number; crowns: number; rate: number | null } | null>(null);
   const { feedback: openFeedback } = useLocalSearchParams<{ feedback?: string }>();
-  const [sheet, setSheet] = useState<'account' | 'payouts' | 'feedback' | 'updates' | 'review' | 'scout' | 'secrets' | null>(null);
+  const [sheet, setSheet] = useState<'account' | 'payouts' | 'feedback' | 'updates' | 'review' | 'scout' | 'secrets' | 'activity' | null>(null);
   // A "report it" nudge elsewhere in the app opens Beta feedback here.
   const [lastOpen, setLastOpen] = useState<string | undefined>(undefined);
   if (openFeedback && openFeedback !== lastOpen && !demo) { setLastOpen(openFeedback); setSheet('feedback'); }
@@ -199,6 +232,7 @@ export default function MoreScreen() {
         <Row icon="bug-outline" title="Beta feedback" detail="Report a bug or idea" onPress={demo ? undefined : () => setSheet('feedback')} />
         <Row icon="bullhorn-outline" title="Updates" detail="Patches and fixes" onPress={demo ? undefined : () => setSheet('updates')} />
         {owner && <Row icon="clipboard-check-outline" title="Review feedback" detail="Owner" onPress={() => setSheet('review')} />}
+        {owner && <Row icon="timer-outline" title="Member activity" detail="Owner · time on the app" onPress={() => setSheet('activity')} />}
         <AppVersion />
       </View>
 
@@ -248,6 +282,7 @@ export default function MoreScreen() {
       {!demo && profile?.plan !== 'GUEST' && <DeleteAccount />}
     </Sheet>
     <Sheet visible={sheet === 'feedback'} title="Beta feedback" onClose={() => { setSheet(null); router.setParams({ feedback: undefined }); }}><BetaFeedback /></Sheet>
+    <Sheet visible={sheet === 'activity'} title="Member activity" onClose={() => setSheet(null)}>{sheet === 'activity' && <MemberActivity />}</Sheet>
     <Sheet visible={sheet === 'secrets'} title="Secrets" onClose={() => setSheet(null)}>{sheet === 'secrets' && (owner ? <SecretsOwner /> : <SecretsUnlock unlocked={gkrPlus} />)}</Sheet>
     <Sheet visible={sheet === 'updates'} title="Updates" onClose={() => setSheet(null)}><PatchNotes /></Sheet>
     <Sheet visible={sheet === 'scout'} title="Scout queue" onClose={() => setSheet(null)}>{sheet === 'scout' && <ScoutQueue />}</Sheet>

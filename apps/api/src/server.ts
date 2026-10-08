@@ -2,6 +2,7 @@ import type { BaseRates, Trend } from './base-rates.js';
 import { registerCompression } from './compress.js';
 import { passwordMatches } from './secrets.js';
 import type { SecretUnlocks } from './secrets.js';
+import type { ActivityLog } from './activity.js';
 import { gzipSync } from 'node:zlib';
 import { lineShop } from './line-shop.js';
 import { sameGame } from './team-match.js';
@@ -189,6 +190,8 @@ export interface ServerOptions {
   tips?: { store: TipStore; reader: TipReader | null; grader: TipGrader | null } | null;
   /** "Secrets" in the More tab: the password that unlocks GKR+ for an account, and who has unlocked it. */
   secrets?: { password: string | null; unlocks: SecretUnlocks } | null;
+  /** Minutes on the app per member (owner's Member activity). */
+  activity?: ActivityLog | null;
   /** JSON-lines history of the books' view of board lines, one row per line per refresh. */
   booksHistoryFile?: string | null;
 }
@@ -679,6 +682,19 @@ export function buildServer(options: ServerOptions = {}) {
     await options.secrets.unlocks.add(user.accountId,user.username??null);
     return {gkrPlus:true};
   });
+  // Time on the app: one beat a minute from a signed-in member's open app; the owner sees the totals.
+  app.post('/v1/activity',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    const input=z.object({tab:z.string().trim().max(60).nullable().optional()}).strict().safeParse(request.body??{});
+    if(!input.success)return reply.code(400).send({code:'INVALID_ACTIVITY'});
+    const counted=options.activity?await options.activity.beat(user.accountId,user.username??null,input.data.tab??null):false;
+    return {counted};
+  });
+  app.get('/v1/owner/activity',async(request,reply)=>{
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    return {members:options.activity?await options.activity.report():[]};
+  });
+  if(options.activity&&!options.clock){const flush=setInterval(()=>{void options.activity!.flush().catch(()=>undefined);},5*60_000);flush.unref();}
   // The owner's list of unlocked accounts, and removing one (it loses GKR+ on its next load).
   app.get('/v1/owner/secrets',async(request,reply)=>{
     if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
