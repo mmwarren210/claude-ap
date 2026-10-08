@@ -11,7 +11,7 @@ const inFlight = new Map<number, { what: string; since: number }>();
 let nextId = 0;
 
 /** Wraps the global fetch so the memory log can name the requests in flight. */
-export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000): NodeJS.Timeout {
+export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000, fetchLimitMs = 90_000): NodeJS.Timeout {
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const id = nextId++;
@@ -20,10 +20,21 @@ export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000): NodeJS.Tim
     inFlight.set(id, { what, since: Date.now() });
     try {
       // Every body is read under a 256 MB cap: a runaway response fails its request instead of killing the server.
-      // Every request gets a time limit (90 s) unless it set its own: one that never answered (an OpenDota match after 55
-      // minutes, 2026-10-08) held the grading run open, so no later run started and finished games went ungraded.
-      const limited = init?.signal ? init : { ...init, signal: AbortSignal.timeout(90_000) };
-      const response = await capped(await original(input, limited), new URL(input instanceof Request ? input.url : String(input)), 256 * 1_048_576);
+      // Every request ends within 90 seconds, body included: one that never answered (an OpenDota match after 55 minutes,
+      // 2026-10-08) held the grading run open, so no later run started and finished games went ungraded. A real timer held
+      // here enforces it: an inline AbortSignal.timeout() can be garbage-collected before it fires, which is how the caller's
+      // own 20-second limit never happened. The caller's signal still aborts it sooner.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(new Error('FETCH_TIMEOUT')), fetchLimitMs);
+      const outer = init?.signal ?? (input instanceof Request ? input.signal : null);
+      const forward = () => controller.abort(outer?.reason);
+      if (outer?.aborted) forward(); else outer?.addEventListener('abort', forward, { once: true });
+      let response: Response;
+      try {
+        // The body is read in full under the same timer (capped), so a body that stalls is cut off too.
+        response = await capped(await original(input, { ...init, signal: controller.signal }),
+          new URL(input instanceof Request ? input.url : String(input)), 256 * 1_048_576);
+      } finally { clearTimeout(timer); outer?.removeEventListener('abort', forward); }
       // Large bodies: logged with their address once read (fetch resolves at the headers, before the body arrives).
       for (const method of ['text', 'json', 'arrayBuffer'] as const) {
         const read = response[method].bind(response) as () => Promise<unknown>;
