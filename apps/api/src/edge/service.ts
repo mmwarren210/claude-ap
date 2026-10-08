@@ -877,7 +877,7 @@ export class EdgeResultsWorker {
   private last: { at: string; graded: number; waiting: number; unsupported: number; error: string | null } | null = null;
   constructor(private readonly ledger: EdgeLedger, private readonly history: InternalHistoryStore | null,
     private readonly boxScores: Pick<BoxScoreResults, 'results'> | null, private readonly clock: () => Date = () => new Date(),
-    private readonly freeHistory: FreeHistoryValues | null = null) {}
+    private readonly freeHistory: FreeHistoryValues | null = null, private readonly freeBudgetMs = 5 * 60_000) {}
 
   status() { return { scheduled: !!this.timer, running: this.running, last: this.last }; }
   start(intervalMs = 60 * 60_000) {
@@ -917,14 +917,25 @@ export class EdgeResultsWorker {
       const free = this.freeHistory ? (await this.ledger.awaitingResults(3)).filter((pick) => freeGradedSports.has(pick.sport)) : [];
       if (free.length) {
         const facts: EdgeResultFact[] = [];
+        // A rate-limited source pauses up to a minute per lookup, so the step stops after its time budget and a sport whose
+        // lookups keep stalling (3 slow misses) is left for the next run.
+        const stepStart = this.clock().getTime(), slowMisses = new Map<string, number>(), skipped = new Set<string>();
         for (const pick of free.slice(0, 300)) {
+          if (this.clock().getTime() - stepStart > this.freeBudgetMs) break;
+          if (skipped.has(pick.sport)) continue;
+          const lookupStart = this.clock().getTime();
           const found = await this.freeHistory!(pick.sport, pick.playerName, pick.market).catch(() => null);
+          if (!found && this.clock().getTime() - lookupStart > 10_000) {
+            const misses = (slowMisses.get(pick.sport) ?? 0) + 1; slowMisses.set(pick.sport, misses);
+            if (misses >= 3) skipped.add(pick.sport);
+          }
           const actual = found ? freeHistoryActual(pick, found) : null;
           if (actual !== null) facts.push({ eventId: pick.eventId, playerId: pick.playerId, market: pick.market, status: 'FINAL', actual,
             sourceName: found!.source });
         }
         graded += (await this.ledger.grade(facts)).graded;
-        console.log(`[edge-grading] free histories: ${free.length} awaiting, ${facts.length} found`);
+        console.log(`[edge-grading] free histories: ${free.length} awaiting, ${facts.length} found` +
+          `${skipped.size ? `, skipped ${[...skipped].join(' ')} (source stalling)` : ''}`);
       }
     } catch (failure) {
       error = failure instanceof Error ? failure.message : 'EDGE_GRADING_FAILED';
