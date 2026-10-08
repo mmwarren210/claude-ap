@@ -17,7 +17,7 @@ import { dirname } from 'node:path';
 import Fastify from 'fastify';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { bestBreakEven, DEFAULT_PAYOUTS, entryBreakEvens, nflPassingResultSchema, pickAppSchema } from '@crowniq/contracts';
+import { bestBreakEven, boardResponseSchema, DEFAULT_PAYOUTS, entryBreakEvens, nflPassingResultSchema, pickAppSchema } from '@crowniq/contracts';
 import { ModelRegistry, routeResearch, snapshotSelection } from '@crowniq/engine';
 import type { OddsProvider, ResearchAdapter } from '@crowniq/engine';
 import type { BoardResponse, Payouts, PropLine } from '@crowniq/contracts';
@@ -2191,6 +2191,14 @@ export function buildServer(options: ServerOptions = {}) {
     // Step 7: the last 7 days of stale alerts replayed against the closing line.
     admin.get('/edge/stale',async(_request,reply)=>edge?edge.staleReplay(7):reply.code(503).send({code:'EDGE_UNAVAILABLE'}));
     // The data volume's largest files (it is small: a full volume fails every save, tips included).
+    // The Board tab's own check (the app's board schema) on what /v1/board/lite serves now: any line that would fail it.
+    admin.get('/board-check',async(_request,reply)=>{
+      const snapshot=service.getBoard();if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+      const lite=liteBoard(snapshot,now());
+      const result=boardResponseSchema.safeParse(JSON.parse(JSON.stringify(lite)));
+      return {ok:result.success,bytes:JSON.stringify(lite).length,lines:lite.board.lines.length,analyses:lite.analyses.length,
+        issues:result.success?[]:result.error.issues.slice(0,10).map((issue)=>({path:issue.path.join('.'),message:issue.message}))};
+    });
     admin.get('/disk',async()=>{
       const root=(process.env.CROWNIQ_DATA_DIR??'tmp').replace(/\/$/,'');
       const files=await readdir(root,{recursive:true}).catch(()=>[] as string[]);
