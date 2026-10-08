@@ -38,6 +38,44 @@ function Row({ icon, title, detail, onPress, locked, last }: { icon: IconName; t
   </Pressable>;
 }
 
+/** Secrets, owner view: every account that unlocked GKR+, each with Remove (it loses GKR+ on its next load). */
+function SecretsOwner() {
+  const { request } = useAuth();
+  const [rows, setRows] = useState<{ accountId: string; username: string | null; unlockedAt: string }[] | null>(null);
+  const [note, setNote] = useState('');
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    let active = true;
+    void request('/v1/owner/secrets').then(async (response) => response.ok
+      ? (await response.json() as { unlocked: { accountId: string; username: string | null; unlockedAt: string }[] }).unlocked : null)
+      .then((list) => { if (!active) return; if (list) setRows(list); else setNote('Could not load the list. Try again.'); })
+      .catch(() => { if (active) setNote('Could not load the list. Try again.'); });
+    return () => { active = false; };
+  }, [request, version]);
+  const remove = async (accountId: string, name: string) => {
+    const response = await request(`/v1/owner/secrets/${encodeURIComponent(accountId)}`, { method: 'DELETE' }).catch(() => null);
+    setNote(response?.ok ? `Removed ${name}: GKR+ is locked for them again.` : 'Could not remove. Try again.');
+    setVersion((value) => value + 1);
+  };
+  return <>
+    <Text style={styles.sheetNote}>You always have GKR+. These accounts unlocked it with the password; Remove locks it again.</Text>
+    {rows === null ? <Text style={styles.sheetNote}>Loading…</Text>
+      : !rows.length ? <Text style={styles.sheetNote}>No one has unlocked GKR+ yet.</Text>
+      : rows.map((row) => {
+        const name = row.username ?? 'Unknown account';
+        return <View key={row.accountId} style={styles.secretRow}>
+          <View style={styles.secretInfo}>
+            <Text style={styles.sheetLabel}>{name}</Text>
+            {!!row.unlockedAt && <Text style={styles.sheetNote}>Unlocked {new Date(row.unlockedAt).toLocaleDateString()}</Text>}
+          </View>
+          <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${name}`} onPress={() => void remove(row.accountId, name)}>
+            <Text style={styles.secretRemove}>Remove</Text></Pressable>
+        </View>;
+      })}
+    {!!note && <Text style={styles.sheetNote}>{note}</Text>}
+  </>;
+}
+
 /** Secrets: a password that unlocks GKR+ for this account. */
 function SecretsUnlock({ unlocked }: { unlocked: boolean }) {
   const { request } = useAuth();
@@ -210,7 +248,7 @@ export default function MoreScreen() {
       {!demo && profile?.plan !== 'GUEST' && <DeleteAccount />}
     </Sheet>
     <Sheet visible={sheet === 'feedback'} title="Beta feedback" onClose={() => { setSheet(null); router.setParams({ feedback: undefined }); }}><BetaFeedback /></Sheet>
-    <Sheet visible={sheet === 'secrets'} title="Secrets" onClose={() => setSheet(null)}>{sheet === 'secrets' && <SecretsUnlock unlocked={gkrPlus} />}</Sheet>
+    <Sheet visible={sheet === 'secrets'} title="Secrets" onClose={() => setSheet(null)}>{sheet === 'secrets' && (owner ? <SecretsOwner /> : <SecretsUnlock unlocked={gkrPlus} />)}</Sheet>
     <Sheet visible={sheet === 'updates'} title="Updates" onClose={() => setSheet(null)}><PatchNotes /></Sheet>
     <Sheet visible={sheet === 'scout'} title="Scout queue" onClose={() => setSheet(null)}>{sheet === 'scout' && <ScoutQueue />}</Sheet>
     <Sheet visible={sheet === 'review'} title="Review feedback" onClose={() => setSheet(null)}><FeedbackReview /></Sheet>
@@ -266,6 +304,9 @@ const styles = StyleSheet.create({
   sheetLabel: { color: colors.text, fontSize: 14, fontWeight: '700' },
   input: { backgroundColor: colors.surfaceSunken, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.md,
     color: colors.text, fontSize: 16, paddingHorizontal: 14, minHeight: 50 },
+  secretRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border },
+  secretInfo: { flex: 1, gap: 2 },
+  secretRemove: { color: colors.red, fontSize: 14, fontWeight: '800' },
   sheetNote: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
   payoutRow: { flexDirection: 'row', gap: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.borderStrong },

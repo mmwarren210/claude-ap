@@ -676,8 +676,19 @@ export function buildServer(options: ServerOptions = {}) {
     const input=z.object({password:z.string().max(200)}).strict().safeParse(request.body);
     if(!input.success||!options.secrets)return reply.code(400).send({code:'INVALID_PASSWORD'});
     if(!passwordMatches(input.data.password,options.secrets.password))return reply.code(403).send({code:'WRONG_PASSWORD'});
-    await options.secrets.unlocks.add(user.accountId);
+    await options.secrets.unlocks.add(user.accountId,user.username??null);
     return {gkrPlus:true};
+  });
+  // The owner's list of unlocked accounts, and removing one (it loses GKR+ on its next load).
+  app.get('/v1/owner/secrets',async(request,reply)=>{
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    return {unlocked:options.secrets?await options.secrets.unlocks.list():[]};
+  });
+  app.delete('/v1/owner/secrets/:accountId',async(request,reply)=>{
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    const id=z.object({accountId:z.string().min(1).max(200)}).safeParse(request.params);
+    if(!id.success||!options.secrets)return reply.code(400).send({code:'INVALID_ACCOUNT'});
+    return await options.secrets.unlocks.remove(id.data.accountId)?{removed:true}:reply.code(404).send({code:'NOT_UNLOCKED'});
   });
   // "Refresh all now, skip next": every scheduled scraper and context feed pulls now (plus the sportsbook feed), and each one's
   // next scheduled run is marked done so it is skipped (no paying twice). Runs in the background; the result goes to the log.

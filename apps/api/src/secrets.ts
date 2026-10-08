@@ -13,30 +13,52 @@ export function passwordMatches(typed: string, password: string | null): boolean
   return timingSafeEqual(digest(typed), digest(password));
 }
 
-export class SecretUnlocks {
-  private accounts: Set<string> | null = null;
-  private loading: Promise<Set<string>> | null = null;
-  constructor(private readonly file: string | null) {}
+/** One account that unlocked GKR+, with its username then (for the owner's list). */
+export interface SecretUnlock { readonly accountId: string; readonly username: string | null; readonly unlockedAt: string }
 
-  private load(): Promise<Set<string>> {
+export class SecretUnlocks {
+  private accounts: Map<string, SecretUnlock> | null = null;
+  private loading: Promise<Map<string, SecretUnlock>> | null = null;
+  constructor(private readonly file: string | null, private readonly clock: () => Date = () => new Date()) {}
+
+  private load(): Promise<Map<string, SecretUnlock>> {
     if (this.accounts) return Promise.resolve(this.accounts);
     this.loading ??= (async () => {
-      const saved = this.file ? await readFile(this.file, 'utf8').then((body) => JSON.parse(body) as { accounts?: string[] }).catch(() => null) : null;
-      return this.accounts = new Set(saved?.accounts ?? []);
+      const saved = this.file ? await readFile(this.file, 'utf8')
+        .then((body) => JSON.parse(body) as { accounts?: (string | SecretUnlock)[] }).catch(() => null) : null;
+      // The first version saved bare account ids.
+      const rows = (saved?.accounts ?? []).map((item) => typeof item === 'string' ? { accountId: item, username: null, unlockedAt: '' } : item);
+      return this.accounts = new Map(rows.map((row) => [row.accountId, row]));
     })();
     return this.loading;
   }
 
-  async has(accountId: string): Promise<boolean> { return (await this.load()).has(accountId); }
-
-  async add(accountId: string): Promise<void> {
-    const accounts = await this.load();
-    if (accounts.has(accountId)) return;
-    accounts.add(accountId);
+  private async save(accounts: Map<string, SecretUnlock>) {
     if (!this.file) return;
     await mkdir(dirname(this.file), { recursive: true });
     const temporary = `${this.file}.tmp`;
-    await writeFile(temporary, JSON.stringify({ accounts: [...accounts] }));
+    await writeFile(temporary, JSON.stringify({ accounts: [...accounts.values()] }));
     await rename(temporary, this.file);
+  }
+
+  async has(accountId: string): Promise<boolean> { return (await this.load()).has(accountId); }
+
+  async list(): Promise<SecretUnlock[]> {
+    return [...(await this.load()).values()].sort((a, b) => b.unlockedAt.localeCompare(a.unlockedAt));
+  }
+
+  async add(accountId: string, username: string | null = null): Promise<void> {
+    const accounts = await this.load();
+    if (accounts.has(accountId)) return;
+    accounts.set(accountId, { accountId, username, unlockedAt: this.clock().toISOString() });
+    await this.save(accounts);
+  }
+
+  /** Removes an account's unlock; false when it had none. */
+  async remove(accountId: string): Promise<boolean> {
+    const accounts = await this.load();
+    if (!accounts.delete(accountId)) return false;
+    await this.save(accounts);
+    return true;
   }
 }

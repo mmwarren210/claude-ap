@@ -33,6 +33,16 @@ test('the Secrets password unlocks GKR+ for that account only, and survives a re
     assert.deepEqual((await restarted.inject({ method: 'GET', url: '/v1/secrets', headers: auth(member.token) })).json(), { gkrPlus: true },
       'the unlock is saved');
     await restarted.close();
+    // The owner's list and removal.
+    assert.equal((await app.inject({ method: 'GET', url: '/v1/owner/secrets', headers: auth(member.token) })).statusCode, 404, 'owner only');
+    const list = (await app.inject({ method: 'GET', url: '/v1/owner/secrets', headers: auth(owner.token) })).json() as
+      { unlocked: { accountId: string; username: string | null }[] };
+    assert.deepEqual(list.unlocked.map((row) => row.username), ['Member_1']);
+    const accountId = list.unlocked[0]!.accountId;
+    assert.equal((await app.inject({ method: 'DELETE', url: `/v1/owner/secrets/${accountId}`, headers: auth(member.token) })).statusCode, 404);
+    assert.deepEqual((await app.inject({ method: 'DELETE', url: `/v1/owner/secrets/${accountId}`, headers: auth(owner.token) })).json(), { removed: true });
+    assert.deepEqual(await status(member.token), { gkrPlus: false }, 'locked again');
+    assert.equal((await app.inject({ method: 'DELETE', url: `/v1/owner/secrets/${accountId}`, headers: auth(owner.token) })).statusCode, 404);
   } finally { await app.close(); await rm(folder, { recursive: true, force: true }); }
 });
 
