@@ -1,5 +1,6 @@
 import type { BaseRates, Trend } from './base-rates.js';
 import { registerCompression } from './compress.js';
+import { gzipSync } from 'node:zlib';
 import { lineShop } from './line-shop.js';
 import { sameGame } from './team-match.js';
 import { bookLines } from './book-picks.js';
@@ -2198,7 +2199,8 @@ export function buildServer(options: ServerOptions = {}) {
       const snapshot=service.getBoard();if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
       const lite=liteBoard(snapshot,now());
       const result=boardResponseSchema.safeParse(JSON.parse(JSON.stringify(lite)));
-      return {ok:result.success,bytes:JSON.stringify(lite).length,lines:lite.board.lines.length,analyses:lite.analyses.length,
+      const body=JSON.stringify(lite);
+      return {ok:result.success,bytes:body.length,gzipBytes:gzipSync(body,{level:5}).length,lines:lite.board.lines.length,analyses:lite.analyses.length,
         issues:result.success?[]:result.error.issues.slice(0,10).map((issue)=>({path:issue.path.join('.'),message:issue.message}))};
     });
     admin.get('/disk',async()=>{
