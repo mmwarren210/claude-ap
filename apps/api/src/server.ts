@@ -2291,7 +2291,7 @@ export function buildServer(options: ServerOptions = {}) {
     admin.get('/free-feeds',async(request)=>{
       // ?url= tries one more address on the apps' own hosts (never anywhere else).
       const extra=(request.query as {url?:string}).url;
-      const allowed=extra&&/^https:\/\/(api\.prizepicks\.com|api\.underdogfantasy\.com|stats\.underdogfantasy\.com|pick6\.draftkings\.com)\//.test(extra);
+      const allowed=extra&&/^https:\/\/(api\.prizepicks\.com|partner-api\.prizepicks\.com|api\.underdogfantasy\.com|stats\.underdogfantasy\.com|pick6\.draftkings\.com)\//.test(extra);
       const feeds:Record<string,string>=allowed?{extra:extra!}:{
         prizepicks:'https://api.prizepicks.com/projections?per_page=250&single_stat=true',
         prizepicksLeagues:'https://api.prizepicks.com/leagues',
