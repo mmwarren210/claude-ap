@@ -46,6 +46,7 @@ import { oddsApiSource, regularKey } from './scrapers/odds-api-source.js';
 import { ScraperPuller } from './scrapers/scraper-puller.js';
 import { zenPrizePicks, zenPrizePicksEsports, zenUnderdog, zenPick6 } from './scrapers/zen-studio.js';
 import { DailySpendBudget } from './scrapers/spend-budget.js';
+import { underdogDirect } from './scrapers/underdog-direct.js';
 import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
 import { ProviderIdentityVerifier } from './provider-identity.js';
@@ -164,7 +165,9 @@ const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBud
   [{source:zenPrizePicksEsports,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_ESPORTS','10,16')},
     {source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','9')},
     {source:lergassy,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_LERGASSY','')},
-    {source:zenUnderdog,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_UNDERDOG','11')},
+    // Underdog's own feed is free, so it refreshes every two hours; the Apify actor stays as a backup on demand.
+    {source:underdogDirect(),hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_UNDERDOG_DIRECT','8,10,12,14,16,18,20,22')},
+    {source:zenUnderdog,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_UNDERDOG','')},
     {source:zenPick6,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PICK6','13')},
     // The Odds API alongside the scrapers as a third check. It spends Odds API credits, so by default
     // it runs only when the owner pulls (CROWNIQ_SCRAPER_HOURS_ODDS_API adds a schedule).

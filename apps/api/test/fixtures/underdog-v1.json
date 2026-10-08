@@ -1,0 +1,63 @@
+{
+ "appearances": [
+  {
+   "id": "1e74e23d-c262-4daf-a972-c5147b9130fb",
+   "match_id": 178867,
+   "match_type": "Game",
+   "player_id": "b3fc6404-a8a0-4475-8276-209e50b74069",
+   "team_id": "26e67e06-664e-50a6-ad7b-c102705fde8b"
+  }
+ ],
+ "players": [
+  {
+   "id": "b3fc6404-a8a0-4475-8276-209e50b74069",
+   "first_name": "Javonte",
+   "last_name": "Williams",
+   "image_url": "https://assets.underdogfantasy.com/player-images/nfl/20260824_15-889dcdc5-3d88-45df-9677-5ad7ff87c011.png",
+   "sport_id": "NFL",
+   "team_id": "26e67e06-664e-50a6-ad7b-c102705fde8b"
+  }
+ ],
+ "games": [
+  {
+   "id": 178867,
+   "abbreviated_title": "TB @ DAL",
+   "full_team_names_title": "Tampa Bay Buccaneers @ Dallas Cowboys",
+   "home_team_id": "26e67e06-664e-50a6-ad7b-c102705fde8b",
+   "away_team_id": "1a20f1da-c502-5224-9c4a-bc363174cd21",
+   "scheduled_at": "2026-10-09T00:15:00Z",
+   "sport_id": "NFL",
+   "status": "scheduled"
+  }
+ ],
+ "solo_games": [],
+ "over_under_lines": [
+  {
+   "id": "190957d5-197f-444f-98a1-a058dd620709",
+   "line_type": "balanced",
+   "live_event": false,
+   "stat_value": "0.5",
+   "status": "active",
+   "options": [
+    {
+     "choice": "higher",
+     "payout_multiplier": "0.75",
+     "status": "active"
+    },
+    {
+     "choice": "lower",
+     "payout_multiplier": "1.29",
+     "status": "active"
+    }
+   ],
+   "over_under": {
+    "category": "player_prop",
+    "appearance_stat": {
+     "appearance_id": "1e74e23d-c262-4daf-a972-c5147b9130fb",
+     "display_stat": "Anytime TD",
+     "stat": "rush_rec_tds"
+    }
+   }
+  }
+ ]
+}
