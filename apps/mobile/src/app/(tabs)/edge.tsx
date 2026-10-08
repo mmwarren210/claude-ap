@@ -38,7 +38,9 @@ export default function EdgeScreen() {
   const slip = useEdgeSlip();
   const { nowMs } = useBoard();
   const live = upcomingPicks(data?.picks ?? [], nowMs, day);
-  const sports = sportsFrom(live);
+  // Every sport with a rated pick on this platform (the server counts them all), so no sport hides behind the list's cut.
+  const counts = new Map((data?.sports ?? []).map((item) => [item.sport, item.picks]));
+  const sports = data?.sports?.length ? data.sports.map((item) => item.sport) : sportsFrom(live);
   const picks = live.filter((pick) => !sport || pick.sport === sport).slice(0, 100);
   const inSlip = new Set(slip.map((leg) => leg.lineId));
   return <Screen eyebrow={`CROWNIQ  /  EDGE  /  ${platformLabel(platform).toUpperCase()}`} title="Edge">
@@ -77,10 +79,10 @@ export default function EdgeScreen() {
           : `Uncalibrated: ${data.calibration.graded} graded picks so far (calibration starts at 150).`}
         {data.counts.quotes === 0 ? ' No sportsbook prices on this board yet; picks are model/ladder only.' : ''}</Text>
       <DayChips day={day} setDay={setDay} />
-      {sports.length > 1 && <View style={styles.chips}>
+      {(sports.length > 1 || !!sport) && <View style={styles.chips}>
         {[null, ...sports].map((item) => <Pressable key={item ?? 'all'} accessibilityRole="button"
           onPress={() => setSport(item)} style={[styles.chip, sport === item && styles.chipOn]}>
-          <Text style={[styles.chipText, sport === item && styles.chipTextOn]}>{item ?? 'All'}</Text></Pressable>)}
+          <Text style={[styles.chipText, sport === item && styles.chipTextOn]}>{item ?? 'All'}{item && counts.get(item) ? ` ${counts.get(item)}` : ''}</Text></Pressable>)}
       </View>}
       <EdgeAlerts platform={platform} />
       <EdgeSlipPanel entries={data.entries} />

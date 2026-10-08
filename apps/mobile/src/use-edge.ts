@@ -29,8 +29,8 @@ export function useEdge(view: EdgeView, source: 'edge' | 'gkr-plus' = 'edge', da
     void (async () => {
       try {
         // GKR+ (owner only) answers in the same shape as Edge, from its own route.
-        // The sport chips: best entries from that sport's picks only.
-        const search = (q ? `&q=${encodeURIComponent(q)}` : '') + (slipSport ? `&slipSport=${encodeURIComponent(slipSport)}` : '');
+        // The sport chips: that sport's picks and best entries, from the whole board (not just the top of the list).
+        const search = (q ? `&q=${encodeURIComponent(q)}` : '') + (slipSport ? `&sport=${encodeURIComponent(slipSport)}` : '');
         const path = source === 'gkr-plus' ? `/v1/owner/gkr-plus?platform=${platform}&limit=300&day=${day}${search}`
           : `/v1/edge?platform=${platform}&view=${view}&limit=300&day=${day}${search}`;
         const response = await request(path, { signal: controller.signal });

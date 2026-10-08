@@ -437,6 +437,8 @@ export const edgeBoardResponseSchema = z.object({
   slips: z.array(edgeSlipSchema),
   /** Why a sportsbook's tab is empty when its feed is down at the provider ("book unavailable"). */
   feedNote: z.string().optional(),
+  /** Every sport with a rated upcoming pick on this platform and how many (the sport chips), whatever the list was cut to. */
+  sports: z.array(z.object({ sport: z.string(), picks: z.number().int().nonnegative() })).optional(),
 });
 
 export const edgeUnpricedLineSchema = z.object({

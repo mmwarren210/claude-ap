@@ -31,7 +31,9 @@ export default function GkrPlusScreen() {
   const { nowMs } = useBoard();
   if (!owner) return <Screen eyebrow="CROWNIQ  /  GKR+" title="GKR+"><Notice title="Not available" detail="Unlock it in More › Secrets." /></Screen>;
   const live = upcomingPicks(data?.picks ?? [], nowMs, day);
-  const sports = sportsFrom(live);
+  // Every sport with a rated pick on this platform (the server counts them all), so no sport hides behind the list's cut.
+  const counts = new Map((data?.sports ?? []).map((item) => [item.sport, item.picks]));
+  const sports = data?.sports?.length ? data.sports.map((item) => item.sport) : sportsFrom(live);
   const picks = live.filter((pick) => !sport || pick.sport === sport).slice(0, 100);
   const inSlip = new Set(slip.map((leg) => leg.lineId));
   return <Screen eyebrow={`CROWNIQ  /  GKR+  /  ${platformLabel(platform).toUpperCase()}`} title="GKR+">
@@ -55,10 +57,10 @@ export default function GkrPlusScreen() {
         <Stat label="+EV picks" value={String(data.counts.positiveEdge)} />
       </View>
       <DayChips day={day} setDay={setDay} />
-      {sports.length > 1 && <View style={styles.chips}>
+      {(sports.length > 1 || !!sport) && <View style={styles.chips}>
         {[null, ...sports].map((item) => <Pressable key={item ?? 'all'} accessibilityRole="button"
           onPress={() => setSport(item)} style={[styles.chip, sport === item && styles.chipOn]}>
-          <Text style={[styles.chipText, sport === item && styles.chipTextOn]}>{item ?? 'All'}</Text></Pressable>)}
+          <Text style={[styles.chipText, sport === item && styles.chipTextOn]}>{item ?? 'All'}{item && counts.get(item) ? ` ${counts.get(item)}` : ''}</Text></Pressable>)}
       </View>}
       <EdgeSlipPanel entries={data.entries} />
       {!searching && <View style={styles.section}>

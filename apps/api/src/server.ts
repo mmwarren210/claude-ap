@@ -91,7 +91,7 @@ import { analyzeTips, DAILY_TIP_UPLOADS, marketRead } from './tips.js';
 import type { TipDraft, TipGrader, TipReader, TipStore } from './tips.js';
 import { matchTip, modelRead } from './tip-models.js';
 import type { TipModelRead } from './tip-models.js';
-import { registerEdgeRoutes } from './edge/routes.js';
+import { registerEdgeRoutes, sportCounts } from './edge/routes.js';
 import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
 
@@ -1493,7 +1493,8 @@ export function buildServer(options: ServerOptions = {}) {
       owner.get('/',async(request,reply)=>{
         const query=z.object({platform:z.enum(EDGE_PLATFORMS as [EdgePlatform,...EdgePlatform[]]).default('prizepicks'),
           limit:z.coerce.number().int().min(1).max(500).default(150),day:z.enum(['all','today']).default('all'),
-          q:z.string().trim().max(60).optional(),slipSport:z.string().trim().min(1).max(20).optional()}).safeParse(request.query);
+          q:z.string().trim().max(60).optional(),slipSport:z.string().trim().min(1).max(20).optional(),
+          sport:z.string().trim().min(1).max(20).optional()}).safeParse(request.query);
         if(!query.success)return reply.code(400).send({code:'INVALID_QUERY'});
         const result=await gkrPlus(query.data.platform);
         if(!result)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
@@ -1513,9 +1514,10 @@ export function buildServer(options: ServerOptions = {}) {
         // Today only covers the whole page: picks and entries from today's games (Eastern).
         const ranked=live.filter((pick)=>pick.edge!==null&&pick.rating!=='NONE'&&
           (query.data.day!=='today'||easternDay(new Date(pick.eventStartTime))===easternDay(new Date(nowMs))));
-        return {...result.snapshot.response,picks:ranked.slice(0,query.data.limit),
-          // The sport chips build entries from that sport's picks only; the pick list stays whole.
-          slips:buildSlips(query.data.slipSport?ranked.filter((pick)=>pick.sport===query.data.slipSport):ranked,
+        // A chosen sport (chip) narrows the picks and the entries to it; the chips list every sport with a rated pick.
+        const chosen=query.data.sport??query.data.slipSport,inSport=chosen?ranked.filter((pick)=>pick.sport===chosen):ranked;
+        return {...result.snapshot.response,picks:(query.data.sport?inSport:ranked).slice(0,query.data.limit),sports:sportCounts(ranked),
+          slips:buildSlips(inSport,
             result.snapshot.response.entries,{minEvents:result.snapshot.minEvents}),
           counts:{...result.snapshot.response.counts,positiveEdge:ranked.length},modelVersion:GKR_PLUS_VERSION};
       });

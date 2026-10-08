@@ -66,6 +66,10 @@ test('Edge routes: every line read or No read, leave-one-out, Gen, slips and own
     // The sport chips: entries from that sport only, while the pick list stays whole.
     const sportOnly = edgeBoardResponseSchema.parse((await app.inject(`/v1/edge?slipSport=${edge.picks[0]!.sport}`)).json());
     assert.ok(sportOnly.slips.length > 0 && sportOnly.slips.every((slip) => slip.legs.every((leg) => leg.sport === edge.picks[0]!.sport)));
+    // Every sport with a rated pick is listed for the chips, counted before the list is cut.
+    const top1 = edgeBoardResponseSchema.parse((await app.inject('/v1/edge?limit=1')).json());
+    assert.equal(top1.picks.length, 1);
+    assert.equal(top1.sports?.reduce((sum, item) => sum + item.picks, 0), edgeBoardResponseSchema.parse((await app.inject('/v1/edge?limit=500')).json()).picks.length);
     const otherSport = edgeBoardResponseSchema.parse((await app.inject('/v1/edge?slipSport=NO_SUCH_SPORT')).json());
     assert.equal(otherSport.slips.length, 0, 'no picks in that sport, no entries');
     assert.ok(otherSport.picks.length > 0, 'the pick list is not cut by the slip sport');

@@ -63,6 +63,13 @@ export function lineMovement(snapshots: Pick<SnapshotStore, 'playerHistory'>, pi
   return [...byPlatform].map(([platform, points]) => ({ platform, points: points.slice(-60) }));
 }
 
+/** Rated picks per sport, most first (the sport chips). */
+export function sportCounts(picks: readonly { sport: string }[]): { sport: string; picks: number }[] {
+  const counts = new Map<string, number>();
+  for (const pick of picks) counts.set(pick.sport, (counts.get(pick.sport) ?? 0) + 1);
+  return [...counts].map(([sport, count]) => ({ sport, picks: count })).sort((a, b) => b.picks - a.picks || a.sport.localeCompare(b.sport));
+}
+
 export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): void {
   const { edge, now } = deps;
   const held = (platform: string) => (deps.held ?? (() => false))(platform);
@@ -95,6 +102,8 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     const onDay = (pick: { eventStartTime: string }) => !today || easternDay(new Date(pick.eventStartTime)) === today;
     // Today only covers the whole page: the top picks are taken from today's games, not cut first and filtered after.
     if (query.data.q) return { ...snapshot.response, picks: searchPicks(snapshot, query.data.q, nowMs, query.data.limit).filter(onDay), slips: [] };
+    // The sport chips: every sport with a rated upcoming pick (today's, with Today only), counted before the list is cut.
+    const sports = sportCounts(viewPicks(snapshot, query.data.view, { ...filters, limit: 100_000, sport: undefined }).filter(onDay));
     const picks = today ? viewPicks(snapshot, query.data.view, { ...filters, limit: 5000 }).filter(onDay).slice(0, query.data.limit)
       : viewPicks(snapshot, query.data.view, filters);
     const live = (slip: { legs: { lineId: string }[] }) => slip.legs.every((leg) => {
@@ -104,7 +113,7 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
       ? buildSlips(viewPicks(snapshot, 'edges', { ...filters, limit: 500, ...(slipSport ? { sport: slipSport } : {}) }).filter(onDay),
         snapshot.response.entries, { minEvents: snapshot.minEvents })
       : snapshot.response.slips.filter(live);
-    return { ...snapshot.response, picks, slips };
+    return { ...snapshot.response, picks, slips, sports };
   });
 
   app.get('/v1/edge/board', async (request, reply) => {
