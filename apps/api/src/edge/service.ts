@@ -442,6 +442,10 @@ export class EdgeService {
       const [prices, pickem] = this.options.sharp
         ? await Promise.all([this.options.sharp.prices(), this.options.sharp.pickem()]) : [[], []];
       const sets = await this.platformSets(board, prices, pickem, now);
+      // How long each step takes, so a slow refresh (a bigger board) shows where its time goes.
+      const timing: Record<string, number> = {}; let mark = Date.now();
+      const lap = (name: string) => { const at = Date.now(); timing[name] = at - mark; mark = at; };
+      lap('sets');
       // Player photos for every platform's picks (books have none of their own): the board's photos, then app line images.
       const photos = new Map<string, string>(), names = new Map(board.board.lines.map((line) => [line.playerId, line.playerName]));
       for (const [playerId, media] of Object.entries(board.playerMedia ?? {}))
@@ -464,6 +468,7 @@ export class EdgeService {
         this.options.history && players.size ? this.options.history.rowsForPlayers([...players.values()], 60)
           : Promise.resolve(new Map<string, InternalHistoryRow[]>()),
         this.gatherValues(allLines)]);
+      lap('history');
       const calibrationRows = await this.options.ledger?.calibrationRows().catch(() => []) ?? [];
       const calibration = fitCalibration(calibrationRows);
       const forecast = forecastReport(calibrationRows);
@@ -501,11 +506,15 @@ export class EdgeService {
       // One platform at a time, yielding between them so requests keep being answered while the board reprices.
       const each: EdgeSnapshot[] = [];
       const anchors = dfsAnchors(sets);
+      lap('inputs');
       for (const set of sets) {
         await yieldToLoop();
         each.push(this.priceSet(set, board, prices, now, calibration, forecast, rows, values, startedAt, injured, fresh, anchors));
+        lap(`price:${set.platform}`);
       }
       const priced = crossPlatform(each);
+      lap('crossPlatform');
+      console.log(`[edge-timing] ${JSON.stringify(timing)}`);
       for (const snapshot of priced) {
         this.current.set(snapshot.platform, snapshot);
         this.log(snapshot);
