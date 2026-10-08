@@ -4,12 +4,14 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { edgeSummary, elsewhereText, headline, lineComparison, moveBadges, pct, ratingColor, ratingLabel, tierLabel } from '../edge-format';
 import { edgeSlip } from '../edge-slip';
 import { palette } from '../theme';
+import { GlowCard } from './ui/GlowCard';
 import { PlayerAvatar } from './ui/PlayerAvatar';
 
-export function EdgePickCard({ pick, rank, inSlip }: { pick: EdgePick; rank?: number; inSlip: boolean }) {
+/** One Edge or GKR+ pick. With an accent it wears the Board's glow card in that color (the lists rotate them like the Board). */
+export function EdgePickCard({ pick, rank, inSlip, accent }: { pick: EdgePick; rank?: number; inSlip: boolean; accent?: string }) {
   const color = ratingColor(pick.rating, palette);
   const start = new Date(pick.eventStartTime);
-  return <View style={styles.card}><Pressable accessibilityRole="button" accessibilityLabel={`Edge detail for ${pick.playerName}`}
+  const body = <><Pressable accessibilityRole="button" accessibilityLabel={`Edge detail for ${pick.playerName}`}
     onPress={() => router.push({ pathname: '/edge/[lineId]', params: { lineId: pick.lineId, platform: pick.platform } })} style={styles.body}>
     <View style={styles.row}>
       <Text style={styles.eyebrow}>{rank ? `#${rank} · ` : ''}{pick.sport} · {tierLabel[pick.tier]}
@@ -20,7 +22,7 @@ export function EdgePickCard({ pick, rank, inSlip }: { pick: EdgePick; rank?: nu
       </View>
     </View>
     <View style={styles.row}>
-      <PlayerAvatar name={pick.playerName} photoUrl={pick.playerImageUrl} ring={color} size={52} />
+      <PlayerAvatar name={pick.playerName} photoUrl={pick.playerImageUrl} ring={accent ?? color} size={52} />
       <View style={styles.main}>
         <Text style={styles.name}>{pick.playerName}</Text>
         <Text style={styles.line}>{headline(pick)}</Text>
@@ -40,12 +42,14 @@ export function EdgePickCard({ pick, rank, inSlip }: { pick: EdgePick; rank?: nu
     <Pressable accessibilityRole="button" onPress={() => edgeSlip.toggle(pick)} style={[styles.slip, inSlip && styles.slipOn]}>
       <Text style={[styles.slipText, inSlip && styles.slipTextOn]}>{inSlip ? '✓ In slip' : '+ Add to slip'}</Text>
     </Pressable>
-  </View>;
+  </>;
+  return accent ? <GlowCard accent={accent}><View style={styles.inner}>{body}</View></GlowCard> : <View style={styles.card}>{body}</View>;
 }
 
 const styles = StyleSheet.create({
   card: { backgroundColor: palette.card, borderWidth: 1, borderColor: palette.border, borderRadius: 18, padding: 16, gap: 8 },
   body: { gap: 6 },
+  inner: { gap: 8 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   main: { flex: 1, gap: 3 },
   eyebrow: { color: palette.muted, fontSize: 10, fontWeight: '800', letterSpacing: 1, flexShrink: 1 },

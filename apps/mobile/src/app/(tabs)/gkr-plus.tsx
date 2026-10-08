@@ -8,7 +8,7 @@ import { PlayerSearch } from '../../components/PlayerSearch';
 import { sportsFrom, upcomingPicks } from '../../edge-format';
 import { edgePlatform, EDGE_PLATFORMS, isBook, platformLabel, useEdgePlatform } from '../../edge-platform';
 import { useEdgeSlip } from '../../edge-slip';
-import { palette } from '../../theme';
+import { palette, rankAccents } from '../../theme';
 import { useBoard } from '../../use-board';
 import { useEdge } from '../../use-edge';
 import { useGkrPlusAccess } from '../../use-gkr-plus';
@@ -73,7 +73,7 @@ export default function GkrPlusScreen() {
         <Text style={styles.sectionTitle}>{searching ? `SEARCH · ${picks.length} LINE${picks.length === 1 ? '' : 'S'}` : book ? 'BETS WITH POSITIVE EV' : 'PICKS ABOVE BREAK-EVEN'}</Text>
         <Text style={styles.sectionDetail}>{searching ? 'Every upcoming line for that player on this platform, blended by GKR+, plays or not.'
           : 'Each card shows GKR+\u2019s chance; its first lines say how Edge, history and GKR moved it.'}</Text>
-        {picks.length ? picks.map((pick, index) => <EdgePickCard key={pick.key + pick.side} pick={pick} rank={searching ? undefined : index + 1} inSlip={inSlip.has(pick.lineId)} />)
+        {picks.length ? picks.map((pick, index) => <EdgePickCard key={pick.key + pick.side} pick={pick} accent={rankAccents[index % rankAccents.length]} rank={searching ? undefined : index + 1} inSlip={inSlip.has(pick.lineId)} />)
           : searching ? <Notice title="No lines found" detail={`No upcoming line on ${platformLabel(platform)} for “${query.trim()}”.`} />
           : <Notice title="Nothing qualifies right now" detail="No lines clear the bar after blending. No edge is a valid result." />}
       </View>

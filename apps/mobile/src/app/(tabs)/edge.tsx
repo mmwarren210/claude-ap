@@ -8,7 +8,7 @@ import { Notice, Screen } from '../../components/Screen';
 import { PlayerSearch } from '../../components/PlayerSearch';
 import { pct, sportsFrom, upcomingPicks } from '../../edge-format';
 import { useEdgeSlip } from '../../edge-slip';
-import { palette } from '../../theme';
+import { palette, rankAccents } from '../../theme';
 import { useBoard } from '../../use-board';
 import { useEdge } from '../../use-edge';
 import { EdgeAlerts } from '../../components/EdgeAlerts';
@@ -99,7 +99,7 @@ export default function EdgeScreen() {
             : platform === 'pick6' ? 'DK Pick’em publishes no payout chart, so Edge shows each pick’s chance; edges appear once the payouts are confirmed.'
             : 'Picks whose hit probability beats the break-even. Edge is shown in percentage points.'
           : 'No source gives PrizePicks’ Goblin/Demon payout factors, so Edge shows each leg’s hit chance and the minimum payout factor that makes it worth it.'}</Text>
-        {picks.length ? picks.map((pick, index) => <EdgePickCard key={pick.key + pick.side} pick={pick}
+        {picks.length ? picks.map((pick, index) => <EdgePickCard key={pick.key + pick.side} pick={pick} accent={rankAccents[index % rankAccents.length]}
           rank={view === 'edges' && !searching ? index + 1 : undefined} inSlip={inSlip.has(pick.lineId)} />)
           : searching ? <Notice title="No lines found" detail={`No upcoming line on ${platformLabel(platform)} for “${query.trim()}”.`} />
           : <Notice title="Nothing qualifies right now" detail="No lines clear the bar on the saved board. No edge is a valid result." />}
