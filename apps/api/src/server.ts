@@ -2290,6 +2290,20 @@ export function buildServer(options: ServerOptions = {}) {
     });
     // SharpAPI: the feed's status and one probe request per book (why a book's rows stopped coming).
     // ?league= probes another league (e.g. which esports leagues SharpAPI carries for PrizePicks).
+    // PropLine with the server's key (PROPLINE_API_KEY), read-only: one GET under /v1/, for checking coverage. The key never
+    // leaves the server; the reply is the body plus the quota headers.
+    admin.get('/propline',async(request,reply)=>{
+      const key=process.env.PROPLINE_API_KEY?.trim();
+      if(!key)return reply.code(503).send({code:'PROPLINE_UNCONFIGURED'});
+      const path=(request.query as {path?:string}).path??'';
+      if(!/^\/v1\/[A-Za-z0-9_\-/.?=&,:%]*$/.test(path))return reply.code(400).send({code:'INVALID_PATH'});
+      const response=await fetch(`https://api.prop-line.com${path}`,{headers:{'X-API-Key':key,accept:'application/json'},
+        signal:AbortSignal.timeout(60_000)}).catch(()=>null);
+      if(!response)return reply.code(502).send({code:'PROPLINE_CONNECTION_FAILED'});
+      const text=await response.text();
+      let body:unknown=text.slice(0,2000);try{body=JSON.parse(text);}catch{/* not JSON */}
+      return {status:response.status,remaining:response.headers.get('x-daily-remaining'),limit:response.headers.get('x-daily-limit'),body};
+    });
     // Whether the apps' own public feeds answer from this server (free sources in place of Apify scrapers).
     admin.get('/free-feeds',async(request)=>{
       // ?url= tries one more address on the apps' own hosts (never anywhere else).
