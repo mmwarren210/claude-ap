@@ -57,3 +57,10 @@ test('player photos ride along on Edge picks and into GKR+', async () => {
   assert.equal(blended.playerImageUrl, photo);
   assert.equal(edgePickSchema.parse(blended).playerImageUrl, photo);
 });
+
+test('GKR+ ranks by its own blended value, keeping the trust Edge gave the read', async () => {
+  const { reRank } = await import('../src/edge/blend.js');
+  const edgePick = { edge: .05, rank: .03, rating: 'STRONG' } as unknown as import('@crowniq/contracts').EdgePick;
+  assert.equal(reRank(edgePick, { ...edgePick, edge: .1 }).rank, .06, 'twice the value, same trust (0.6)');
+  assert.equal(reRank(edgePick, { ...edgePick, edge: -.01, rating: 'NONE' }).rank, undefined, 'no play, no rank');
+});

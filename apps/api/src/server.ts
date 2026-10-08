@@ -76,7 +76,7 @@ import type { HistoryArchive } from './history-archive.js';
 import type { ShadowPick, ShadowRecord } from './shadow-record.js';
 import type { BookPick, Sportsbook } from './book-picks.js';
 import { serveWebApp } from './web-app.js';
-import { EDGE_PLATFORMS, EdgeResultsWorker, EdgeService, searchPicks } from './edge/service.js';
+import { EDGE_PLATFORMS, EdgeResultsWorker, EdgeService, searchPicks, viewPicks } from './edge/service.js';
 import { blendPick, blendPicks, GKR_PLUS_VERSION } from './edge/blend.js';
 import type { GkrSide } from './edge/blend.js';
 import { canonicalMarket } from './edge/market-map.js';
@@ -585,6 +585,8 @@ export function buildServer(options: ServerOptions = {}) {
   });
   // Tips (owner-only for now): picks from the services the owner pays for, uploaded as a screenshot or text, in their own section (display-only).
   const tipStatus=z.enum(['PENDING','WON','LOST','PUSH','VOID']);
+  // Set once Edge is running: per sport, rated upcoming picks and how many make the top 300, for Edge and GKR+ (admin).
+  let sportMix:((platform:EdgePlatform)=>Promise<unknown>)|null=null;
   // Set once Edge is running: each tip's Edge and GKR+ read from the boards.
   let tipModelReads:((tips:readonly (TipDraft&{id:string})[])=>Promise<Map<string,{edge:TipModelRead|null;gkrPlus:TipModelRead|null}>>)|null=null;
   app.get('/v1/tips',async(request,reply)=>{
@@ -1465,6 +1467,15 @@ export function buildServer(options: ServerOptions = {}) {
       const picks=blendPicks(snapshot.response.picks,await gkrSides(platform));
       return {snapshot,picks};
     };
+    sportMix=async(platform)=>{
+      const snapshot=await edge.snapshot(platform);if(!snapshot)return null;
+      const nowMs=now().getTime(),rated=viewPicks(snapshot,'edges',{nowMs,limit:100_000});
+      const plus=(await gkrPlus(platform))?.picks.filter((pick)=>Date.parse(pick.eventStartTime)>nowMs+5*60_000&&pick.edge!==null&&pick.rating!=='NONE')??[];
+      const mix=(picks:readonly EdgePick[])=>{const all=sportCounts(picks),top=new Map(sportCounts(picks.slice(0,300)).map((row)=>[row.sport,row.picks]));
+        return all.map((row)=>({sport:row.sport,rated:row.picks,top300:top.get(row.sport)??0,
+          best:Math.round(Math.max(...picks.filter((pick)=>pick.sport===row.sport).map((pick)=>pick.edge??0))*1000)/10}));};
+      return {platform,edge:mix(rated),gkrPlus:mix(plus)};
+    };
     tipModelReads=async(tips)=>{
       const out=new Map<string,{edge:TipModelRead|null;gkrPlus:TipModelRead|null}>();
       const props=tips.filter((tip)=>tip.market==='PLAYER_PROP'&&tip.line!==null);
@@ -2245,6 +2256,11 @@ export function buildServer(options: ServerOptions = {}) {
     admin.get('/edge/stale',async(_request,reply)=>edge?edge.staleReplay(7):reply.code(503).send({code:'EDGE_UNAVAILABLE'}));
     // The data volume's largest files (it is small: a full volume fails every save, tips included).
     // The Board tab's own check (the app's board schema) on what /v1/board/lite serves now: any line that would fail it.
+    admin.get('/sport-mix',async(request,reply)=>{
+      const platform=z.object({platform:z.enum(EDGE_PLATFORMS as [EdgePlatform,...EdgePlatform[]]).default('prizepicks')}).safeParse(request.query);
+      if(!platform.success||!sportMix)return reply.code(400).send({code:'INVALID_PLATFORM'});
+      return await sportMix(platform.data.platform)??reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    });
     admin.get('/board-check',async(_request,reply)=>{
       const snapshot=service.getBoard();if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
       const lite=liteBoard(snapshot,now());

@@ -1,4 +1,5 @@
 import type { EdgePick } from '@crowniq/contracts';
+import { rankScore } from '@crowniq/edge';
 
 // GKR+ (owner approved 2026-10-07: "build the gkr+history+edge"): an opt-in model shown only to the owner, recorded and
 // graded on its own ledger next to Edge. It changes no GKR or Edge score.
@@ -58,6 +59,20 @@ export function blendPick(pick: EdgePick, gkr: GkrSide | null): EdgePick {
 
 /** Blended picks, ranked by blended edge (unranked ones after, by chance). */
 export function blendPicks(picks: readonly EdgePick[], gkrFor: (pick: EdgePick) => GkrSide | null): EdgePick[] {
-  return picks.map((pick) => blendPick(pick, gkrFor(pick)))
+  return picks.map((pick) => reRank(pick, blendPick(pick, gkrFor(pick))))
     .sort((a, b) => (b.rank ?? -1) - (a.rank ?? -1) || b.probability - a.probability);
+}
+
+/**
+ * GKR+'s own order (2026-10-08: the list kept Edge's rank after blending, so GKR+'s top was Edge's top). The blended value
+ * times the trust Edge gave the read (its rank ÷ its value: price source, agreement, freshness); a fresh score when Edge had
+ * no positive value to take that from.
+ */
+export function reRank(edge: EdgePick, blended: EdgePick): EdgePick {
+  const before = edge.ev ?? edge.edge, after = blended.ev ?? blended.edge;
+  if (after === null || after === undefined || blended.rating === 'NONE') { const { rank: _rank, ...rest } = blended; return rest; }
+  const trust = edge.rank !== null && edge.rank !== undefined && before !== null && before !== undefined && before > 0 ? edge.rank / before : null;
+  const rank = trust !== null ? Math.round(after * trust * 1e5) / 1e5 : rankScore(blended);
+  if (rank === null) { const { rank: _rank, ...rest } = blended; return rest; }
+  return { ...blended, rank };
 }
