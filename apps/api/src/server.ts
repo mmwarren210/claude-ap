@@ -630,6 +630,14 @@ export function buildServer(options: ServerOptions = {}) {
       if(/credit balance is too low/i.test(message))return reply.code(503).send({code:'AI_CREDITS_EXHAUSTED'});
       return reply.code(502).send({code:'TIPS_READ_FAILED'});}
   });
+  // Grade finished tips now (Refresh all): runs in the background; one run at a time.
+  app.post('/v1/tips/grade',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    if(!options.tips?.grader)return reply.code(503).send({code:'TIPS_GRADER_UNAVAILABLE'});
+    void options.tips.grader.runOnce().catch(()=>undefined);
+    return reply.code(202).send({grading:true});
+  });
   app.post('/v1/tips/recheck',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});

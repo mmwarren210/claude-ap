@@ -253,7 +253,7 @@ export async function analyzeTips(store: TipStore, reader: TipReader, tips: read
   return analyses.size;
 }
 
-/** Grades pending tips every two hours, a batch of 15 per Claude call, at most 4 calls a run. */
+/** Grades pending tips hourly (and on demand), a batch of 15 per Claude call, at most 4 calls a run. */
 export class TipGrader {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
@@ -274,10 +274,17 @@ export class TipGrader {
     if (graded || error) console.log(`[tips] graded ${graded}${error ? `, error ${error}` : ''}`);
     return graded;
   }
-  start(intervalMs = 2 * 3600_000) {
+  /**
+   * A first run 3 minutes after startup, then hourly: with only a two-hour timer, servers restarted more often than that
+   * (deploy days) never graded at all (2026-10-08).
+   */
+  private first: NodeJS.Timeout | null = null;
+  start(intervalMs = 3600_000, firstMs = 3 * 60_000) {
     if (this.timer) return;
+    this.first = setTimeout(() => { void this.runOnce(); }, firstMs);
+    this.first.unref?.();
     this.timer = setInterval(() => { void this.runOnce(); }, intervalMs);
     this.timer.unref?.();
   }
-  stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
+  stop() { if (this.timer) clearInterval(this.timer); if (this.first) clearTimeout(this.first); this.timer = null; this.first = null; }
 }

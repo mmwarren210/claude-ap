@@ -123,3 +123,13 @@ test('Claude tip reader sends the screenshot and reads the strict tool output', 
   assert.equal((await new ClaudeTipReader({ client: shy as never }).read({ text: 'Spain ML', today: '2030-10-07' })).tips.length, 1);
   assert.equal(calls, 2);
 });
+
+test('the tips grader runs soon after start, not only after its first full interval', async () => {
+  let runs = 0;
+  const store = { gradable: async () => { runs++; return []; } } as unknown as TipStore;
+  const grader = new TipGrader(store, {} as TipReader);
+  grader.start(3600_000, 20);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  grader.stop();
+  assert.equal(runs, 1);
+});

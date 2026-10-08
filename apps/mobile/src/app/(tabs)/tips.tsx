@@ -125,8 +125,11 @@ export default function TipsScreen() {
     await load();
   };
   // Refresh all: Edge's and GKR+'s reads come fresh with the reload; the AI only reads picks it hasn't read yet.
+  // It also grades finished games now (the server looks up the results in the background; the list reloads a minute later).
   const refreshAll = async () => {
     const unread = pending.filter((tip) => !tip.analysis && !tip.analyzing).map((tip) => tip.id).slice(0, 40);
+    const grading = await request('/v1/tips/grade', { method: 'POST' }).then((response) => response.ok).catch(() => false);
+    if (grading) { setMessage('Grading finished games… results land in about a minute.'); setTimeout(() => { void load(); }, 60_000); }
     if (unread.length) await recheck(unread); else await load();
   };
   const recheck = async (ids: string[]) => {
