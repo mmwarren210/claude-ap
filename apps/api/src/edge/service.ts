@@ -888,9 +888,11 @@ export class EdgeResultsWorker {
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
 
   /** Step 8: hourly, from 3 hours after each start until graded (box scores, CrownIQ's rows, the free histories). */
+  private runningSince = 0;
   async runOnce() {
-    if (this.running) return this.last;
-    this.running = true;
+    // A run stuck past 30 minutes (a source that never answers) no longer blocks every later run.
+    if (this.running && this.clock().getTime() - this.runningSince < 30 * 60_000) return this.last;
+    this.running = true; this.runningSince = this.clock().getTime();
     const now = this.clock();
     let graded = 0, waiting = 0, unsupported = 0, error: string | null = null;
     try {

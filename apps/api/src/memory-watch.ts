@@ -20,7 +20,10 @@ export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000): NodeJS.Tim
     inFlight.set(id, { what, since: Date.now() });
     try {
       // Every body is read under a 256 MB cap: a runaway response fails its request instead of killing the server.
-      const response = await capped(await original(input, init), new URL(input instanceof Request ? input.url : String(input)), 256 * 1_048_576);
+      // Every request gets a time limit (90 s) unless it set its own: one that never answered (an OpenDota match after 55
+      // minutes, 2026-10-08) held the grading run open, so no later run started and finished games went ungraded.
+      const limited = init?.signal ? init : { ...init, signal: AbortSignal.timeout(90_000) };
+      const response = await capped(await original(input, limited), new URL(input instanceof Request ? input.url : String(input)), 256 * 1_048_576);
       // Large bodies: logged with their address once read (fetch resolves at the headers, before the body arrives).
       for (const method of ['text', 'json', 'arrayBuffer'] as const) {
         const read = response[method].bind(response) as () => Promise<unknown>;
