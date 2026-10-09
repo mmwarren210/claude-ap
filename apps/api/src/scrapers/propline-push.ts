@@ -133,8 +133,9 @@ export class PropLinePush {
     await this.load();
     const header = (name: string) => { const value = headers[name]; return Array.isArray(value) ? value[0] : value; };
     const timestamp = header('x-propline-timestamp') ?? '', signature = header('x-propline-signature') ?? '';
-    // Old or replayed deliveries (over 10 minutes) are refused.
-    if (!timestamp || Math.abs(Date.now() / 1000 - Number(timestamp)) > 600) { this.stats.rejected++; return false; }
+    // PropLine retries a failed delivery for up to about an hour (10s, 30s, 2m, 10m, 30m, 1h), so signatures up to 3 hours
+    // old are accepted; replays inside that window are dropped by their delivery id.
+    if (!timestamp || Math.abs(Date.now() / 1000 - Number(timestamp)) > 3 * 3600) { this.stats.rejected++; return false; }
     const owner = this.saved.subscriptions.find((subscription) => {
       const expected = createHmac('sha256', subscription.secret).update(`${timestamp}.`).update(raw).digest('hex');
       return expected.length === signature.length && timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
