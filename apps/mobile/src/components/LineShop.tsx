@@ -1,11 +1,13 @@
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth';
 import { formatLine, gameTime, marketLabel } from '../insights';
 import { appNames } from '../port';
-import { colors, radius } from '../theme';
+import { colors, radius, rankAccents } from '../theme';
+import { Sheet } from './Sheet';
+import { GlowCard } from './ui/GlowCard';
 import { BoardPicker } from './BoardPicker';
 import type { BoardSource } from './BoardPicker';
 import { Notice } from './Screen';
@@ -32,11 +34,11 @@ const short: Readonly<Record<Source, string>> = { prizepicks: 'PrizePicks', unde
 const word = (side: Side) => side === 'MORE' ? 'More' : 'Less';
 
 /** One player and stat across the apps. Used on the Line Shop board and the player screen. */
-export function ShopCard({ entry, compact }: { entry: ShopEntry; compact?: boolean }) {
+export function ShopCard({ entry, compact, accent, onPress }: { entry: ShopEntry; compact?: boolean; accent?: string; onPress?: () => void }) {
   const isBest = (source: Source, threshold: number) => ({
     more: entry.bestMore?.source === source && entry.bestMore.threshold === threshold && entry.spread > 0,
     less: entry.bestLess?.source === source && entry.bestLess.threshold === threshold && entry.spread > 0 });
-  return <View style={[styles.card, compact && styles.compact]}>
+  const body = <>
     {!compact && <View style={styles.head}>
       <View style={styles.grow}><Text style={styles.name} numberOfLines={1}>{entry.playerName}</Text>
         <Text style={styles.meta} numberOfLines={1}>{entry.league} · {marketLabel(entry.market)} · {gameTime(entry.eventStartTime)}</Text></View>
@@ -56,7 +58,29 @@ export function ShopCard({ entry, compact }: { entry: ShopEntry; compact?: boole
       {entry.booksOver !== null ? ` · ${Math.round(entry.booksOver * 100)}% over (no vig)` : ''}</Text>}
     {entry.pick?.best && <Text style={styles.pick}>{entry.pick.by === 'GKR' ? `GKR ${entry.pick.score}` : `History ${entry.pick.score}`}
       {' '}backs {word(entry.pick.side)}: easiest on {appNames[entry.pick.best.source]} at {formatLine(entry.pick.best.threshold)}</Text>}
-  </View>;
+    {onPress && <Text style={styles.more}>Shop all of {entry.playerName.split(' ').slice(-1)[0]}&apos;s lines ›</Text>}
+  </>;
+  // On the Line Shop board each player card glows like the other boards' cards and opens the player's full shop.
+  const card = accent ? <GlowCard accent={accent}><View style={styles.inner}>{body}</View></GlowCard>
+    : <View style={[styles.card, compact && styles.compact]}>{body}</View>;
+  return onPress ? <Pressable accessibilityRole="button" accessibilityLabel={`Shop all of ${entry.playerName}'s lines`} onPress={onPress}>{card}</Pressable> : card;
+}
+
+/** Every stat the apps list for one player in one game, with a link to the player's profile (photo and research there). */
+function PlayerShop({ player, entries, onClose }: { player: ShopEntry | null; entries: readonly ShopEntry[]; onClose: () => void }) {
+  if (!player) return null;
+  const lines = entries.filter((entry) => entry.playerName === player.playerName && entry.eventStartTime === player.eventStartTime)
+    .sort((a, b) => b.spread - a.spread || a.market.localeCompare(b.market));
+  const profile = lines.flatMap((entry) => entry.offers).find((offer) => offer.source === 'prizepicks')?.lineId;
+  return <Sheet visible title={player.playerName} onClose={onClose}>
+    <Text style={styles.meta}>{player.league}{player.eventName ? ` · ${player.eventName}` : ''} · {gameTime(player.eventStartTime)} · {lines.length} stat{lines.length === 1 ? '' : 's'} to shop</Text>
+    {profile && <Pressable accessibilityRole="button" onPress={() => { onClose(); router.push({ pathname: '/player/[lineId]', params: { lineId: profile } }); }}
+      style={styles.profile}><Text style={styles.profileText}>Open player profile ›</Text></Pressable>}
+    {lines.map((entry) => <View key={entry.key} style={styles.forLine}>
+      <Text style={styles.stat}>{marketLabel(entry.market)}{entry.spread > 0 ? ` · ${formatLine(entry.spread)} apart` : ' · same number everywhere'}</Text>
+      <ShopCard entry={entry} compact />
+    </View>)}
+  </Sheet>;
 }
 
 /** The line shop for one PrizePicks line, on the player screen (nothing when no other app lists it). */
@@ -83,6 +107,7 @@ export function LineShopBoard({ onSource }: { onSource: (source: BoardSource) =>
   const { request, demo } = useAuth();
   const [entries, setEntries] = useState<ShopEntry[]>([]), [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [backedOnly, setBackedOnly] = useState(false);
+  const [player, setPlayer] = useState<ShopEntry | null>(null);
   useFocusEffect(useCallback(() => {
     if (demo) { setState('ready'); return; }
     let active = true;
@@ -106,10 +131,12 @@ export function LineShopBoard({ onSource }: { onSource: (source: BoardSource) =>
   </View>;
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <FlatList data={shown} keyExtractor={(entry) => entry.key} contentContainerStyle={styles.content} ListHeaderComponent={header}
-      initialNumToRender={8} windowSize={7} renderItem={({ item }) => <ShopCard entry={item} />}
+      initialNumToRender={8} windowSize={7} renderItem={({ item, index }) => <ShopCard entry={item}
+        accent={rankAccents[index % rankAccents.length]} onPress={() => setPlayer(item)} />}
       ListEmptyComponent={<Notice title={demo ? 'Sign in to shop lines' : state === 'loading' ? 'Loading lines'
         : state === 'error' ? 'Line shop unavailable' : 'Nothing to compare right now'}
         detail={demo ? 'The demo shows PrizePicks only.' : 'Lines show once two apps list the same player and stat.'} />} />
+    <PlayerShop player={player} entries={entries} onClose={() => setPlayer(null)} />
   </SafeAreaView>;
 }
 
@@ -136,4 +163,9 @@ const styles = StyleSheet.create({
   pick: { color: colors.mint, fontSize: 13, fontWeight: '800' },
   forLine: { gap: 8 },
   forTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
+  inner: { gap: 10 },
+  more: { color: colors.mint, fontSize: 13, fontWeight: '800' },
+  stat: { color: colors.text, fontSize: 14, fontWeight: '800' },
+  profile: { alignSelf: 'flex-start', borderWidth: 1, borderColor: colors.mint, borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 8 },
+  profileText: { color: colors.mint, fontSize: 13, fontWeight: '800' },
 });
