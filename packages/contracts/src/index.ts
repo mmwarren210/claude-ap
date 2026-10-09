@@ -544,9 +544,13 @@ export const DEFAULT_PAYOUTS: Payouts = {
     POWER: { 2: { 2: 3 }, 3: { 3: 6 }, 4: { 4: 10 }, 5: { 5: 12 }, 6: { 6: 37.5, 5: 1.5 }, 7: { 7: 40, 6: 2 }, 8: { 8: 80, 7: 3, 6: 1 } },
     FLEX: {},
   },
-  // Dabble (owner, 2026-10-08, lines from PropLine): no payout chart confirmed yet, so none is assumed. Edge shows each Dabble
-  // pick's chance and no edge until the owner's chart arrives (CROWNIQ_PAYOUTS).
-  dabble: { POWER: {}, FLEX: {} },
+  // Dabble (owner's app screenshots, 2026-10-09): every pick must hit, 2–12 picks at 3/6/10/20/40/80/150/275/500/1000/1500x.
+  // Dabble's Hedge entries (13–16 picks, and payouts with a miss) show only their top prize, so none is assumed for them.
+  dabble: {
+    POWER: { 2: { 2: 3 }, 3: { 3: 6 }, 4: { 4: 10 }, 5: { 5: 20 }, 6: { 6: 40 }, 7: { 7: 80 }, 8: { 8: 150 }, 9: { 9: 275 },
+      10: { 10: 500 }, 11: { 11: 1000 }, 12: { 12: 1500 } },
+    FLEX: {},
+  },
 };
 
 const choose = (n: number, k: number) => { let result = 1; for (let i = 1; i <= k; i++) result = result * (n - k + i) / i; return result; };

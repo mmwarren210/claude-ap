@@ -5,7 +5,7 @@ import { toggleSlipLeg } from './edge-format';
 // In-memory slip shared by the Edge tab and pick detail; nothing is persisted or submitted.
 let legs: EdgePick[] = [];
 /** Most legs an entry takes on each platform (PrizePicks 6, Underdog and Pick6 8, DraftKings 8, Hard Rock 20). */
-const maxLegs: Readonly<Record<string, number>> = { prizepicks: 6, underdog: 8, pick6: 8, dabble: 6, draftkings: 8, hardrock: 20 };
+const maxLegs: Readonly<Record<string, number>> = { prizepicks: 6, underdog: 8, pick6: 8, dabble: 12, draftkings: 8, hardrock: 20 };
 const listeners = new Set<() => void>();
 const emit = () => { for (const listener of listeners) listener(); };
 

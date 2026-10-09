@@ -50,7 +50,13 @@ test('Edge P2: every platform priced against its own payout, a platform never pr
   assert.equal(dk!.response.entries[0]!.type, 'PARLAY');
   assert.equal(hr!.response.entries.at(-1)!.size, 20);
   assert.equal(service.status().reports.draftkings!.platform, 'draftkings');
-  // Dabble: no payout chart at all, so chances only, never an edge or a rating (no payout is invented).
+  // Dabble: priced against its own all-hit chart (2 picks pay 3x, so each needs about 57.7%).
   const db = await service.snapshot('dabble');
-  assert.ok(db!.response.picks.length > 0 && db!.response.picks.every((pick) => pick.edge === null && pick.rating === 'NONE'));
+  assert.ok(db!.response.picks.length > 0 && db!.response.picks.every((pick) => pick.edge !== null));
+  assert.ok(Math.abs(db!.response.entries.find((entry) => entry.size === 2)!.breakEven - Math.sqrt(1 / 3)) < 1e-3);
+  // A pick'em app with no chart at all still gets chances only (no payout is invented).
+  const bare = new EdgeService({ board: () => board, payouts: { ...DEFAULT_PAYOUTS, dabble: { POWER: {}, FLEX: {} } }, clock: () => now,
+    sharp: { prices: async () => prices, pickem: async () => [] },
+    appBoards: { active: async (app) => players.map((name, index) => stored(app as 'dabble', name, index, { MORE: 1, LESS: 1 })) } });
+  assert.ok((await bare.snapshot('dabble'))!.response.picks.every((pick) => pick.edge === null && pick.rating === 'NONE'));
 });

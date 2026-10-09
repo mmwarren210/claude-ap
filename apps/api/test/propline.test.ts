@@ -74,11 +74,14 @@ test('Pick6 alternates are ordinary picks at their own number; Underdog lines ar
     [['underdog', 'REGULAR', 'MORE/LESS']]);
 });
 
-test('Dabble: an Edge platform with no assumed payout chart, its PropLine lines read as regular lines', async () => {
+test('Dabble: an Edge platform with its own all-hit payout chart, its PropLine lines read as regular lines', async () => {
   const { EDGE_PLATFORMS } = await import('../src/edge/service.js');
   const { DEFAULT_PAYOUTS } = await import('@crowniq/contracts');
   assert.ok(EDGE_PLATFORMS.includes('dabble'));
-  assert.deepEqual(DEFAULT_PAYOUTS.dabble, { POWER: {}, FLEX: {} }, 'no payout is invented');
+  // The chart from Dabble's own app: all picks must hit, 2–12 picks; no Hedge or partial payouts assumed.
+  assert.deepEqual(DEFAULT_PAYOUTS.dabble.POWER[2], { 2: 3 });
+  assert.deepEqual(DEFAULT_PAYOUTS.dabble.POWER[12], { 12: 1500 });
+  assert.deepEqual(DEFAULT_PAYOUTS.dabble.FLEX, {});
   const dabble = { ...event, bookmakers: [{ key: 'dabble', markets: [{ key: 'player_pass_yds', outcomes: [
     outcome('Over', 'Dak Prescott', 244.5, null), outcome('Under', 'Dak Prescott', 244.5, null)] }] }] };
   assert.deepEqual(eventLines(dabble, 'NFL', 'NFL', { app: 'dabble', bookmaker: 'dabble' }).map((line) => [line.app, line.tier, line.line]),
