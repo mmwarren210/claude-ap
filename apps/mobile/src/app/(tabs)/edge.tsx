@@ -6,7 +6,9 @@ import { EdgePickCard } from '../../components/EdgePickCard';
 import { EdgeSlipPanel, SlipSummary, StakePicker } from '../../components/EdgeSlipPanel';
 import { Notice, Screen } from '../../components/Screen';
 import { PlayerSearch } from '../../components/PlayerSearch';
-import { pct, sportsFrom, upcomingPicks } from '../../edge-format';
+import { marketLabel, pct, sportsFrom, upcomingPicks } from '../../edge-format';
+import { choiceParam, picked } from '../../components/ui/MultiPick';
+import { EdgeFilters } from '../../components/EdgeFilters';
 import { useEdgeSlip } from '../../edge-slip';
 import { palette, rankAccents } from '../../theme';
 import { useBoard } from '../../use-board';
@@ -30,31 +32,36 @@ export default function EdgeScreen() {
   const platform = useEdgePlatform(), book = isBook(platform);
   // Goblins and Demons are PrizePicks only.
   const view: EdgeView = platform === 'prizepicks' ? chosenView : 'edges';
-  const [sport, setSport] = useState<string | null>(null);
+  // Sport and stat pickers (several at once), shared by Top Picks, Board and Gen.
+  const [sports, setSports] = useState<string[]>([]);
+  const [markets, setMarkets] = useState<string[]>([]);
   const [day, setDay] = useState<'all' | 'today'>('all');
   const [query, setQuery] = useState('');
   const searching = query.trim().length >= 2;
-  const { status, data, message, retry } = useEdge(view, 'edge', day, query, sport);
+  const { status, data, message, retry } = useEdge(view, 'edge', day, query, choiceParam(sports), choiceParam(markets));
   const slip = useEdgeSlip();
   const { nowMs } = useBoard();
   const live = upcomingPicks(data?.picks ?? [], nowMs, day);
   // Every sport with a rated pick on this platform (the server counts them all), so no sport hides behind the list's cut.
   const counts = new Map((data?.sports ?? []).map((item) => [item.sport, item.picks]));
-  const sports = data?.sports?.length ? data.sports.map((item) => item.sport) : sportsFrom(live);
-  const picks = live.filter((pick) => !sport || pick.sport === sport).slice(0, 100);
+  const sportOptions = data?.sports?.length ? data.sports.map((item) => item.sport) : sportsFrom(live);
+  const picks = live.filter((pick) => picked(sports, pick.sport) && picked(markets, pick.market)).slice(0, 100);
+  const filters = <EdgeFilters sports={sports} markets={markets} onSports={setSports} onMarkets={setMarkets}
+    sportOptions={sportOptions.map((item) => ({ key: item, label: item, count: counts.get(item) }))}
+    marketOptions={(data?.markets ?? []).map((item) => ({ key: item.market, label: marketLabel(item.market), count: item.picks }))} />;
   const inSlip = new Set(slip.map((leg) => leg.lineId));
   return <Screen eyebrow={`CROWNIQ  /  EDGE  /  ${platformLabel(platform).toUpperCase()}`} title="Edge">
     <Text style={styles.intro}>CrownIQ&apos;s own probability engine. It reads every line on each app and book, sets its own line, and picks the side that beats that platform&apos;s payout. Lines it can&apos;t read say exactly what&apos;s missing.</Text>
     <View style={styles.chips}>{EDGE_PLATFORMS.map((item) => <Pressable key={item.value} accessibilityRole="button"
-      accessibilityState={{ selected: platform === item.value }} onPress={() => { edgePlatform.set(item.value); setSport(null); }}
+      accessibilityState={{ selected: platform === item.value }} onPress={() => edgePlatform.set(item.value)}
       style={[styles.chip, platform === item.value && styles.chipOn]}>
       <Text style={[styles.chipText, platform === item.value && styles.chipTextOn]}>{item.label}</Text></Pressable>)}</View>
     <View style={styles.segments}>{sections.map((item) => <Pressable key={item.key} accessibilityRole="tab"
       accessibilityState={{ selected: section === item.key }} onPress={() => setSection(item.key)}
       style={[styles.segment, section === item.key && styles.segmentOn]}>
       <Text style={[styles.segmentText, section === item.key && styles.segmentTextOn]}>{item.label}</Text></Pressable>)}</View>
-    {section === 'record' ? <EdgeRecord /> : section === 'board' ? <><EdgeSlipPanel entries={data?.entries ?? []} /><EdgeBoardView /></>
-      : section === 'gen' ? data ? <><EdgeGenView entries={data.entries} sports={sports} nowMs={nowMs} starts={live.map((pick) => pick.eventStartTime)} /><EdgeSlipPanel entries={data.entries} /></>
+    {section === 'record' ? <EdgeRecord /> : section === 'board' ? <><EdgeSlipPanel entries={data?.entries ?? []} /><EdgeBoardView sports={sports} markets={markets} onSports={setSports} onMarkets={setMarkets} /></>
+      : section === 'gen' ? data ? <>{filters}<EdgeGenView entries={data.entries} sports={sports} markets={markets} nowMs={nowMs} starts={live.map((pick) => pick.eventStartTime)} /><EdgeSlipPanel entries={data.entries} /></>
         : <Notice title={status === 'loading' ? 'Pricing the board' : 'Edge pending'} detail={message || 'Reading the saved board.'} />
       : <>
     {platform === 'prizepicks' && <View style={styles.chips}>{views.map((item) => <Pressable key={item.key} accessibilityRole="button"
@@ -79,17 +86,13 @@ export default function EdgeScreen() {
           : `Uncalibrated: ${data.calibration.graded} graded picks so far (calibration starts at 150).`}
         {data.counts.quotes === 0 ? ' No sportsbook prices on this board yet; picks are model/ladder only.' : ''}</Text>
       <DayChips day={day} setDay={setDay} />
-      {(sports.length > 1 || !!sport) && <View style={styles.chips}>
-        {[null, ...sports].map((item) => <Pressable key={item ?? 'all'} accessibilityRole="button"
-          onPress={() => setSport(item)} style={[styles.chip, sport === item && styles.chipOn]}>
-          <Text style={[styles.chipText, sport === item && styles.chipTextOn]}>{item ?? 'All'}{item && counts.get(item) ? ` ${counts.get(item)}` : ''}</Text></Pressable>)}
-      </View>}
+      {filters}
       <EdgeAlerts platform={platform} />
       <EdgeSlipPanel entries={data.entries} />
       {view === 'edges' && !searching && <View style={styles.section}>
         <Text style={styles.sectionTitle}>BEST ENTRIES</Text>
         <Text style={styles.sectionDetail}>Highest expected value using the strongest legs, one per player and at most two per game.</Text>
-        {!data.slips.length && <Text style={styles.sectionDetail}>{`No ${sport ? `${sport} ` : ''}entry clears the bar${day === 'today' ? ' with today’s games alone' : ' right now'}.`}</Text>}
+        {!data.slips.length && <Text style={styles.sectionDetail}>{`No ${sports.length ? `${sports.join('/')} ` : ''}entry clears the bar${day === 'today' ? ' with today’s games alone' : ' right now'}.`}</Text>}
         <StakePicker />
         {data.slips.slice(0, 2).map((item) => <View key={item.entry.type + item.entry.size + item.legs.map((leg) => leg.lineId).join()} style={styles.card}>
           <SlipSummary slip={item} /></View>)}

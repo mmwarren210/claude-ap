@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { backedLeg, buildSlips, EDGE_MODEL_VERSION, generateEntries, isAlternate } from '@crowniq/edge';
+import { backedLeg, buildSlips, EDGE_MODEL_VERSION, generateEntries, inChoice, isAlternate } from '@crowniq/edge';
 import { z } from 'zod';
 import type { EdgePick, EdgePlatform } from '@crowniq/contracts';
 import { cdf, makeDistribution } from '@crowniq/edge';
@@ -63,6 +63,13 @@ export function lineMovement(snapshots: Pick<SnapshotStore, 'playerHistory'>, pi
   return [...byPlatform].map(([platform, points]) => ({ platform, points: points.slice(-60) }));
 }
 
+/** Rated picks per stat, most first (the stat picker). */
+export function marketCounts(picks: readonly { market: string }[]): { market: string; picks: number }[] {
+  const counts = new Map<string, number>();
+  for (const pick of picks) counts.set(pick.market, (counts.get(pick.market) ?? 0) + 1);
+  return [...counts].map(([market, count]) => ({ market, picks: count })).sort((a, b) => b.picks - a.picks || a.market.localeCompare(b.market));
+}
+
 /** Rated picks per sport, most first (the sport chips). */
 export function sportCounts(picks: readonly { sport: string }[]): { sport: string; picks: number }[] {
   const counts = new Map<string, number>();
@@ -70,11 +77,15 @@ export function sportCounts(picks: readonly { sport: string }[]): { sport: strin
   return [...counts].map(([sport, count]) => ({ sport, picks: count })).sort((a, b) => b.picks - a.picks || a.sport.localeCompare(b.sport));
 }
 
+/** Multi-select filters: one value or a comma-separated list (sports, stat keys). */
+const choiceSchema = z.string().trim().min(1).max(200).optional();
+const marketChoiceSchema = z.string().trim().min(1).max(2000).optional();
+
 export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): void {
   const { edge, now } = deps;
   const held = (platform: string) => (deps.held ?? (() => false))(platform);
   const edgeQuery = z.object({ platform: platformSchema, view: z.enum(['edges', 'alternates', 'all']).default('edges'),
-    sport: z.string().trim().min(1).max(20).optional(), market: z.string().trim().min(1).max(80).optional(),
+    sport: choiceSchema, market: marketChoiceSchema,
     limit: z.coerce.number().int().min(1).max(500).default(150),
     minProbability: z.coerce.number().min(0).max(1).optional(),
     /** Best entries from today's games only (Eastern date), or any upcoming game. */
@@ -82,7 +93,7 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     /** Player search: every line Edge read for players whose name contains this, plays or not. */
     q: z.string().trim().max(60).optional(),
     /** Best entries from this sport's picks only (the sport chips); the pick list itself stays whole. */
-    slipSport: z.string().trim().min(1).max(20).optional() }).strict();
+    slipSport: choiceSchema }).strict();
 
   app.get('/v1/edge', async (request, reply) => {
     const query = edgeQuery.safeParse(request.query);
@@ -104,6 +115,7 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     if (query.data.q) return { ...snapshot.response, picks: searchPicks(snapshot, query.data.q, nowMs, query.data.limit).filter(onDay), slips: [] };
     // The sport chips: every sport with a rated upcoming pick (today's, with Today only), counted before the list is cut.
     const sports = sportCounts(viewPicks(snapshot, query.data.view, { ...filters, limit: 100_000, sport: undefined }).filter(onDay));
+    const markets = marketCounts(viewPicks(snapshot, query.data.view, { ...filters, limit: 100_000, market: undefined }).filter(onDay));
     const picks = today ? viewPicks(snapshot, query.data.view, { ...filters, limit: 5000 }).filter(onDay).slice(0, query.data.limit)
       : viewPicks(snapshot, query.data.view, filters);
     const live = (slip: { legs: { lineId: string }[] }) => slip.legs.every((leg) => {
@@ -113,11 +125,11 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
       ? buildSlips(viewPicks(snapshot, 'edges', { ...filters, limit: 500, ...(slipSport ? { sport: slipSport } : {}) }).filter(onDay),
         snapshot.response.entries, { minEvents: snapshot.minEvents })
       : snapshot.response.slips.filter(live);
-    return { ...snapshot.response, picks, slips, sports };
+    return { ...snapshot.response, picks, slips, sports, markets };
   });
 
   app.get('/v1/edge/board', async (request, reply) => {
-    const query = z.object({ platform: platformSchema, sport: z.string().trim().min(1).max(20).optional(), market: z.string().trim().min(1).max(80).optional(),
+    const query = z.object({ platform: platformSchema, sport: choiceSchema, market: marketChoiceSchema,
       q: z.string().trim().max(60).optional(), filter: z.enum(['all', 'picks', 'no_read']).default('all'),
       sort: z.enum(['start', 'edge', 'probability', 'rank']).default('start'),
       offset: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(200).default(100) })
@@ -132,7 +144,7 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
 
   app.post('/v1/edge/gen', async (request, reply) => {
     const body = z.object({ platform: platformSchema, type: z.enum(['POWER', 'FLEX', 'PARLAY']), size: z.number().int().min(2).max(20),
-      count: z.number().int().min(1).max(10).default(3), sport: z.string().trim().min(1).max(20).optional(),
+      count: z.number().int().min(1).max(10).default(3), sport: choiceSchema, market: marketChoiceSchema,
       from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(),
       maxPerGame: z.number().int().min(1).max(3).default(2), maxLegUses: z.number().int().min(1).max(5).default(1),
       objective: z.enum(['ev', 'growth']).default('ev'),
@@ -148,11 +160,11 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     if (held(body.data.platform)) return { modelVersion: EDGE_MODEL_VERSION, builtAt: new Date(nowMs).toISOString(), pool: 0, slips: [],
       notes: ['Edge entries for this platform are on hold while its new prices are checked for one-sided bias.'] };
     const slips = generateEntries(snapshot.response.picks, entry, { count: body.data.count, nowMs,
-      ...(body.data.sport ? { sport: body.data.sport } : {}),
+      ...(body.data.sport ? { sport: body.data.sport } : {}), ...(body.data.market ? { market: body.data.market } : {}),
       ...(body.data.from ? { from: Date.parse(body.data.from) } : {}), ...(body.data.to ? { to: Date.parse(body.data.to) } : {}),
       maxPerEvent: body.data.maxPerGame, maxLegUses: body.data.maxLegUses, minEvents: snapshot.minEvents, objective: body.data.objective, alternates: body.data.alternates });
     const pool = snapshot.response.picks.filter((pick) => pick.edge !== null && pick.edge > 0 && pick.rating !== 'NONE' &&
-      Date.parse(pick.eventStartTime) > nowMs && (!body.data.sport || pick.sport === body.data.sport) &&
+      Date.parse(pick.eventStartTime) > nowMs && inChoice(body.data.sport, pick.sport) && inChoice(body.data.market, pick.market) &&
       (!body.data.from || Date.parse(pick.eventStartTime) >= Date.parse(body.data.from)) &&
       (!body.data.to || Date.parse(pick.eventStartTime) < Date.parse(body.data.to)) && backedLeg(pick));
     const alternates = pool.filter(isAlternate).length;

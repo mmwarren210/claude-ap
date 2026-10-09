@@ -13,10 +13,10 @@ import { useBoard } from '../use-board';
 import { useHistoryReads } from '../use-history-reads';
 import { useRankings } from '../use-rankings';
 import { Notice } from './Screen';
-import { ChipRow, FilterChip } from './ui/Controls';
+import { MultiPick, picked } from './ui/MultiPick';
 import { PlayerAvatar } from './ui/PlayerAvatar';
 
-type BookPick = { id: string; playerName: string; market: string; line: number; side: 'MORE' | 'LESS'; eventStartTime: string;
+type BookPick = { id: string; sport?: string; playerName: string; market: string; line: number; side: 'MORE' | 'LESS'; eventStartTime: string;
   by?: 'GKR' | 'HISTORY' | 'VALUE'; score?: number; gkr: { score: number } | null; note?: string | null; american: number | null };
 const word = (side: 'MORE' | 'LESS') => side === 'MORE' ? 'More' : 'Less';
 const odds = (american: number | null) => american === null ? '' : ` (${american > 0 ? '+' : ''}${american})`;
@@ -30,8 +30,10 @@ export function AllPicks({ only }: { only?: PickSource } = {}) {
   const history = useHistoryReads();
   // Each board's picks, filled in as they arrive (one slow board never holds up the rest); a single-board tab loads only it.
   const [loaded, setLoaded] = useState<Partial<Record<PickSource, AnyPick[]>>>({});
-  const [chosen, setSource] = useState<PickSource | 'ALL'>('ALL');
-  const source = only ?? chosen;
+  // Platforms (several at once) and sports narrow the list.
+  const [chosen, setSources] = useState<string[]>([]);
+  const [sports, setSports] = useState<string[]>([]);
+  const sources = only ? [only] : chosen;
   useFocusEffect(useCallback(() => {
     if (demo) return;
     let active = true;
@@ -43,14 +45,14 @@ export function AllPicks({ only }: { only?: PickSource } = {}) {
       ...Object.fromEntries((['underdog', 'pick6', 'dabble'] as const).map((app) => [app, async () =>
         ((await json<{ lines: AppLine[] }>(`/v1/apps/${app}/board`))?.lines ?? []).flatMap((line): AnyPick[] => {
           const back = backing(line);
-          return back ? [{ key: `${line.playerId}|${line.market ?? line.stat}`, source: app, by: back.by, title: line.playerName,
+          return back ? [{ key: `${line.playerId}|${line.market ?? line.stat}`, source: app, sport: line.sport, by: back.by, title: line.playerName,
             detail: `${line.stat} · ${sideLabel(app, back.side)} ${formatLine(line.threshold)}`, strength: back.score, edge: null,
             startTime: line.eventStartTime, lineId: null, note: back.by === 'HISTORY' ? line.history?.text ?? null : null,
             photoUrl: line.playerImageUrl, playerId: line.playerId }] : [];
         })])),
       ...Object.fromEntries((['draftkings', 'hardrock'] as const).map((book) => [book, async () =>
         ((await json<{ picks: BookPick[] }>(`/v1/books/${book}/picks`))?.picks ?? []).map((pick): AnyPick => ({
-          key: `${pick.playerName}|${pick.market}`, source: book, by: pick.by ?? 'GKR', title: pick.playerName,
+          key: `${pick.playerName}|${pick.market}`, source: book, sport: pick.sport, by: pick.by ?? 'GKR', title: pick.playerName,
           detail: `${marketLabel(pick.market)} · ${pick.side === 'MORE' ? 'Over' : 'Under'} ${formatLine(pick.line)}${odds(pick.american)}`,
           strength: pick.gkr?.score ?? pick.score ?? 0, edge: null, startTime: pick.eventStartTime, lineId: null, note: pick.note ?? null }))])),
     };
@@ -91,15 +93,19 @@ export function AllPicks({ only }: { only?: PickSource } = {}) {
     return id ? board?.playerMedia?.[id]?.photoUrl ?? null : null;
   })();
   const all = useMemo(() => rankAll([...prizePicks, ...linked], nowMs), [prizePicks, linked, nowMs]);
-  const shown = (source === 'ALL' ? all : all.filter((pick) => pick.source === source)).slice(0, 60);
-  const counts = new Map<string, number>();
+  const lineSport = useMemo(() => new Map(board?.board.lines.map((line) => [line.id, line.sport])), [board]);
+  const sportOf = (pick: AnyPick) => pick.sport ?? (pick.lineId ? lineSport.get(pick.lineId) : undefined);
+  const inSources = all.filter((pick) => picked(sources, pick.source));
+  const shown = inSources.filter((pick) => !sports.length || sports.includes(sportOf(pick) ?? '')).slice(0, 60);
+  const counts = new Map<string, number>(), sportCounts = new Map<string, number>();
   for (const pick of all) counts.set(pick.source, (counts.get(pick.source) ?? 0) + 1);
+  for (const pick of inSources) { const sport = sportOf(pick); if (sport) sportCounts.set(sport, (sportCounts.get(sport) ?? 0) + 1); }
   return <View style={styles.wrap}>
-    {!only && <ChipRow>
-      <FilterChip label={`All (${all.length})`} active={source === 'ALL'} chevron={false} onPress={() => setSource('ALL')} />
-      {(Object.keys(sourceLabels) as PickSource[]).filter((item) => counts.get(item)).map((item) => <FilterChip key={item}
-        label={`${sourceLabels[item]} (${counts.get(item)})`} active={source === item} chevron={false} onPress={() => setSource(item)} />)}
-    </ChipRow>}
+    {!only && <MultiPick label="PLATFORM" allLabel={`All (${all.length})`} selected={chosen} onChange={setSources}
+      options={(Object.keys(sourceLabels) as PickSource[]).filter((item) => counts.get(item))
+        .map((item) => ({ key: item, label: sourceLabels[item], count: counts.get(item) }))} />}
+    {sportCounts.size > 1 && <MultiPick label="SPORT" allLabel="All sports" selected={sports} onChange={setSports}
+      options={[...sportCounts].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, label: key, count }))} />}
     {!shown.length && (waiting ? <Notice title="Loading picks" detail="One moment." />
       : <Notice title="No picks right now" detail="Check back after the next update." />)}
     {shown.map((pick, index) => <Pressable key={`${pick.source}|${pick.key}|${pick.by}`} accessibilityRole="button" disabled={!pick.lineId}

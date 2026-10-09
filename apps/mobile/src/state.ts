@@ -10,6 +10,15 @@ export const evidenceExpired=(analysis:Analysis|undefined,nowMs:number)=>
 export interface Filters { sport: string; market: string; direction: string; grade: string;
   lineType: string; evidence: string; date: string }
 export type ViewMode='LITE'|'FULL';
+/** A filter value is 'ALL' or a comma-separated list of picks (several sports, stats, dates at once). */
+export const passes=(choice:string,value:string|null|undefined)=>choice==='ALL'||(value!==null&&value!==undefined&&choice.split(',').includes(value));
+/** Adds or removes one option from a filter; removing the last one goes back to 'ALL'. */
+export function toggleFilter(choice:string,option:string):string{
+  if(option==='ALL')return 'ALL';
+  const current=choice==='ALL'?[]:choice.split(',');
+  const next=current.includes(option)?current.filter((item)=>item!==option):[...current,option];
+  return next.length?next.join(','):'ALL';
+}
 export const LITE_LIMIT=20;
 export const emptyFilters: Filters = { sport:'ALL',market:'ALL',direction:'ALL',grade:'ALL',
   lineType:'ALL',evidence:'ALL',date:'ALL' };
@@ -29,13 +38,9 @@ export function visibleLines(data: BoardResponse, filters: Filters, nowMs=Date.n
   return data.board.lines.filter((line) => {
     const analysis=analyses.get(line.id);
     return Date.parse(line.eventStartTime)>nowMs &&
-      (filters.sport === 'ALL' || line.sport === filters.sport) &&
-      (filters.market === 'ALL' || line.market === filters.market) &&
-      (filters.lineType === 'ALL' || line.lineType === filters.lineType) &&
-      (filters.direction === 'ALL' || analysis?.direction === filters.direction) &&
-      (filters.grade === 'ALL' || analysis?.scoreBand === filters.grade) &&
-      (filters.evidence === 'ALL' || analysis?.evidenceQuality === filters.evidence) &&
-      (filters.date === 'ALL' || line.eventStartTime.slice(0,10) === filters.date);
+      passes(filters.sport,line.sport) && passes(filters.market,line.market) && passes(filters.lineType,line.lineType) &&
+      passes(filters.direction,analysis?.direction) && passes(filters.grade,analysis?.scoreBand) &&
+      passes(filters.evidence,analysis?.evidenceQuality) && passes(filters.date,line.eventStartTime.slice(0,10));
   });
 }
 /**
@@ -112,13 +117,11 @@ export function boardLinesForMode(data:BoardResponse,filters:Filters,mode:ViewMo
       !['PLAYABLE','CROWN_STRONG','CROWN_ELITE'].includes(analysis.scoreBand??'')||
       !line.availableDirections.includes(analysis.direction)||
       Date.parse(line.eventStartTime)<=nowMs||evidenceExpired(analysis,nowMs)||
-      (filters.sport!=='ALL'&&line.sport!==filters.sport)||
-      (filters.market!=='ALL'&&line.market!==filters.market)||
+      !passes(filters.sport,line.sport)||!passes(filters.market,line.market)||
       // The Board's line-style, evidence and date chips apply in both views; grade and
       // direction stay Full-only so a stale Full filter never hides ranked plays.
-      (filters.lineType!=='ALL'&&line.lineType!==filters.lineType)||
-      (filters.evidence!=='ALL'&&analysis.evidenceQuality!==filters.evidence)||
-      (filters.date!=='ALL'&&line.eventStartTime.slice(0,10)!==filters.date))continue;
+      !passes(filters.lineType,line.lineType)||!passes(filters.evidence,analysis.evidenceQuality)||
+      !passes(filters.date,line.eventStartTime.slice(0,10)))continue;
     if(ranked.some((item)=>item.eventId===line.eventId&&item.playerId===line.playerId))continue;
     ranked.push(line);
     if(ranked.length===LITE_LIMIT)break;

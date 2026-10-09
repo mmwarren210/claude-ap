@@ -5,6 +5,8 @@ export type PickSource = 'prizepicks' | 'underdog' | 'pick6' | 'dabble' | 'draft
 export type PickBy = 'GKR' | 'SCOUT' | 'HISTORY' | 'VALUE' | 'EDGE';
 export interface AnyPick {
   readonly key: string; readonly source: PickSource; readonly by: PickBy;
+  /** The sport (the sport picker); PrizePicks picks take it from the board line. */
+  readonly sport?: string;
   /** The player, or the game for a market pick. */
   readonly title: string;
   /** The stat, side and number (or the market side) in plain words. */

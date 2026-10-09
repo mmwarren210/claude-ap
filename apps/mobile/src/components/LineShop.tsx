@@ -1,5 +1,5 @@
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth';
@@ -11,6 +11,9 @@ import type { BoardSource } from './BoardPicker';
 import { Notice } from './Screen';
 import { AppHeader } from './ui/AppHeader';
 import { ChipRow, FilterChip } from './ui/Controls';
+import { useLeagueStatFilter } from './LeagueStatFilter';
+
+const shopStat = (entry: { market: string }) => entry.market;
 
 // Line shopping: the same player and stat on PrizePicks, Underdog and Pick6, with the easiest number per side and the
 // sportsbooks' line. Biggest gaps first. Display only.
@@ -79,7 +82,7 @@ export function LineShopFor({ lineId }: { lineId: string }) {
 export function LineShopBoard({ onSource }: { onSource: (source: BoardSource) => void }) {
   const { request, demo } = useAuth();
   const [entries, setEntries] = useState<ShopEntry[]>([]), [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [league, setLeague] = useState('ALL'), [backedOnly, setBackedOnly] = useState(false);
+  const [backedOnly, setBackedOnly] = useState(false);
   useFocusEffect(useCallback(() => {
     if (demo) { setState('ready'); return; }
     let active = true;
@@ -89,16 +92,15 @@ export function LineShopBoard({ onSource }: { onSource: (source: BoardSource) =>
     }).catch(() => { if (active) setState('error'); });
     return () => { active = false; };
   }, [request, demo]));
-  const leagues = useMemo(() => [...new Set(entries.map((entry) => entry.league))].sort(), [entries]);
-  const shown = entries.filter((entry) => (league === 'ALL' || entry.league === league) && (!backedOnly || entry.pick?.best));
+  const { shown: inPicks, pickers } = useLeagueStatFilter(entries, shopStat);
+  const shown = inPicks.filter((entry) => !backedOnly || entry.pick?.best);
   const header = <View style={styles.header}>
     <AppHeader subtitle="Line shop" />
     <BoardPicker value="shop" onChange={onSource} />
-    {leagues.length > 1 && <ChipRow>
-      <FilterChip label="All leagues" active={league === 'ALL'} chevron={false} onPress={() => setLeague('ALL')} />
+    {entries.length > 0 && <ChipRow>
       <FilterChip label="Backed sides" icon="check-decagram-outline" active={backedOnly} chevron={false} onPress={() => setBackedOnly(!backedOnly)} />
-      {leagues.map((item) => <FilterChip key={item} label={item} active={league === item} chevron={false} onPress={() => setLeague(item)} />)}
     </ChipRow>}
+    {pickers}
     <Text style={styles.explain}>The same player and stat on each app. For More, the lowest number is easiest; for Less, the
       highest. Biggest gaps first. PrizePicks Goblins and Demons are left out because they pay differently.</Text>
   </View>;

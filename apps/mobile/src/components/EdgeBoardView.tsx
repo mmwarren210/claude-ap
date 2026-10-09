@@ -9,6 +9,8 @@ import { edgeSlip, useEdgeSlip } from '../edge-slip';
 import { platformShort, useEdgePlatform } from '../edge-platform';
 import { palette } from '../theme';
 import { Notice } from './Screen';
+import { EdgeFilters } from './EdgeFilters';
+import { choiceParam } from './ui/MultiPick';
 
 type Filter = 'all' | 'picks' | 'no_read';
 type Sort = 'rank' | 'start' | 'edge' | 'probability';
@@ -19,39 +21,42 @@ const sorts: { key: Sort; label: string }[] = [{ key: 'rank', label: 'Best' }, {
 const PAGE = 60;
 
 /** Every line on the board with Edge's read, including lines GKR skips and lines Edge cannot read. */
-export function EdgeBoardView() {
+export function EdgeBoardView({ sports, markets, onSports, onMarkets }: { sports: string[]; markets: string[];
+  onSports: (next: string[]) => void; onMarkets: (next: string[]) => void }) {
   const { request } = useAuth();
   const platform = useEdgePlatform();
   const slip = useEdgeSlip();
-  const [sport, setSport] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('rank');
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(PAGE);
-  const [state, setState] = useState<{ key: string; rows: EdgeBoardRow[]; total: number; sports: string[]; message: string } | null>(null);
-  const key = JSON.stringify([platform, sport, filter, sort, search.trim(), limit]);
+  const [state, setState] = useState<{ key: string; rows: EdgeBoardRow[]; total: number; sports: string[]; markets: { market: string; lines: number }[]; message: string } | null>(null);
+  const sport = choiceParam(sports), market = choiceParam(markets);
+  const key = JSON.stringify([platform, sport, market, filter, sort, search.trim(), limit]);
   useEffect(() => {
     let active = true;
     const params = new URLSearchParams({ platform, filter, sort, limit: String(Math.min(limit, 200)) });
     if (sport) params.set('sport', sport);
+    if (market) params.set('market', market);
     if (search.trim()) params.set('q', search.trim());
     const timer = setTimeout(() => {
       void request('/v1/edge/board?' + params.toString()).then(async (response) => {
         if (!active) return;
-        if (!response.ok) { setState({ key, rows: [], total: 0, sports: [], message: response.status === 503 ? 'Edge is waiting for a saved board.' : 'Could not load the Edge board.' }); return; }
+        if (!response.ok) { setState({ key, rows: [], total: 0, sports: [], markets: [], message: response.status === 503 ? 'Edge is waiting for a saved board.' : 'Could not load the Edge board.' }); return; }
         const page = edgeBoardPageSchema.parse(await response.json());
-        setState({ key, rows: page.rows, total: page.total, sports: page.sports, message: '' });
-      }).catch(() => { if (active) setState({ key, rows: [], total: 0, sports: [], message: 'Could not load the Edge board.' }); });
+        setState({ key, rows: page.rows, total: page.total, sports: page.sports, markets: page.markets ?? [], message: '' });
+      }).catch(() => { if (active) setState({ key, rows: [], total: 0, sports: [], markets: [], message: 'Could not load the Edge board.' }); });
     }, search ? 250 : 0);
     return () => { active = false; clearTimeout(timer); };
-  }, [filter, key, limit, request, search, sort, sport, platform]);
+  }, [filter, key, limit, request, search, sort, sport, market, platform]);
   const inSlip = new Set(slip.map((leg) => leg.lineId));
   const current = state; // keep the previous page visible while a new query loads
   return <View style={styles.wrap}>
     <TextInput accessibilityLabel="Search players" value={search} onChangeText={(value) => { setSearch(value); setLimit(PAGE); }}
       placeholder="Search a player" placeholderTextColor={palette.muted} style={styles.search} autoCorrect={false} />
-    {!!current?.sports.length && <Chips options={[{ key: null, label: 'All sports' }, ...current.sports.map((item) => ({ key: item, label: item }))]}
-      value={sport} onChange={(value) => { setSport(value); setLimit(PAGE); }} />}
+    <EdgeFilters sports={sports} markets={markets} onSports={(next) => { onSports(next); setLimit(PAGE); }}
+      onMarkets={(next) => { onMarkets(next); setLimit(PAGE); }} sportOptions={(current?.sports ?? []).map((item) => ({ key: item, label: item }))}
+      marketOptions={(current?.markets ?? []).map((item) => ({ key: item.market, label: marketLabel(item.market), count: item.lines }))} />
     <Chips options={filters} value={filter} onChange={(value) => { setFilter(value); setLimit(PAGE); }} />
     <Chips options={sorts} value={sort} onChange={(value) => { setSort(value); setLimit(PAGE); }} />
     {!current ? <Notice title="Loading the Edge board" detail="Reading every line on the saved board." />
@@ -98,7 +103,7 @@ function PickRow({ row, inSlip }: { row: Extract<EdgeBoardRow, { kind: 'PICK' }>
   </View>;
 }
 
-function Chips<T extends string | null>({ options, value, onChange }: { options: { key: T; label: string }[]; value: T; onChange: (value: T) => void }) {
+function Chips<T extends string>({ options, value, onChange }: { options: { key: T; label: string }[]; value: T; onChange: (value: T) => void }) {
   return <View style={styles.chips}>{options.map((option) => <Pressable key={String(option.key)} accessibilityRole="button"
     onPress={() => onChange(option.key)} style={[styles.chip, value === option.key && styles.chipOn]}>
     <Text style={[styles.chipText, value === option.key && styles.chipTextOn]}>{option.label}</Text></Pressable>)}</View>;

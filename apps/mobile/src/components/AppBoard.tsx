@@ -18,9 +18,16 @@ import type { BoardSource } from './BoardPicker';
 import { Notice } from './Screen';
 import { AppHeader } from './ui/AppHeader';
 import { ChipRow, FilterChip, PrimaryButton, Segmented } from './ui/Controls';
+import { useLeagueStatFilter } from './LeagueStatFilter';
 import { PlayerAvatar } from './ui/PlayerAvatar';
 import { backedSide, historySide, scoutSide, sideLabel } from '../app-lines';
 import type { AppLine, Side } from '../app-lines';
+
+
+/** The stat key for the stat picker, and its name as the app shows it. */
+const appStat = (line: AppLine) => line.market ?? line.stat;
+const statName = (lines: readonly AppLine[]) => { const names = new Map(lines.map((line) => [appStat(line), line.stat]));
+  return (key: string) => names.get(key) ?? key; };
 
 export type { PickApp };
 export { pickApps };
@@ -106,7 +113,6 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   const { nowMs } = useBoard();
   const [lines, setLines] = useState<AppLine[]>([]), [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [sport, setSport] = useState('ALL');
   const [gkrOnly, setGkrOnly] = useState(false);
   const [boostOnly, setBoostOnly] = useState(false);
   const [scored, setScored] = useState(false);
@@ -125,10 +131,11 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   }, [app, request, demo]);
   useFocusEffect(useCallback(() => { setState('loading'); void load(); }, [load]));
 
-  const sports = useMemo(() => [...new Set(lines.map((line) => line.league))].sort(), [lines]);
+  // League and stat pickers (several of each at once).
+  const { shown: filtered, pickers } = useLeagueStatFilter(lines, appStat, statName(lines));
   // Picks: lines GKR backs (strongest first), then Scout's plays where GKR can't read the line.
   const shown = useMemo(() => {
-    const inLeague = lines.filter((line) => (sport === 'ALL' || line.league === sport) && (!boostOnly || boosted(line)));
+    const inLeague = filtered.filter((line) => !boostOnly || boosted(line));
     // Playable lines first (GKR's, then Scout's, strongest first), then lines not read yet, then Scout's no-edge reads;
     // each group keeps game-time order.
     const strength = (line: AppLine) => line.gkr ? 1000 + line.gkr.score : scoutSide(line) ? 500 + (line.scout!.score ?? 0)
@@ -136,7 +143,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     const group = (line: AppLine) => backedSide(line) ? 0 : line.scout ? 2 : 1;
     const ordered = [...inLeague].sort((a, b) => group(a) - group(b) || strength(b) - strength(a));
     return gkrOnly ? ordered.filter(backedSide) : ordered;
-  }, [lines, sport, gkrOnly, boostOnly]);
+  }, [filtered, gkrOnly, boostOnly]);
   const boostCount = useMemo(() => lines.filter(boosted).length, [lines]);
   const backed = useMemo(() => lines.filter(backedSide).length, [lines]);
   const picks = new Map(slip.map((item) => [item.line.id, item.side]));
@@ -179,9 +186,8 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   const header = <View style={styles.header}>
     <AppHeader subtitle={`${appNames[app]} board`} />
     <BoardPicker value={app} onChange={onApp} />
-    {lines.length > 0 && <ChipRow>
-      <FilterChip label="All leagues" active={sport === 'ALL'} onPress={() => setSport('ALL')} />
-      {sports.map((league) => <FilterChip key={league} label={league} active={sport === league} onPress={() => setSport(league)} />)}
+    {pickers}
+    {boostCount > 0 && <ChipRow>
       {boostCount > 0 && <FilterChip label={`Boosted (${boostCount})`} icon="rocket-launch-outline" active={boostOnly}
         chevron={false} onPress={() => setBoostOnly(!boostOnly)} />}
     </ChipRow>}

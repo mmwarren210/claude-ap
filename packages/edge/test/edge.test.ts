@@ -6,7 +6,7 @@ import {
   applyCalibration, backtestProjection, breakEven, buildSlips, cdf, conditionalOver, defaultEntries,
   describeEntry, devigPower, evaluateSlip, fitCalibration, fitMean, fitPlatt, forecastReport,
   makeDistribution, outcomeAt, parseEntries, priceBoard, profileFor, projectFromRows, sigmoid, logit,
-  edgeLine, generateEntries,
+  edgeLine, generateEntries, inChoice,
 } from '../src/index.js';
 import type { StatRow } from '../src/index.js';
 
@@ -257,5 +257,11 @@ test('Edge Gen builds distinct entries within filters', () => {
   assert.ok(slips.every((slip) => slip.expectedProfit > 0 && new Set(slip.legs.map((leg) => leg.eventId)).size >= 2));
   const nflOnly = generateEntries(result.picks, power3, { count: 2, sport: 'NFL', nowMs: now.getTime() });
   assert.ok(nflOnly.every((slip) => slip.legs.every((leg) => leg.sport === 'NFL')));
+  // Several sports and stats at once (comma-separated).
+  const sports = [...new Set(result.picks.map((pick) => pick.sport))].join(',');
+  assert.equal(generateEntries(result.picks, power3, { count: 2, sport: sports, nowMs: now.getTime() }).length,
+    generateEntries(result.picks, power3, { count: 2, nowMs: now.getTime() }).length);
+  assert.equal(generateEntries(result.picks, power3, { count: 2, market: 'no_such_stat,other', nowMs: now.getTime() }).length, 0);
+  assert.ok(inChoice('NFL,NBA', 'NBA') && !inChoice('NFL,NBA', 'MLB') && inChoice(undefined, 'MLB'));
   assert.equal(generateEntries(result.picks, power3, { from: Date.parse('2026-10-07T00:00:00Z'), nowMs: now.getTime() }).length, 0);
 });

@@ -2,7 +2,7 @@ import type { BoardResponse } from '@crowniq/contracts';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { marketLabel } from '../insights';
-import { emptyFilters } from '../state';
+import { emptyFilters, passes, toggleFilter } from '../state';
 import type { Filters, ViewMode } from '../state';
 import { colors, lineStyleOf, lineStyles, radius } from '../theme';
 import { Sheet } from './Sheet';
@@ -13,8 +13,8 @@ type Group = { key: keyof Filters; label: string; options: string[]; fullOnly?: 
 export function filterGroups(data: BoardResponse, draft: Filters): Group[] {
   return [
     { key: 'sport', label: 'Sport', options: [...new Set(data.board.lines.map((line) => line.sport))].sort() },
-    { key: 'market', label: 'Market', options: [...new Set(data.board.lines.filter((line) =>
-      draft.sport === 'ALL' || line.sport === draft.sport).map((line) => line.market))].sort() },
+    { key: 'market', label: 'Stat', options: [...new Set(data.board.lines.filter((line) =>
+      passes(draft.sport, line.sport)).map((line) => line.market))].sort() },
     { key: 'lineType', label: 'Line style', options: ['REGULAR', 'GOBLIN', 'DEMON'] },
     { key: 'evidence', label: 'Evidence', options: ['HIGH', 'MEDIUM', 'LOW', 'NONE'] },
     { key: 'date', label: 'Date', options: [...new Set(data.board.lines.map((line) =>
@@ -27,6 +27,9 @@ export function filterGroups(data: BoardResponse, draft: Filters): Group[] {
 
 export function optionLabel(key: keyof Filters, option: string): string {
   if (option === 'ALL') return key === 'sport' ? 'All Sports' : 'All';
+  // Several picks: name up to two, else count them.
+  if (option.includes(',')) { const parts = option.split(',');
+    return parts.length > 2 ? `${parts.length} picked` : parts.map((part) => optionLabel(key, part)).join(' + '); }
   if (key === 'market') return marketLabel(option);
   if (key === 'lineType') return lineStyles[lineStyleOf(option as 'REGULAR')].label;
   if (key === 'evidence') return { HIGH: 'A · Strong', MEDIUM: 'B · Good', LOW: 'C · Thin', NONE: 'None' }[option] ?? option;
@@ -35,28 +38,29 @@ export function optionLabel(key: keyof Filters, option: string): string {
   return option.replaceAll('_', ' ').toLowerCase().replace(/^\w/, (letter) => letter.toUpperCase());
 }
 
-/** Filter sheet. With `only`, it shows one filter and applies on tap, like a dropdown. */
+/** Filter sheet; every group takes several picks at once. With `only`, it shows one filter and applies each tap at once. */
 export function FilterSheet({ visible, onClose, data, value, onApply, mode, only }: { visible: boolean;
   onClose: () => void; data: BoardResponse; value: Filters; onApply: (next: Filters) => void; mode: ViewMode;
   only?: keyof Filters }) {
   const [draft, setDraft] = useState(value);
   const groups = filterGroups(data, draft).filter((group) => only ? group.key === only : mode === 'FULL' || !group.fullOnly);
   const choose = (key: keyof Filters, option: string) => {
-    const next = { ...draft, [key]: option, ...(key === 'sport' ? { market: 'ALL' } : {}) };
+    const next = { ...draft, [key]: toggleFilter(draft[key], option) };
     setDraft(next);
-    if (only) { onApply(next); onClose(); }
+    if (only) onApply(next);
   };
   return <Sheet visible={visible} title={only ? groups[0]?.label ?? 'Filter' : 'More filters'} onClose={onClose}>
     {groups.map(({ key, label, options }) => <View key={key} style={styles.group}>
       {!only && <Text style={styles.heading}>{label}</Text>}
       <View style={styles.options}>
         {['ALL', ...options].map((option) => {
-          const selected = draft[key] === option;
+          const selected = option === 'ALL' ? draft[key] === 'ALL' : passes(draft[key], option) && draft[key] !== 'ALL';
           return <Pressable key={option} accessibilityRole="button" accessibilityState={{ selected }}
             onPress={() => choose(key, option)} style={[styles.chip, selected && styles.active]}>
             <Text style={[styles.text, selected && styles.activeText]}>{optionLabel(key, option)}</Text></Pressable>;
         })}
       </View></View>)}
+    {only && <PrimaryButton label="Done" onPress={onClose} />}
     {!only && <View style={styles.actions}>
       <Pressable accessibilityRole="button" style={styles.reset} onPress={() => setDraft(emptyFilters)}>
         <Text style={styles.text}>Reset</Text></Pressable>

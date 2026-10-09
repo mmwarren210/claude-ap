@@ -7,7 +7,7 @@ import { bandOf, betaNote } from '../src/beta.js';
 import { buildSlip } from '../src/app-slip.js';
 import { buildBookSlip, parlayAmerican } from '../src/slip-builders.js';
 import { addLeg, betterSwap, boardLinesForMode, isPlay, withBooksPicks, CROWN_LEG_FLOOR, emptyFilters, evidenceExpired, freshness, gkrBacked, shareCrown,
-  visibleLines } from '../src/state.js';
+  passes, toggleFilter, visibleLines } from '../src/state.js';
 import { parseDraft, profileDraftKey } from '../src/draft-codec.js';
 
 const line=propLineSchema.parse({id:'one',sourceLineId:'one',provider:'prizepicks',sport:'CS2',
@@ -26,6 +26,9 @@ const board=boardResponseSchema.parse({board:{provider:'prizepicks',fetchedAt:'2
 test('filters reset and select exact lines without modifying the provider board',()=>{
   assert.deepEqual(visibleLines(board,emptyFilters).map((item)=>item.id),['one','two']);
   assert.deepEqual(visibleLines(board,{...emptyFilters,lineType:'GOBLIN'}).map((item)=>item.id),['one']);
+  // Several picks at once: both line styles, or a stat list.
+  assert.deepEqual(visibleLines(board,{...emptyFilters,lineType:'GOBLIN,REGULAR'}).map((item)=>item.id),['one','two']);
+  assert.deepEqual(visibleLines(board,{...emptyFilters,market:'kills,assists'}).map((item)=>item.id),[]);
   assert.deepEqual(visibleLines(board,{...emptyFilters,direction:'MORE'}).map((item)=>item.id),['one']);
   assert.equal(board.board.lines[1].threshold,30.5);
   const eventStart=Date.parse(line.eventStartTime);
@@ -345,4 +348,13 @@ test('Top Picks: other apps’ and books’ picks open the player’s PrizePicks
   assert.equal(byId!.lineId, 'pp-2', 'same player id, same stat');
   assert.equal(byName!.lineId, 'pp-1', 'a book pick matches by name and falls back to any of the player’s lines');
   assert.equal(unknown!.lineId, null);
+});
+
+test('multi-select filters: toggling picks several values and the last one off goes back to All', () => {
+  assert.equal(toggleFilter('ALL','NFL'),'NFL');
+  assert.equal(toggleFilter('NFL','NBA'),'NFL,NBA');
+  assert.equal(toggleFilter('NFL,NBA','NFL'),'NBA');
+  assert.equal(toggleFilter('NBA','NBA'),'ALL');
+  assert.equal(toggleFilter('NFL,NBA','ALL'),'ALL');
+  assert.ok(passes('ALL','anything') && passes('NFL,NBA','NBA') && !passes('NFL,NBA','MLB') && !passes('NFL',undefined));
 });

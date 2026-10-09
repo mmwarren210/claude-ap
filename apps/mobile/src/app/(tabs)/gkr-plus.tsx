@@ -5,7 +5,9 @@ import { EdgeRecord } from '../../components/EdgeRecord';
 import { EdgeSlipPanel, SlipSummary, StakePicker } from '../../components/EdgeSlipPanel';
 import { Notice, Screen } from '../../components/Screen';
 import { PlayerSearch } from '../../components/PlayerSearch';
-import { sportsFrom, upcomingPicks } from '../../edge-format';
+import { marketLabel, sportsFrom, upcomingPicks } from '../../edge-format';
+import { EdgeFilters } from '../../components/EdgeFilters';
+import { choiceParam, picked } from '../../components/ui/MultiPick';
 import { edgePlatform, EDGE_PLATFORMS, isBook, platformLabel, useEdgePlatform } from '../../edge-platform';
 import { useEdgeSlip } from '../../edge-slip';
 import { palette, rankAccents } from '../../theme';
@@ -22,24 +24,25 @@ export default function GkrPlusScreen() {
   const owner = useGkrPlusAccess();
   const [section, setSection] = useState<Section>('top');
   const platform = useEdgePlatform(), book = isBook(platform);
-  const [sport, setSport] = useState<string | null>(null);
+  const [sports, setSports] = useState<string[]>([]);
+  const [markets, setMarkets] = useState<string[]>([]);
   const [day, setDay] = useState<'all' | 'today'>('all');
   const [query, setQuery] = useState('');
   const searching = query.trim().length >= 2;
-  const { status, data, message, retry } = useEdge('edges', 'gkr-plus', day, query, sport);
+  const { status, data, message, retry } = useEdge('edges', 'gkr-plus', day, query, choiceParam(sports), choiceParam(markets));
   const slip = useEdgeSlip();
   const { nowMs } = useBoard();
   if (!owner) return <Screen eyebrow="CROWNIQ  /  GKR+" title="GKR+"><Notice title="Not available" detail="Unlock it in More › Secrets." /></Screen>;
   const live = upcomingPicks(data?.picks ?? [], nowMs, day);
   // Every sport with a rated pick on this platform (the server counts them all), so no sport hides behind the list's cut.
   const counts = new Map((data?.sports ?? []).map((item) => [item.sport, item.picks]));
-  const sports = data?.sports?.length ? data.sports.map((item) => item.sport) : sportsFrom(live);
-  const picks = live.filter((pick) => !sport || pick.sport === sport).slice(0, 100);
+  const sportOptions = data?.sports?.length ? data.sports.map((item) => item.sport) : sportsFrom(live);
+  const picks = live.filter((pick) => picked(sports, pick.sport) && picked(markets, pick.market)).slice(0, 100);
   const inSlip = new Set(slip.map((leg) => leg.lineId));
   return <Screen eyebrow={`CROWNIQ  /  GKR+  /  ${platformLabel(platform).toUpperCase()}`} title="GKR+">
     <Text style={styles.intro}>A test model, only for you: Edge&apos;s chance blended with the player&apos;s history at this exact number and GKR&apos;s side where GKR plays the line. It keeps its own record next to Edge&apos;s.</Text>
     <View style={styles.chips}>{EDGE_PLATFORMS.map((item) => <Pressable key={item.value} accessibilityRole="button"
-      accessibilityState={{ selected: platform === item.value }} onPress={() => { edgePlatform.set(item.value); setSport(null); }}
+      accessibilityState={{ selected: platform === item.value }} onPress={() => edgePlatform.set(item.value)}
       style={[styles.chip, platform === item.value && styles.chipOn]}>
       <Text style={[styles.chipText, platform === item.value && styles.chipTextOn]}>{item.label}</Text></Pressable>)}</View>
     <View style={styles.segments}>{sections.map((item) => <Pressable key={item.key} accessibilityRole="tab"
@@ -57,16 +60,14 @@ export default function GkrPlusScreen() {
         <Stat label="+EV picks" value={String(data.counts.positiveEdge)} />
       </View>
       <DayChips day={day} setDay={setDay} />
-      {(sports.length > 1 || !!sport) && <View style={styles.chips}>
-        {[null, ...sports].map((item) => <Pressable key={item ?? 'all'} accessibilityRole="button"
-          onPress={() => setSport(item)} style={[styles.chip, sport === item && styles.chipOn]}>
-          <Text style={[styles.chipText, sport === item && styles.chipTextOn]}>{item ?? 'All'}{item && counts.get(item) ? ` ${counts.get(item)}` : ''}</Text></Pressable>)}
-      </View>}
+      <EdgeFilters sports={sports} markets={markets} onSports={setSports} onMarkets={setMarkets}
+        sportOptions={sportOptions.map((item) => ({ key: item, label: item, count: counts.get(item) }))}
+        marketOptions={(data.markets ?? []).map((item) => ({ key: item.market, label: marketLabel(item.market), count: item.picks }))} />
       <EdgeSlipPanel entries={data.entries} />
       {!searching && <View style={styles.section}>
         <Text style={styles.sectionTitle}>BEST ENTRIES</Text>
         <Text style={styles.sectionDetail}>Highest expected value from GKR+&apos;s strongest legs, one per player and at most two per game.</Text>
-        {!data.slips.length && <Text style={styles.sectionDetail}>{`No ${sport ? `${sport} ` : ''}entry clears the bar${day === 'today' ? ' with today’s games alone' : ' right now'}.`}</Text>}
+        {!data.slips.length && <Text style={styles.sectionDetail}>{`No ${sports.length ? `${sports.join('/')} ` : ''}entry clears the bar${day === 'today' ? ' with today’s games alone' : ' right now'}.`}</Text>}
         <StakePicker />
         {data.slips.slice(0, 2).map((item) => <View key={item.entry.type + item.entry.size + item.legs.map((leg) => leg.lineId).join()} style={styles.card}>
           <SlipSummary slip={item} /></View>)}

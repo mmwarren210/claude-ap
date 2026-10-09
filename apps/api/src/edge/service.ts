@@ -6,7 +6,7 @@ import type { BoardResponse, EdgeBoardPage, EdgeBoardResponse, EdgeBoardRow, Edg
   PlayableDirection, PropLine } from '@crowniq/contracts';
 import { backtestProjection, buildSlips, describeEntry, EDGE_MODEL_VERSION, entriesFromTables, evaluateSlip, fitCalibration, suggestSwap,
   forecastReport, marketProfiles, parlayEntries, priceBoard, profileFor, profileKey } from '@crowniq/edge';
-import { rankScore } from '@crowniq/edge';
+import { inChoice, rankScore } from '@crowniq/edge';
 import type { CalibrationModel, EntryDefinition, SidePayout, StatRow, UnpricedLine } from '@crowniq/edge';
 import type { BoxScoreResults } from '../box-score-results.js';
 import type { FairPrice, PickemLine } from '../context/sharp-props.js';
@@ -823,7 +823,7 @@ export function viewPicks(snapshot: EdgeSnapshot, view: EdgeView, filters: { spo
       : pick.edge === null; // alternates: Goblin/Demon lines with no confirmed payout factor, ranked by hit probability
   // Never show a pick that starts in under 5 minutes (spec §6).
   const picks = snapshot.response.picks.filter((pick) => Date.parse(pick.eventStartTime) > filters.nowMs + 5 * 60_000 &&
-    (!filters.sport || pick.sport === filters.sport) && (!filters.market || pick.market === filters.market) &&
+    inChoice(filters.sport, pick.sport) && inChoice(filters.market, pick.market) &&
     (filters.minProbability === undefined || pick.probability >= filters.minProbability) && inView(pick));
   if (view === 'alternates') picks.sort((a, b) => b.probability - a.probability);
   return picks.slice(0, filters.limit);
@@ -862,8 +862,8 @@ export function boardPage(snapshot: EdgeSnapshot, query: { sport?: string; marke
   filter: EdgeBoardFilter; sort: EdgeBoardSort; offset: number; limit: number; nowMs: number }): EdgeBoardPage {
   const text = query.q?.trim().toLowerCase();
   const keep = (item: { sport: string; market: string; playerName: string; eventStartTime: string }) =>
-    Date.parse(item.eventStartTime) > query.nowMs && (!query.sport || item.sport === query.sport) &&
-    (!query.market || item.market === query.market) && (!text || item.playerName.toLowerCase().includes(text));
+    Date.parse(item.eventStartTime) > query.nowMs && inChoice(query.sport, item.sport) &&
+    inChoice(query.market, item.market) && (!text || item.playerName.toLowerCase().includes(text));
   const picks: EdgeBoardRow[] = query.filter === 'no_read' ? [] : snapshot.response.picks.filter(keep)
     .map((pick) => ({ kind: 'PICK' as const, pick }));
   const unread: EdgeBoardRow[] = query.filter === 'picks' ? [] : snapshot.unpriced
@@ -882,9 +882,13 @@ export function boardPage(snapshot: EdgeSnapshot, query: { sport?: string; marke
     : (a, b) => strength(b) - strength(a));
   const sports = [...new Set([...snapshot.response.picks.map((pick) => pick.sport),
     ...snapshot.unpriced.map((item) => item.line.sport)])].sort();
+  const marketCounts = new Map<string, number>();
+  for (const item of [...snapshot.response.picks, ...snapshot.unpriced.map(({ line }) => line)])
+    if (inChoice(query.sport, item.sport)) marketCounts.set(item.market, (marketCounts.get(item.market) ?? 0) + 1);
+  const markets = [...marketCounts].map(([market, lines]) => ({ market, lines })).sort((a, b) => b.lines - a.lines || a.market.localeCompare(b.market));
   return { modelVersion: snapshot.response.modelVersion, builtAt: snapshot.response.builtAt,
     boardFetchedAt: snapshot.response.boardFetchedAt, total: rows.length, offset: query.offset, limit: query.limit,
-    sports, rows: rows.slice(query.offset, query.offset + query.limit) };
+    sports, markets, rows: rows.slice(query.offset, query.offset + query.limit) };
 }
 
 /** Grades Edge picks from ESPN / MLB box scores and CrownIQ's own game rows (no Odds API credits). */

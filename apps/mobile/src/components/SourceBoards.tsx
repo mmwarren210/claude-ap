@@ -1,5 +1,5 @@
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../auth';
@@ -11,7 +11,8 @@ import { Notice } from './Screen';
 import { ScoutVerdict } from './ScoutVerdict';
 import type { AiRead } from '../scout';
 import { AppHeader } from './ui/AppHeader';
-import { ChipRow, FilterChip, GhostButton, PrimaryButton } from './ui/Controls';
+import { GhostButton, PrimaryButton } from './ui/Controls';
+import { useLeagueStatFilter } from './LeagueStatFilter';
 import { copyAndOpenUrl, openExternal } from '../port';
 import { openCrownOn, toggleCrownLeg, useCrownLegs } from '../crown-legs';
 import type { CrownProvider } from '../crown-legs';
@@ -147,15 +148,10 @@ export function SlipTray({ lines, summary, url, appName, onClear }: { lines: str
   </View>;
 }
 
-function useLeagueFilter<T extends { league: string }>(picks: T[]) {
-  const [league, setLeague] = useState('ALL');
-  const leagues = useMemo(() => [...new Set(picks.map((pick) => pick.league))].sort(), [picks]);
-  const shown = league === 'ALL' ? picks : picks.filter((pick) => pick.league === league);
-  const chips = leagues.length > 1 ? <ChipRow>
-    <FilterChip label="All leagues" active={league === 'ALL'} chevron={false} onPress={() => setLeague('ALL')} />
-    {leagues.map((item) => <FilterChip key={item} label={item} active={league === item} chevron={false} onPress={() => setLeague(item)} />)}
-  </ChipRow> : null;
-  return { shown, chips };
+const pickStat = (pick: { market: string }) => pick.market;
+function useLeagueFilter<T extends { league: string; market: string }>(picks: T[]) {
+  const { shown, pickers } = useLeagueStatFilter(picks, pickStat);
+  return { shown, chips: pickers };
 }
 
 /** "Add to Crown" on a board card, and the count of what's in that provider's Crown with a way there. */

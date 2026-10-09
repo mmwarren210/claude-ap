@@ -153,10 +153,15 @@ export function buildSlips(picks: readonly EdgePick[], entries: readonly EdgeEnt
   return slips.sort((a, b) => b.expectedProfit - a.expectedProfit);
 }
 
+/** A multi-select filter: unset passes everything, else a comma-separated list of the values picked. */
+export const inChoice = (choice: string | undefined, value: string) => !choice || choice.split(',').includes(value);
+
 export interface GenerateOptions {
   readonly count?: number;
   readonly maxPerEvent?: number;
+  /** Sports and stats to build from (comma-separated lists; unset means all). */
   readonly sport?: string;
+  readonly market?: string;
   /** Only legs starting within [from, to). */
   readonly from?: number;
   readonly to?: number;
@@ -181,7 +186,7 @@ export function generateEntries(picks: readonly EdgePick[], entry: EdgeEntry, op
   const count = options.count ?? 3, maxPerEvent = options.maxPerEvent ?? 2, maxUses = options.maxLegUses ?? 1;
   const now = options.nowMs ?? Date.now(), minEvents = options.minEvents ?? 2, objective = options.objective ?? 'ev';
   const pool = picks.filter((pick) => pick.edge !== null && pick.edge > (options.minEdge ?? 0) && pick.rating !== 'NONE' && backedLeg(pick) &&
-    Date.parse(pick.eventStartTime) > now && (!options.sport || pick.sport === options.sport) &&
+    Date.parse(pick.eventStartTime) > now && inChoice(options.sport, pick.sport) && inChoice(options.market, pick.market) &&
     (options.from === undefined || Date.parse(pick.eventStartTime) >= options.from) &&
     (options.to === undefined || Date.parse(pick.eventStartTime) < options.to) &&
     (options.alternates === undefined ? legAllowed(entry, pick) : options.alternates || !isAlternate(pick)))

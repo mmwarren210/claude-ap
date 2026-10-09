@@ -439,6 +439,8 @@ export const edgeBoardResponseSchema = z.object({
   feedNote: z.string().optional(),
   /** Every sport with a rated upcoming pick on this platform and how many (the sport chips), whatever the list was cut to. */
   sports: z.array(z.object({ sport: z.string(), picks: z.number().int().nonnegative() })).optional(),
+  /** Rated picks per stat for the chosen sports (the stat picker). */
+  markets: z.array(z.object({ market: z.string(), picks: z.number().int().nonnegative() })).optional(),
 });
 
 export const edgeUnpricedLineSchema = z.object({
@@ -457,6 +459,8 @@ export const edgeBoardPageSchema = z.object({
   modelVersion: identifier, builtAt: timestamp, boardFetchedAt: timestamp,
   total: z.number().int(), offset: z.number().int(), limit: z.number().int(),
   sports: z.array(z.string()), rows: z.array(edgeBoardRowSchema),
+  /** Stats listed for the chosen sports (the stat picker), most lines first. */
+  markets: z.array(z.object({ market: z.string(), lines: z.number().int().nonnegative() })).optional(),
 });
 export const edgeGenResponseSchema = z.object({
   modelVersion: identifier, builtAt: timestamp, pool: z.number().int(),
