@@ -34,6 +34,9 @@ export class PropLinePush {
   private dirty = new Map<DfsApp, Set<string>>();
   private timer: NodeJS.Timeout | null = null;
   private seenDeliveries = new Set<string>();
+  private steamListeners: ((event: PushEvent) => void)[] = [];
+  /** Steam deliveries also go to these (Edge's movement tracker, set up by the server). */
+  onSteam(listener: (event: PushEvent) => void): void { this.steamListeners.push(listener); }
   readonly stats = { deliveries: 0, events: {} as Record<string, number>, rejected: 0, lastAt: null as string | null,
     pulls: 0, suspended: 0, lastError: null as string | null, ensuredAt: null as string | null,
     /** The latest delivery of each type, for the owner page (shapes, not secrets). */
@@ -173,7 +176,7 @@ export class PropLinePush {
       void this.handlers.suspend(app, `propline:${game}`, player, keys).then((removed) => { this.stats.suspended += removed; })
         .catch(() => undefined);
     } else if (type === 'resolution') this.handlers.resolution?.(event);
-    else if (type === 'steam') this.handlers.steam?.(event);
+    else if (type === 'steam') { this.handlers.steam?.(event); for (const listener of this.steamListeners) listener(event); }
   }
 
   /** Moves arrive in bursts, so each app's moved sports are re-pulled together, at most once a minute. */

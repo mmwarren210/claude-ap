@@ -53,6 +53,8 @@ import type { AiPickService, AiRead } from './ai-picks.js';
 import type { BoxScoreResults } from './box-score-results.js';
 import type { PropLinePush } from './scrapers/propline-push.js';
 import type { PropLineResults } from './scrapers/propline-results.js';
+import { proplineLeague, proplineMarketKey } from './scrapers/propline.js';
+import { leagueInfo } from './scrapers/markets.js';
 import type { ScraperPuller } from './scrapers/scraper-puller.js';
 import type { ContextRefreshOptions, DailyLookupBudget } from './context-refresh.js';
 import type { ProviderName } from './provider-identity.js';
@@ -1438,6 +1440,18 @@ export function buildServer(options: ServerOptions = {}) {
   },()=>now());
   // CrownIQ Edge (Edge 2.0): its own reads of every platform, warmed in the background like the app boards.
   const movement=new MovementTracker();
+  // PropLine steam (pushed): a player prop several books moved the same way feeds Edge's steam badge and stale-line check.
+  options.proplinePush?.onSteam((event)=>{
+    const sportKey=String(event.sport_key??''),player=typeof event.player_name==='string'?event.player_name:'';
+    if(!player||typeof event.market_key!=='string')return;
+    const sport=leagueInfo(proplineLeague(sportKey)).sport;
+    const toward=String(event.moved_toward??event.consensus_direction??event.outcome_name??'').toLowerCase();
+    const lines=(event.lines as {books?:string[]}[]|undefined)??[];
+    const books=[...new Set([...(Array.isArray(event.books)?event.books as string[]:[]),...lines.flatMap((line)=>line.books??[])])];
+    movement.pushSteam({sport,player,market:proplineMarketKey(sport,event.market_key),direction:/over|up|more/.test(toward)?'UP':'DOWN',
+      books:books.length?books:Array.from({length:Number(event.books_moved)||3},(_,index)=>`book${index}`),
+      at:Date.parse(String(event.timestamp??''))||Date.now(),score:typeof event.steam_score==='number'?event.steam_score:null});
+  });
   // Step 7: the tracker starts from the last saved book prices, so the first refresh after a restart can see moves
   // (it only remembered prices in memory, and every deploy reset it: stale and steam stayed at 0).
   if(options.sharpProps&&!options.clock)void options.sharpProps.current().then(({prices,fetchedAt})=>{
@@ -2373,7 +2387,7 @@ export function buildServer(options: ServerOptions = {}) {
     admin.get('/propline-push',async(request)=>{
       if(!options.proplinePush)return {configured:false};
       if((request.query as {ensure?:string}).ensure==='1')await options.proplinePush.ensureNow();
-      return {...options.proplinePush.status(),results:options.proplineResults?.status()??null};
+      return {...options.proplinePush.status(),results:options.proplineResults?.status()??null,steam:movement.pushedSteam.slice(0,10)};
     });
     admin.get('/propline',async(request,reply)=>{
       const key=process.env.PROPLINE_API_KEY?.trim();

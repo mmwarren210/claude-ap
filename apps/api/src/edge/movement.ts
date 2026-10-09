@@ -50,6 +50,25 @@ export class MovementTracker {
     return recorded;
   }
 
+  /** PropLine's steam alerts (pushed; it watches 30+ books), newest first, for the owner page. */
+  readonly pushedSteam: { at: string; sport: string; player: string; market: string; direction: 'UP' | 'DOWN'; books: number; score: number | null }[] = [];
+
+  /**
+   * A PropLine steam delivery for a player prop: recorded as each agreeing book's move, so the steam badge and the
+   * stale-line check treat it exactly like steam CrownIQ saw itself.
+   */
+  pushSteam(event: { sport: string; player: string; market: string; direction: 'UP' | 'DOWN'; books: readonly string[]; at: number; score?: number | null }): void {
+    if (!event.player || event.books.length < 1) return;
+    const key = moveKey(event.sport, event.player, event.market);
+    const list = (this.moves.get(key) ?? []).filter((move) => event.at - move.at <= KEEP);
+    const deltaSd = event.direction === 'UP' ? MOVE_SD + .05 : -(MOVE_SD + .05);
+    for (const book of new Set(event.books)) list.push({ book: `propline:${book}`, at: event.at, deltaSd });
+    this.moves.set(key, list);
+    this.pushedSteam.unshift({ at: new Date(event.at).toISOString(), sport: event.sport, player: event.player, market: event.market,
+      direction: event.direction, books: new Set(event.books).size, score: event.score ?? null });
+    this.pushedSteam.length = Math.min(this.pushedSteam.length, 50);
+  }
+
   /** The newest move for a player and stat in the last 3 hours, with steam when 3+ books moved together. */
   summary(sport: string, player: string, market: string, nowMs: number): MoveSummary | null {
     const list = (this.moves.get(moveKey(sport, player, market)) ?? []).filter((move) => nowMs - move.at <= KEEP);

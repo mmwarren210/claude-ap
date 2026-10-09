@@ -72,3 +72,14 @@ test('line store: a partial (one league) pull replaces only that league; a pulle
     assert.deepEqual((await store.active('prizepicks')).map((item) => item.appLineId), ['a2']);
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
+
+test('PropLine steam feeds the movement tracker: 3+ agreeing books read as steam in that direction', async () => {
+  const { MovementTracker } = await import('../src/edge/movement.js');
+  const movement = new MovementTracker();
+  const at = Date.parse('2030-01-10T12:00:00Z');
+  movement.pushSteam({ sport: 'NFL', player: 'Dak Prescott', market: 'passing_yards', direction: 'UP', books: ['draftkings', 'fanduel', 'betmgm'], at, score: 60 });
+  const summary = movement.summary('NFL', 'Dak Prescott', 'passing_yards', at + 60_000);
+  assert.equal(summary?.steam, true);
+  assert.equal(summary?.direction, 'UP');
+  assert.equal(movement.pushedSteam[0]?.books, 3);
+});
