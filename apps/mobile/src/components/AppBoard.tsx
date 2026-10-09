@@ -132,7 +132,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   useFocusEffect(useCallback(() => { setState('loading'); void load(); }, [load]));
 
   // League and stat pickers (several of each at once).
-  const { shown: filtered, pickers } = useLeagueStatFilter(lines, appStat, statName(lines));
+  const { shown: filtered, pickers, filter } = useLeagueStatFilter(lines, appStat, statName(lines));
   // Picks: lines GKR backs (strongest first), then Scout's plays where GKR can't read the line.
   const shown = useMemo(() => {
     const inLeague = filtered.filter((line) => !boostOnly || boosted(line));
@@ -144,6 +144,9 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     const ordered = [...inLeague].sort((a, b) => group(a) - group(b) || strength(b) - strength(a));
     return gkrOnly ? ordered.filter(backedSide) : ordered;
   }, [filtered, gkrOnly, boostOnly]);
+  // With games picked in the filter: each game's strongest backed line, shown right under the filter.
+  const bestPerGame = filter.games.map((game) => shown.find((line) => line.eventId === game && backedSide(line)))
+    .filter((line): line is AppLine => !!line);
   const boostCount = useMemo(() => lines.filter(boosted).length, [lines]);
   const backed = useMemo(() => lines.filter(backedSide).length, [lines]);
   const picks = new Map(slip.map((item) => [item.line.id, item.side]));
@@ -187,6 +190,15 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
     <AppHeader subtitle={`${appNames[app]} board`} />
     <BoardPicker value={app} onChange={onApp} />
     {pickers}
+    {filter.games.length > 0 && <View style={styles.best}>
+      <Text style={styles.bestTitle}>BEST PICK {filter.games.length === 1 ? 'FOR THIS GAME' : 'PER GAME'}</Text>
+      {!bestPerGame.length && <Text style={styles.note}>No backed pick in {filter.games.length === 1 ? 'that game' : 'those games'} for this filter. Passing is a valid result.</Text>}
+      {bestPerGame.map((line) => <View key={line.id} style={styles.bestGame}>
+        <Text style={styles.note}>{line.eventName} · {gameTime(line.eventStartTime)}</Text>
+        <LineCard app={app} line={line} picked={picks.get(line.id) ?? null} onPick={(side) => pick(line, side)}
+          asking={asking.has(line.id)} onAsk={demo ? undefined : () => void askScout(line)} />
+      </View>)}
+    </View>}
     {boostCount > 0 && <ChipRow>
       {boostCount > 0 && <FilterChip label={`Boosted (${boostCount})`} icon="rocket-launch-outline" active={boostOnly}
         chevron={false} onPress={() => setBoostOnly(!boostOnly)} />}
@@ -222,6 +234,9 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
 }
 
 const styles = StyleSheet.create({
+  best: { gap: 10, borderWidth: 1, borderColor: colors.mint, borderRadius: radius.lg, padding: 12 },
+  bestTitle: { color: colors.mint, fontSize: 11, fontWeight: '900', letterSpacing: 1.4 },
+  bestGame: { gap: 6 },
   safe: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 140, gap: 12 },
   header: { gap: 12, marginBottom: 2 },

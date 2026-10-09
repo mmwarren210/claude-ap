@@ -8,7 +8,7 @@ export const evidenceExpired=(analysis:Analysis|undefined,nowMs:number)=>
   !!analysis?.evidenceExpiresAt&&Date.parse(analysis.evidenceExpiresAt)<=nowMs;
 
 export interface Filters { sport: string; market: string; direction: string; grade: string;
-  lineType: string; evidence: string; date: string }
+  lineType: string; evidence: string; date: string; game: string }
 export type ViewMode='LITE'|'FULL';
 /** A filter value is 'ALL' or a comma-separated list of picks (several sports, stats, dates at once). */
 export const passes=(choice:string,value:string|null|undefined)=>choice==='ALL'||(value!==null&&value!==undefined&&choice.split(',').includes(value));
@@ -21,7 +21,7 @@ export function toggleFilter(choice:string,option:string):string{
 }
 export const LITE_LIMIT=20;
 export const emptyFilters: Filters = { sport:'ALL',market:'ALL',direction:'ALL',grade:'ALL',
-  lineType:'ALL',evidence:'ALL',date:'ALL' };
+  lineType:'ALL',evidence:'ALL',date:'ALL',game:'ALL' };
 /**
  * A Crown leg. `score` and `modelVersion` are GKR's for the chosen side, or null when GKR does not back that side.
  * `yourCall` lists the tips the user saw and overrode to add it.
@@ -40,7 +40,8 @@ export function visibleLines(data: BoardResponse, filters: Filters, nowMs=Date.n
     return Date.parse(line.eventStartTime)>nowMs &&
       passes(filters.sport,line.sport) && passes(filters.market,line.market) && passes(filters.lineType,line.lineType) &&
       passes(filters.direction,analysis?.direction) && passes(filters.grade,analysis?.scoreBand) &&
-      passes(filters.evidence,analysis?.evidenceQuality) && passes(filters.date,line.eventStartTime.slice(0,10));
+      passes(filters.evidence,analysis?.evidenceQuality) && passes(filters.date,line.eventStartTime.slice(0,10)) &&
+      passes(filters.game,line.eventId);
   });
 }
 /**
@@ -121,7 +122,7 @@ export function boardLinesForMode(data:BoardResponse,filters:Filters,mode:ViewMo
       // The Board's line-style, evidence and date chips apply in both views; grade and
       // direction stay Full-only so a stale Full filter never hides ranked plays.
       !passes(filters.lineType,line.lineType)||!passes(filters.evidence,analysis.evidenceQuality)||
-      !passes(filters.date,line.eventStartTime.slice(0,10)))continue;
+      !passes(filters.date,line.eventStartTime.slice(0,10))||!passes(filters.game,line.eventId))continue;
     if(ranked.some((item)=>item.eventId===line.eventId&&item.playerId===line.playerId))continue;
     ranked.push(line);
     if(ranked.length===LITE_LIMIT)break;

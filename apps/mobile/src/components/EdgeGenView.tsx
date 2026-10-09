@@ -3,7 +3,7 @@ import type { EdgeEntry, EdgeGenResponse, EdgePick, EdgeSlip } from '@crowniq/co
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '../auth';
-import { dayWindow, pct, usd } from '../edge-format';
+import { dayWindow, marketLabel, pct, usd } from '../edge-format';
 import { useEdgeStake } from '../edge-stake';
 import { isBook, useEdgePlatform } from '../edge-platform';
 import { chosenDay, gameDays } from '../game-days';
@@ -13,10 +13,12 @@ import { palette } from '../theme';
 import { SlipSummary, StakePicker } from './EdgeSlipPanel';
 import { DayPicker } from './ui/DayPicker';
 import { Notice } from './Screen';
+import { edgeQuery } from './EdgeFilters';
+import { filterSummary } from './FilterBar';
+import type { FilterValue } from './FilterBar';
 
 /** Edge Gen: build entries from Edge's own +EV reads only. */
-export function EdgeGenView({ entries, sports, markets, nowMs, starts }: { entries: readonly EdgeEntry[]; sports: readonly string[];
-  markets: readonly string[];
+export function EdgeGenView({ entries, filter, nowMs, starts }: { entries: readonly EdgeEntry[]; filter: FilterValue;
   nowMs: number; starts: readonly string[] }) {
   const { request } = useAuth();
   const platform = useEdgePlatform(), book = isBook(platform);
@@ -40,8 +42,8 @@ export function EdgeGenView({ entries, sports, markets, nowMs, starts }: { entri
     setBusy(true);
     try {
       const response = await request('/v1/edge/gen', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ platform, type, size, count, objective, alternates: platform === 'prizepicks' && alternates, ...(sports.length ? { sport: sports.join(',') } : {}),
-          ...(markets.length ? { market: markets.join(',') } : {}), ...dayWindow(day) }) });
+        body: JSON.stringify({ platform, type, size, count, objective, alternates: platform === 'prizepicks' && alternates, ...Object.fromEntries(Object.entries(edgeQuery(filter)).filter(([, value]) => value)),
+          ...(filter.games.length ? {} : dayWindow(day)) }) });
       if (!response.ok) { setResult({ data: null, message: response.status === 422 ? 'That entry size has no payout table configured.' : 'Could not generate entries.' }); return; }
       setResult({ data: edgeGenResponseSchema.parse(await response.json()), message: '' });
     } catch { setResult({ data: null, message: 'Could not generate entries.' }); }
@@ -74,8 +76,8 @@ export function EdgeGenView({ entries, sports, markets, nowMs, starts }: { entri
     <Chips options={[{ key: 'ev' as const, label: 'Most EV' }, { key: 'growth' as const, label: 'Steady growth (Kelly)' }]} value={objective} onChange={setObjective} />
     <Label text="WHEN" />
     <DayPicker days={days} day={day} nowMs={nowMs} onChange={setPicked} />
-    <Text style={styles.muted}>{sports.length || markets.length ? `Building from ${[sports.join(', '), markets.length ? `${markets.length} stat${markets.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')} (the pickers above).`
-      : 'Building from every sport and stat. Use the pickers above to narrow it.'}</Text>
+    <Text style={styles.muted}>{filterSummary(filter, { stat: marketLabel }) ? `Building from ${filterSummary(filter, { stat: marketLabel })} (the filter above${filter.games.length ? '; picked games override the day' : ''}).`
+      : 'Building from every sport, game and stat. Use the filter above to narrow it.'}</Text>
     <Pressable accessibilityRole="button" disabled={busy} onPress={() => void generate()} style={styles.button}>
       {busy ? <ActivityIndicator color={palette.background} /> : <Text style={styles.buttonText}>Generate Edge entries</Text>}
     </Pressable>

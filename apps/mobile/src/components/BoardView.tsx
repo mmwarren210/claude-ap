@@ -20,7 +20,7 @@ import type { BoardSource } from './BoardPicker';
 import { BookBoard } from './SourceBoards';
 import { BoardCard } from './BoardCard';
 import { CrownTray } from './CrownTray';
-import { FilterSheet, optionLabel } from './FilterSheet';
+import { FilterSheet, gameOptions, optionLabel } from './FilterSheet';
 import { Notice } from './Screen';
 import { Sheet } from './Sheet';
 import { AppHeader } from './ui/AppHeader';
@@ -32,8 +32,8 @@ export const windows: readonly { value: Window; label: string }[] = [
   { value: 'L5', label: 'L5' }, { value: 'L10', label: 'L10' }, { value: 'L15', label: 'L15' },
   { value: 'H2H', label: 'H2H' }, { value: 'AVG', label: 'Avg' }];
 
-const chipKeys: readonly (keyof Filters)[] = ['sport', 'market', 'lineType', 'evidence', 'date'];
-const chipNames: Readonly<Partial<Record<keyof Filters, string>>> = { sport: 'All Sports', market: 'Market',
+const chipKeys: readonly (keyof Filters)[] = ['sport', 'game', 'market', 'lineType', 'evidence', 'date'];
+const chipNames: Readonly<Partial<Record<keyof Filters, string>>> = { sport: 'All Sports', game: 'Games', market: 'Market',
   lineType: 'Line Style', evidence: 'Evidence', date: 'Date' };
 
 function freshnessLine(freshness: string, fetchedAt: string | undefined, nowMs: number): string {
@@ -95,6 +95,9 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
   const open = useCallback((lineId: string) => router.push({ pathname: '/player/[lineId]', params: { lineId } }), []);
   const warn = ['STALE', 'UNREACHABLE', 'OFFLINE'].includes(freshness);
 
+  // The game chip names the game (or counts them) instead of showing its id.
+  const gameChip = (value: string) => { const names = data ? gameOptions(data, filters).labels : {}, ids = value.split(',');
+    return ids.length > 1 ? `${ids.length} games` : names[ids[0]!]?.split(' · ')[0] ?? 'Game'; };
   const header = <View style={styles.header}>
     <AppHeader subtitle="Sports Intelligence · Powered by GKR" />
     <BoardPicker value="prizepicks" onChange={onApp} />
@@ -112,7 +115,7 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
     </View>}
     {data && <ChipRow>
       {chipKeys.map((key) => <FilterChip key={key} active={filters[key] !== 'ALL'} onPress={() => setSheet(key)}
-        label={filters[key] === 'ALL' ? chipNames[key]! : optionLabel(key, filters[key])} />)}
+        label={filters[key] === 'ALL' ? chipNames[key]! : key === 'game' ? gameChip(filters.game) : optionLabel(key, filters[key])} />)}
     </ChipRow>}
     <View style={styles.windowRow}>
       <View style={styles.windows}><Segmented label="Hit-rate window" options={windows} value={window} onChange={setWindow} /></View>

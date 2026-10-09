@@ -262,6 +262,10 @@ test('Edge Gen builds distinct entries within filters', () => {
   assert.equal(generateEntries(result.picks, power3, { count: 2, sport: sports, nowMs: now.getTime() }).length,
     generateEntries(result.picks, power3, { count: 2, nowMs: now.getTime() }).length);
   assert.equal(generateEntries(result.picks, power3, { count: 2, market: 'no_such_stat,other', nowMs: now.getTime() }).length, 0);
+  // Picked games: every leg comes from them.
+  const twoGames = [...new Set(result.picks.map((pick) => pick.eventId))].slice(0, 2);
+  assert.ok(generateEntries(result.picks, power3, { count: 2, event: twoGames.join(','), nowMs: now.getTime() })
+    .every((slip) => slip.legs.every((leg) => twoGames.includes(leg.eventId))));
   assert.ok(inChoice('NFL,NBA', 'NBA') && !inChoice('NFL,NBA', 'MLB') && inChoice(undefined, 'MLB'));
   assert.equal(generateEntries(result.picks, power3, { from: Date.parse('2026-10-07T00:00:00Z'), nowMs: now.getTime() }).length, 0);
 });

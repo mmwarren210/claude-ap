@@ -32,7 +32,12 @@ import type { AiRead } from '../../use-ai-picks';
 import { AllPicks } from '../../components/AllPicks';
 import type { PickSource } from '../../all-picks';
 import { passes, toggleFilter } from '../../state';
-import { MultiPick, picked } from '../../components/ui/MultiPick';
+import { picked } from '../../components/ui/MultiPick';
+import { emptyFilter, FilterBar } from '../../components/FilterBar';
+import type { FilterValue } from '../../components/FilterBar';
+import { useLeagueStatFilter } from '../../components/LeagueStatFilter';
+
+const cardStat = (card: { market: string }) => card.market;
 
 /** Top Picks by provider: everything together, PrizePicks' GKR rankings, each other board, and +EV. */
 const topLists: readonly { value: 'ALL' | 'GKR' | 'EV' | Exclude<PickSource, 'prizepicks'>; label: string }[] = [
@@ -41,7 +46,7 @@ const topLists: readonly { value: 'ALL' | 'GKR' | 'EV' | Exclude<PickSource, 'pr
   { value: 'EV', label: '+EV' }];
 
 type Card = RankingCard | SecondLookCard;
-type ListFilter = { sport: string; market: string; date: string; lineType: string };
+type ListFilter = { lineType: string };
 const sizes = [2, 3, 4, 5, 6].map((value) => ({ value, label: `Top ${value}` }));
 
 function insight(card: Card, l10: ReturnType<typeof lineStats>, l5: ReturnType<typeof lineStats>,
@@ -146,7 +151,8 @@ function EvCard({ pick, onAdd }: { pick: EvPick; onAdd: () => void }) {
 export default function TopPicksScreen() {
   const { request, demo } = useAuth();
   const [mode, setMode] = useState<'ALL' | 'GKR' | 'EV' | Exclude<PickSource, 'prizepicks'>>('ALL');
-  const [evApp, setEvApp] = useState<string[]>([]);
+  const [evFilter, setEvFilter] = useState<FilterValue>(emptyFilter);
+  const evApp = evFilter.platforms;
   const { reads: scoutReads } = useAiPicks();
   const [ev, setEv] = useState<{ status: 'idle' | 'loading' | 'ready' | 'error'; value: EvResponse | null }>({ status: 'idle', value: null });
   useEffect(() => {
@@ -162,21 +168,20 @@ export default function TopPicksScreen() {
   const { beta } = useBeta(board?.builtAt ?? null);
   const { status, data, message, retry } = useRankings();
   const [size, setSize] = useState(5);
-  const [filter, setFilter] = useState<ListFilter>({ sport: 'ALL', market: 'ALL', date: 'ALL', lineType: 'ALL' });
+  const [filter, setFilter] = useState<ListFilter>({ lineType: 'ALL' });
   const [sheet, setSheet] = useState<keyof ListFilter | null>(null);
   const [notice, setNotice] = useState('');
   const tips = useTipFlow(setNotice);
   const lineById = useMemo(() => new Map(board?.board.lines.map((line) => [line.id, line])), [board]);
   const analysisById = useMemo(() => new Map(board?.analyses.map((item) => [item.lineId, item])), [board]);
-  const keep = (card: Card) => Date.parse(card.eventStartTime) > nowMs &&
-    passes(filter.sport, card.sport) && passes(filter.market, card.market) && passes(filter.lineType, card.lineType) &&
-    passes(filter.date, card.eventStartTime.slice(0, 10));
+  // One filter (league, then games with teams and start time, then stats); line style stays its own chip.
+  const cards = useMemo(() => [...(data?.rankings ?? []), ...(data?.watchlist ?? [])], [data]);
+  const { pickers, filter: pickedFilter } = useLeagueStatFilter(cards, cardStat);
+  const keep = (card: Card) => Date.parse(card.eventStartTime) > nowMs && passes(filter.lineType, card.lineType) &&
+    picked(pickedFilter.sports, card.league) && picked(pickedFilter.games, card.eventId) && picked(pickedFilter.stats, card.market);
   const rankings = (data?.rankings ?? []).filter(keep);
   const watchlist = (data?.watchlist ?? []).filter(keep);
   const options: Record<keyof ListFilter, string[]> = {
-    sport: [...new Set((data?.rankings ?? []).map((card) => card.sport))],
-    market: [...new Set((data?.rankings ?? []).filter((card) => passes(filter.sport, card.sport)).map((card) => card.market))].sort(),
-    date: [...new Set((data?.rankings ?? []).map((card) => card.eventStartTime.slice(0, 10)))].sort(),
     lineType: ['REGULAR', 'GOBLIN', 'DEMON'],
   };
   const addCard = (card: Card) => {
@@ -190,8 +195,9 @@ export default function TopPicksScreen() {
       <ChipRow>{topLists.map((item) => <FilterChip key={item.value} label={item.label} active={mode === item.value} chevron={false}
         onPress={() => setMode(item.value)} />)}</ChipRow>
       {mode === 'ALL' ? <AllPicks /> : mode !== 'GKR' && mode !== 'EV' ? <AllPicks key={mode} only={mode} /> : mode === 'EV' ? <>
-        <MultiPick label="PLATFORM" allLabel="All apps" selected={evApp} onChange={setEvApp}
-          options={(Object.keys(evApps) as (keyof typeof evApps)[]).map((app) => ({ key: app, label: evApps[app] }))} />
+        <FilterBar value={evFilter} onChange={setEvFilter} sports={[]} games={[]} stats={[]} placeholder="Filter: all apps"
+          platformName={(key) => evApps[key as keyof typeof evApps] ?? key}
+          platforms={(Object.keys(evApps) as (keyof typeof evApps)[]).map((app) => ({ key: app, label: evApps[app] }))} />
         {demo ? <Notice title="+EV needs a profile" detail="Sign in to see live +EV picks." />
           : ev.status !== 'ready' ? <Notice title={ev.status === 'error' ? '+EV unavailable' : 'Loading +EV picks'}
             detail={ev.status === 'error' ? 'Sportsbook prices are not connected yet. Try again later.' : 'Comparing sportsbook prices.'} />
@@ -206,13 +212,8 @@ export default function TopPicksScreen() {
         {!!notice && <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text>}
       </> : <>
       <Segmented label="How many top picks" options={sizes} value={size} onChange={setSize} />
+      {pickers}
       <ChipRow>
-        <FilterChip label={filter.sport === 'ALL' ? 'All Sports' : optionLabel('sport', filter.sport)}
-          active={filter.sport !== 'ALL'} onPress={() => setSheet('sport')} />
-        <FilterChip label={filter.market === 'ALL' ? 'All Stats' : optionLabel('market', filter.market)}
-          active={filter.market !== 'ALL'} onPress={() => setSheet('market')} />
-        <FilterChip icon="calendar-blank-outline" label={filter.date === 'ALL' ? 'Date' : optionLabel('date', filter.date)}
-          active={filter.date !== 'ALL'} onPress={() => setSheet('date')} />
         <FilterChip icon="chart-line" label={filter.lineType === 'ALL' ? 'Line Style' : optionLabel('lineType', filter.lineType)}
           active={filter.lineType !== 'ALL'} onPress={() => setSheet('lineType')} />
       </ChipRow>
@@ -238,7 +239,7 @@ export default function TopPicksScreen() {
       </>}
     </ScrollView>
     {tips.sheet}
-    {sheet && <Sheet visible title={{ sport: 'Sport (pick several)', market: 'Stat (pick several)', date: 'Date (pick several)', lineType: 'Line style (pick several)' }[sheet]} onClose={() => setSheet(null)}>
+    {sheet && <Sheet visible title="Line style (pick several)" onClose={() => setSheet(null)}>
       <View style={styles.options}>
         {['ALL', ...options[sheet]].map((option) => <Pressable key={option} accessibilityRole="button"
           accessibilityState={{ selected: option === 'ALL' ? filter[sheet] === 'ALL' : filter[sheet] !== 'ALL' && passes(filter[sheet], option) }}

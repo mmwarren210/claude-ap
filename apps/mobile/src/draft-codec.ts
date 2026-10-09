@@ -4,7 +4,9 @@ import { emptyFilters } from './state';
 import type { CrownLeg, Filters, TipId, ViewMode } from './state';
 
 const filterSchema=z.object({sport:z.string(),market:z.string(),direction:z.string(),
-  grade:z.string(),lineType:z.string(),evidence:z.string(),date:z.string()});
+  grade:z.string(),lineType:z.string(),evidence:z.string(),date:z.string(),
+  // Saved before games were selectable: every game.
+  game:z.string().default('ALL')});
 const tipIdSchema=z.enum(['NO_SCORE','AGAINST_MODEL','LOW_SCORE','STALE_EVIDENCE','TEAM_STACK','WEAKER_TICKET']);
 const draftSchema=z.object({filters:filterSchema,legs:z.array(z.object({line:propLineSchema,
   direction:z.enum(['MORE','LESS']),score:z.number().nullable(),modelVersion:z.string().nullable(),

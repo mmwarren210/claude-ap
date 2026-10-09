@@ -10,13 +10,13 @@ export type EdgeView = 'edges' | 'alternates';
 type EdgeState = { status: 'loading' | 'available' | 'unavailable'; data: EdgeBoardResponse | null; message: string };
 
 /** Reads the server's saved Edge pricing. Opening or refreshing never pulls odds. */
-export function useEdge(view: EdgeView, source: 'edge' | 'gkr-plus' = 'edge', day: 'all' | 'today' = 'all', query = '', sport?: string, market?: string): EdgeState & { retry: () => void } {
+export function useEdge(view: EdgeView, source: 'edge' | 'gkr-plus' = 'edge', day: 'all' | 'today' = 'all', query = '', sport?: string, market?: string, event?: string): EdgeState & { retry: () => void } {
   const q = query.trim().length >= 2 ? query.trim() : '';
   const { request } = useAuth();
   const platform = useEdgePlatform();
   const [attempt, setAttempt] = useState(0);
   const [focused, setFocused] = useState(false);
-  const requestKey = JSON.stringify([platform, view, attempt, source, day, q, sport, market]);
+  const requestKey = JSON.stringify([platform, view, attempt, source, day, q, sport, market, event]);
   const [state, setState] = useState<EdgeState & { requestKey: string; view?: string }>({ status: 'loading', data: null, message: '', requestKey: '' });
   useFocusEffect(useCallback(() => {
     setFocused(true); setAttempt((value) => value + 1);
@@ -31,7 +31,7 @@ export function useEdge(view: EdgeView, source: 'edge' | 'gkr-plus' = 'edge', da
         // GKR+ (owner only) answers in the same shape as Edge, from its own route.
         // The sport and stat pickers (several at once): those picks and their best entries, from the whole board.
         const search = (q ? `&q=${encodeURIComponent(q)}` : '') + (sport ? `&sport=${encodeURIComponent(sport)}` : '')
-          + (market ? `&market=${encodeURIComponent(market)}` : '');
+          + (market ? `&market=${encodeURIComponent(market)}` : '') + (event ? `&event=${encodeURIComponent(event)}` : '');
         const path = source === 'gkr-plus' ? `/v1/owner/gkr-plus?platform=${platform}&limit=300&day=${day}${search}`
           : `/v1/edge?platform=${platform}&view=${view}&limit=300&day=${day}${search}`;
         const response = await request(path, { signal: controller.signal });
@@ -42,7 +42,7 @@ export function useEdge(view: EdgeView, source: 'edge' | 'gkr-plus' = 'edge', da
           return;
         }
         const data = edgeBoardResponseSchema.parse(await response.json());
-        if (active) setState({ status: 'available', data, message: '', requestKey, view: `${platform}|${view}|${source}|${day}|${q}|${sport ?? ''}|${market ?? ''}` });
+        if (active) setState({ status: 'available', data, message: '', requestKey, view: `${platform}|${view}|${source}|${day}|${q}|${sport ?? ''}|${market ?? ''}|${event ?? ''}` });
       } catch (error) {
         if (!active || controller.signal.aborted) return;
         reportMobileFailure('edge', error);
@@ -51,7 +51,7 @@ export function useEdge(view: EdgeView, source: 'edge' | 'gkr-plus' = 'edge', da
       }
     })();
     return () => { active = false; controller.abort(); };
-  }, [request, requestKey, focused, view, platform, source, day, q, sport, market]);
+  }, [request, requestKey, focused, view, platform, source, day, q, sport, market, event]);
   // Keep showing the previous data while a background refresh is in flight.
   // A new sport or stat choice keeps the page up while its picks load.
   const base = `${platform}|${view}|${source}|${day}|${q}|`;

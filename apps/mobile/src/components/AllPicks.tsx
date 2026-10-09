@@ -13,7 +13,9 @@ import { useBoard } from '../use-board';
 import { useHistoryReads } from '../use-history-reads';
 import { useRankings } from '../use-rankings';
 import { Notice } from './Screen';
-import { MultiPick, picked } from './ui/MultiPick';
+import { picked } from './ui/MultiPick';
+import { emptyFilter, FilterBar } from './FilterBar';
+import type { FilterValue } from './FilterBar';
 import { PlayerAvatar } from './ui/PlayerAvatar';
 
 type BookPick = { id: string; sport?: string; playerName: string; market: string; line: number; side: 'MORE' | 'LESS'; eventStartTime: string;
@@ -31,9 +33,8 @@ export function AllPicks({ only }: { only?: PickSource } = {}) {
   // Each board's picks, filled in as they arrive (one slow board never holds up the rest); a single-board tab loads only it.
   const [loaded, setLoaded] = useState<Partial<Record<PickSource, AnyPick[]>>>({});
   // Platforms (several at once) and sports narrow the list.
-  const [chosen, setSources] = useState<string[]>([]);
-  const [sports, setSports] = useState<string[]>([]);
-  const sources = only ? [only] : chosen;
+  const [filter, setFilter] = useState<FilterValue>(emptyFilter);
+  const sources = only ? [only] : filter.platforms, sports = filter.sports;
   useFocusEffect(useCallback(() => {
     if (demo) return;
     let active = true;
@@ -101,11 +102,11 @@ export function AllPicks({ only }: { only?: PickSource } = {}) {
   for (const pick of all) counts.set(pick.source, (counts.get(pick.source) ?? 0) + 1);
   for (const pick of inSources) { const sport = sportOf(pick); if (sport) sportCounts.set(sport, (sportCounts.get(sport) ?? 0) + 1); }
   return <View style={styles.wrap}>
-    {!only && <MultiPick label="PLATFORM" allLabel={`All (${all.length})`} selected={chosen} onChange={setSources}
-      options={(Object.keys(sourceLabels) as PickSource[]).filter((item) => counts.get(item))
-        .map((item) => ({ key: item, label: sourceLabels[item], count: counts.get(item) }))} />}
-    {sportCounts.size > 1 && <MultiPick label="SPORT" allLabel="All sports" selected={sports} onChange={setSports}
-      options={[...sportCounts].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, label: key, count }))} />}
+    {all.length > 0 && <FilterBar value={filter} onChange={setFilter} games={[]} stats={[]} placeholder={only ? 'Filter: all sports' : 'Filter: all platforms and sports'}
+      platformName={(key) => sourceLabels[key as PickSource] ?? key}
+      {...(only ? {} : { platforms: (Object.keys(sourceLabels) as PickSource[]).filter((item) => counts.get(item))
+        .map((item) => ({ key: item, label: sourceLabels[item], count: counts.get(item) })) })}
+      sports={[...sportCounts].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, label: key, count }))} />}
     {!shown.length && (waiting ? <Notice title="Loading picks" detail="One moment." />
       : <Notice title="No picks right now" detail="Check back after the next update." />)}
     {shown.map((pick, index) => <Pressable key={`${pick.source}|${pick.key}|${pick.by}`} accessibilityRole="button" disabled={!pick.lineId}

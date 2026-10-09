@@ -29,6 +29,9 @@ test('filters reset and select exact lines without modifying the provider board'
   // Several picks at once: both line styles, or a stat list.
   assert.deepEqual(visibleLines(board,{...emptyFilters,lineType:'GOBLIN,REGULAR'}).map((item)=>item.id),['one','two']);
   assert.deepEqual(visibleLines(board,{...emptyFilters,market:'kills,assists'}).map((item)=>item.id),[]);
+  // Games: the board's one event, or another game only.
+  assert.deepEqual(visibleLines(board,{...emptyFilters,game:'event,other'}).map((item)=>item.id),['one','two']);
+  assert.deepEqual(visibleLines(board,{...emptyFilters,game:'other'}).map((item)=>item.id),[]);
   assert.deepEqual(visibleLines(board,{...emptyFilters,direction:'MORE'}).map((item)=>item.id),['one']);
   assert.equal(board.board.lines[1].threshold,30.5);
   const eventStart=Date.parse(line.eventStartTime);

@@ -1,20 +1,22 @@
 import type { BoardResponse } from '@crowniq/contracts';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { marketLabel } from '../insights';
+import { gameTime, marketLabel } from '../insights';
 import { emptyFilters, passes, toggleFilter } from '../state';
 import type { Filters, ViewMode } from '../state';
 import { colors, lineStyleOf, lineStyles, radius } from '../theme';
 import { Sheet } from './Sheet';
 import { PrimaryButton } from './ui/Controls';
 
-type Group = { key: keyof Filters; label: string; options: string[]; fullOnly?: boolean };
+type Group = { key: keyof Filters; label: string; options: string[]; fullOnly?: boolean; labels?: Readonly<Record<string, string>> };
 
 export function filterGroups(data: BoardResponse, draft: Filters): Group[] {
   return [
     { key: 'sport', label: 'Sport', options: [...new Set(data.board.lines.map((line) => line.sport))].sort() },
+    // Games for the sports picked (teams and start time), soonest first.
+    { key: 'game', label: 'Game', ...gameOptions(data, draft) },
     { key: 'market', label: 'Stat', options: [...new Set(data.board.lines.filter((line) =>
-      passes(draft.sport, line.sport)).map((line) => line.market))].sort() },
+      passes(draft.sport, line.sport) && passes(draft.game, line.eventId)).map((line) => line.market))].sort() },
     { key: 'lineType', label: 'Line style', options: ['REGULAR', 'GOBLIN', 'DEMON'] },
     { key: 'evidence', label: 'Evidence', options: ['HIGH', 'MEDIUM', 'LOW', 'NONE'] },
     { key: 'date', label: 'Date', options: [...new Set(data.board.lines.map((line) =>
@@ -23,6 +25,16 @@ export function filterGroups(data: BoardResponse, draft: Filters): Group[] {
     { key: 'grade', label: 'Score band', options: ['CROWN_ELITE', 'CROWN_STRONG', 'PLAYABLE', 'LEAN', 'WEAK', 'PASS'],
       fullOnly: true },
   ];
+}
+
+/** The board's games for the picked sports, soonest first, named "Away @ Home · Sun 8:20 PM". */
+export function gameOptions(data: BoardResponse, draft: Pick<Filters, 'sport'>): { options: string[]; labels: Record<string, string> } {
+  const games = new Map<string, { name: string; start: string }>();
+  const nowMs = Date.now();
+  for (const line of data.board.lines) if (passes(draft.sport, line.sport) && !games.has(line.eventId) && Date.parse(line.eventStartTime) > nowMs)
+    games.set(line.eventId, { name: line.eventName, start: line.eventStartTime });
+  const sorted = [...games].sort((a, b) => a[1].start.localeCompare(b[1].start));
+  return { options: sorted.map(([id]) => id), labels: Object.fromEntries(sorted.map(([id, game]) => [id, `${game.name} · ${gameTime(game.start)}`])) };
 }
 
 export function optionLabel(key: keyof Filters, option: string): string {
@@ -45,19 +57,20 @@ export function FilterSheet({ visible, onClose, data, value, onApply, mode, only
   const [draft, setDraft] = useState(value);
   const groups = filterGroups(data, draft).filter((group) => only ? group.key === only : mode === 'FULL' || !group.fullOnly);
   const choose = (key: keyof Filters, option: string) => {
-    const next = { ...draft, [key]: toggleFilter(draft[key], option) };
+    // A new sport choice clears picked games (they may belong to a sport no longer picked).
+    const next = { ...draft, [key]: toggleFilter(draft[key], option), ...(key === 'sport' ? { game: 'ALL' } : {}) };
     setDraft(next);
     if (only) onApply(next);
   };
   return <Sheet visible={visible} title={only ? groups[0]?.label ?? 'Filter' : 'More filters'} onClose={onClose}>
-    {groups.map(({ key, label, options }) => <View key={key} style={styles.group}>
+    {groups.map(({ key, label, options, labels }) => <View key={key} style={styles.group}>
       {!only && <Text style={styles.heading}>{label}</Text>}
       <View style={styles.options}>
         {['ALL', ...options].map((option) => {
           const selected = option === 'ALL' ? draft[key] === 'ALL' : passes(draft[key], option) && draft[key] !== 'ALL';
           return <Pressable key={option} accessibilityRole="button" accessibilityState={{ selected }}
             onPress={() => choose(key, option)} style={[styles.chip, selected && styles.active]}>
-            <Text style={[styles.text, selected && styles.activeText]}>{optionLabel(key, option)}</Text></Pressable>;
+            <Text style={[styles.text, selected && styles.activeText]}>{option !== 'ALL' && labels?.[option] ? labels[option] : optionLabel(key, option)}</Text></Pressable>;
         })}
       </View></View>)}
     {only && <PrimaryButton label="Done" onPress={onClose} />}

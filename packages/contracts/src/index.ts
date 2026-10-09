@@ -441,6 +441,8 @@ export const edgeBoardResponseSchema = z.object({
   sports: z.array(z.object({ sport: z.string(), picks: z.number().int().nonnegative() })).optional(),
   /** Rated picks per stat for the chosen sports (the stat picker). */
   markets: z.array(z.object({ market: z.string(), picks: z.number().int().nonnegative() })).optional(),
+  /** Games with rated picks for the chosen sports (the game picker), soonest first. */
+  games: z.array(z.object({ eventId: z.string(), eventName: z.string(), sport: z.string(), startTime: z.string(), picks: z.number().int().nonnegative() })).optional(),
 });
 
 export const edgeUnpricedLineSchema = z.object({
@@ -461,6 +463,8 @@ export const edgeBoardPageSchema = z.object({
   sports: z.array(z.string()), rows: z.array(edgeBoardRowSchema),
   /** Stats listed for the chosen sports (the stat picker), most lines first. */
   markets: z.array(z.object({ market: z.string(), lines: z.number().int().nonnegative() })).optional(),
+  /** Games for the chosen sports (the game picker), soonest first; `picks` counts their lines. */
+  games: z.array(z.object({ eventId: z.string(), eventName: z.string(), sport: z.string(), startTime: z.string(), picks: z.number().int().nonnegative() })).optional(),
 });
 export const edgeGenResponseSchema = z.object({
   modelVersion: identifier, builtAt: timestamp, pool: z.number().int(),

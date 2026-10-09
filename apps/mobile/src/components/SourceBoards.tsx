@@ -149,7 +149,7 @@ export function SlipTray({ lines, summary, url, appName, onClear }: { lines: str
 }
 
 const pickStat = (pick: { market: string }) => pick.market;
-function useLeagueFilter<T extends { league: string; market: string }>(picks: T[]) {
+function useLeagueFilter<T extends { league: string; market: string; eventStartTime: string; eventName?: string }>(picks: T[]) {
   const { shown, pickers } = useLeagueStatFilter(picks, pickStat);
   return { shown, chips: pickers };
 }

@@ -818,13 +818,13 @@ export function searchPicks(snapshot: EdgeSnapshot, text: string, nowMs: number,
 }
 
 export function viewPicks(snapshot: EdgeSnapshot, view: EdgeView, filters: { sport?: string; limit: number;
-  minProbability?: number; market?: string; nowMs: number }): EdgePick[] {
+  minProbability?: number; market?: string; event?: string; nowMs: number }): EdgePick[] {
   const inView = (pick: EdgePick) => view === 'all' ? true
     : view === 'edges' ? pick.edge !== null && pick.rating !== 'NONE'
       : pick.edge === null; // alternates: Goblin/Demon lines with no confirmed payout factor, ranked by hit probability
   // Never show a pick that starts in under 5 minutes (spec §6).
   const picks = snapshot.response.picks.filter((pick) => Date.parse(pick.eventStartTime) > filters.nowMs + 5 * 60_000 &&
-    inChoice(filters.sport, pick.sport) && inChoice(filters.market, pick.market) &&
+    inChoice(filters.sport, pick.sport) && inChoice(filters.market, pick.market) && inChoice(filters.event, pick.eventId) &&
     (filters.minProbability === undefined || pick.probability >= filters.minProbability) && inView(pick));
   if (view === 'alternates') picks.sort((a, b) => b.probability - a.probability);
   return picks.slice(0, filters.limit);
@@ -859,12 +859,12 @@ export type EdgeBoardFilter = 'all' | 'picks' | 'no_read';
 export type EdgeBoardSort = 'start' | 'edge' | 'probability' | 'rank';
 
 /** Every line on the board with Edge's read: priced picks (any rating) and the lines it could not read. */
-export function boardPage(snapshot: EdgeSnapshot, query: { sport?: string; market?: string; q?: string;
+export function boardPage(snapshot: EdgeSnapshot, query: { sport?: string; market?: string; event?: string; q?: string;
   filter: EdgeBoardFilter; sort: EdgeBoardSort; offset: number; limit: number; nowMs: number }): EdgeBoardPage {
   const text = query.q?.trim().toLowerCase();
-  const keep = (item: { sport: string; market: string; playerName: string; eventStartTime: string }) =>
+  const keep = (item: { sport: string; market: string; eventId: string; playerName: string; eventStartTime: string }) =>
     Date.parse(item.eventStartTime) > query.nowMs && inChoice(query.sport, item.sport) &&
-    inChoice(query.market, item.market) && (!text || item.playerName.toLowerCase().includes(text));
+    inChoice(query.market, item.market) && inChoice(query.event, item.eventId) && (!text || item.playerName.toLowerCase().includes(text));
   const picks: EdgeBoardRow[] = query.filter === 'no_read' ? [] : snapshot.response.picks.filter(keep)
     .map((pick) => ({ kind: 'PICK' as const, pick }));
   const unread: EdgeBoardRow[] = query.filter === 'picks' ? [] : snapshot.unpriced
@@ -883,13 +883,18 @@ export function boardPage(snapshot: EdgeSnapshot, query: { sport?: string; marke
     : (a, b) => strength(b) - strength(a));
   const sports = [...new Set([...snapshot.response.picks.map((pick) => pick.sport),
     ...snapshot.unpriced.map((item) => item.line.sport)])].sort();
-  const marketCounts = new Map<string, number>();
-  for (const item of [...snapshot.response.picks, ...snapshot.unpriced.map(({ line }) => line)])
-    if (inChoice(query.sport, item.sport)) marketCounts.set(item.market, (marketCounts.get(item.market) ?? 0) + 1);
+  const marketCounts = new Map<string, number>(), gameCounts = new Map<string, { eventId: string; eventName: string; sport: string; startTime: string; picks: number }>();
+  for (const item of [...snapshot.response.picks, ...snapshot.unpriced.map(({ line }) => line)]) {
+    if (Date.parse(item.eventStartTime) <= query.nowMs || !inChoice(query.sport, item.sport)) continue;
+    const game = gameCounts.get(item.eventId) ?? { eventId: item.eventId, eventName: item.eventName, sport: item.sport, startTime: item.eventStartTime, picks: 0 };
+    game.picks++; gameCounts.set(item.eventId, game);
+    if (inChoice(query.event, item.eventId)) marketCounts.set(item.market, (marketCounts.get(item.market) ?? 0) + 1);
+  }
+  const games = [...gameCounts.values()].sort((a, b) => a.startTime.localeCompare(b.startTime) || a.eventName.localeCompare(b.eventName));
   const markets = [...marketCounts].map(([market, lines]) => ({ market, lines })).sort((a, b) => b.lines - a.lines || a.market.localeCompare(b.market));
   return { modelVersion: snapshot.response.modelVersion, builtAt: snapshot.response.builtAt,
     boardFetchedAt: snapshot.response.boardFetchedAt, total: rows.length, offset: query.offset, limit: query.limit,
-    sports, markets, rows: rows.slice(query.offset, query.offset + query.limit) };
+    sports, markets, games, rows: rows.slice(query.offset, query.offset + query.limit) };
 }
 
 /** Grades Edge picks from ESPN / MLB box scores and CrownIQ's own game rows (no Odds API credits). */

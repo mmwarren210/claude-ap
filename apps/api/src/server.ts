@@ -91,7 +91,7 @@ import { analyzeTips, DAILY_TIP_UPLOADS, marketRead } from './tips.js';
 import type { TipDraft, TipGrader, TipReader, TipStore } from './tips.js';
 import { matchTip, modelRead } from './tip-models.js';
 import type { TipModelRead } from './tip-models.js';
-import { marketCounts, registerEdgeRoutes, sportCounts } from './edge/routes.js';
+import { gameCounts, marketCounts, registerEdgeRoutes, sportCounts } from './edge/routes.js';
 import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
 
@@ -1525,7 +1525,8 @@ export function buildServer(options: ServerOptions = {}) {
         const query=z.object({platform:z.enum(EDGE_PLATFORMS as [EdgePlatform,...EdgePlatform[]]).default('prizepicks'),
           limit:z.coerce.number().int().min(1).max(500).default(150),day:z.enum(['all','today']).default('all'),
           q:z.string().trim().max(60).optional(),slipSport:z.string().trim().min(1).max(200).optional(),
-          sport:z.string().trim().min(1).max(200).optional(),market:z.string().trim().min(1).max(2000).optional()}).safeParse(request.query);
+          sport:z.string().trim().min(1).max(200).optional(),market:z.string().trim().min(1).max(2000).optional(),
+          event:z.string().trim().min(1).max(4000).optional()}).safeParse(request.query);
         if(!query.success)return reply.code(400).send({code:'INVALID_QUERY'});
         const result=await gkrPlus(query.data.platform);
         if(!result)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
@@ -1548,9 +1549,10 @@ export function buildServer(options: ServerOptions = {}) {
         // A chosen sport (chip) narrows the picks and the entries to it; the chips list every sport with a rated pick.
         // Sports and stats are multi-select (comma-separated lists).
         const chosen=query.data.sport??query.data.slipSport,
-          inSport=ranked.filter((pick)=>inChoice(chosen,pick.sport)&&inChoice(query.data.market,pick.market));
-        return {...result.snapshot.response,picks:(query.data.sport||query.data.market?inSport:ranked).slice(0,query.data.limit),
-          sports:sportCounts(ranked),markets:marketCounts(ranked.filter((pick)=>inChoice(chosen,pick.sport))),
+          inSport=ranked.filter((pick)=>inChoice(chosen,pick.sport)&&inChoice(query.data.market,pick.market)&&inChoice(query.data.event,pick.eventId));
+        return {...result.snapshot.response,picks:(query.data.sport||query.data.market||query.data.event?inSport:ranked).slice(0,query.data.limit),
+          sports:sportCounts(ranked),markets:marketCounts(ranked.filter((pick)=>inChoice(chosen,pick.sport)&&inChoice(query.data.event,pick.eventId))),
+          games:gameCounts(ranked.filter((pick)=>inChoice(chosen,pick.sport))),
           slips:buildSlips(inSport,
             result.snapshot.response.entries,{minEvents:result.snapshot.minEvents}),
           counts:{...result.snapshot.response.counts,positiveEdge:ranked.length},modelVersion:GKR_PLUS_VERSION};

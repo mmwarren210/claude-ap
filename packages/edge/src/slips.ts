@@ -162,6 +162,8 @@ export interface GenerateOptions {
   /** Sports and stats to build from (comma-separated lists; unset means all). */
   readonly sport?: string;
   readonly market?: string;
+  /** Games to build from (comma-separated event ids). */
+  readonly event?: string;
   /** Only legs starting within [from, to). */
   readonly from?: number;
   readonly to?: number;
@@ -186,7 +188,7 @@ export function generateEntries(picks: readonly EdgePick[], entry: EdgeEntry, op
   const count = options.count ?? 3, maxPerEvent = options.maxPerEvent ?? 2, maxUses = options.maxLegUses ?? 1;
   const now = options.nowMs ?? Date.now(), minEvents = options.minEvents ?? 2, objective = options.objective ?? 'ev';
   const pool = picks.filter((pick) => pick.edge !== null && pick.edge > (options.minEdge ?? 0) && pick.rating !== 'NONE' && backedLeg(pick) &&
-    Date.parse(pick.eventStartTime) > now && inChoice(options.sport, pick.sport) && inChoice(options.market, pick.market) &&
+    Date.parse(pick.eventStartTime) > now && inChoice(options.sport, pick.sport) && inChoice(options.market, pick.market) && inChoice(options.event, pick.eventId) &&
     (options.from === undefined || Date.parse(pick.eventStartTime) >= options.from) &&
     (options.to === undefined || Date.parse(pick.eventStartTime) < options.to) &&
     (options.alternates === undefined ? legAllowed(entry, pick) : options.alternates || !isAlternate(pick)))
