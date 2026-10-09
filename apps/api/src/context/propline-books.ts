@@ -29,11 +29,11 @@ export function sharpLeagueFor(sportKey: string): string | null {
 /** PropLine market keys whose CrownIQ key differs by sport (everything else follows the Odds API naming CrownIQ uses). */
 function crowniqKey(sport: Sport, key: string): string {
   const shared: Readonly<Record<string, string>> = { player_pass_rush_yds: 'pass_plus_rush_yds', player_rush_reception_yds: 'rush_plus_rec_yds',
-    player_longest_completion: 'player_pass_longest_completion', batter_rbis: 'rbis', batter_runs_scored: 'runs', batter_singles: 'singles',
+    player_longest_completion: 'player_pass_longest_completion', batter_rbis: 'rbis', batter_runs_scored: 'runs', batter_runs: 'runs', batter_singles: 'singles',
     batter_doubles: 'doubles', batter_stolen_bases: 'stolen_bases', pitcher_hits_allowed: 'hits_allowed', pitcher_earned_runs: 'earned_runs',
     pitcher_walks: 'walks_allowed', pitcher_outs: 'pitching_outs', player_aces: 'aces', player_double_faults: 'double_faults',
     player_games_won: 'games_won', player_total_games: 'games_won' };
-  const nhl: Readonly<Record<string, string>> = { player_goals: 'goals', player_assists: 'assists', player_saves: 'saves', player_shots: 'shots_on_goal',
+  const nhl: Readonly<Record<string, string>> = { goalie_saves: 'saves', player_goals: 'goals', player_assists: 'assists', player_saves: 'saves', player_shots: 'shots_on_goal',
     player_blocked_shots: 'blocked_shots', player_power_play_points: 'power_play_points' };
   const soccer: Readonly<Record<string, string>> = { player_shots: 'shots', player_shots_on_target: 'sot', player_goals: 'goals',
     player_assists: 'assists', player_fouls: 'fouls', player_saves: 'goalie_saves', player_goalkeeper_saves: 'goalie_saves' };

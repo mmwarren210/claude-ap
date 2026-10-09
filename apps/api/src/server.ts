@@ -1637,8 +1637,10 @@ export function buildServer(options: ServerOptions = {}) {
     // Why GKR passes: reason codes, and the score spread of lines it did score, by sport.
     const why:Record<string,number>={},scored:Record<string,number>={};
     const missing:Record<string,number>={},evidenceKinds=new Map(service.getEvidence().map((item)=>[item.id,item.kind]));
+    // By id, not a scan per analysis: 40k lines × 40k analyses scanned froze the server for seconds (lag log, 2026-10-09).
+    const lineById=new Map(board.board.lines.map((item)=>[item.id,item]));
     for(const analysis of board.analyses){
-      const line=board.board.lines.find((item)=>item.id===analysis.lineId);
+      const line=lineById.get(analysis.lineId);
       const sport=line?.sport??'?';
       if(analysis.score!==null){const bucket=analysis.score>=80?'80+':analysis.score>=74?'74-79':analysis.score>=68?'68-73':'<68';
         scored[`${sport} ${bucket}`]=(scored[`${sport} ${bucket}`]??0)+1;}
