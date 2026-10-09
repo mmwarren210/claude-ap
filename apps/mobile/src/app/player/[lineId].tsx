@@ -69,7 +69,9 @@ function LadderRow({ line, analysis, current, onPress }: { line: PropLine; analy
     <Text style={styles.ladderLine}>{formatLine(line.threshold)}</Text>
     <Text style={[styles.ladderRate, (rate ?? 0) >= 0.6 && { color: colors.mint }]}>{percent(rate)}</Text>
     <Text style={styles.ladderScore}>{analysis?.score === null || analysis?.score === undefined ? '—' : Math.round(analysis.score)}</Text>
-    <Text style={[styles.ladderBand, { color: bandColor(analysis?.scoreBand) }]}>{bandLabel(analysis?.scoreBand)}</Text>
+    {/* A pass because GKR's side isn't offered on this line (Goblins and Demons are More only) says so. */}
+    <Text style={[styles.ladderBand, { color: bandColor(analysis?.scoreBand) }]}>{analysis?.reasonCode === 'DIRECTION_UNAVAILABLE'
+      ? (line.availableDirections[0] === 'MORE' ? 'MORE ONLY' : 'LESS ONLY') : bandLabel(analysis?.scoreBand)}</Text>
     <View style={[styles.ladderStyle, { borderColor: alpha(style.color, 0.45), backgroundColor: alpha(style.color, 0.08) }]}>
       <Icon name={style.icon} size={14} color={style.color} /><Text style={[styles.ladderStyleText, { color: style.color }]}>
         {style.short}</Text></View>
@@ -121,6 +123,11 @@ export default function PlayerResearch() {
     item.playerId === line.playerId) ?? [] : [], [data, line]);
   const ladder = useMemo(() => line ? related.filter((item) => item.market === line.market &&
     item.lineType !== 'UNKNOWN_ALTERNATE').sort((a, b) => a.threshold - b.threshold) : [], [related, line]);
+  // GKR's side on the regular line decides the alternates: Goblins and Demons are More only, so a Less play passes them.
+  const regular = ladder.find((item) => item.lineType === 'REGULAR'), regularSide = regular ? analyses.get(regular.id)?.direction : undefined;
+  const ladderNote = regularSide === 'LESS' && ladder.some((item) => item.lineType === 'GOBLIN' || item.lineType === 'DEMON')
+    ? `GKR’s side on the regular line is Less. Goblins and Demons are More only on PrizePicks, so they pass here. When GKR’s side is More, each Goblin and Demon gets its own score.`
+    : null;
   const markets = useMemo(() => {
     const best = new Map<string, PropLine>();
     for (const item of related) {
@@ -273,6 +280,7 @@ export default function PlayerResearch() {
           {ladder.map((item) => <LadderRow key={item.id} line={item} analysis={analyses.get(item.id)}
             current={item.id === line.id} onPress={() => setSelectedId(item.id)} />)}
         </View>}
+        {ladderNote && <Text style={styles.note}>{ladderNote}</Text>}
       </View>
 
       {started ? <Notice title="Event started" detail="This line can no longer be added or saved." />
