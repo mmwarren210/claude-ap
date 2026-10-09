@@ -13,9 +13,10 @@ const quote = (bookmaker: string, overPrice: number, underPrice: number): Market
   eventId: 'e1', sourceMarketKey: 'player_points', market: 'player_points', playerName: 'Test Player', point: 24.5,
   overPrice, underPrice, fetchedAt: now.toISOString() });
 
-test('entries come from the app payout charts (PrizePicks Power 2–6, Flex 2–6)', () => {
+test('entries come from the app payout charts (PrizePicks Power 2–6, Flex 3–6, as PropLine publishes them)', () => {
   const entries = entriesFromTables(DEFAULT_PAYOUTS.prizepicks);
-  assert.equal(entries.length, 10);
+  assert.equal(entries.length, 9);
+  assert.deepEqual(entries.find((entry) => entry.type === 'POWER' && entry.size === 3)!.payouts, { 3: 5 });
   const flex6 = entries.find((entry) => entry.type === 'FLEX' && entry.size === 6)!;
   assert.deepEqual(flex6.payouts, { 6: 25, 5: 2, 4: 0.4 });
   assert.ok(Math.abs(breakEven(entries.find((entry) => entry.type === 'POWER' && entry.size === 2)!) - Math.sqrt(1 / 3)) < 1e-6);

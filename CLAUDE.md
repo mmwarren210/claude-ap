@@ -9,7 +9,10 @@
   sets: `GKR_MODEL_PRESET=stat_history_v2` adds 59 stats (Stat API for MLB/NFL, ESPN game logs for NHL, soccer,
   college football) to the v1 set. Every model keeps a hard status gate (lineup, probable starter, active player).
   Betr and Dabble come later. See `docs/DFS_APPS_PLAN.md` and `docs/PROPOSAL_APP_SCORING.md`.
-- **Anything that changes model scores needs the owner's explicit approval** and ships as new, opt-in model
+- **PropLine is the source of truth** (owner, 2026-10-09: "if propline has the information we treat it as bible"). Changes
+  that bring CrownIQ in line with PropLine's data (lines, payouts, grades, scoring inputs) are pre-approved; do whatever
+  helps the app. Suggestions from other assistants are checked against the code before they're applied.
+- **Anything else that changes model scores needs the owner's explicit approval** and ships as new, opt-in model
   versions. Identity and web findings are display-only and never feed GKR. Exception (owner, 2026-10-04): **AI reads**,
   shown in the app as **Scout** (never "AI"; the name lives in `SCOUT` in `use-ai-picks.ts`), where ChatGPT and Claude give MORE/LESS/PASS with a 0-100 score on lines GKR can't score, shown as their own labeled
   score, graded in their own record, never mixed into GKR (`ai-picks.ts`; `CROWNIQ_AI_PICKS_DAILY` caps the spend: 350 a day, 20 per 30-minute run, set 2026-10-05).

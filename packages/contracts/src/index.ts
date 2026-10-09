@@ -525,10 +525,11 @@ export type Payouts = Readonly<Record<PickApp, AppPayouts>>;
  * chart: it shows a Base Payout at entry and pays extra by contest standings, so its numbers here are estimates.
  */
 export const DEFAULT_PAYOUTS: Payouts = {
-  // PrizePicks' published chart (checked 2026-10-05): Power 3/6/10/20/37.5x; Flex now starts at 2 picks.
+  // PrizePicks' standard chart as PropLine publishes it (/v1/dfs/payouts, 2026-10-09; PropLine is the source of truth):
+  // Power 3/5/10/20/37.5x, Flex 3–6 picks. /v1/admin/payout-check compares it with PropLine's current chart.
   prizepicks: {
-    POWER: { 2: { 2: 3 }, 3: { 3: 6 }, 4: { 4: 10 }, 5: { 5: 20 }, 6: { 6: 37.5 } },
-    FLEX: { 2: { 2: 2, 1: 0.5 }, 3: { 3: 3, 2: 1 }, 4: { 4: 6, 3: 1.5 }, 5: { 5: 10, 4: 2, 3: 0.4 }, 6: { 6: 25, 5: 2, 4: 0.4 } },
+    POWER: { 2: { 2: 3 }, 3: { 3: 5 }, 4: { 4: 10 }, 5: { 5: 20 }, 6: { 6: 37.5 } },
+    FLEX: { 3: { 3: 2.25, 2: 1.25 }, 4: { 4: 5, 3: 1.5 }, 5: { 5: 10, 4: 2, 3: 0.4 }, 6: { 6: 25, 5: 2, 4: 0.4 } },
   },
   // Underdog's published base multipliers (checked 2026-10-05), before each pick's own multiplier: Standard 2–8 picks,
   // Flex 3–8 picks (6+ picks are double-flexed).

@@ -199,7 +199,8 @@ const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBud
     // Underdog's own feed is free, so it refreshes every two hours; the Apify actor stays as a backup on demand.
     {source:underdogDirect(),hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_UNDERDOG_DIRECT','8,10,12,14,16,18,20,22')},
     {source:zenUnderdog,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_UNDERDOG','')},
-    {source:zenPick6,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PICK6','13')},
+    // Off by default since PropLine carries Pick6 (2026-10-09); CROWNIQ_SCRAPER_HOURS_ZEN_PICK6 turns it back on.
+    {source:zenPick6,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PICK6','')},
     // The Odds API alongside the scrapers as a third check. It spends Odds API credits, so by default
     // it runs only when the owner pulls (CROWNIQ_SCRAPER_HOURS_ODDS_API adds a schedule).
     ...(oddsPrizePicks?[{source:oddsApiSource(oddsPrizePicks,undefined,
