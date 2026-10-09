@@ -8,7 +8,7 @@ const listeners = new Set<() => void>();
 
 export const EDGE_PLATFORMS: readonly { value: EdgePlatform; label: string; short: string }[] = [
   { value: 'prizepicks', label: 'PrizePicks', short: 'PP' }, { value: 'underdog', label: 'Underdog', short: 'UD' },
-  { value: 'pick6', label: 'Pick6', short: 'P6' }, { value: 'draftkings', label: 'DraftKings', short: 'DK' },
+  { value: 'pick6', label: 'Pick6', short: 'P6' }, { value: 'dabble', label: 'Dabble', short: 'DB' }, { value: 'draftkings', label: 'DraftKings', short: 'DK' },
   { value: 'hardrock', label: 'Hard Rock', short: 'HR' }];
 export const platformShort = (value: EdgePlatform) => EDGE_PLATFORMS.find((item) => item.value === value)?.short ?? 'PP';
 export const platformLabel = (value: EdgePlatform) => EDGE_PLATFORMS.find((item) => item.value === value)?.label ?? 'PrizePicks';

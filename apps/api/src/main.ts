@@ -182,7 +182,7 @@ const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBud
     ...(propLine?[{source:propLineBoard(propLine,{app:'prizepicks',bookmaker:'prizepicks'}),
       hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PROPLINE_PRIZEPICKS',Array.from({length:24},(_,hour)=>hour).join(','))}]:[]),
     // Underdog and Pick6 from PropLine too; Underdog's own feed stays alongside for its payout multipliers.
-    ...(propLine?(['underdog','pick6'] as const).map((app)=>({source:propLineBoard(propLine,{app,bookmaker:app}),
+    ...(propLine?(['underdog','pick6','dabble'] as const).map((app)=>({source:propLineBoard(propLine,{app,bookmaker:app}),
       hoursEt:hoursEt(`CROWNIQ_SCRAPER_HOURS_PROPLINE_${app.toUpperCase()}`,Array.from({length:24},(_,hour)=>hour).join(','))})):[]),
     {source:prizePicksPartner(),hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER','7,9,11,13,15,17,19,21,23')},
     {source:zenPrizePicksEsports,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_ESPORTS','')},

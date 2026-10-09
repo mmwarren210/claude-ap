@@ -9,8 +9,8 @@ import type { DfsApp } from './scrapers/scraped-line.js';
 // 2026-10-04, CROWNIQ_APP_GKR_SCORES) with the approved models on the PrizePicks line's research; see appScores.
 
 export type OtherApp = Exclude<DfsApp, 'prizepicks'>;
-export const otherApps: readonly OtherApp[] = ['underdog', 'pick6'];
-const prefixes: Readonly<Record<OtherApp, string>> = { underdog: 'ud', pick6: 'p6' };
+export const otherApps: readonly OtherApp[] = ['underdog', 'pick6', 'dabble'];
+const prefixes: Readonly<Record<OtherApp, string>> = { underdog: 'ud', pick6: 'p6', dabble: 'db' };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 24);
 
 /** Stat names that mean the same thing under different keys, so lines match across apps. */

@@ -95,7 +95,7 @@ export function elsewhereText(pick: EdgePick): string | null {
       : other.edge !== null ? ` · ${signedPoints(other.edge)} pts` : '')).join('  |  ');
 }
 
-const shortNames: Readonly<Record<string, string>> = { prizepicks: 'PP', underdog: 'UD', pick6: 'P6', draftkings: 'DK', hardrock: 'HR' };
+const shortNames: Readonly<Record<string, string>> = { prizepicks: 'PP', underdog: 'UD', pick6: 'P6', dabble: 'DB', draftkings: 'DK', hardrock: 'HR' };
 /** "PP 24.5 · Edge line 26.5": the platform's number beside the number Edge would set. */
 export function lineComparison(pick: EdgePick): string {
   return `${shortNames[pick.platform] ?? 'PP'} ${formatLine(pick.threshold)} · Edge line ${formatLine(pick.fairLine)}`;

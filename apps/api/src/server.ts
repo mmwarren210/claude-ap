@@ -1144,7 +1144,7 @@ export function buildServer(options: ServerOptions = {}) {
     // `personal` Crowns hold the user's own calls (one side per line in `directions`) and skip GKR's rules.
     // Underdog and Pick6 take up to 8 picks; PrizePicks up to 6.
     const input=z.object({lineIds:z.array(z.string().min(1).max(300)).min(2).max(8),personal:z.literal(true).optional(),
-      directions:z.record(z.string(),z.enum(['MORE','LESS'])).optional(),app:z.enum(['underdog','pick6']).optional()})
+      directions:z.record(z.string(),z.enum(['MORE','LESS'])).optional(),app:z.enum(['underdog','pick6','dabble']).optional()})
       .strict().refine((value)=>!value.personal||value.lineIds.every((id)=>value.directions?.[id]))
       .refine((value)=>!!value.app||value.lineIds.length<=6)
       .safeParse(request.body);
@@ -1213,7 +1213,7 @@ export function buildServer(options: ServerOptions = {}) {
     const board=service.getBoard();
     if(!board)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
     if(!options.sharpProps)return reply.code(503).send({code:'EV_UNCONFIGURED'});
-    const only=z.object({app:z.enum(['prizepicks','underdog','pick6']).optional()}).parse(request.query).app;
+    const only=z.object({app:z.enum(['prizepicks','underdog','pick6','dabble']).optional()}).parse(request.query).app;
     const {fetchedAt,prices}=await options.sharpProps.current();
     const time=now().getTime();
     if(!evCache||evCache.key[0]!==board||evCache.key[1]!==prices||time-evCache.at>5*60_000){
@@ -1379,7 +1379,8 @@ export function buildServer(options: ServerOptions = {}) {
         const found=await options.playerHistory.tennisFantasy(line.playerName).catch(()=>null);
         return found&&found.values.length>=5?found:null;
       }
-      if(app==='pick6'||!options.espnHistory?.recentFantasy)return null;
+      // Pick6 and Dabble publish no fantasy scoring CrownIQ knows, so no fantasy history is built for them.
+      if(app==='pick6'||app==='dabble'||!options.espnHistory?.recentFantasy)return null;
       const values=await options.espnHistory.recentFantasy({eventId:line.eventId,eventName:line.eventName,eventStartTime:line.eventStartTime,
         league:line.league,playerId:line.playerId,playerName:line.playerName,team:line.team,opponent:line.opponent,
         homeTeam:line.homeTeam??null,awayTeam:line.awayTeam??null,market:line.market,sport:line.sport,
@@ -1462,7 +1463,7 @@ export function buildServer(options: ServerOptions = {}) {
           ?[[item.lineId,{direction:item.direction as 'MORE'|'LESS',score:item.score}] as const]:[]));
         return (pick)=>analyses.get(pick.lineId)??null;
       }
-      if(platform==='underdog'||platform==='pick6'){
+      if(platform==='underdog'||platform==='pick6'||platform==='dabble'){
         const scores=await scoresFor(platform),prefix=platform==='underdog'?'ud':'p6';
         return (pick)=>{const score=scores.get(`${prefix}:${pick.lineId.slice(platform.length+1)}`);
           return score?{direction:score.direction,score:score.score}:null;};

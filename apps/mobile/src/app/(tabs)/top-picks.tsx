@@ -35,7 +35,7 @@ import type { PickSource } from '../../all-picks';
 /** Top Picks by provider: everything together, PrizePicks' GKR rankings, each other board, and +EV. */
 const topLists: readonly { value: 'ALL' | 'GKR' | 'EV' | Exclude<PickSource, 'prizepicks'>; label: string }[] = [
   { value: 'ALL', label: 'All' }, { value: 'GKR', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' },
-  { value: 'pick6', label: 'Pick6' }, { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' },
+  { value: 'pick6', label: 'Pick6' }, { value: 'dabble', label: 'Dabble' }, { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' },
   { value: 'EV', label: '+EV' }];
 
 type Card = RankingCard | SecondLookCard;

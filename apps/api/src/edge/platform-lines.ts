@@ -18,7 +18,7 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 export type PayoutBook = Map<string, Partial<Record<PlayableDirection, SidePayout>>>;
 
 /** Underdog / Pick6 board lines from the scraped store, with each side's multiplier. */
-export function appLines(stored: readonly StoredLine[], app: 'underdog' | 'pick6', fetchedAt: string) {
+export function appLines(stored: readonly StoredLine[], app: 'underdog' | 'pick6' | 'dabble', fetchedAt: string) {
   const lines: PropLine[] = [], payouts: PayoutBook = new Map(), promos = new Map<string, number | null>();
   for (const line of stored) {
     if (line.app !== app || line.removedAt) continue;

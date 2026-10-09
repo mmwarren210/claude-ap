@@ -3,11 +3,12 @@ import { Linking, Platform, Share } from 'react-native';
 // Carrying picks into the pick'em apps. None of them publishes a link that pre-fills an entry, so CrownIQ copies the
 // picks and opens the app (its universal link opens the installed app on phones).
 
-export type PickApp = 'prizepicks' | 'underdog' | 'pick6';
+export type PickApp = 'prizepicks' | 'underdog' | 'pick6' | 'dabble';
 export const appNames: Readonly<Record<PickApp, string>> = { prizepicks: 'PrizePicks', underdog: 'Underdog',
-  pick6: 'Pick6' };
+  pick6: 'Pick6', dabble: 'Dabble' };
 export const appUrls: Readonly<Record<PickApp, string>> = { prizepicks: 'https://app.prizepicks.com/',
-  underdog: 'https://underdogfantasy.com/pick-em/higher-lower', pick6: 'https://pick6.draftkings.com/' };
+  underdog: 'https://underdogfantasy.com/pick-em/higher-lower', pick6: 'https://pick6.draftkings.com/',
+  dabble: 'https://dabble.com/' };
 
 export const sideWord = (app: PickApp, side: 'MORE' | 'LESS') => app === 'underdog' ? side === 'MORE' ? 'Higher' : 'Lower'
   : side === 'MORE' ? 'More' : 'Less';

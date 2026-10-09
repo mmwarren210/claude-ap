@@ -321,7 +321,7 @@ export const nflPassingResultSchema = z.object({
 
 // ---- CrownIQ Edge engine output (a standalone engine; never reads or changes GKR output) ----
 /** Every platform Edge reads. */
-export const edgePlatformSchema = z.enum(['prizepicks', 'underdog', 'pick6', 'draftkings', 'hardrock']);
+export const edgePlatformSchema = z.enum(['prizepicks', 'underdog', 'pick6', 'dabble', 'draftkings', 'hardrock']);
 const probability = z.number().min(0).max(1);
 export const edgeTierSchema = z.enum(['SHARP', 'MARKET', 'MODEL', 'LADDER']);
 export const edgeRatingSchema = z.enum(['ELITE', 'STRONG', 'VALUE', 'THIN', 'NONE']);
@@ -389,7 +389,7 @@ export const edgePickSchema = z.object({
   // for this side there, its payout and edge.
   /** The player's headshot (the board's player photos, or the app line's own image), when there is one. */
   playerImageUrl: z.url().optional(),
-  elsewhere: z.array(z.object({ platform: z.enum(['prizepicks', 'underdog', 'pick6', 'draftkings', 'hardrock']),
+  elsewhere: z.array(z.object({ platform: z.enum(['prizepicks', 'underdog', 'pick6', 'dabble', 'draftkings', 'hardrock']),
     lineId: identifier, threshold: z.number().finite(), side: playableDirectionSchema, probability, edge: z.number().finite().nullable(),
     payoutMultiplier: z.number().positive().finite().optional(), ev: z.number().finite().optional() })).optional(),
 });
@@ -497,7 +497,7 @@ export type NflPassingResult = z.infer<typeof nflPassingResultSchema>;
 
 /* ---------- Pick'em payouts and break-evens ---------- */
 
-export const pickAppSchema = z.enum(['prizepicks', 'underdog', 'pick6']);
+export const pickAppSchema = z.enum(['prizepicks', 'underdog', 'pick6', 'dabble']);
 export type PickApp = z.infer<typeof pickAppSchema>;
 export const entryModeSchema = z.enum(['POWER', 'FLEX']);
 export type EntryMode = z.infer<typeof entryModeSchema>;
@@ -536,6 +536,9 @@ export const DEFAULT_PAYOUTS: Payouts = {
     POWER: { 2: { 2: 3 }, 3: { 3: 6 }, 4: { 4: 10 }, 5: { 5: 12 }, 6: { 6: 37.5, 5: 1.5 }, 7: { 7: 40, 6: 2 }, 8: { 8: 80, 7: 3, 6: 1 } },
     FLEX: {},
   },
+  // Dabble (owner, 2026-10-08, lines from PropLine): no payout chart confirmed yet, so none is assumed. Edge shows each Dabble
+  // pick's chance and no edge until the owner's chart arrives (CROWNIQ_PAYOUTS).
+  dabble: { POWER: {}, FLEX: {} },
 };
 
 const choose = (n: number, k: number) => { let result = 1; for (let i = 1; i <= k; i++) result = result * (n - k + i) / i; return result; };

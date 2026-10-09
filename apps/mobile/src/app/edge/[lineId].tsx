@@ -99,7 +99,7 @@ export default function EdgeDetail() {
 
 type Point = { x: number; p: number };
 type Movement = { platform: string; points: { t: string; number: number }[] };
-const platformNames: Record<string, string> = { prizepicks: 'PrizePicks', prizepicks_flex: 'PrizePicks', underdog: 'Underdog', pick6: 'Pick6',
+const platformNames: Record<string, string> = { prizepicks: 'PrizePicks', prizepicks_flex: 'PrizePicks', underdog: 'Underdog', pick6: 'Pick6', dabble: 'Dabble',
   draftkings: 'DraftKings', hardrock: 'Hard Rock', fanduel: 'FanDuel', betrivers: 'BetRivers' };
 
 /** The fair distribution as bars, with the pick's side shaded and the line marked. */

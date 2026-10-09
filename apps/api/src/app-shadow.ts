@@ -13,7 +13,7 @@ import type { ScrapedLineStore } from './scrapers/line-store.js';
 // the app's own number and sides, on the research gathered for the PrizePicks line. Plays are recorded under shadow
 // versions, graded from box scores, and never shown to users or added to GKR's tracked record.
 
-const tags: Readonly<Record<OtherApp, string>> = { underdog: 'UD-SHADOW', pick6: 'P6-SHADOW' };
+const tags: Readonly<Record<OtherApp, string>> = { underdog: 'UD-SHADOW', pick6: 'P6-SHADOW', dabble: 'DB-SHADOW' };
 /** Go-live bars the owner approved: per app, on shadow plays scoring 80+. */
 export const GO_LIVE = { minScore: 80, minGraded: 150, minHitRate: 0.56, maxGapToPrizePicks: 0.03 } as const;
 

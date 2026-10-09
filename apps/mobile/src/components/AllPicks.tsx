@@ -40,7 +40,7 @@ export function AllPicks({ only }: { only?: PickSource } = {}) {
       return response?.ok ? await response.json() as T : null;
     };
     const loaders: Partial<Record<PickSource, () => Promise<AnyPick[]>>> = {
-      ...Object.fromEntries((['underdog', 'pick6'] as const).map((app) => [app, async () =>
+      ...Object.fromEntries((['underdog', 'pick6', 'dabble'] as const).map((app) => [app, async () =>
         ((await json<{ lines: AppLine[] }>(`/v1/apps/${app}/board`))?.lines ?? []).flatMap((line): AnyPick[] => {
           const back = backing(line);
           return back ? [{ key: `${line.playerId}|${line.market ?? line.stat}`, source: app, by: back.by, title: line.playerName,

@@ -9,7 +9,7 @@ import type { FairPrice } from './context/sharp-props.js';
 // the sportsbooks put it. When GKR or a History Read backs a side, the shop says where that side is easiest to play.
 // Display only: nothing here changes a score.
 
-export type ShopSource = 'prizepicks' | 'underdog' | 'pick6';
+export type ShopSource = 'prizepicks' | 'underdog' | 'pick6' | 'dabble';
 export interface ShopOffer {
   readonly source: ShopSource; readonly lineId: string; readonly threshold: number; readonly lineType: string;
   readonly sides: readonly PlayableDirection[];

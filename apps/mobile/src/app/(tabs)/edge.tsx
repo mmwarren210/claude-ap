@@ -99,6 +99,7 @@ export default function EdgeScreen() {
         <Text style={styles.sectionDetail}>{searching ? 'Every upcoming line Edge read for that player on this platform, plays or not; the strongest edge first.' : view === 'edges'
           ? book ? 'Every rung the book posts, held against its own odds. Stake shown is a quarter-Kelly share of your bankroll, capped at 2%.'
             : platform === 'pick6' ? 'Pick6 publishes no payout chart, so Edge shows each pick’s chance; edges appear once the payouts are confirmed.'
+            : platform === 'dabble' ? 'Dabble’s payout chart isn’t confirmed yet, so Edge shows each pick’s chance; edges appear once it is.'
             : 'Picks whose hit probability beats the break-even. Edge is shown in percentage points.'
           : 'No source gives PrizePicks’ Goblin/Demon payout factors, so Edge shows each leg’s hit chance and the minimum payout factor that makes it worth it.'}</Text>
         {picks.length ? picks.map((pick, index) => <EdgePickCard key={pick.key + pick.side} pick={pick} accent={rankAccents[index % rankAccents.length]}

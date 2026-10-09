@@ -33,7 +33,7 @@ const ringTint: Readonly<Record<Backing['by'], string | undefined>> = { GKR: und
 const band = (score: number) => score >= 92 ? 'CROWN_ELITE' as const : score >= 86 ? 'CROWN_STRONG' as const
   : score >= 80 ? 'PLAYABLE' as const : score >= 74 ? 'LEAN' as const : 'WEAK' as const;
 
-function LegCard({ app, leg, accent, onRemove }: { app: 'underdog' | 'pick6'; leg: Leg; accent: string; onRemove: () => void }) {
+function LegCard({ app, leg, accent, onRemove }: { app: 'underdog' | 'pick6' | 'dabble'; leg: Leg; accent: string; onRemove: () => void }) {
   const back = backing(leg.line), multiplier = leg.line.multipliers?.[leg.side];
   return <View style={[styles.leg, { borderColor: alpha(accent, 0.55) }]}>
     <PlayerAvatar name={leg.line.playerName} photoUrl={leg.line.playerImageUrl} ring={accent} size={58} />
@@ -56,7 +56,7 @@ function LegCard({ app, leg, accent, onRemove }: { app: 'underdog' | 'pick6'; le
   </View>;
 }
 
-export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: number }) {
+export function AppCrown({ app, size }: { app: 'underdog' | 'pick6' | 'dabble'; size: number }) {
   const { request, demo } = useAuth();
   const { nowMs } = useBoard();
   const [lines, setLines] = useState<AppLine[] | null>(null);

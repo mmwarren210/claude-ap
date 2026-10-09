@@ -81,9 +81,10 @@ function hitter(row: Row, app: FantasyApp): number | null {
     + (v(row, 'walks') + v(row, 'hitByPitch')) * (ud ? 3 : 2) + v(row, 'stolenBases') * (ud ? 4 : 5);
 }
 
-/** A fantasy line's app from its id (Underdog and Pick6 lines carry their app; the rest are PrizePicks). */
-export function fantasyApp(line: Pick<PropLine, 'id'>): FantasyApp | 'pick6' {
-  return line.id.startsWith('underdog:') ? 'underdog' : line.id.startsWith('pick6:') ? 'pick6' : 'prizepicks';
+/** A fantasy line's app from its id (Underdog, Pick6 and Dabble lines carry their app; the rest are PrizePicks). */
+export function fantasyApp(line: Pick<PropLine, 'id'>): FantasyApp | 'pick6' | 'dabble' {
+  return line.id.startsWith('underdog:') ? 'underdog' : line.id.startsWith('pick6:') ? 'pick6'
+    : line.id.startsWith('dabble:') ? 'dabble' : 'prizepicks';
 }
 
 /** A full-game fantasy score line (any app's label); segment lines are left out. */

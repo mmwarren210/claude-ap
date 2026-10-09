@@ -36,7 +36,7 @@ import { chosenDay, gameDays, onDay } from '../../game-days';
 import type { CrownProvider } from '../../crown-legs';
 
 const crownProviders: readonly { value: CrownProvider | 'prizepicks'; label: string }[] = [
-  { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'Pick6' },
+  { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'Pick6' }, { value: 'dabble', label: 'Dabble' },
   { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' }];
 
 /** PrizePicks takes up to 6 picks; Underdog and Pick6 up to 8. */
@@ -111,7 +111,7 @@ export default function CrownScreen() {
   // picks it.
   const [provider, setProvider] = useState<CrownProvider | 'prizepicks'>(crownOpening());
   useFocusEffect(useCallback(() => { setProvider(crownOpening()); }, []));
-  const playApp: PickApp = provider === 'underdog' || provider === 'pick6' ? provider : 'prizepicks';
+  const playApp: PickApp = provider === 'underdog' || provider === 'pick6' || provider === 'dabble' ? provider : 'prizepicks';
   const [lineKind, setLineKind] = useState<'ANY' | 'REGULAR' | 'GOBLIN' | 'DEMON'>('ANY');
   const [sports, setSports] = useState<string[]>([]), [picked, setPicked] = useState<string | null>(null);
   const tips = useTipFlow(setMessage);
@@ -195,7 +195,7 @@ export default function CrownScreen() {
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <AppHeader subtitle="Your Crown" />
       {appPicker}
-      {provider === 'underdog' || provider === 'pick6' ? <>
+      {provider === 'underdog' || provider === 'pick6' || provider === 'dabble' ? <>
         <Segmented label="Crown size" options={sizesFor(8)} value={size} onChange={setSize} />
         <AppCrown key={`${provider}-${size}`} app={provider} size={size} />
       </> : <BookCrown key={provider} book={provider} />}
@@ -311,7 +311,7 @@ export default function CrownScreen() {
       {legs.length >= 2 && <View style={styles.panel}>
         <Text style={styles.panelTitle}>Play it on</Text>
         <Text style={styles.legMeta}>Copy these picks and open the app. Underdog and Pick6 show each player’s line there first.</Text>
-        <View style={styles.actions}>{(['prizepicks', 'underdog', 'pick6'] as const).map((app) => <GhostButton key={app}
+        <View style={styles.actions}>{(['prizepicks', 'underdog', 'pick6', 'dabble'] as const).map((app) => <GhostButton key={app}
           label={appNames[app]} style={styles.action} onPress={() => setPortApp(app)} />)}</View>
       </View>}
       {legs.length >= 2 && <View style={styles.actions}>

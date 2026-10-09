@@ -1,6 +1,6 @@
 import type { PlayableDirection } from '@crowniq/contracts';
 
-export type DfsApp = 'prizepicks' | 'underdog' | 'pick6';
+export type DfsApp = 'prizepicks' | 'underdog' | 'pick6' | 'dabble';
 export type ScrapedTier = 'REGULAR' | 'GOBLIN' | 'DEMON';
 
 /** One pick'em line as a scraper reported it, in a source-neutral shape. */

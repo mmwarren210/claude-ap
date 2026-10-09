@@ -31,7 +31,7 @@ const stored = (app: 'underdog' | 'pick6', name: string, index: number, multipli
 test('Edge P2: every platform priced against its own payout, a platform never prices itself', async () => {
   const service = new EdgeService({ board: () => board, payouts: DEFAULT_PAYOUTS, clock: () => now,
     sharp: { prices: async () => prices, pickem: async () => [] },
-    appBoards: { active: async (app) => players.map((name, index) => stored(app, name, index,
+    appBoards: { active: async (app) => players.map((name, index) => stored(app as 'underdog' | 'pick6', name, index,
       app === 'underdog' ? { MORE: index === 0 ? 1.1 : 1, LESS: 1 } : { MORE: 1, LESS: 1 }, app === 'pick6' && index === 1)) } });
   const [pp, ud, p6, dk, hr] = await Promise.all((['prizepicks', 'underdog', 'pick6', 'draftkings', 'hardrock'] as const)
     .map((platform) => service.snapshot(platform)));

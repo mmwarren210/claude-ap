@@ -42,7 +42,7 @@ export interface EdgeServiceOptions {
   /** SharpAPI's latest book prices and PrizePicks lines. */
   readonly sharp?: { prices(): Promise<readonly FairPrice[]>; pickem(): Promise<readonly PickemLine[]> } | null;
   /** The scraped Underdog and Pick6 boards. */
-  readonly appBoards?: { active(app: 'underdog' | 'pick6'): Promise<readonly StoredLine[]> } | null;
+  readonly appBoards?: { active(app: 'underdog' | 'pick6' | 'dabble'): Promise<readonly StoredLine[]> } | null;
   readonly history?: InternalHistoryStore | null;
   /** A player's recent values for a line's stat (the shared History values), newest first. */
   readonly values?: ((line: PropLine) => Promise<{ values: number[] } | null>) | null;
@@ -155,10 +155,10 @@ function evShape(picks: readonly EdgePick[]) {
     sport: tally((pick) => pick.sport), medianEv: evs.length ? Math.round(evs[Math.floor(evs.length / 2)]! * 1000) / 1000 : null };
 }
 
-export const EDGE_PLATFORMS: readonly EdgePlatform[] = ['prizepicks', 'underdog', 'pick6', 'draftkings', 'hardrock'];
+export const EDGE_PLATFORMS: readonly EdgePlatform[] = ['prizepicks', 'underdog', 'pick6', 'dabble', 'draftkings', 'hardrock'];
 /** Each platform's book in SharpAPI, left out of its own fair price (a book never confirms its own price). */
 const ownBooks: Readonly<Record<EdgePlatform, readonly string[]>> = { prizepicks: ['prizepicks', 'prizepicks_flex'],
-  underdog: ['underdog'], pick6: ['pick6'], draftkings: ['draftkings'], hardrock: ['hardrock'] };
+  underdog: ['underdog'], pick6: ['pick6'], dabble: ['dabble'], draftkings: ['draftkings'], hardrock: ['hardrock'] };
 /** Largest parlay Edge builds per sportsbook (DraftKings 8, Hard Rock 20). */
 const parlayMax: Readonly<Partial<Record<EdgePlatform, number>>> = { draftkings: 8, hardrock: 20 };
 
@@ -220,7 +220,7 @@ export function nextSideBias(previous: SideBias | null, picks: readonly Pick<Edg
 
 /** Every pick'em app's regular numbers by canonical player, stat and game day: platform → numbers. */
 export type AnchorIndex = Map<string, Map<string, number[]>>;
-const isPickem = (platform: string) => platform === 'prizepicks' || platform === 'underdog' || platform === 'pick6';
+const isPickem = (platform: string) => platform === 'prizepicks' || platform === 'underdog' || platform === 'pick6' || platform === 'dabble';
 const anchorKey = (line: Pick<PropLine, 'sport' | 'league' | 'playerName' | 'market' | 'eventStartTime'>) =>
   `${line.sport === 'OTHER' ? line.league.toUpperCase() : line.sport}|${normalizedName(line.playerName)}|${canonicalMarket(line.sport, line.market)}|${line.eventStartTime.slice(0, 10)}`;
 
@@ -421,7 +421,7 @@ export class EdgeService {
     const sets: PlatformSet[] = [{ platform: 'prizepicks', lines: [...boardLines, ...extra.added.filter(open)], payouts: null,
       entries: this.entriesFor('prizepicks'), minEvents: 2,
       sharpApi: { lines: extra.total, confirmed: extra.confirmed, added: extra.added.length } }];
-    for (const app of ['underdog', 'pick6'] as const) {
+    for (const app of ['underdog', 'pick6', 'dabble'] as const) {
       const stored = await this.options.appBoards?.active(app).catch(() => []) ?? [];
       const { lines, payouts, promos } = appLines(stored, app, nowIso);
       if (promos.size) console.log(`[edge-promo] ${app} ${promos.size} promo lines: ${JSON.stringify(lines.filter((line) => promos.has(line.id))
@@ -544,7 +544,7 @@ export class EdgeService {
     values: { found: Map<string, number[]>; asked: number }, startedAt: number, injured: ReadonlyMap<string, string> = new Map(),
     alerts: EdgeAlert[] = [], anchors: AnchorIndex = new Map()): EdgeSnapshot {
     // A platform's own book never prices it, and pick'em apps' rows are payouts, never prices.
-    const nowIso = now.toISOString(), own = [...new Set([...ownBooks[set.platform], 'prizepicks', 'prizepicks_flex', 'underdog', 'pick6'])];
+    const nowIso = now.toISOString(), own = [...new Set([...ownBooks[set.platform], 'prizepicks', 'prizepicks_flex', 'underdog', 'pick6', 'dabble'])];
     const matched = prices.length && set.lines.length ? matchBookPrices(set.lines, prices, nowIso, own, set.promos) : null;
     // Pick6's entry chart isn't public: until the owner confirms it, its picks get a chance but no edge.
     const unconfirmed = set.platform === 'pick6' && !this.options.pick6PayoutsConfirmed;
@@ -612,7 +612,7 @@ export class EdgeService {
    */
   private enrich(set: PlatformSet, picks: readonly EdgePick[], now: Date, injured: ReadonlyMap<string, string>,
     alerts: EdgeAlert[]): EdgePick[] {
-    const nowMs = now.getTime(), dfs = set.platform === 'prizepicks' || set.platform === 'underdog' || set.platform === 'pick6';
+    const nowMs = now.getTime(), dfs = isPickem(set.platform);
     const staleWhy = { noMove: 0, againstTheLine: 0, sideNotOffered: 0, noAppHistory: 0, appChangedAfterMove: 0, gapUnderHalfSd: 0 };
     const out = picks.map((source) => {
       let pick: EdgePick = source;
@@ -641,7 +641,7 @@ export class EdgeService {
         if (favors && appChanged !== null && appChanged !== undefined && appChanged < moved.lastMoveAt &&
           Math.abs(gap) >= .5 * pick.projection.sd) {
           const minutesAgo = Math.max(0, Math.round((nowMs - moved.lastMoveAt) / 60_000));
-          const name = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'Pick6' }[set.platform as 'prizepicks'];
+          const name = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'Pick6', dabble: 'Dabble' }[set.platform as 'prizepicks'];
           pick = { ...pick, stale: { minutesAgo, books: moved.books, direction: moved.direction },
             reasons: [`Books moved ${moved.direction === 'UP' ? 'up' : 'down'} ${minutesAgo} min ago (${moved.books} book${moved.books === 1 ? '' : 's'}, first ${moved.firstMover}); ${name} hasn’t.`, ...pick.reasons] };
         }
