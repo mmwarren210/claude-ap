@@ -335,7 +335,14 @@ export class EdgeService {
     // has no LESS to pick, so it would read as "MORE bias" (owner diagnostics 2026-10-09: Pick6 85% MORE after its alternates).
     const choices = snapshot.response.picks.filter((pick) => pick.oppositeLineId !== null ||
       (snapshot.lines.get(pick.lineId)?.availableDirections.length ?? 0) > 1);
-    const next = nextSideBias(this.bias.get(snapshot.platform) ?? null, choices);
+    // One line per player and stat: a book's ladder of alternate numbers (PropLine sends every number, 2026-10-09) leans one way
+    // by construction, so only the number nearest Edge's own median is judged. Every alternate keeps its own read.
+    const main = new Map<string, (typeof choices)[number]>();
+    for (const pick of choices) {
+      const key = `${pick.eventId}|${pick.playerId}|${pick.market}`, current = main.get(key);
+      if (!current || Math.abs(pick.threshold - pick.projection.median) < Math.abs(current.threshold - current.projection.median)) main.set(key, pick);
+    }
+    const next = nextSideBias(this.bias.get(snapshot.platform) ?? null, [...main.values()]);
     this.bias.set(snapshot.platform, next);
     if (next.share === null) return;
     if (next.streak > 0) console.warn(`[edge-bias] ${snapshot.platform}: ${Math.round(next.share * 100)}% of ${next.plusEv} +EV picks are ${next.side}` +
