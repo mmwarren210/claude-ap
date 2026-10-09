@@ -52,6 +52,7 @@ import { createHash } from 'node:crypto';
 import type { AiPickService, AiRead } from './ai-picks.js';
 import type { BoxScoreResults } from './box-score-results.js';
 import type { PropLinePush } from './scrapers/propline-push.js';
+import type { PropLineResults } from './scrapers/propline-results.js';
 import type { ScraperPuller } from './scrapers/scraper-puller.js';
 import type { ContextRefreshOptions, DailyLookupBudget } from './context-refresh.js';
 import type { ProviderName } from './provider-identity.js';
@@ -155,6 +156,8 @@ export interface ServerOptions {
   scraperPuller?: ScraperPuller | null;
   /** PropLine push deliveries (line moves, pulled markets, grades, steam). */
   proplinePush?: PropLinePush | null;
+  /** PropLine's graded props (grades Edge and GKR+ picks first). */
+  proplineResults?: PropLineResults | null;
   /** Display-only game context feeds (injuries, Pinnacle); never scored. */
   contextFeeds?: ContextFeeds | null;
   /** DraftKings and Hard Rock prop prices (SharpAPI) for reference odds and CrownIQ's own +EV; never scored. */
@@ -270,9 +273,14 @@ export function buildServer(options: ServerOptions = {}) {
     contextScheduler?.start();
     // After a scraper pull changes lines, rebuild the board through the owner job (free; tracks picks). A change that lands
     // while a rebuild is already running (common with pushed moves) is picked up by one more rebuild right after it.
-    let rebuildAgain=false;
-    options.scraperPuller?.whenLinesChange(()=>{if(!startOwnerBoardRefresh())rebuildAgain=true;});
-    if(!options.clock){const again=setInterval(()=>{if(rebuildAgain&&ownerBoardRefresh.status!=='RUNNING'){rebuildAgain=false;startOwnerBoardRefresh();}},15_000);
+    // Rescores (about 40 s of heavy work) start at most every 5 minutes (CROWNIQ_REBUILD_MIN_MINUTES): pushed line moves arrive
+    // all the time, so changes between rescores wait and go into the next one together.
+    let rebuildAgain=false,lastRebuildAt=0;
+    const spacing=Math.max(1,Number(process.env.CROWNIQ_REBUILD_MIN_MINUTES??5)||5)*60_000;
+    const rebuild=()=>{if(Date.now()-lastRebuildAt<spacing||!startOwnerBoardRefresh()){rebuildAgain=true;return;}lastRebuildAt=Date.now();};
+    options.scraperPuller?.whenLinesChange(rebuild);
+    if(!options.clock){const again=setInterval(()=>{if(rebuildAgain&&ownerBoardRefresh.status!=='RUNNING'&&Date.now()-lastRebuildAt>=spacing){
+      rebuildAgain=false;rebuild();}},15_000);
       again.unref();shadowTimers.push(again);}
     // Step 0: SharpAPI's PrizePicks lines are the primary source in the line store. A failed or empty pass ingests nothing
     // as a complete pull, so lines only SharpAPI listed leave the board (fail closed) and the backups carry it.
@@ -1452,7 +1460,8 @@ export function buildServer(options: ServerOptions = {}) {
     clock:()=>now()}):null;
   const edgeWorker=edge&&options.edge?.ledger?new EdgeResultsWorker(options.edge.ledger,options.internalHistory??null,
     options.edge.boxScores??null,()=>now(),
-    options.playerHistory?(sport,playerName,market)=>options.playerHistory!.values(sport,playerName,market):null):null;
+    options.playerHistory?(sport,playerName,market)=>options.playerHistory!.values(sport,playerName,market):null,undefined,
+    options.proplineResults??null):null;
   if(edge){
     // Hard Rock joined with the book change (9b): its picks stay out of Top Picks and Gen until the side-bias check clears it.
     const heldPlatforms=new Set((process.env.CROWNIQ_EDGE_HOLD??'hardrock').split(',').map((item)=>item.trim()).filter(Boolean));
@@ -1474,7 +1483,8 @@ export function buildServer(options: ServerOptions = {}) {
     // GKR+ (owner only): Edge's read blended with history at the number and GKR's side, on every platform; its own ledger.
     const gkrPlusLedger=options.edge?.gkrPlusLedger??null;
     const gkrPlusWorker=gkrPlusLedger?new EdgeResultsWorker(gkrPlusLedger,options.internalHistory??null,options.edge?.boxScores??null,()=>now(),
-      options.playerHistory?(sport,playerName,market)=>options.playerHistory!.values(sport,playerName,market):null):null;
+      options.playerHistory?(sport,playerName,market)=>options.playerHistory!.values(sport,playerName,market):null,undefined,
+      options.proplineResults??null):null;
     const gkrSides=async(platform:EdgePlatform):Promise<(pick:EdgePick)=>GkrSide|null>=>{
       if(platform==='prizepicks'){
         const analyses=new Map((service.getBoard()?.analyses??[]).flatMap((item)=>item.direction!=='PASS'&&item.score!==null
@@ -1603,6 +1613,9 @@ export function buildServer(options: ServerOptions = {}) {
       const firstHealth=setTimeout(healthLog,5*60_000);firstHealth.unref();
       const hourly=setInterval(healthLog,3600_000);hourly.unref();
       edgeWorker?.start();
+      // PropLine grades settle minutes after a game ends: picks on PropLine games are graded every 10 minutes.
+      if(options.proplineResults){const quick=setInterval(()=>{void edgeWorker?.gradePropLine().catch(()=>undefined);
+        void gkrPlusWorker?.gradePropLine().catch(()=>undefined);},10*60_000);quick.unref();shadowTimers.push(quick);}
       const grade=setTimeout(()=>{void edgeWorker?.runOnce().catch(()=>undefined);},5*60_000);grade.unref();
       shadowTimers.push(first,every,grade);
     }
@@ -2360,7 +2373,7 @@ export function buildServer(options: ServerOptions = {}) {
     admin.get('/propline-push',async(request)=>{
       if(!options.proplinePush)return {configured:false};
       if((request.query as {ensure?:string}).ensure==='1')await options.proplinePush.ensureNow();
-      return options.proplinePush.status();
+      return {...options.proplinePush.status(),results:options.proplineResults?.status()??null};
     });
     admin.get('/propline',async(request,reply)=>{
       const key=process.env.PROPLINE_API_KEY?.trim();

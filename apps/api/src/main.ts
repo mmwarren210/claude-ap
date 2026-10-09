@@ -50,6 +50,7 @@ import { underdogDirect } from './scrapers/underdog-direct.js';
 import { prizePicksPartner } from './scrapers/prizepicks-partner.js';
 import { PropLineClient, propLineBoard } from './scrapers/propline.js';
 import { PropLinePush } from './scrapers/propline-push.js';
+import { PropLineResults } from './scrapers/propline-results.js';
 import { fetchPropLineRows } from './context/propline-books.js';
 import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
@@ -172,6 +173,9 @@ const oddsPrizePicks=apiKey?new FullPrizePicksProvider({apiKey,maxEvents,maxCred
   consensusBookmakers:(process.env.CROWNIQ_ODDS_CONSENSUS_BOOKS??'pinnacle,fanduel,draftkings,betmgm,williamhill_us,espnbet,betonlineag,betrivers,lowvig')
     .split(',').map((book)=>book.trim()).filter(Boolean)}):null;
 const propLine=process.env.PROPLINE_API_KEY?.trim()?new PropLineClient(process.env.PROPLINE_API_KEY.trim()):null;
+// PropLine's graded props, pushed as they settle and read back per game; Edge and GKR+ grade from them first.
+const proplineResults=propLine?new PropLineResults(propLine,`${dataDir}/propline-results.json`):null;
+const noteGame=proplineResults?(gameId:string,sportKey:string)=>proplineResults.noteGame(gameId,sportKey):undefined;
 const proplineEvery=Math.min(60,Math.max(5,Number(process.env.CROWNIQ_PROPLINE_EVERY_MINUTES??15)||15));
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
   // Apify's plan stops at $100 a month (owner, 2026-10-08), so each full board is pulled once a day and the cap is about
@@ -183,10 +187,10 @@ const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBud
     // configured (off by CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER) for comparison.
     // Every 15 minutes (owner, 2026-10-09; CROWNIQ_PROPLINE_EVERY_MINUTES): about 25 requests a pull per app, well inside
     // the 250,000 a day. A pull that brings no change rebuilds nothing.
-    ...(propLine?[{source:propLineBoard(propLine,{app:'prizepicks',bookmaker:'prizepicks'}),everyMinutes:proplineEvery,
+    ...(propLine?[{source:propLineBoard(propLine,{app:'prizepicks',bookmaker:'prizepicks',noteGame}),everyMinutes:proplineEvery,
       hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PROPLINE_PRIZEPICKS',Array.from({length:24},(_,hour)=>hour).join(','))}]:[]),
     // Underdog and Pick6 from PropLine too; Underdog's own feed stays alongside for its payout multipliers.
-    ...(propLine?(['underdog','pick6','dabble'] as const).map((app)=>({source:propLineBoard(propLine,{app,bookmaker:app}),everyMinutes:proplineEvery,
+    ...(propLine?(['underdog','pick6','dabble'] as const).map((app)=>({source:propLineBoard(propLine,{app,bookmaker:app,noteGame}),everyMinutes:proplineEvery,
       hoursEt:hoursEt(`CROWNIQ_SCRAPER_HOURS_PROPLINE_${app.toUpperCase()}`,Array.from({length:24},(_,hour)=>hour).join(','))})):[]),
     {source:prizePicksPartner(),hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER','7,9,11,13,15,17,19,21,23')},
     {source:zenPrizePicksEsports,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_ESPORTS','')},
@@ -210,7 +214,9 @@ const publicUrl=(process.env.CROWNIQ_PUBLIC_URL??(process.env.RAILWAY_PUBLIC_DOM
 const proplinePush=propLine&&scraperPuller&&publicUrl&&process.env.CROWNIQ_PROPLINE_PUSH!=='off'
   ?new PropLinePush(propLine,`${publicUrl}/v1/hooks/propline`,`${dataDir}/propline-push.json`,{
     pullSports:(app,sports)=>scraperPuller.pullSports(`propline-${app}`,sports),
-    suspend:(app,game,player,keys)=>scraperPuller.suspend(app,game,player,keys)}):null;
+    suspend:(app,game,player,keys)=>scraperPuller.suspend(app,game,player,keys),
+    resolution:(event)=>{void proplineResults?.record(event).then(()=>proplineResults.save()).catch(()=>undefined);},
+    noteGame}):null;
 // Display-only game context (never scored): injuries and Pinnacle game lines.
 const contextFeeds=process.env.APIFY_TOKEN?.trim()?new ContextFeeds(apify,scraperBudget,[
   {source:injuryReports,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_INJURIES','8')},
@@ -494,7 +500,7 @@ const app = buildServer({ ufcHistory, soccerHistory, oddsConsensus:oddsPrizePick
     return {store,reader,grader:reader?new TipGrader(store,reader):null};})(),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
-  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,contextFeeds,sharpProps,evBreakEven,payouts,
+  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,contextFeeds,sharpProps,evBreakEven,payouts,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,

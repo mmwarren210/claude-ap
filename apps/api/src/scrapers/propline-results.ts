@@ -1,0 +1,108 @@
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { normalizedName } from '../context/match.js';
+import { canonicalMarket } from '../edge/market-map.js';
+import { leagueInfo } from './markets.js';
+import type { PropLineClient } from './propline.js';
+import { proplineLeague, proplineMarketKey } from './propline.js';
+
+// Prop results from PropLine (owner, 2026-10-09): every prop graded against the real box score, pushed the moment it settles
+// ("resolution" deliveries) and read back per game from /results when a delivery was missed. Picks are graded from the actual
+// stat value, matched by PropLine's own game id, the player and the stat. Two days of finished games are kept.
+
+type Entry = { actual: number; at: string };
+type Saved = { results: Record<string, Entry>; sports: Record<string, string>; asked: Record<string, string> };
+
+/** PropLine's game id inside a CrownIQ event id ("pp-game:propline:46672" → "46672"). */
+export const proplineGameId = (eventId: string) => /propline:(\d+)/.exec(eventId)?.[1] ?? null;
+
+export class PropLineResults {
+  private data: Saved = { results: {}, sports: {}, asked: {} };
+  private loaded = false;
+  private dirty = false;
+  readonly stats = { pushed: 0, fetched: 0, games: 0, graded: 0 };
+
+  constructor(private readonly client: PropLineClient | null, private readonly file: string,
+    private readonly clock: () => Date = () => new Date()) {}
+
+  private key(gameId: string, sport: string, player: string, market: string): string {
+    return `${gameId}|${normalizedName(player)}|${canonicalMarket(sport, market)}`;
+  }
+
+  private async load(): Promise<void> {
+    if (this.loaded) return;
+    this.loaded = true;
+    try { this.data = { results: {}, sports: {}, asked: {}, ...JSON.parse(await readFile(this.file, 'utf8')) as Partial<Saved> }; } catch { /* first run */ }
+  }
+
+  async save(): Promise<void> {
+    if (!this.dirty) return;
+    this.dirty = false;
+    // Two days after a result arrived it has been used; drop it.
+    const cutoff = this.clock().getTime() - 2 * 86_400_000;
+    for (const [key, entry] of Object.entries(this.data.results)) if (Date.parse(entry.at) < cutoff) delete this.data.results[key];
+    await mkdir(dirname(this.file), { recursive: true });
+    const temporary = `${this.file}.tmp`;
+    await writeFile(temporary, JSON.stringify(this.data));
+    await rename(temporary, this.file);
+  }
+
+  /** Remembers which PropLine sport a game belongs to (from any delivery), so its results can be read back later. */
+  noteGame(gameId: string, sportKey: string): void {
+    if (!this.loaded) { void this.load().then(() => this.noteGame(gameId, sportKey)); return; }
+    if (this.data.sports[gameId] !== sportKey) { this.data.sports[gameId] = sportKey; this.dirty = true; }
+  }
+
+  private put(gameId: string, sportKey: string, player: string, marketKey: string, actual: unknown, resolution: unknown): boolean {
+    // Only a settled prop counts (won, lost or push): an in-progress game's running stat is never used, and a void (player
+    // not in the box score) leaves the pick to the other sources.
+    if (typeof actual !== 'number' || !Number.isFinite(actual) || !['won', 'lost', 'push'].includes(String(resolution))) return false;
+    const sport = leagueInfo(proplineLeague(sportKey)).sport;
+    // Stored under PropLine's market key and CrownIQ's name for it, so either form of a pick finds it.
+    for (const market of new Set([marketKey, proplineMarketKey(sport, marketKey)]))
+      this.data.results[this.key(gameId, sport, player, market)] = { actual, at: this.clock().toISOString() };
+    this.dirty = true;
+    return true;
+  }
+
+  /** A pushed resolution delivery. */
+  async record(event: Record<string, unknown>): Promise<void> {
+    await this.load();
+    const game = (event.event as { id?: unknown } | undefined)?.id, sportKey = String(event.sport_key ?? '');
+    const player = typeof event.player_name === 'string' ? event.player_name : typeof event.description === 'string' ? event.description : null;
+    if (game === undefined || !sportKey || !player || typeof event.market_key !== 'string') return;
+    this.noteGame(String(game), sportKey);
+    const current = event.current as { actual_value?: unknown } | undefined;
+    if (this.put(String(game), sportKey, player, event.market_key, event.actual_value ?? current?.actual_value, event.resolution)) this.stats.pushed++;
+  }
+
+  /** Reads back results for finished games with picks still waiting (one request per game, each game once an hour at most). */
+  async fetchGames(gameIds: readonly string[], limit = 40): Promise<void> {
+    await this.load();
+    if (!this.client) return;
+    const now = this.clock().getTime();
+    const due = [...new Set(gameIds)].filter((id) => this.data.sports[id] && (!this.data.asked[id] || now - Date.parse(this.data.asked[id]!) > 3600_000)).slice(0, limit);
+    for (const id of due) {
+      const sportKey = this.data.sports[id]!;
+      this.data.asked[id] = new Date(now).toISOString(); this.dirty = true;
+      try {
+        const body = await this.client.get<{ bookmakers?: { markets?: { key: string; outcomes?: { description?: string; actual_value?: unknown; resolution?: unknown }[] }[] }[] }>(
+          `/v1/sports/${sportKey}/events/${id}/results?bookmakers=prizepicks,underdog,draftkings,fanduel`);
+        this.stats.games++;
+        for (const book of body.bookmakers ?? []) for (const market of book.markets ?? []) for (const outcome of market.outcomes ?? [])
+          if (outcome.description && this.put(id, sportKey, outcome.description, market.key, outcome.actual_value, outcome.resolution)) this.stats.fetched++;
+      } catch { /* retried next hour */ }
+    }
+    await this.save();
+  }
+
+  /** A pick's actual stat value, when PropLine has graded that game, player and stat. */
+  async actual(pick: { eventId: string; sport: string; playerName: string; market: string }): Promise<number | null> {
+    await this.load();
+    const game = proplineGameId(pick.eventId);
+    if (!game) return null;
+    return this.data.results[this.key(game, pick.sport, pick.playerName, pick.market)]?.actual ?? null;
+  }
+
+  status() { return { ...this.stats, stored: Object.keys(this.data.results).length, games: Object.keys(this.data.sports).length }; }
+}

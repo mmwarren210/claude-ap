@@ -130,7 +130,9 @@ export type PropLineSource = ScraperSource & {
 };
 
 export function propLineBoard(client: PropLineClient, options: { app: DfsApp; bookmaker: string; discoverEveryMs?: number;
-  horizonDays?: number; clock?: () => Date; onReport?: (report: PropLineReport) => void }): PropLineSource {
+  horizonDays?: number; clock?: () => Date; onReport?: (report: PropLineReport) => void;
+  /** Each pulled game and its PropLine sport (results are read back by game later). */
+  noteGame?: (gameId: string, sportKey: string) => void }): PropLineSource {
   const clock = options.clock ?? (() => new Date());
   const discover = (failed: string[]) => client.propMarkets(failed, clock, options.horizonDays, options.discoverEveryMs);
   const pull = async (only: ReadonlySet<string> | null) => {
@@ -148,7 +150,7 @@ export function propLineBoard(client: PropLineClient, options: { app: DfsApp; bo
           try { slate = list<Event>(await client.get(`/v1/sports/${sportKey}/odds?markets=${chunk.join(',')}&bookmakers=${options.bookmaker}`)); }
           catch { failed.push(`${sportKey}:${index / 30}`); continue; }
           events += index === 0 ? slate.length : 0;
-          for (const event of slate) rows.push(...eventLines(event, league, sport, options, drop));
+          for (const event of slate) { options.noteGame?.(String(event.id), sportKey); rows.push(...eventLines(event, league, sport, options, drop)); }
         }
       }));
       const byLeague: Record<string, number> = {}, byTier: Record<string, number> = {};

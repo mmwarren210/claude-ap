@@ -22,6 +22,8 @@ export interface PushHandlers {
   resolution?(event: PushEvent): void;
   /** Steam (several books moving one way). */
   steam?(event: PushEvent): void;
+  /** Every delivery names its game and sport (so its results can be read back later). */
+  noteGame?(gameId: string, sportKey: string): void;
 }
 
 const APPS: readonly DfsApp[] = ['prizepicks', 'underdog', 'pick6', 'dabble'];
@@ -154,7 +156,12 @@ export class PropLinePush {
     this.stats.events[type] = (this.stats.events[type] ?? 0) + 1;
     this.stats.samples[type] = event;
     const app = String(event.bookmaker_key ?? '') as DfsApp, sportKey = String(event.sport_key ?? '');
-    if (type === 'line_movement' && APPS.includes(app) && sportKey) {
+    const gameId = (event.event as { id?: unknown } | undefined)?.id;
+    if (gameId !== undefined && sportKey) this.handlers.noteGame?.(String(gameId), sportKey);
+    // A delivery where neither the number nor the price moved (e.g. only a payout multiplier changed) needs no re-pull.
+    const before = event.previous as { point?: unknown; price_american?: unknown } | undefined, after = event.current as typeof before;
+    const moved = !before || !after || before.point !== after.point || before.price_american !== after.price_american;
+    if (type === 'line_movement' && APPS.includes(app) && sportKey && moved) {
       const set = this.dirty.get(app) ?? new Set<string>(); set.add(sportKey); this.dirty.set(app, set);
       this.schedule();
     } else if (type === 'market_suspended' && APPS.includes(app)) {

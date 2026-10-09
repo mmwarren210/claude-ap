@@ -917,7 +917,9 @@ export class EdgeResultsWorker {
   private last: { at: string; graded: number; waiting: number; unsupported: number; error: string | null } | null = null;
   constructor(private readonly ledger: EdgeLedger, private readonly history: InternalHistoryStore | null,
     private readonly boxScores: Pick<BoxScoreResults, 'results'> | null, private readonly clock: () => Date = () => new Date(),
-    private readonly freeHistory: FreeHistoryValues | null = null, private readonly freeBudgetMs = 5 * 60_000) {}
+    private readonly freeHistory: FreeHistoryValues | null = null, private readonly freeBudgetMs = 5 * 60_000,
+    /** PropLine's graded props (pushed, else read back per game): the first and fastest source. */
+    private readonly propline: { fetchGames(ids: readonly string[]): Promise<void>; actual(pick: TrackedEdgePick): Promise<number | null> } | null = null) {}
 
   status() { return { scheduled: !!this.timer, running: this.running, last: this.last }; }
   start(intervalMs = 60 * 60_000) {
@@ -926,6 +928,23 @@ export class EdgeResultsWorker {
     this.timer.unref?.();
   }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
+
+  /**
+   * PropLine first: picks on PropLine games graded from its settled props (pushed, else read back per game), from about 30
+   * minutes after the start. Runs on its own every 10 minutes as well as at the top of each full run; light (no box scores).
+   */
+  async gradePropLine(): Promise<number> {
+    if (!this.propline) return 0;
+    const early = await this.ledger.awaitingResults(0.5);
+    const games = early.flatMap((pick) => { const id = /propline:(\d+)/.exec(pick.eventId)?.[1]; return id ? [id] : []; });
+    await this.propline.fetchGames(games).catch(() => undefined);
+    const facts: EdgeResultFact[] = [];
+    for (const pick of early) { const actual = await this.propline.actual(pick).catch(() => null);
+      if (actual !== null) facts.push({ eventId: pick.eventId, playerId: pick.playerId, market: pick.market, status: 'FINAL', actual, sourceName: 'PropLine' }); }
+    const done = facts.length ? (await this.ledger.grade(facts)).graded : 0;
+    if (early.length) console.log(`[edge-grading] PropLine: ${early.length} awaiting, ${facts.length} results, ${done} graded`);
+    return done;
+  }
 
   /** Step 8: hourly, from 3 hours after each start until graded (box scores, CrownIQ's rows, the free histories). */
   private runningSince = 0;
@@ -936,6 +955,7 @@ export class EdgeResultsWorker {
     const now = this.clock();
     let graded = 0, waiting = 0, unsupported = 0, error: string | null = null;
     try {
+      graded += await this.gradePropLine();
       const awaiting = await this.ledger.awaitingResults(3);
       console.log(`[edge-grading] start: ${awaiting.length} awaiting`);
       if (this.boxScores && awaiting.length) {
