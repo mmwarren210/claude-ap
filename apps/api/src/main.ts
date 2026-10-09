@@ -49,6 +49,7 @@ import { DailySpendBudget } from './scrapers/spend-budget.js';
 import { underdogDirect } from './scrapers/underdog-direct.js';
 import { prizePicksPartner } from './scrapers/prizepicks-partner.js';
 import { PropLineClient, propLineBoard } from './scrapers/propline.js';
+import { fetchPropLineRows } from './context/propline-books.js';
 import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
 import { ProviderIdentityVerifier } from './provider-identity.js';
@@ -213,6 +214,8 @@ process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`,undefi
 const sharpProps=new SharpPropsFeed((process.env.SHARPAPI_KEY ?? process.env.sharp_api)?.trim()||null,
   process.env.CROWNIQ_SHARP_PROPS_FILE ?? `${dataDir}/sharp-props.json`,
   {books:(process.env.CROWNIQ_SHARP_BOOKS??'draftkings,fanduel,hardrock,betmgm,caesars,prizepicks').split(',').map((book)=>book.trim()).filter(Boolean),
+    // DraftKings, Hard Rock and the line-shopping books from PropLine (owner, 2026-10-08); CROWNIQ_BOOKS_SOURCE=sharpapi goes back.
+    ...(propLine&&process.env.CROWNIQ_BOOKS_SOURCE!=='sharpapi'?{propLineRows:()=>fetchPropLineRows(propLine)}:{}),
     maxPagesPerLeague:100,extraTotals:apiKey?(()=>{const totals=new OddsApiTotals(apiKey);return ()=>totals.games();})():undefined,
     ...(process.env.CROWNIQ_SHARP_LEAGUES?.trim()?{leagues:process.env.CROWNIQ_SHARP_LEAGUES.split(',').map((league)=>league.trim()).filter(Boolean)}:{})});
 // A bad CROWNIQ_PAYOUTS falls back to the defaults rather than stopping the server.

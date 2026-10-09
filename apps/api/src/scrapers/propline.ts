@@ -45,6 +45,38 @@ export class PropLineClient {
     private readonly concurrency = 8, private readonly baseUrl = 'https://api.prop-line.com',
     private readonly sleep = (ms: number) => new Promise<void>((done) => { const timer = setTimeout(done, ms); timer.unref?.(); })) {}
 
+  private discovered: { at: number; markets: Map<string, string[]> } | null = null;
+  private discovering: Promise<Map<string, string[]>> | null = null;
+  /**
+   * Each active sport's player-prop market keys, from its events in the next few days; shared by every PropLine source and
+   * re-learned every 6 hours. A sport whose events can't be listed is named in `failed`.
+   */
+  async propMarkets(failed: string[], clock: () => Date = () => new Date(), horizonDays = 4, everyMs = 6 * 3600_000): Promise<Map<string, string[]>> {
+    const now = clock().getTime();
+    if (this.discovered && now - this.discovered.at < everyMs) return this.discovered.markets;
+    this.discovering ??= (async () => {
+      const sports = list<{ key: string; active?: boolean }>(await this.get('/v1/sports')).filter((sport) => sport.active !== false);
+      const horizon = now + horizonDays * 86_400_000;
+      const markets = new Map<string, string[]>();
+      await Promise.all(sports.map(async (sport) => {
+        try {
+          const events = list<Event>(await this.get(`/v1/sports/${sport.key}/events`))
+            .filter((event) => { const start = Date.parse(event.commence_time ?? ''); return start > now && start < horizon; });
+          const keys = new Set<string>();
+          await Promise.all(events.map(async (event) => {
+            try { for (const market of list<{ key: string }>(await this.get(`/v1/sports/${sport.key}/events/${event.id}/markets`)))
+              if (isPropMarket(market.key)) keys.add(market.key); }
+            catch { /* one event's market list; the sport still counts */ }
+          }));
+          if (keys.size) markets.set(sport.key, [...keys].sort());
+        } catch { failed.push(`${sport.key}:events`); }
+      }));
+      this.discovered = { at: now, markets };
+      return markets;
+    })().finally(() => { this.discovering = null; });
+    return this.discovering;
+  }
+
   async get<T>(path: string): Promise<T> {
     while (this.active >= this.concurrency) await new Promise<void>((done) => this.waiting.push(done));
     this.active++;
@@ -83,29 +115,7 @@ export interface PropLineReport { at: string; sports: number; events: number; re
 export function propLineBoard(client: PropLineClient, options: { app: DfsApp; bookmaker: string; discoverEveryMs?: number;
   horizonDays?: number; clock?: () => Date; onReport?: (report: PropLineReport) => void }): ScraperSource {
   const clock = options.clock ?? (() => new Date());
-  let discovered: { at: number; markets: Map<string, string[]> } | null = null;
-  const discover = async (failed: string[]) => {
-    const now = clock().getTime();
-    if (discovered && now - discovered.at < (options.discoverEveryMs ?? 6 * 3600_000)) return discovered.markets;
-    const sports = list<{ key: string; active?: boolean }>(await client.get('/v1/sports')).filter((sport) => sport.active !== false);
-    const horizon = now + (options.horizonDays ?? 4) * 86_400_000;
-    const markets = new Map<string, string[]>();
-    await Promise.all(sports.map(async (sport) => {
-      try {
-        const events = list<Event>(await client.get(`/v1/sports/${sport.key}/events`))
-          .filter((event) => { const start = Date.parse(event.commence_time ?? ''); return start > now && start < horizon; });
-        const keys = new Set<string>();
-        await Promise.all(events.map(async (event) => {
-          try { for (const market of list<{ key: string }>(await client.get(`/v1/sports/${sport.key}/events/${event.id}/markets`)))
-            if (isPropMarket(market.key)) keys.add(market.key); }
-          catch { /* one event's market list; the sport still counts */ }
-        }));
-        if (keys.size) markets.set(sport.key, [...keys].sort());
-      } catch { failed.push(`${sport.key}:events`); }
-    }));
-    discovered = { at: now, markets };
-    return markets;
-  };
+  const discover = (failed: string[]) => client.propMarkets(failed, clock, options.horizonDays, options.discoverEveryMs);
   return {
     id: `propline-${options.app}`, actor: null, apps: [options.app], rowCap: null, input: () => ({}),
     async run() {

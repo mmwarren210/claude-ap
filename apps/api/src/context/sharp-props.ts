@@ -58,6 +58,11 @@ const marketKeys: Readonly<Partial<Record<Sport, Readonly<Record<string, string>
     player_fouls: 'fouls', player_saves: 'goalie_saves' },
 };
 
+/** The SharpAPI-style market type for a CrownIQ market key (the first, plainest one), for rows from another source (PropLine). */
+export function sharpTypeFor(sport: Sport, crowniqKey: string): string | undefined {
+  return Object.entries(marketKeys[sport] ?? {}).find(([, key]) => key === crowniqKey)?.[0];
+}
+
 /** The full-game player-prop market types CrownIQ reads for a sport (step 1d), plus the anytime-scorer markets. */
 export function fullGameTypes(sport: Sport | undefined): string[] {
   if (!sport) return [];
@@ -581,7 +586,9 @@ export class SharpPropsFeed {
       /** Pause between requests; SharpAPI's Hobby plan allows 120 a minute. */
       requestGapMs?: number; retryScale?: number;
       /** More football game totals (The Odds API) for the anytime-TD prices; SharpAPI's own totals win. */
-      extraTotals?: () => Promise<readonly GamePrice[]> } = {},
+      extraTotals?: () => Promise<readonly GamePrice[]>;
+      /** Rows from PropLine instead of SharpAPI (owner, 2026-10-08): the same row shape, so everything downstream is unchanged. */
+      propLineRows?: () => Promise<{ rows: unknown[]; gameRows: unknown[]; failed: string[]; unmapped: Record<string, number>; requests: number }> } = {},
     private readonly fetchFn: typeof fetch = fetch, private readonly clock: () => Date = () => new Date()) {}
 
   private loading: Promise<void> | null = null;
@@ -681,8 +688,9 @@ export class SharpPropsFeed {
 
   private async refreshNow(): Promise<SharpPropsStatus> {
     await this.load();
-    if (!this.apiKey) { this.lastError = 'SHARPAPI_KEY_MISSING'; return this.status(); }
+    if (!this.apiKey && !this.options.propLineRows) { this.lastError = 'SHARPAPI_KEY_MISSING'; return this.status(); }
     const rows: unknown[] = [], gameRows: unknown[] = [];
+    if (this.options.propLineRows) return this.refreshFromPropLine(rows, gameRows);
     const requested = this.options.books ?? ['draftkings', 'hardrock', 'fanduel'];
     // Pick'em apps get their own pass (step 0): mixed into the books' requests they were cut off by the page cap.
     const books = requested.filter((book) => !/^(prizepicks|underdog|pick6|sleeper|dabble|betr)/.test(book));
@@ -743,32 +751,56 @@ export class SharpPropsFeed {
       if (this.unavailable.length) console.warn(`[sharp] SharpAPI reports ${this.unavailable.join(', ')} unavailable (its feed for the book is down)`);
     } else { this.unavailable = []; this.notSelected = null; }
     this.emptyBooks = empty;
-    if (booksOk) {
-      console.log(`[sharp] refresh fetched ${rows.length} prop rows in ${this.requests} requests`);
-      // Pick'em rows (PrizePicks) are lines, not prices: kept apart so they never count toward a fair price.
-      const bookRows = rows.filter((row) => !isPickemRow(row));
-      const games = gamePrices(gameRows.filter((row) => !isPickemRow(row)));
-      const extraTotals = this.options.extraTotals ? await this.options.extraTotals().catch(() => []) : [];
-      const scorers = scorerFairPrices(bookRows, [...extraTotals, ...games]);
-      if (scorers.length || rows.some((row) => scorerMarkets.has(String((row as Row).market_type))))
-        console.log(`[sharp] anytime scorer: ${scorers.filter((price) => price.market === 'goals').length} goals and ${scorers.filter((price) => price.market === 'anytime_tds').length} TD prices; ${JSON.stringify(scorerSkips)}; tennis total games ${tennisTotalPrices(games).length}`);
-      const fights = fightTotals(gameRows.filter((row) => !isPickemRow(row)));
-      const types = (league: string) => [...new Set(gameRows.filter((row) => (row as Row).league === league).map((row) => String((row as Row).market_type)))];
-      if (leagues.includes('ufc') || leagues.includes('kbo'))
-        console.log(`[sharp] step 6 games: ufc types ${JSON.stringify(types('ufc'))}, ${fights.length} total-rounds prices; kbo types ${JSON.stringify(types('kbo'))}`);
-      const prices = [...fairPrices(bookRows), ...scorers, ...tennisTotalPrices(games), ...fights];
-      this.auditMarkets(bookRows);
-      const shots = shotsAudit(bookRows);
-      if (shots.players) console.log(`[sharp-audit] NHL player_shots vs shots on goal: ${JSON.stringify(shots)}`);
-      if (!prices.length) this.lastError = 'NO_PRICES';
-      else {
-        this.prices = prices; this.overOnly = overOnlyPrices(bookRows); this.games = games;
-        this.fetchedAt = this.clock().toISOString(); this.lastError = null;
-        await this.save();
-        for (const callback of this.onRefreshed) { try { await callback(prices, this.clock()); } catch { /* best effort */ } }
-      }
+    if (booksOk) await this.publish(rows, gameRows, leagues);
+    return this.status();
+  }
+
+  /** PropLine's rows in the feed's shape: one pull, then the same pricing as SharpAPI's rows. */
+  private async refreshFromPropLine(rows: unknown[], gameRows: unknown[]): Promise<SharpPropsStatus> {
+    this.lastStartedAt = this.clock().getTime();
+    try {
+      const pulled = await this.options.propLineRows!();
+      rows.push(...pulled.rows.map(normalizeRow)); gameRows.push(...pulled.gameRows);
+      this.requests += pulled.requests;
+      const books = [...new Set(pulled.rows.map((row) => String((row as Row).sportsbook)))];
+      this.emptyBooks = (this.options.books ?? []).filter((book) => !books.includes(book) && !/^(prizepicks|underdog|pick6|sleeper|dabble|betr)/.test(book));
+      this.unavailable = []; this.notSelected = null;
+      console.log(`[propline-books] ${pulled.rows.length} prop rows and ${pulled.gameRows.length} game rows in ${pulled.requests} requests; books ${JSON.stringify(books)}; ` +
+        `failed ${JSON.stringify(pulled.failed)}; unmapped markets ${JSON.stringify(pulled.unmapped)}`);
+      if (!pulled.rows.length) { this.lastError = pulled.failed.length ? 'PROPLINE_FAILED' : 'NO_PRICES'; return this.status(); }
+      await this.publish(rows, gameRows, [...new Set(rows.map((row) => String((row as Row).league)))]);
+    } catch (error) {
+      this.lastError = error instanceof Error ? error.message : 'PROPLINE_FAILED';
+      console.warn(`[propline-books] refresh failed: ${this.lastError}`);
     }
     return this.status();
+  }
+
+  /** Prices, over-only props and game lines from a refresh's rows; saved and announced only when there are prices. */
+  private async publish(rows: unknown[], gameRows: unknown[], leagues: readonly string[]): Promise<void> {
+    console.log(`[sharp] refresh fetched ${rows.length} prop rows in ${this.requests} requests`);
+    // Pick'em rows (PrizePicks) are lines, not prices: kept apart so they never count toward a fair price.
+    const bookRows = rows.filter((row) => !isPickemRow(row));
+    const games = gamePrices(gameRows.filter((row) => !isPickemRow(row)));
+    const extraTotals = this.options.extraTotals ? await this.options.extraTotals().catch(() => []) : [];
+    const scorers = scorerFairPrices(bookRows, [...extraTotals, ...games]);
+    if (scorers.length || rows.some((row) => scorerMarkets.has(String((row as Row).market_type))))
+      console.log(`[sharp] anytime scorer: ${scorers.filter((price) => price.market === 'goals').length} goals and ${scorers.filter((price) => price.market === 'anytime_tds').length} TD prices; ${JSON.stringify(scorerSkips)}; tennis total games ${tennisTotalPrices(games).length}`);
+    const fights = fightTotals(gameRows.filter((row) => !isPickemRow(row)));
+    const types = (league: string) => [...new Set(gameRows.filter((row) => (row as Row).league === league).map((row) => String((row as Row).market_type)))];
+    if (leagues.includes('ufc') || leagues.includes('kbo'))
+      console.log(`[sharp] step 6 games: ufc types ${JSON.stringify(types('ufc'))}, ${fights.length} total-rounds prices; kbo types ${JSON.stringify(types('kbo'))}`);
+    const prices = [...fairPrices(bookRows), ...scorers, ...tennisTotalPrices(games), ...fights];
+    this.auditMarkets(bookRows);
+    const shots = shotsAudit(bookRows);
+    if (shots.players) console.log(`[sharp-audit] NHL player_shots vs shots on goal: ${JSON.stringify(shots)}`);
+    if (!prices.length) this.lastError = 'NO_PRICES';
+    else {
+      this.prices = prices; this.overOnly = overOnlyPrices(bookRows); this.games = games;
+      this.fetchedAt = this.clock().toISOString(); this.lastError = null;
+      await this.save();
+      for (const callback of this.onRefreshed) { try { await callback(prices, this.clock()); } catch { /* best effort */ } }
+    }
   }
 
   /**
