@@ -98,7 +98,9 @@ export async function fetchPropLineRows(client: PropLineClient, books: readonly 
       try {
         const body = await client.get<unknown>(`/v1/sports/${sportKey}/odds?markets=${chunk.join(',')}&bookmakers=${books.join(',')}`);
         const events = Array.isArray(body) ? body as Event[] : [];
-        for (const event of events) { const out = proplineRows(event, sportKey, unmapped); rows.push(...out.rows); gameRows.push(...out.gameRows); }
+        for (const event of events) { const out = proplineRows(event, sportKey, unmapped);
+          for (const row of out.rows) rows.push(row);
+          for (const row of out.gameRows) gameRows.push(row); }
       } catch { failed.push(`${sportKey}:${index / 15}`); }
     }
   }));

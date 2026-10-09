@@ -760,7 +760,9 @@ export class SharpPropsFeed {
     this.lastStartedAt = this.clock().getTime();
     try {
       const pulled = await this.options.propLineRows!();
-      rows.push(...pulled.rows.map(normalizeRow)); gameRows.push(...pulled.gameRows);
+      // Hundreds of thousands of rows: a loop, not a spread (a spread that large overflows the call stack).
+      for (const row of pulled.rows) rows.push(normalizeRow(row));
+      for (const row of pulled.gameRows) gameRows.push(row);
       this.requests += pulled.requests;
       const books = [...new Set(pulled.rows.map((row) => String((row as Row).sportsbook)))];
       this.emptyBooks = (this.options.books ?? []).filter((book) => !books.includes(book) && !/^(prizepicks|underdog|pick6|sleeper|dabble|betr)/.test(book));
