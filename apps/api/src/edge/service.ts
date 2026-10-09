@@ -299,6 +299,8 @@ export class EdgeService {
   private lastAlertFor = new Map<string, number>();
   private current = new Map<EdgePlatform, EdgeSnapshot>();
   private computedAt = 0;
+  /** The last pass was the quick one after a restart (thin history): shown, not recorded, and redone in full next. */
+  private quickPass = false;
   private key: string | null = null;
   private pending: Promise<void> | null = null;
   private lastError: string | null = null;
@@ -375,7 +377,8 @@ export class EdgeService {
     if (!board) return null;
     const key = `${board.board.fetchedAt}|${board.builtAt}`;
     const fresh = this.computedAt && this.key === key && this.clock().getTime() - this.computedAt < (this.options.ttlMs ?? 5 * 60_000);
-    if (!fresh && !this.pending) this.pending = this.computeAll(board, key).finally(() => { this.pending = null; });
+    // After a quick first pass (just after a restart), the full pass follows on the next call.
+    if ((!fresh || this.quickPass) && !this.pending) this.pending = this.computeAll(board, key).finally(() => { this.pending = null; });
     if (!this.current.has(platform) && this.pending) await this.pending;
     return this.current.get(platform) ?? null;
   }
@@ -384,7 +387,7 @@ export class EdgeService {
    * players it hasn't seen (coverage builds up across passes instead of restarting every 10 minutes). */
   private readonly valuesCache = new Map<string, { until: number; values: number[] | null }>();
 
-  private async gatherValues(lines: readonly PropLine[]) {
+  private async gatherValues(lines: readonly PropLine[], budgetMs?: number) {
     const found = new Map<string, number[]>();
     if (!this.options.values) return { found, asked: 0 };
     const nowMs = Date.now();
@@ -398,7 +401,7 @@ export class EdgeService {
     }
     // Soonest games first: they matter most and their lines go first.
     queue.sort((a, b) => a[1].eventStartTime.localeCompare(b[1].eventStartTime));
-    const deadline = nowMs + (this.options.valuesBudgetMs ?? 45_000);
+    const deadline = nowMs + (budgetMs ?? this.options.valuesBudgetMs ?? 45_000);
     const worker = async () => {
       for (let item = queue.shift(); item && Date.now() < deadline; item = queue.shift()) {
         const result = await this.options.values!(item[1]).catch(() => undefined);
@@ -474,11 +477,16 @@ export class EdgeService {
         const id = playerKey(line.sport, line.playerName);
         if (!players.has(id)) players.set(id, { key: id, sport: line.sport, playerId: line.playerId, playerName: line.playerName });
       }
+      // Just after a restart nothing is showing yet, so the first pass is quick: history it can read within a few
+      // seconds (the rest keeps loading for the full pass right after). A quick pass is shown but never recorded.
+      const quick = this.current.size === 0;
+      const within = <T,>(work: Promise<T>, ms: number, fallback: T) => quick
+        ? Promise.race([work, new Promise<T>((done) => { setTimeout(() => done(fallback), ms); })]) : work;
       // PrizePicks lines first in the History queue (the main board), then the rest.
       const [rows, values] = await Promise.all([
-        this.options.history && players.size ? this.options.history.rowsForPlayers([...players.values()], 60)
+        this.options.history && players.size ? within(this.options.history.rowsForPlayers([...players.values()], 60), 8_000, new Map<string, InternalHistoryRow[]>())
           : Promise.resolve(new Map<string, InternalHistoryRow[]>()),
-        this.gatherValues(allLines)]);
+        within(this.gatherValues(allLines, quick ? 5_000 : undefined), 6_000, { found: new Map<string, number[]>(), asked: 0 })]);
       lap('history');
       const calibrationRows = await this.options.ledger?.calibrationRows().catch(() => []) ?? [];
       const calibration = fitCalibration(calibrationRows);
@@ -525,10 +533,12 @@ export class EdgeService {
       }
       const priced = crossPlatform(each);
       lap('crossPlatform');
-      console.log(`[edge-timing] ${JSON.stringify(timing)}`);
+      console.log(`[edge-timing] ${quick ? '(quick first pass) ' : ''}${JSON.stringify(timing)}`);
+      this.quickPass = quick;
       for (const snapshot of priced) {
         this.current.set(snapshot.platform, snapshot);
         this.log(snapshot);
+        if (quick) continue;
         this.checkSideBias(snapshot);
         void this.options.ledger?.record(snapshot.response.picks, (lineId) => {
           const line = snapshot.lines.get(lineId);

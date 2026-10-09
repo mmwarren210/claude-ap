@@ -60,3 +60,24 @@ test('Edge P2: every platform priced against its own payout, a platform never pr
     appBoards: { active: async (app) => players.map((name, index) => stored(app as 'dabble', name, index, { MORE: 1, LESS: 1 })) } });
   assert.ok((await bare.snapshot('dabble'))!.response.picks.every((pick) => pick.edge === null && pick.rating === 'NONE'));
 });
+
+test('after a restart the first Edge pass is quick (shown, not recorded) and the full pass follows on the next call', async () => {
+  const recorded: number[] = [];
+  let slow = true;
+  const service = new EdgeService({ board: () => board, payouts: DEFAULT_PAYOUTS, clock: () => now,
+    sharp: { prices: async () => prices, pickem: async () => [] },
+    // A slow history lookup (as just after a restart) on the first pass only.
+    values: () => slow ? new Promise(() => undefined) : Promise.resolve(null),
+    ledger: { record: async (picks: readonly unknown[]) => { recorded.push(picks.length); }, calibrationRows: async () => [],
+      weakTiers: async () => new Set<string>(), honesty: async () => new Map<string, number>(), byIds: async () => new Map() } as never });
+  const started = Date.now();
+  const first = await service.snapshot('prizepicks');
+  assert.ok(first && first.response.picks.length > 0, 'picks show without waiting for history');
+  assert.ok(Date.now() - started < 15_000);
+  assert.deepEqual(recorded, [], 'the quick pass is never recorded');
+  slow = false;
+  await service.snapshot('prizepicks');
+  await new Promise((done) => setTimeout(done, 50));
+  for (let i = 0; i < 50 && !recorded.length; i++) { await service.snapshot('prizepicks'); await new Promise((done) => setTimeout(done, 20)); }
+  assert.ok(recorded.length > 0, 'the full pass records');
+});
