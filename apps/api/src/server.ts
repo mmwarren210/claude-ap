@@ -2384,6 +2384,19 @@ export function buildServer(options: ServerOptions = {}) {
     // PropLine with the server's key (PROPLINE_API_KEY), read-only: one GET under /v1/, for checking coverage. The key never
     // leaves the server; the reply is the body plus the quota headers.
     // ?ensure=1 sets the subscriptions up now (and reports why if it can't).
+    // PrizePicks' payout chart as PropLine publishes it, beside the chart CrownIQ prices with (display only: a difference is
+    // the owner's call, since PrizePicks varies payouts by region and promotion).
+    admin.get('/payout-check',async(_request,reply)=>{
+      if(!options.proplinePush)return reply.code(503).send({code:'PROPLINE_UNCONFIGURED'});
+      const body=await options.proplinePush.dfsPayouts().catch(()=>null) as {plays?:{play_type:string;legs:number;payouts:{correct:number;multiplier:number}[]}[]}|null;
+      if(!body?.plays)return reply.code(502).send({code:'PROPLINE_UNAVAILABLE'});
+      const ours=(options.payouts??DEFAULT_PAYOUTS).prizepicks;
+      const rows=body.plays.map((play)=>{const type=play.play_type.toUpperCase() as 'POWER'|'FLEX';
+        const propline=Object.fromEntries(play.payouts.map((item)=>[String(item.correct),item.multiplier]));
+        const mine=(ours[type] as Record<string,Record<string,number>>|undefined)?.[String(play.legs)]??null;
+        return {type,legs:play.legs,propline,crowniq:mine,same:!!mine&&JSON.stringify(Object.entries(mine).map(([k,v])=>[String(k),v]).sort())===JSON.stringify(Object.entries(propline).sort())};});
+      return {platform:'prizepicks',differences:rows.filter((row)=>!row.same).length,rows};
+    });
     admin.get('/propline-push',async(request)=>{
       if(!options.proplinePush)return {configured:false};
       if((request.query as {ensure?:string}).ensure==='1')await options.proplinePush.ensureNow();

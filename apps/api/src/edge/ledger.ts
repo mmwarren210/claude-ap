@@ -29,6 +29,23 @@ export interface TrackedEdgePick {
   firstBreakEven?: number;
   /** The stats projection's and the books' means at the last sighting (the honesty gate compares them with the result). */
   statsMean?: number; marketMean?: number;
+  /** The platform's own line when it opened and when the game started (PropLine), and the closing odds for a sportsbook bet. */
+  openingPoint?: number; closingPoint?: number; closingDecimal?: number;
+  /** True once the closing line was looked up (found or not), so it is asked for once. */
+  closingChecked?: boolean;
+}
+
+/**
+ * Against the market's close (PropLine closing lines): how often the platform's line moved toward the side Edge took after it
+ * was taken (MORE and the line rose, or LESS and it fell), and by how many points on average. Sharp picks beat the close.
+ */
+export function closingLineReport(picks: readonly TrackedEdgePick[]) {
+  const withClose = picks.filter((pick) => typeof pick.closingPoint === 'number');
+  const gain = (pick: TrackedEdgePick) => (pick.side === 'MORE' ? 1 : -1) * (pick.closingPoint! - pick.threshold);
+  const moved = withClose.filter((pick) => gain(pick) !== 0);
+  return { picks: withClose.length, moved: moved.length,
+    beatClose: moved.length ? moved.filter((pick) => gain(pick) > 0).length / moved.length : null,
+    averagePoints: withClose.length ? Math.round(withClose.reduce((sum, pick) => sum + gain(pick), 0) / withClose.length * 100) / 100 : null };
 }
 
 /** The result fact shape shared with GKR's product tracking (box scores, admin posts). */
@@ -174,6 +191,34 @@ export class EdgeLedger {
     });
   }
 
+  /** Started picks on PropLine games (last two days) whose closing line hasn't been looked up yet. */
+  async needingClose(): Promise<TrackedEdgePick[]> {
+    return this.exclusive(async () => {
+      const now = this.clock().getTime();
+      return (await this.read()).picks.filter((pick) => !pick.closingChecked && /propline:\d+/.test(pick.eventId) &&
+        Date.parse(pick.eventStartTime) < now && Date.parse(pick.eventStartTime) > now - 2 * 86_400_000).map((pick) => ({ ...pick }));
+    });
+  }
+
+  /** Saves looked-up closing lines (each pick is marked checked whether or not one was found). */
+  async setClosing(updates: readonly { id: string; openingPoint?: number; closingPoint?: number; closingDecimal?: number }[]): Promise<number> {
+    if (!updates.length) return 0;
+    return this.exclusive(async () => {
+      const data = await this.read(), byId = new Map(updates.map((update) => [update.id, update]));
+      let found = 0;
+      for (const pick of data.picks) {
+        const update = byId.get(pick.id);
+        if (!update) continue;
+        pick.closingChecked = true;
+        if (update.closingPoint !== undefined) { pick.closingPoint = update.closingPoint; found++; }
+        if (update.openingPoint !== undefined) pick.openingPoint = update.openingPoint;
+        if (update.closingDecimal !== undefined) pick.closingDecimal = update.closingDecimal;
+      }
+      await this.write(data);
+      return found;
+    });
+  }
+
   /**
    * The honesty gate (spec §5.6): per sport:market, how the stats projection's error compares with the books' on graded
    * picks that had both (n ≥ 30). Weight = (books' MAE ÷ stats MAE)², capped at 1 and shrunk toward 1 with 100 picks of
@@ -273,6 +318,7 @@ export class EdgeLedger {
         byTier: groupBy((pick) => pick.stale ? 'STALE' : pick.tier), byRating: groupBy((pick) => pick.rating),
         bySport: groupBy((pick) => pick.sport),
         gradingCoverage: gradingCoverage(picks, this.clock().getTime()),
+        closingLine: closingLineReport(picks),
         recent: picks.filter((pick) => pick.outcome !== 'PENDING')
           .sort((a, b) => b.eventStartTime.localeCompare(a.eventStartTime)).slice(0, 50),
       };

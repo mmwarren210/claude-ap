@@ -96,6 +96,55 @@ export class PropLineResults {
     await this.save();
   }
 
+  /**
+   * Each pick's platform line at the open and at the start (PropLine's closing lines), one game at a time. The game's stats
+   * are requested 30 at a time from the sport's market list. Picks on a game PropLine never named stay unchecked.
+   */
+  async closingFor(picks: readonly { id: string; eventId: string; sport: string; platform: string; playerName: string; market: string;
+    side: 'MORE' | 'LESS'; threshold: number }[], marketsFor: (sportKey: string) => Promise<readonly string[]>, limit = 30):
+    Promise<{ id: string; openingPoint?: number; closingPoint?: number; closingDecimal?: number }[]> {
+    await this.load();
+    if (!this.client) return [];
+    const byGame = new Map<string, typeof picks[number][]>();
+    for (const pick of picks) { const game = proplineGameId(pick.eventId); if (game && this.data.sports[game]) byGame.set(game, [...byGame.get(game) ?? [], pick]); }
+    const out: { id: string; openingPoint?: number; closingPoint?: number; closingDecimal?: number }[] = [];
+    for (const [game, list] of [...byGame].slice(0, limit)) {
+      const sportKey = this.data.sports[game]!, keys = await marketsFor(sportKey);
+      const books = [...new Set(list.map((pick) => pick.platform))].join(',');
+      const found = new Map<string, { point: number; price: number | null; open: number | null }[]>();
+      let ok = true;
+      for (let index = 0; index < keys.length; index += 30) {
+        try {
+          const body = await this.client.get<{ bookmakers?: { key: string; markets?: { key: string; outcomes?: { name?: string; description?: string; point?: number;
+            price?: number; opening_point?: number }[] }[] }[] }>(`/v1/sports/${sportKey}/events/${game}/odds/closing?markets=${keys.slice(index, index + 30).join(',')}&bookmakers=${books}`);
+          const sport = leagueInfo(proplineLeague(sportKey)).sport;
+          for (const book of body.bookmakers ?? []) for (const market of book.markets ?? []) for (const outcome of market.outcomes ?? []) {
+            if (!outcome.description || typeof outcome.point !== 'number') continue;
+            const side = /^(over|yes)$/i.test(outcome.name ?? '') ? 'MORE' : 'LESS';
+            const key = `${book.key}|${normalizedName(outcome.description)}|${canonicalMarket(sport, proplineMarketKey(sport, market.key))}|${side}`;
+            found.set(key, [...found.get(key) ?? [], { point: outcome.point, price: typeof outcome.price === 'number' ? outcome.price : null,
+              open: typeof outcome.opening_point === 'number' ? outcome.opening_point : null }]);
+          }
+        } catch { ok = false; }
+      }
+      if (!ok) continue; // retried next run
+      for (const pick of list) {
+        const rows = found.get(`${pick.platform}|${normalizedName(pick.playerName)}|${canonicalMarket(pick.sport, pick.market)}|${pick.side}`) ?? [];
+        // An app's ladder lists several numbers: the pick's own rung is the one whose opening number is nearest to it.
+        const row = [...rows].sort((a, b) => Math.abs((a.open ?? a.point) - pick.threshold) - Math.abs((b.open ?? b.point) - pick.threshold))[0];
+        const decimal = row?.price === null || row?.price === undefined ? undefined : row.price > 0 ? 1 + row.price / 100 : 1 + 100 / -row.price;
+        out.push({ id: pick.id, ...(row ? { closingPoint: row.point } : {}), ...(row?.open !== null && row?.open !== undefined ? { openingPoint: row.open } : {}),
+          ...(decimal && pick.platform !== 'prizepicks' ? { closingDecimal: Math.round(decimal * 1000) / 1000 } : {}) });
+      }
+    }
+    return out;
+  }
+
+  /** Closing lines for started picks, with the stat list from PropLine's market discovery (cached 6 hours). */
+  closing(picks: Parameters<PropLineResults['closingFor']>[0]) {
+    return this.closingFor(picks, async (sportKey) => (await this.client?.propMarkets([]).catch(() => null))?.get(sportKey) ?? []);
+  }
+
   /** A pick's actual stat value, when PropLine has graded that game, player and stat. */
   async actual(pick: { eventId: string; sport: string; playerName: string; market: string }): Promise<number | null> {
     await this.load();

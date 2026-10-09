@@ -34,3 +34,13 @@ test('PropLine results: a pushed grade and a read-back game grade picks by game,
     assert.equal(await results.actual({ eventId: 'pp-game:12345', sport: 'NFL', playerName: 'Bijan Robinson', market: 'rush_tds' }), null);
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
+
+test('closing line report: MORE beats the close when the line rises after the pick, LESS when it falls', async () => {
+  const { closingLineReport } = await import('../src/edge/ledger.js');
+  const pick = (side: 'MORE' | 'LESS', threshold: number, closingPoint?: number) => ({ side, threshold, ...(closingPoint === undefined ? {} : { closingPoint }) }) as never;
+  const report = closingLineReport([pick('MORE', 24.5, 25.5), pick('LESS', 6.5, 5.5), pick('MORE', 10.5, 9.5), pick('MORE', 3.5, 3.5), pick('LESS', 2.5)]);
+  assert.equal(report.picks, 4);
+  assert.equal(report.moved, 3);
+  assert.equal(report.beatClose, 2 / 3);
+  assert.equal(report.averagePoints, 0.25);
+});

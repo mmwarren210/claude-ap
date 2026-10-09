@@ -12,6 +12,8 @@ type Evaluation = { graded: number; hitRate: Interval; averageBreakEven: number 
   roi: Interval; brier: number | null; brierSkill?: number | null; maxCalibrationGap: number | null;
   calibration: { from: number; to: number; n: number; forecast: number; hitRate: number }[] };
 type Performance = { tracked: number; pending: number; evaluation: Evaluation; byPlatform: Record<string, Evaluation>;
+  /** Against the platform's own closing line (PropLine): how often the line moved toward Edge's side after the pick. */
+  closingLine?: { picks: number; moved: number; beatClose: number | null; averagePoints: number | null };
   byTier: Record<string, Evaluation>; byRating: Record<string, Evaluation>; bySport?: Record<string, Evaluation> };
 
 const range = (interval: Interval, points = false) => !interval ? '—'
@@ -44,6 +46,13 @@ export function EdgeRecord({ path = '/v1/edge/performance', name = 'Edge' }: { p
       {' '}{name}&apos;s chance at the close minus what the pick needed when it was shown. Ranges are 95%. {data.pending} picks are waiting on results.</Text>
     {data.evaluation.graded === 0 ? <Notice title="No graded picks yet" detail="The record fills in as games finish." /> : <>
       {row('All standard picks', data.evaluation)}
+      {!!data.closingLine?.picks && <View style={styles.card}>
+        <Text style={styles.label}>Against the closing line · {data.closingLine.picks} picks</Text>
+        <Text style={styles.text}>{data.closingLine.beatClose === null ? 'No line has moved after a pick yet.'
+          : `The line moved Edge's way after ${pct(data.closingLine.beatClose, 0)} of picks whose line moved (${data.closingLine.moved} of ${data.closingLine.picks}).`}
+          {data.closingLine.averagePoints !== null ? ` Average: ${data.closingLine.averagePoints >= 0 ? '+' : ''}${data.closingLine.averagePoints} pts.` : ''}</Text>
+        <Text style={styles.muted}>Each pick&apos;s number compared with the app&apos;s own line when the game started (PropLine). Beating the close more often than not is the best long-run sign of real edge.</Text>
+      </View>}
       <Text style={styles.section}>BY PLATFORM</Text>
       {Object.entries(data.byPlatform).map(([platform, value]) => row(platformLabel(platform as never), value))}
       <Text style={styles.section}>BY SOURCE</Text>

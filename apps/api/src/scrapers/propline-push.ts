@@ -194,6 +194,9 @@ export class PropLinePush {
     }
   }
 
+  /** PrizePicks' standard payout chart as PropLine publishes it (free reference data). */
+  dfsPayouts(): Promise<unknown> { return this.client.get('/v1/dfs/payouts'); }
+
   status() {
     return { url: this.url, subscriptions: this.saved.subscriptions.map(({ name, id, lastSeq }) => ({ name, id, lastSeq })), ...this.stats,
       waiting: Object.fromEntries([...this.dirty].map(([app, sports]) => [app, [...sports]])) };
