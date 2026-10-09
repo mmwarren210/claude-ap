@@ -57,12 +57,16 @@ type Diagnostics={
   funnel?:Funnel;
   sideBias?:Record<string,{flagged:boolean;share:number|null;side:'MORE'|'LESS'|null;plusEv:number;markets:Record<string,number>}>|null;
   lineSources?:{
+    prices?:{source:'propline'|'sharpapi';prices:number;fetchedAt:string|null;lastError:string|null;emptyBooks:string[]}|null;
     prizePicksFeed:{ok:boolean;rows:number;lines:number;at:string;error:string|null}|null;
     books?:{selectedButEmpty:string[];planSelects:string[]|null;requestsLastHour:number}|null;
-    board:{primary:{sharpapi:number;oddsApi:number;scraper:number};goblins:number;demons:number;unconfirmed:number;
+    board:{bySource?:Record<string,number>;primary:{sharpapi:number;oddsApi:number;scraper:number};goblins:number;demons:number;unconfirmed:number;
       disagreements:Record<string,number>}|null;
   };
 };
+/** Readable names for the line store's sources. */
+const sourceName=(source:string)=>({'propline-prizepicks':'PropLine','prizepicks-partner':'Free PrizePicks feed',sharpapi:'SharpAPI',
+  'the-odds-api':'The Odds API','zen-studio-prizepicks':'Apify','lergassy':'Apify backup'} as Record<string,string>)[source]??source;
 type ReanalyzeResult={
   builtAt:string;lineCount:number;rankedCount:number;research:string;evidenceCount:number;
   oddsCreditsUsed:0;tracked:number;trackingStatus:string;
@@ -238,17 +242,17 @@ export default function OwnerBoardScreen(){
       detail="Board analysis controls are only available to the owner profile configured on the server."/>}
     {access==='ALLOWED'&&<>
       <Notice title="Refresh everything now"
-        detail="Pulls the PrizePicks, Underdog and Pick6 scrapers, injuries, Pinnacle and the sportsbook feed now, and skips each one's next scheduled pull so you don't pay twice. Takes a few minutes on the server."/>
+        detail="Pulls PrizePicks, Underdog, Pick6 and Dabble from PropLine, the free PrizePicks backup and the other line sources now, and skips each one's next scheduled pull. Takes a few minutes on the server."/>
       <Pressable accessibilityRole="button" disabled={busy} onPress={()=>void refreshAllNow()}
         style={[styles.action,busy&&styles.disabled]}>
         <Text style={styles.actionText}>Refresh all now · skip next scheduled</Text>
       </Pressable>
       <Notice title="Current PrizePicks snapshot"
-        detail="This pull may use Odds API credits. Once started, it continues on the server if you leave or close the app. The prior board stays available if it fails."/>
+        detail="Pulls the whole PrizePicks board from PropLine now (inside the plan's daily requests, no Odds API credits). Once started, it continues on the server if you leave or close the app. The prior board stays available if it fails."/>
       <Pressable accessibilityRole="button" disabled={busy||pulling||checkingPull}
         onPress={()=>void pullSnapshot()}
         style={[styles.action,(busy||pulling||checkingPull)&&styles.disabled]}>
-        <Text style={styles.actionText}>{pulling?'Pull running on server…':'Pull DFS snapshot (uses Odds credits)'}</Text>
+        <Text style={styles.actionText}>{pulling?'Pull running on server…':'Pull PrizePicks from PropLine'}</Text>
       </Pressable>
       {checkingPull&&<ActivityIndicator color={palette.green}/>}
       {pullStatus?.job.status==='RUNNING'&&<View style={styles.card} accessibilityRole="progressbar"
@@ -281,12 +285,15 @@ export default function OwnerBoardScreen(){
         </View>
         {diagnostics.lineSources&&<View style={styles.card}>
           <Text style={styles.heading}>LINE SOURCES</Text>
-          {diagnostics.lineSources.prizePicksFeed
+          {diagnostics.lineSources.prices&&(diagnostics.lineSources.prices.lastError&&!diagnostics.lineSources.prices.prices
+            ?<Text style={styles.error}>Sportsbook prices ({diagnostics.lineSources.prices.source==='propline'?'PropLine':'SharpAPI'}) failed: {diagnostics.lineSources.prices.lastError.replace(/_/g,' ').toLowerCase()}</Text>
+            :<Text style={styles.row}>Sportsbook prices ({diagnostics.lineSources.prices.source==='propline'?'PropLine':'SharpAPI'}): {diagnostics.lineSources.prices.prices.toLocaleString()}{diagnostics.lineSources.prices.fetchedAt?` · ${new Date(diagnostics.lineSources.prices.fetchedAt).toLocaleTimeString()}`:''}{diagnostics.lineSources.prices.emptyBooks.length?` · no rows: ${diagnostics.lineSources.prices.emptyBooks.join(', ')}`:''}</Text>)}
+          {diagnostics.lineSources.prices?.source==='propline'?null:diagnostics.lineSources.prizePicksFeed
             ?diagnostics.lineSources.prizePicksFeed.ok
               ?<Text style={styles.row}>SharpAPI PrizePicks: {diagnostics.lineSources.prizePicksFeed.lines.toLocaleString()} lines · {new Date(diagnostics.lineSources.prizePicksFeed.at).toLocaleString()}</Text>
               :<Text style={styles.error}>SharpAPI PrizePicks feed down ({(diagnostics.lineSources.prizePicksFeed.error??'').replace(/_/g,' ').toLowerCase()}): the board is on The Odds API and the scrapers.</Text>
             :<Text style={styles.hint}>SharpAPI PrizePicks: no pass yet since the server started.</Text>}
-          {diagnostics.lineSources.books&&<>
+          {diagnostics.lineSources.prices?.source!=='propline'&&diagnostics.lineSources.books&&<>
             {diagnostics.lineSources.books.selectedButEmpty.length>0&&
               <Text style={styles.error}>Selected but empty: {diagnostics.lineSources.books.selectedButEmpty.join(', ')} returned no rows in any league two refreshes running.</Text>}
             {diagnostics.lineSources.books.planSelects&&
@@ -296,9 +303,10 @@ export default function OwnerBoardScreen(){
           {diagnostics.sideBias&&Object.entries(diagnostics.sideBias).filter(([,bias])=>bias.flagged).map(([platform,bias])=>
             <Text key={platform} style={styles.error}>Side bias: {platform} has {Math.round((bias.share??0)*100)}% of {bias.plusEv} +EV picks on {bias.side} (held from Top Picks and Gen) · {Object.entries(bias.markets).slice(0,3).map(([market,count])=>`${market.replace(/_/g,' ')} ${count}`).join(', ')}</Text>)}
           {diagnostics.lineSources.board&&<>
-            <Text style={styles.row}>From SharpAPI: {diagnostics.lineSources.board.primary.sharpapi.toLocaleString()} · The Odds API: {diagnostics.lineSources.board.primary.oddsApi.toLocaleString()} · Scrapers: {diagnostics.lineSources.board.primary.scraper.toLocaleString()}</Text>
+            {diagnostics.lineSources.board.bySource&&<Text style={styles.row}>PrizePicks lines by source: {Object.entries(diagnostics.lineSources.board.bySource)
+              .sort((a,b)=>b[1]-a[1]).map(([source,count])=>`${sourceName(source)} ${count.toLocaleString()}`).join(' · ')}</Text>}
             <Text style={styles.row}>Goblins: {diagnostics.lineSources.board.goblins.toLocaleString()} · Demons: {diagnostics.lineSources.board.demons.toLocaleString()}</Text>
-            <Text style={styles.hint}>Unconfirmed (one source): {diagnostics.lineSources.board.unconfirmed.toLocaleString()}{Object.keys(diagnostics.lineSources.board.disagreements).length
+            <Text style={styles.hint}>Listed by one source only (PropLine and the free feed confirm each other every 2 hours): {diagnostics.lineSources.board.unconfirmed.toLocaleString()}{Object.keys(diagnostics.lineSources.board.disagreements).length
               ?` · Sources disagreed: ${Object.entries(diagnostics.lineSources.board.disagreements).map(([sport,count])=>`${sport} ${count}`).join(', ')}`:''}</Text>
           </>}
         </View>}

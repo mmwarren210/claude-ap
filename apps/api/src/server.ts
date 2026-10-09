@@ -843,7 +843,9 @@ export function buildServer(options: ServerOptions = {}) {
         contextFeeds:await options.contextFeeds?.status()??null,
         sharpProps:await options.sharpProps?.status()??null,
         sideBias:edge?.sideBias()??null,
-        lineSources:{prizePicksFeed:(await options.sharpProps?.status())?.prizePicksFeed??null,
+        lineSources:{prices:await options.sharpProps?.status().then((sharp)=>({source:sharp.source??'sharpapi',prices:sharp.prices,
+            fetchedAt:sharp.fetchedAt,lastError:sharp.lastError,emptyBooks:sharp.emptyBooks??[]}))??null,
+          prizePicksFeed:(await options.sharpProps?.status())?.source==='propline'?null:(await options.sharpProps?.status())?.prizePicksFeed??null,
           books:options.sharpProps?await options.sharpProps.status().then((sharp)=>({selectedButEmpty:sharp.selectedButEmpty??[],
             planSelects:sharp.planSelects??null,requestsLastHour:sharp.requestsLastHour??0})):null,
           board:(options.provider as {lastReport?:BoardSourceReport|null}|null|undefined)?.lastReport??null},
@@ -882,8 +884,12 @@ export function buildServer(options: ServerOptions = {}) {
       const input=z.object({acknowledgeProviderCost:z.literal(true)}).strict().safeParse(request.body);
       if(!input.success)return reply.code(428).send({code:'PROVIDER_CREDITS_CONFIRMATION_REQUIRED',
         message:'A PrizePicks provider refresh may consume credits.'});
-      // With scrapers feeding the board, the owner's paid pull runs The Odds API as the third source;
-      // the board rebuilds once its lines are stored.
+      // PropLine (owner, 2026-10-08) is the PrizePicks source: the owner's pull runs it (inside the plan's daily requests) and
+      // the board rebuilds once its lines are stored. The Odds API (paid credits) runs only when PropLine isn't configured.
+      if(options.scraperPuller?.hasSource('propline-prizepicks')){
+        void options.scraperPuller.pull('propline-prizepicks');
+        return reply.code(202).send({started:true,job:currentJob(),source:'propline-prizepicks'});
+      }
       if(options.scraperPuller?.hasSource('the-odds-api')){
         void options.scraperPuller.pull('the-odds-api');
         return reply.code(202).send({started:true,job:currentJob(),source:'the-odds-api'});

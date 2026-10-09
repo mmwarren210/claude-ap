@@ -152,6 +152,25 @@ export function propLineBoard(client: PropLineClient, options: { app: DfsApp; bo
   };
 }
 
+/**
+ * PropLine market keys to the keys CrownIQ's models and the other line sources already use for the same stat (owner diagnostics
+ * 2026-10-09: these showed as "market has no model" though an approved model exists). Everything else keeps the Odds API naming.
+ */
+export function proplineMarketKey(sport: Sport, key: string): string {
+  const football: Readonly<Record<string, string>> = { player_rush_tds: 'rush_tds', player_field_goals_made: 'player_field_goals',
+    player_longest_completion: 'player_pass_longest_completion', player_reception_targets: 'player_receiving_targets',
+    player_extra_points_made: 'player_extra_points' };
+  const bySport: Readonly<Partial<Record<Sport, Readonly<Record<string, string>>>>> = {
+    NFL: football,
+    NCAAFB: { ...football, player_reception_tds: 'rec_tds', player_rush_longest: 'longest_rush', player_reception_longest: 'longest_rec' },
+    NHL: { player_goals: 'goals', player_assists: 'assists', player_saves: 'saves', goalie_saves: 'saves', player_blocked_shots: 'blocked_shots' },
+    TENNIS: { player_games_won: 'games_won', player_break_points_won: 'break_points_won', player_aces: 'aces', player_double_faults: 'double_faults' },
+    MLB: { batter_rbis: 'rbis', batter_doubles: 'doubles', batter_triples: 'triples', batter_stolen_bases: 'sb', batter_strikeouts: 'hitter_ks',
+      pitcher_walks: 'walks_allowed', pitcher_outs: 'pitching_outs' },
+  };
+  return bySport[sport]?.[key] ?? normalizePrizePicksMarketKey(sport, key);
+}
+
 const tiers: Readonly<Record<string, ScrapedTier>> = { standard: 'REGULAR', goblin: 'GOBLIN', demon: 'DEMON' };
 /** Pick6's alternate numbers are ordinary picks at their own number (no Goblin/Demon on Pick6). */
 const pick6Tiers: Readonly<Record<string, ScrapedTier>> = { standard: 'REGULAR', alternate: 'REGULAR' };
@@ -189,7 +208,7 @@ export function eventLines(event: Event, league: string, sport: Sport, options: 
     app: options.app,
     appLineId: `pl-${hash(JSON.stringify([event.id, entry.player.toLowerCase(), entry.market, entry.tier, entry.point]))}`,
     league, gameId: `propline:${event.id}`, player: entry.player, team: null, teamName: null, opponent: null,
-    stat: marketLabel(entry.market), marketKey: normalizePrizePicksMarketKey(sport, entry.market), line: entry.point, tier: entry.tier,
+    stat: marketLabel(entry.market), marketKey: proplineMarketKey(sport, entry.market), line: entry.point, tier: entry.tier,
     directions: [...entry.sides].sort((a, b) => a === 'MORE' ? -1 : b === 'MORE' ? 1 : 0), startTime, imageUrl: null,
     home: home ? { abbreviation: home, name: home } : null, away: away ? { abbreviation: away, name: away } : null,
     ...(entry.multiplier && entry.tier !== 'REGULAR' ? { multipliers: { MORE: entry.multiplier } } : {}),

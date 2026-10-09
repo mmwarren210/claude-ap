@@ -331,7 +331,11 @@ export class EdgeService {
    * entries are held. Ten or more +EV picks are needed to judge.
    */
   private checkSideBias(snapshot: EdgeSnapshot) {
-    const next = nextSideBias(this.bias.get(snapshot.platform) ?? null, snapshot.response.picks);
+    // Only picks where the app offered both sides can show a lean: a MORE-only line (Goblin, Demon, a Pick6 alternate number)
+    // has no LESS to pick, so it would read as "MORE bias" (owner diagnostics 2026-10-09: Pick6 85% MORE after its alternates).
+    const choices = snapshot.response.picks.filter((pick) => pick.oppositeLineId !== null ||
+      (snapshot.lines.get(pick.lineId)?.availableDirections.length ?? 0) > 1);
+    const next = nextSideBias(this.bias.get(snapshot.platform) ?? null, choices);
     this.bias.set(snapshot.platform, next);
     if (next.share === null) return;
     if (next.streak > 0) console.warn(`[edge-bias] ${snapshot.platform}: ${Math.round(next.share * 100)}% of ${next.plusEv} +EV picks are ${next.side}` +

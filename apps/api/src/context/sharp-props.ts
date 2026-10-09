@@ -496,6 +496,8 @@ export function sharpGameLines(games: readonly GamePrice[]): import('./feeds.js'
 }
 
 export interface SharpPropsStatus {
+  /** Where the sportsbook prices come from: PropLine (owner, 2026-10-08) or SharpAPI. */
+  readonly source?: 'propline' | 'sharpapi';
   readonly configured: boolean; readonly fetchedAt: string | null; readonly prices: number;
   readonly lastError: string | null; readonly requests: number;
   readonly overOnly?: number; readonly games?: number; readonly pickem?: number;
@@ -639,7 +641,8 @@ export class SharpPropsFeed {
 
   async status(): Promise<SharpPropsStatus> {
     await this.load();
-    return { configured: !!this.apiKey, fetchedAt: this.fetchedAt, prices: this.prices.length, lastError: this.lastError,
+    return { source: this.options.propLineRows ? 'propline' : 'sharpapi', configured: !!this.apiKey || !!this.options.propLineRows,
+      fetchedAt: this.fetchedAt, prices: this.prices.length, lastError: this.lastError,
       requests: this.requests, overOnly: this.overOnly.length, games: this.games.length,
       pickem: this.pickem.length, prizePicksFeed: this.pickemStatus, requestsLastHour: this.requestsLastHour(),
       selectedButEmpty: [...this.emptyStreaks].filter(([, streak]) => streak >= 2).map(([book]) => book),
