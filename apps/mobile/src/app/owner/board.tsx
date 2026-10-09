@@ -66,7 +66,7 @@ type Diagnostics={
 };
 /** Readable names for the line store's sources. */
 const sourceName=(source:string)=>({'propline-prizepicks':'PropLine','prizepicks-partner':'Free PrizePicks feed',sharpapi:'SharpAPI',
-  'the-odds-api':'The Odds API','zen-studio-prizepicks':'Apify','lergassy':'Apify backup'} as Record<string,string>)[source]??source;
+  'propline-underdog':'PropLine Underdog','propline-pick6':'PropLine Pick6','propline-dabble':'PropLine Dabble'} as Record<string,string>)[source]??source;
 type ReanalyzeResult={
   builtAt:string;lineCount:number;rankedCount:number;research:string;evidenceCount:number;
   oddsCreditsUsed:0;tracked:number;trackingStatus:string;

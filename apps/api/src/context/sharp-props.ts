@@ -587,8 +587,6 @@ export class SharpPropsFeed {
     private readonly options: { books?: readonly string[]; leagues?: readonly string[]; maxPagesPerLeague?: number;
       /** Pause between requests; SharpAPI's Hobby plan allows 120 a minute. */
       requestGapMs?: number; retryScale?: number;
-      /** More football game totals (The Odds API) for the anytime-TD prices; SharpAPI's own totals win. */
-      extraTotals?: () => Promise<readonly GamePrice[]>;
       /** Rows from PropLine instead of SharpAPI (owner, 2026-10-08): the same row shape, so everything downstream is unchanged. */
       propLineRows?: () => Promise<{ rows: unknown[]; gameRows: unknown[]; failed: string[]; unmapped: Record<string, number>; requests: number }> } = {},
     private readonly fetchFn: typeof fetch = fetch, private readonly clock: () => Date = () => new Date()) {}
@@ -787,8 +785,7 @@ export class SharpPropsFeed {
     // Pick'em rows (PrizePicks) are lines, not prices: kept apart so they never count toward a fair price.
     const bookRows = rows.filter((row) => !isPickemRow(row));
     const games = gamePrices(gameRows.filter((row) => !isPickemRow(row)));
-    const extraTotals = this.options.extraTotals ? await this.options.extraTotals().catch(() => []) : [];
-    const scorers = scorerFairPrices(bookRows, [...extraTotals, ...games]);
+    const scorers = scorerFairPrices(bookRows, games);
     if (scorers.length || rows.some((row) => scorerMarkets.has(String((row as Row).market_type))))
       console.log(`[sharp] anytime scorer: ${scorers.filter((price) => price.market === 'goals').length} goals and ${scorers.filter((price) => price.market === 'anytime_tds').length} TD prices; ${JSON.stringify(scorerSkips)}; tennis total games ${tennisTotalPrices(games).length}`);
     const fights = fightTotals(gameRows.filter((row) => !isPickemRow(row)));

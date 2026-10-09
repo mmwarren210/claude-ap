@@ -20,7 +20,6 @@
   "scripts": {
     "dev": "node --import tsx --watch src/main.ts",
     "start": "node --import tsx src/main.ts",
-    "pull:prizepicks": "node --import tsx scripts/pull-prizepicks.ts",
     "audit:nfl": "node --import tsx scripts/audit-nfl-passing.ts",
     "plan:research": "node --import tsx scripts/plan-web-research.ts",
     "run:research": "node --import tsx scripts/run-web-research.ts",

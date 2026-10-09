@@ -5,7 +5,6 @@ import { SharpPropsFeed } from '../src/context/sharp-props.js';
 import type { PickemLine } from '../src/context/sharp-props.js';
 import { ScrapedLineStore } from '../src/scrapers/line-store.js';
 import { sameLineKey } from '../src/scrapers/markets.js';
-import { classifyAgainst, regularKey } from '../src/scrapers/odds-api-source.js';
 import { ScrapedPrizePicksProvider } from '../src/scrapers/scraped-prizepicks-provider.js';
 import type { ScrapedLine } from '../src/scrapers/scraped-line.js';
 import { SHARP_SOURCE, sharpPrizePicksScraped } from '../src/scrapers/sharp-prizepicks.js';
@@ -59,15 +58,6 @@ test('board: SharpAPI first, the newest number wins a disagreement and stays unc
   assert.equal(after.some((line) => line.playerName === 'New Tight End'), false);
   assert.deepEqual(after.filter((line) => line.playerName === 'Test Receiver' && line.lineType === 'REGULAR').map((line) => line.sources),
     [['zen-studio-prizepicks']]);
-});
-
-test('Odds API alternates with no regular beside them are placed against SharpAPI’s regular line', () => {
-  const alt = { id: 'a', provider: 'prizepicks', sourceLineId: 'a', sourceLineIdIsSynthetic: true, sport: 'NFL', league: 'NFL', eventId: 'o1',
-    eventName: 'Away @ Home', eventStartTime: start, playerId: 'p', playerName: 'Test Receiver', team: null, opponent: null,
-    market: 'player_reception_yds', threshold: 39.5, availableDirections: ['MORE'], lineType: 'UNKNOWN_ALTERNATE', fetchedAt: now.toISOString() } as PropLine;
-  const regulars = new Map([[regularKey('NFL', 'Test Receiver', 'player_reception_yds', start), 54.5]]);
-  const [goblin, demon, unknown] = classifyAgainst([alt, { ...alt, threshold: 74.5 }, { ...alt, playerName: 'Nobody' }], regulars);
-  assert.deepEqual([goblin!.lineType, demon!.lineType, unknown!.lineType], ['GOBLIN', 'DEMON', 'UNKNOWN_ALTERNATE']);
 });
 
 test('SharpAPI feed: PrizePicks gets its own pass; a failed pass clears its lines and says so, book prices unaffected', async () => {

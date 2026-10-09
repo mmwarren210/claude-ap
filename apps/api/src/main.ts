@@ -14,9 +14,6 @@ import { CompositeResearchAdapter, conservativeCorrelationPolicy, createGkrRegis
   statHistoryReadyVersions, statHistoryV2Versions, statHistoryV3Versions, statHistoryV4Versions } from '@crowniq/engine';
 import type { OddsProvider } from '@crowniq/engine';
 import { buildServer } from './server.js';
-import { consensusFairPrices, FullPrizePicksProvider } from './full-prizepicks-provider.js';
-import { TheOddsApiProvider } from './the-odds-api-provider.js';
-import { PROBES_V2, probeOddsApiOnce } from './edge/odds-api-probe.js';
 import { EdgeLedger } from './edge/ledger.js';
 import { SnapshotStore } from './edge/snapshots.js';
 import { BookWeightStore } from './edge/book-weights.js';
@@ -26,7 +23,8 @@ import { JsonSelectionLedger } from './selection-ledger.js';
 import { CombinedWebResearch, WebResearchAdapter, WebResearchCatalog } from './web-research.js';
 import { SharpPropsFeed } from './context/sharp-props.js';
 import { SlotLedger } from './scrapers/slot-ledger.js';
-import { ContextFeeds, injuryReports, pinnacleLines } from './context/feeds.js';
+import { ContextFeeds, injuryReports } from './context/feeds.js';
+import { proplineGameLines } from './context/propline-game-lines.js';
 import { ClaudeWebResearchAdapter } from './claude-web-research.js';
 import { ProductLedger } from './product-ledger.js';
 import { ProductGradingWorker } from './background-grading.js';
@@ -41,12 +39,8 @@ import { BoardCache } from './board-cache.js';
 import { ApifyClient } from './scrapers/apify-client.js';
 import { ScrapedLineStore } from './scrapers/line-store.js';
 import { ScrapedPrizePicksProvider } from './scrapers/scraped-prizepicks-provider.js';
-import { lergassy } from './scrapers/lergassy.js';
-import { oddsApiSource, regularKey } from './scrapers/odds-api-source.js';
 import { ScraperPuller } from './scrapers/scraper-puller.js';
-import { zenPrizePicks, zenPrizePicksEsports, zenUnderdog, zenPick6 } from './scrapers/zen-studio.js';
 import { DailySpendBudget } from './scrapers/spend-budget.js';
-import { underdogDirect } from './scrapers/underdog-direct.js';
 import { prizePicksPartner } from './scrapers/prizepicks-partner.js';
 import { PropLineClient, propLineBoard } from './scrapers/propline.js';
 import { PropLinePush } from './scrapers/propline-push.js';
@@ -65,7 +59,6 @@ import { PlayerIdentityResearch } from './identity/player-identity.js';
 import { SleeperNflIdentitySource } from './identity/sleeper-nfl.js';
 import { JsonCache } from './identity/types.js';
 import { CurrentContextResearch } from './current-context.js';
-import { OddsApiTotals } from './context/odds-api-totals.js';
 import { UfcHistory } from './ufc-history.js';
 import { SoccerHistory } from './soccer-history.js';
 import { SecretUnlocks } from './secrets.js';
@@ -86,35 +79,15 @@ setInterval(()=>{try{for(const name of readdirSync(dataDir,{recursive:true}) as 
   if(Date.now()-statSync(path).mtimeMs>15*60_000){rmSync(path,{force:true});console.warn(`[disk] removed a stale half-written save: ${name}`);}
 }}catch{/* nothing to sweep */}},3600_000).unref();
 // CrownIQ's own archive: every game log, graded result and line it has seen, kept for verification and evidence.
-// One-time line reset (owner, 2026-10-08, moving to PropLine): CROWNIQ_CLEAR_LINES_ONCE=<id> deletes the saved PrizePicks board
-// and the line store at startup, once per id (a marker file remembers it). Lines come back from the next pull.
-const clearId=process.env.CROWNIQ_CLEAR_LINES_ONCE?.trim();
-if(clearId&&/^[a-z0-9-]{1,40}$/i.test(clearId)&&!existsSync(`${dataDir}/lines-cleared-${clearId}`)){
-  for(const file of [process.env.CROWNIQ_BOARD_CACHE_FILE ?? `${dataDir}/board-cache.json`,
-    process.env.CROWNIQ_SCRAPED_LINES_FILE ?? `${dataDir}/scraped-lines.json`])rmSync(file,{force:true});
-  try{writeFileSync(`${dataDir}/lines-cleared-${clearId}`,new Date().toISOString());}catch{/* data dir missing */}
-  console.warn(`[startup] saved lines cleared (${clearId})`);
-}
 const historyArchive=new HistoryArchive(`${dataDir}/archive`);
 // Minutes on the app per member; saved every few minutes and on shutdown (a deploy sends SIGTERM first).
 const activityLog=new ActivityLog(`${dataDir}/activity.json`);
 process.once('SIGTERM',()=>{void activityLog.flush().catch(()=>undefined).finally(()=>process.exit(0));});
-const apiKey = process.env.THE_ODDS_API_KEY;
-const providerMode = process.env.ODDS_PROVIDER ?? 'auto';
-if (!['auto', 'none', 'the_odds_api', 'scrapers'].includes(providerMode)) {
-  throw new Error('Unknown ODDS_PROVIDER');
-}
-const providerName = providerMode === 'auto'
-  ? apiKey ? 'the_odds_api' : 'none'
-  : providerMode;
-const scope = process.env.THE_ODDS_API_SCOPE ?? 'full';
-if (scope !== 'full' && scope !== 'nfl_passing_yards') throw new Error('Unknown THE_ODDS_API_SCOPE');
-const maxEvents = process.env.THE_ODDS_API_MAX_EVENTS
-  ? Number(process.env.THE_ODDS_API_MAX_EVENTS) : undefined;
-const maxCreditsPerRefresh = process.env.THE_ODDS_API_MAX_CREDITS_PER_REFRESH
-  ? Number(process.env.THE_ODDS_API_MAX_CREDITS_PER_REFRESH) : undefined;
-// Lines from the Apify scrapers instead of The Odds API: pulls run on their own schedule and spend cap,
-// and the board reads the stored lines for free.
+// Lines come from the stored scraper board (PropLine and the free PrizePicks partner feed); `none` serves no board.
+const providerMode = process.env.ODDS_PROVIDER ?? 'scrapers';
+if (!['auto', 'none', 'scrapers'].includes(providerMode)) throw new Error('Unknown ODDS_PROVIDER');
+const providerName = providerMode === 'none' ? 'none' : 'scrapers';
+// Pulls run on their own schedule and spend cap, and the board reads the stored lines for free.
 const nonNegativeNumber=(name:string,fallback:number)=>{
   const value=Number(process.env[name]??fallback);
   if(!Number.isFinite(value)||value<0)throw new Error(`Invalid ${name}`);
@@ -167,47 +140,24 @@ const soccerHistory=process.env.APIFY_TOKEN?.trim()?new SoccerHistory(async(quer
   await scraperBudget.record(run.usageUsd);
   return run.status==='SUCCEEDED'?await apify.datasetItems(run.datasetId):null;
 },`${dataDir}/soccer-history.json`):null;
-// Step 5a: the Odds API PrizePicks pull also asks for up to nine sportsbooks (one region, so no extra credits per market).
-// Pinnacle first: the Step 2 probe confirmed it returns player props through The Odds API. CROWNIQ_ODDS_CONSENSUS_BOOKS overrides.
-const oddsPrizePicks=apiKey?new FullPrizePicksProvider({apiKey,maxEvents,maxCreditsPerRefresh,quotesFile:`${dataDir}/odds-consensus.json`,
-  consensusBookmakers:(process.env.CROWNIQ_ODDS_CONSENSUS_BOOKS??'pinnacle,fanduel,draftkings,betmgm,williamhill_us,espnbet,betonlineag,betrivers,lowvig')
-    .split(',').map((book)=>book.trim()).filter(Boolean)}):null;
 const propLine=process.env.PROPLINE_API_KEY?.trim()?new PropLineClient(process.env.PROPLINE_API_KEY.trim()):null;
 // PropLine's graded props, pushed as they settle and read back per game; Edge and GKR+ grade from them first.
 const proplineResults=propLine?new PropLineResults(propLine,`${dataDir}/propline-results.json`):null;
 const noteGame=proplineResults?(gameId:string,sportKey:string)=>proplineResults.noteGame(gameId,sportKey):undefined;
 const proplineEvery=Math.min(60,Math.max(5,Number(process.env.CROWNIQ_PROPLINE_EVERY_MINUTES??15)||15));
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
-  // Apify's plan stops at $100 a month (owner, 2026-10-08), so each full board is pulled once a day and the cap is about
-  // $3.30 a day. Esports run on their own cheap pull (SharpAPI has no PrizePicks esports), first in line, twice a day;
-  // the lergassy backup is off unless CROWNIQ_SCRAPER_HOURS_LERGASSY names hours.
-  // PrizePicks' partner address serves the whole board (esports, Goblins and Demons included) for free, every two hours;
-  // the Apify PrizePicks pulls stay as on-demand backups.
+  // PrizePicks' partner address serves the whole board (esports, Goblins and Demons included) for free, every two hours.
+  // The Apify line scrapers, Underdog's own feed and The Odds API were removed (owner, 2026-10-09): PropLine replaced them.
   [// PropLine (owner, 2026-10-08): the PrizePicks board for every sport it carries, hourly. The free partner feed stays
     // configured (off by CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER) for comparison.
     // Every 15 minutes (owner, 2026-10-09; CROWNIQ_PROPLINE_EVERY_MINUTES): about 25 requests a pull per app, well inside
     // the 250,000 a day. A pull that brings no change rebuilds nothing.
     ...(propLine?[{source:propLineBoard(propLine,{app:'prizepicks',bookmaker:'prizepicks',noteGame}),everyMinutes:proplineEvery,
       hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PROPLINE_PRIZEPICKS',Array.from({length:24},(_,hour)=>hour).join(','))}]:[]),
-    // Underdog and Pick6 from PropLine too; Underdog's own feed stays alongside for its payout multipliers.
+    // Underdog, Pick6 and Dabble from PropLine too.
     ...(propLine?(['underdog','pick6','dabble'] as const).map((app)=>({source:propLineBoard(propLine,{app,bookmaker:app,noteGame}),everyMinutes:proplineEvery,
       hoursEt:hoursEt(`CROWNIQ_SCRAPER_HOURS_PROPLINE_${app.toUpperCase()}`,Array.from({length:24},(_,hour)=>hour).join(','))})):[]),
-    {source:prizePicksPartner(),hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER','7,9,11,13,15,17,19,21,23')},
-    {source:zenPrizePicksEsports,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_ESPORTS','')},
-    {source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','')},
-    {source:lergassy,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_LERGASSY','')},
-    // Underdog's own feed is free, so it refreshes every two hours; the Apify actor stays as a backup on demand.
-    {source:underdogDirect(),hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_UNDERDOG_DIRECT','8,10,12,14,16,18,20,22')},
-    {source:zenUnderdog,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_UNDERDOG','')},
-    // Off by default since PropLine carries Pick6 (2026-10-09); CROWNIQ_SCRAPER_HOURS_ZEN_PICK6 turns it back on.
-    {source:zenPick6,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PICK6','')},
-    // The Odds API alongside the scrapers as a third check. It spends Odds API credits, so by default
-    // it runs only when the owner pulls (CROWNIQ_SCRAPER_HOURS_ODDS_API adds a schedule).
-    ...(oddsPrizePicks?[{source:oddsApiSource(oddsPrizePicks,undefined,
-      // Step 0b: Goblins/Demons the Odds API pull can't place are classified against SharpAPI's regular PrizePicks line.
-      async()=>new Map((await sharpProps.pickemLines()).lines.filter((line)=>line.sport&&line.market)
-        .map((line)=>[regularKey(line.sport!,line.player,line.market!,new Date(line.startTime).toISOString()),line.line]))),
-      hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ODDS_API','')}]:[])],
+    {source:prizePicksPartner(),hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER','7,9,11,13,15,17,19,21,23')}],
   {maxRunUsd:nonNegativeNumber('CROWNIQ_SCRAPER_MAX_RUN_USD',5),slots:scraperSlots}):null;
 // PropLine push (owner, 2026-10-09): line moves, pulled markets, grades and steam arrive the moment they happen, at no request
 // cost. A moved line re-pulls just that app's sport; a pulled market comes down at once. CROWNIQ_PROPLINE_PUSH=off turns it off.
@@ -218,10 +168,9 @@ const proplinePush=propLine&&scraperPuller&&publicUrl&&process.env.CROWNIQ_PROPL
     suspend:(app,game,player,keys)=>scraperPuller.suspend(app,game,player,keys),
     resolution:(event)=>{void proplineResults?.record(event).then(()=>proplineResults.save()).catch(()=>undefined);},
     noteGame}):null;
-// Display-only game context (never scored): injuries and Pinnacle game lines.
+// Display-only game context (never scored): injuries. Game lines come from PropLine.
 const contextFeeds=process.env.APIFY_TOKEN?.trim()?new ContextFeeds(apify,scraperBudget,[
-  {source:injuryReports,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_INJURIES','8')},
-  {source:pinnacleLines,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_PINNACLE','8')}],
+  {source:injuryReports,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_INJURIES','8')}],
 process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`,undefined,scraperSlots):null;
 // DraftKings, Hard Rock, FanDuel and BetRivers prop prices from SharpAPI (reference odds, +EV and Edge), refreshed hourly.
 // The owner's Railway variable is named `sharp_api`; SHARPAPI_KEY also works.
@@ -234,21 +183,12 @@ const sharpProps=new SharpPropsFeed((process.env.SHARPAPI_KEY ?? process.env.sha
   {books:(process.env.CROWNIQ_SHARP_BOOKS??'draftkings,fanduel,hardrock,betmgm,caesars,prizepicks').split(',').map((book)=>book.trim()).filter(Boolean),
     // DraftKings, Hard Rock and the line-shopping books from PropLine (owner, 2026-10-08); CROWNIQ_BOOKS_SOURCE=sharpapi goes back.
     ...(propLine&&process.env.CROWNIQ_BOOKS_SOURCE!=='sharpapi'?{propLineRows:()=>fetchPropLineRows(propLine)}:{}),
-    maxPagesPerLeague:100,extraTotals:apiKey?(()=>{const totals=new OddsApiTotals(apiKey);return ()=>totals.games();})():undefined,
+    maxPagesPerLeague:100,
     ...(process.env.CROWNIQ_SHARP_LEAGUES?.trim()?{leagues:process.env.CROWNIQ_SHARP_LEAGUES.split(',').map((league)=>league.trim()).filter(Boolean)}:{})});
 // A bad CROWNIQ_PAYOUTS falls back to the defaults rather than stopping the server.
 const payouts=mergePayouts((()=>{try{return JSON.parse(process.env.CROWNIQ_PAYOUTS??'null');}catch{return null;}})());
+const provider: OddsProvider | null = scrapedLines ? new ScrapedPrizePicksProvider(scrapedLines) : null;
 const evBreakEven=process.env.CROWNIQ_EV_BREAK_EVEN?Number(process.env.CROWNIQ_EV_BREAK_EVEN):undefined;
-const provider: OddsProvider | null = scrapedLines ? new ScrapedPrizePicksProvider(scrapedLines)
-  : providerName !== 'the_odds_api' || !apiKey ? null
-  : scope === 'nfl_passing_yards'
-    ? new TheOddsApiProvider({ apiKey,
-      marketKeys: process.env.THE_ODDS_API_MARKETS?.split(',').map((item) => item.trim()),
-      maxEvents, maxCreditsPerRefresh })
-    : new FullPrizePicksProvider({ apiKey, maxEvents, maxCreditsPerRefresh });
-if (providerName === 'the_odds_api' && !provider) {
-  console.warn('The Odds API is selected but THE_ODDS_API_KEY is not set in this server runtime.');
-}
 // Web research providers: ChatGPT (OPENAI_API_KEY) and Claude (ANTHROPIC_API_KEY). `auto` runs every provider that
 // has a key, side by side; findings stay display-only.
 const researchProvider = process.env.RESEARCH_PROVIDER ?? 'auto';
@@ -470,7 +410,7 @@ const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',dispersion:edgeDisp
   pick6PayoutsConfirmed:process.env.EDGE_PICK6_PAYOUTS_CONFIRMED!=='false',
   alertsFile:`${dataDir}/edge/alerts.json`,staleLogFile:`${dataDir}/edge/stale-events.jsonl`};
 
-const app = buildServer({ ufcHistory, soccerHistory, oddsConsensus:oddsPrizePicks?()=>consensusFairPrices(oddsPrizePicks.consensusQuotes()):undefined, adminToken: process.env.ADMIN_TOKEN, playerHistory, espnHistory: espnEvidence, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
+const app = buildServer({ ufcHistory, soccerHistory, adminToken: process.env.ADMIN_TOKEN, playerHistory, espnHistory: espnEvidence, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
   webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,
   autoGradingEnabled:!!autoGrade,autoGradingStatus:()=>autoGrade?.status()??null,
   requireProfiles:true,identityVerifier,
@@ -484,13 +424,6 @@ const app = buildServer({ ufcHistory, soccerHistory, oddsConsensus:oddsPrizePick
     dailyResults:Number(process.env.CROWNIQ_SCOUT_RESULTS_DAILY ?? 60),resultsPerRun:Number(process.env.CROWNIQ_SCOUT_RESULTS_PER_RUN ?? 10),
     dailyOwner:Number(process.env.CROWNIQ_SCOUT_OWNER_DAILY ?? 300),archive:historyArchive,
     extraFacts:playerHistory?(line)=>playerHistory.factsFor(line):undefined},new BoxScoreResults(fetch,undefined,historyArchive)):null,
-  // The sports list costs no credits and returns the balance headers.
-  oddsApiQuota:apiKey?async()=>{
-    const response=await fetch(`https://api.the-odds-api.com/v4/sports?apiKey=${encodeURIComponent(apiKey)}`,
-      {signal:AbortSignal.timeout(15_000)});
-    const header=(name:string)=>{const value=response.headers.get(name);return value===null?null:Number(value);};
-    return {status:response.status,remaining:header('x-requests-remaining'),used:header('x-requests-used')};
-  }:null,
   historyArchive,
   edge:edgeOptions,
   feedback:new FeedbackStore(`${dataDir}/feedback.json`),
@@ -501,7 +434,7 @@ const app = buildServer({ ufcHistory, soccerHistory, oddsConsensus:oddsPrizePick
     return {store,reader,grader:reader?new TipGrader(store,reader):null};})(),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
-  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,contextFeeds,sharpProps,evBreakEven,payouts,
+  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,contextFeeds,gameLines:propLine?proplineGameLines(propLine):null,sharpProps,evBreakEven,payouts,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,
@@ -510,10 +443,6 @@ const app = buildServer({ ufcHistory, soccerHistory, oddsConsensus:oddsPrizePick
   nflverseMappingFile: process.env.NFLVERSE_MAPPING_FILE,
   models });
 autoGrade?.start();
-// Edge 2.0 data check (spec §1.1b), once per data disk.
-setTimeout(()=>{void probeOddsApiOnce(apiKey,`${dataDir}/edge/odds-api-probe.json`).catch(()=>undefined);},20_000).unref();
-// Steps 2a and 5b: Pinnacle props, AFL and soccer player markets, once per data disk (~4 credits), logged as [edge-probe].
-setTimeout(()=>{void probeOddsApiOnce(apiKey,`${dataDir}/edge/odds-api-probe-v2.json`,PROBES_V2).catch(()=>undefined);},40_000).unref();
 // A first grading pass shortly after startup, so a deploy doesn't wait an hour for results.
 if(autoGrade)setTimeout(()=>{void autoGrade.runOnce().catch(()=>undefined);},2*60_000).unref();
 app.addHook('onClose',async()=>autoGrade?.stop());

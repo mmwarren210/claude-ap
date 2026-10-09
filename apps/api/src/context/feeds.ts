@@ -5,7 +5,7 @@ import type { ApifyClient } from '../scrapers/apify-client.js';
 import type { DailySpendBudget } from '../scrapers/spend-budget.js';
 import { nextSlot, SlotLedger } from '../scrapers/slot-ledger.js';
 
-// Display-only game context from Apify scrapers: injury reports and Pinnacle game lines.
+// Display-only game context from Apify scrapers: injury reports (game lines come from PropLine).
 // None of it feeds GKR scoring; using any of it in a score needs the owner's approval and a new opt-in model version.
 
 export interface InjuryNote {
@@ -18,7 +18,7 @@ export interface GameLine {
   readonly league: string; readonly home: string; readonly away: string; readonly startTime: string;
   readonly market: 'moneyline' | 'spread' | 'total'; readonly line: number | null;
   readonly homePrice: number | null; readonly awayPrice: number | null;
-  /** Pinnacle's no-vig win chance, 0–1. */
+  /** The book's no-vig win chance, 0–1. */
   readonly homeFair: number | null; readonly awayFair: number | null;
   readonly sourceUrl: string | null;
 }
@@ -50,22 +50,6 @@ export const injuryReports: ContextSource<InjuryNote> = {
       sourceUrl: text(row.playerUrl) };
   },
 };
-
-export const pinnacleLines: ContextSource<GameLine> = {
-  id: 'pinnacle', actor: 'lergassy/pinnacle-odds-api', maxRunUsd: 1.5,
-  input: () => ({ mode: 'odds', daysAhead: 3, markets: ['moneyline', 'spread', 'total'], includeAlternateLines: false,
-    leagues: ['nfl', 'ncaaf', 'nba', 'wnba', 'mlb', 'nhl', 'mls', 'epl', 'laliga', 'bundesliga', 'seriea', 'ligue1',
-      'ucl', 'brasileirao', 'atp', 'wta'], maxItems: 5_000 }),
-  read(value) {
-    const row = asRow(value), market = row?.market;
-    const home = text(row?.homeTeam), away = text(row?.awayTeam), start = text(row?.startTime);
-    if (!row || !home || !away || !start || (market !== 'moneyline' && market !== 'spread' && market !== 'total')) return null;
-    return { league: String(row.league ?? '').toUpperCase(), home, away, startTime: start, market, line: num(row.line),
-      homePrice: num(row.homePrice), awayPrice: num(row.awayPrice), homeFair: num(row.homeFairProbability),
-      awayFair: num(row.awayFairProbability), sourceUrl: text(row.sourceUrl) ?? text(row.espnLink) };
-  },
-};
-
 
 export interface ContextScheduled { readonly source: ContextSource; readonly hoursEt: readonly number[] }
 export interface ContextReport {

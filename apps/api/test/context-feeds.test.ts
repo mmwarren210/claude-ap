@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { propLineSchema } from '@crowniq/contracts';
 import { fixtureLine } from '../../../packages/engine/test/fixtures.js';
-import { ContextFeeds, injuryReports, pinnacleLines } from '../src/context/feeds.js';
+import { ContextFeeds, injuryReports } from '../src/context/feeds.js';
+import { eventGameLines, proplineGameLines } from '../src/context/propline-game-lines.js';
+import type { PropLineClient } from '../src/scrapers/propline.js';
 import type { ApifyClient } from '../src/scrapers/apify-client.js';
 import type { DailySpendBudget } from '../src/scrapers/spend-budget.js';
 import { gameLinesFor, injuryFor } from '../src/context/match.js';
@@ -13,9 +15,15 @@ const line = propLineSchema.parse({ ...fixtureLine(), sport: 'NFL', league: 'NFL
 const injury = injuryReports.read({ type: 'injury', league: 'nfl', team: 'Chicago Bears', teamAbbreviation: 'CHI',
   player: 'Caleb Williams', positionAbbreviation: 'QB', status: 'Out', injuryType: 'Hamstring', returnDate: '2030-10-11',
   shortComment: 'Williams is out Sunday.', reportedAt: '2030-10-04T15:50Z', playerUrl: 'https://www.espn.com/x' })!;
-const pinnacle = pinnacleLines.read({ league: 'nfl', homeTeam: 'Chicago Bears', awayTeam: 'New York Jets',
-  startTime: '2030-10-04T17:00Z', market: 'moneyline', line: null, homePrice: -183, awayPrice: 164,
-  homeFairProbability: 0.63, awayFairProbability: 0.37, espnLink: 'https://www.espn.com/nfl/game' })!;
+// One PropLine event: DraftKings and Pinnacle both price it; Pinnacle is read first, DraftKings fills the market it lacks.
+const event = { home_team: 'Chicago Bears', away_team: 'New York Jets', commence_time: '2030-10-04T17:00:00Z', bookmakers: [
+  { key: 'draftkings', markets: [
+    { key: 'h2h', outcomes: [{ name: 'Chicago Bears', price: -200 }, { name: 'New York Jets', price: 170 }] },
+    { key: 'totals', outcomes: [{ name: 'Over', price: -110, point: 44.5 }, { name: 'Under', price: -110, point: 44.5 }] }] },
+  { key: 'pinnacle', markets: [
+    { key: 'h2h', outcomes: [{ name: 'Chicago Bears', price: -183 }, { name: 'New York Jets', price: 164 }] },
+    { key: 'spreads', outcomes: [{ name: 'Chicago Bears', price: -105, point: -3.5 }, { name: 'New York Jets', price: -105, point: 3.5 }] }] }] };
+const pinnacle = eventGameLines(event, 'NFL').find((item) => item.market === 'moneyline')!;
 
 test('context feeds read each scraper row and match it to a board line conservatively', () => {
   assert.deepEqual([injury.league, injury.status, injury.injury], ['NFL', 'Out', 'Hamstring']);
@@ -24,7 +32,23 @@ test('context feeds read each scraper row and match it to a board line conservat
   const games = gameLinesFor(line, [pinnacle]);
   assert.equal(games.length, 1);
   assert.equal(gameLinesFor({ ...line, eventStartTime: '2030-10-11T17:00:00.000Z' }, [pinnacle]).length, 0);
-  assert.equal(pinnacleLines.read({ ...pinnacle, market: 'alternate-total' }), null);
+});
+
+test('PropLine game lines take Pinnacle first, fill gaps from DraftKings and remove the vig', async () => {
+  const lines = eventGameLines(event, 'NFL');
+  assert.deepEqual(lines.map((item) => [item.market, item.line, item.homePrice]),
+    [['moneyline', null, -183], ['spread', -3.5, -105], ['total', 44.5, -110]]);
+  assert.ok(Math.abs(pinnacle.homeFair! + pinnacle.awayFair! - 1) < 1e-9);
+  assert.ok(Math.abs(pinnacle.homeFair! - 0.6306) < 0.001, '-183 and +164 without the vig');
+  assert.deepEqual(eventGameLines({ ...event, home_team: null }, 'NFL'), [], 'an event without both teams is skipped');
+  // One request per sport, kept for the cache window.
+  let calls = 0, now = 0;
+  const client = { propMarkets: async () => new Map([['football_nfl', ['player_pass_yds']]]),
+    get: async () => { calls++; return [event]; } } as unknown as PropLineClient;
+  const read = proplineGameLines(client, 60_000, () => now);
+  assert.equal((await read()).length, 3);
+  await read(); assert.equal(calls, 1);
+  now = 61_000; await read(); assert.equal(calls, 2);
 });
 
 test('a context pull spends from the shared budget, keeps the last good snapshot and counts blank runs', async () => {

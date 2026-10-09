@@ -4,83 +4,85 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ApifyClient } from '../src/scrapers/apify-client.js';
-import { lergassy, readLergassyRow } from '../src/scrapers/lergassy.js';
 import { ScrapedLineStore } from '../src/scrapers/line-store.js';
 import { marketKey, ScrapedPrizePicksProvider } from '../src/scrapers/scraped-prizepicks-provider.js';
 import type { ScrapedLine } from '../src/scrapers/scraped-line.js';
 import { ScraperPuller } from '../src/scrapers/scraper-puller.js';
 import { DailySpendBudget } from '../src/scrapers/spend-budget.js';
-import { zenPrizePicks, zenUnderdog } from '../src/scrapers/zen-studio.js';
+import { readPrizePicksRow } from '../src/scrapers/prizepicks-partner.js';
+import type { ScraperSource } from '../src/scrapers/scraped-line.js';
 
 const now = new Date('2030-10-03T20:00:00.000Z');
-// Rows shaped like lergassy/dfs-props-scraper output; every player and number is synthetic.
-const row = (overrides: Record<string, unknown> = {}) => ({ type: 'prop', platform: 'prizepicks', propId: '1001',
-  league: 'NFL', player: 'Test Receiver', team: 'JAC', teamName: 'Jaguars', position: 'WR', market: 'Rec Yards',
-  line: 64.5, oddsType: 'standard', pickType: 'Single Stat', allowedPicks: 'under_or_over', live: false,
-  status: 'pre_game', gameId: 'NFL_game_1', opponent: 'CIN', startTime: '2030-10-04T17:00:00.000Z',
-  image: 'https://static.prizepicks.com/images/players/test.png', ...overrides });
-const line = (overrides: Record<string, unknown> = {}): ScrapedLine => {
-  const result = readLergassyRow(row(overrides), now);
+// PrizePicks rows as the partner feed flattens them; every player and number is synthetic.
+const row = (overrides: Record<string, unknown> = {}) => ({ projection_id: '1001', line: 64.5, stat: 'Receiving Yards',
+  stat_short: 'Rec Yards', odds_tier: 'standard', status: 'pre_game', is_live: false, in_game: false, event_type: 'team',
+  allowed_wager_types: 'under_or_over', player_name: 'Test Receiver', player_team: 'JAC', player_team_name: 'Jaguars',
+  player_image: 'https://static.prizepicks.com/images/players/test.png', player_combo: false, league: 'NFL',
+  game_external_id: 'NFL_game_1', start_time: '2030-10-04T13:00:00.000-04:00', game_start: '2030-10-04T13:00:00.000-04:00',
+  home_team: 'CIN', home_team_name: 'Bengals', away_team: 'JAC', away_team_name: 'Jaguars', ...overrides });
+const line = (overrides: Record<string, unknown> = {}, app: ScrapedLine['app'] = 'prizepicks'): ScrapedLine => {
+  const result = readPrizePicksRow(row(overrides), now);
   if ('skip' in result) throw new Error(result.skip);
-  return result.line;
+  return { ...result.line, app };
 };
+// A paid-actor source for the puller tests (the puller still runs Apify actors for any source that names one).
+const actorSource: ScraperSource = { id: 'test-actor', actor: 'test/actor', apps: ['prizepicks'], rowCap: null, input: () => ({}),
+  read: readPrizePicksRow };
+const otherSource: ScraperSource = { ...actorSource, id: 'test-other' };
 
-test('scraped rows become lines with the right sides, tier and photo, and unreadable rows are skipped', () => {
+test('PrizePicks rows become lines with the right sides, tier, teams and photo, and unreadable rows are skipped', () => {
   const regular = line();
-  assert.deepEqual([regular.app, regular.tier, regular.directions, regular.stat, regular.line],
-    ['prizepicks', 'REGULAR', ['MORE', 'LESS'], 'Rec Yards', 64.5]);
+  assert.deepEqual([regular.app, regular.tier, regular.directions, regular.stat, regular.line, regular.opponent, regular.startTime],
+    ['prizepicks', 'REGULAR', ['MORE', 'LESS'], 'Rec Yards', 64.5, 'CIN', '2030-10-04T17:00:00.000Z']);
   assert.equal(regular.imageUrl, 'https://static.prizepicks.com/images/players/test.png');
-  assert.deepEqual(line({ oddsType: 'demon', allowedPicks: 'over' }).directions, ['MORE']);
-  // No stated sides: Regular offers both, Goblins and Demons MORE only.
-  assert.deepEqual(line({ allowedPicks: null }).directions, ['MORE', 'LESS']);
-  assert.deepEqual(line({ oddsType: 'goblin', allowedPicks: null }).directions, ['MORE']);
+  assert.deepEqual(line({ odds_tier: 'demon', allowed_wager_types: 'over' }).directions, ['MORE']);
+  assert.deepEqual(line({ allowed_wager_types: null }).directions, ['MORE', 'LESS']);
+  assert.deepEqual(line({ odds_tier: 'goblin', allowed_wager_types: null }).directions, ['MORE']);
   // Team logos and placeholders are not player photos.
-  assert.equal(line({ image: 'https://static.prizepicks.com/images/teams/nfl/x/2.webp' }).imageUrl, null);
-  assert.equal(line({ image: 'https://static.prizepicks.com/images/players/placeholder.png' }).imageUrl, null);
-  // Underdog's "OSU @ IOWA" opponent keeps only the other side.
-  assert.equal(line({ platform: 'underdog', team: 'OSU', opponent: 'OSU @ IOWA', oddsType: 'balanced' }).opponent, 'IOWA');
+  assert.equal(line({ player_image: 'https://static.prizepicks.com/images/teams/nfl/x/2.webp' }).imageUrl, null);
+  assert.equal(line({ player_image: 'https://static.prizepicks.com/images/players/placeholder.png' }).imageUrl, null);
   const skip = (overrides: Record<string, unknown>) => {
-    const result = readLergassyRow(row(overrides), now); return 'skip' in result ? result.skip : null;
+    const result = readPrizePicksRow(row(overrides), now); return 'skip' in result ? result.skip : null;
   };
-  assert.equal(skip({ team: 'BAL/TEN' }), 'COMBO_PLAYER');
-  assert.equal(skip({ live: true }), 'LIVE_OR_STARTED');
+  assert.equal(skip({ player_combo: true }), 'COMBO_PLAYER');
+  assert.equal(skip({ is_live: true }), 'LIVE_OR_STARTED');
+  assert.equal(skip({ in_game: true }), 'LIVE_OR_STARTED');
   assert.equal(skip({ status: 'suspended' }), 'LIVE_OR_STARTED');
-  assert.equal(skip({ startTime: '2030-10-03T19:00:00.000Z' }), 'LIVE_OR_STARTED');
-  assert.equal(skip({ platform: 'sleeper' }), 'UNKNOWN_APP');
-  assert.equal(skip({ oddsType: 'flex' }), 'UNKNOWN_TIER');
+  assert.equal(skip({ start_time: '2030-10-03T19:00:00.000Z', game_start: null }), 'LIVE_OR_STARTED');
+  assert.equal(skip({ odds_tier: 'flex' }), 'UNKNOWN_TIER');
   assert.equal(skip({ line: 'x' }), 'INVALID_ROW');
 });
 
 test('the store keeps one record per line, replaces moved numbers, confirms across sources and freezes started games', async () => {
   let clock = now;
   const store = new ScrapedLineStore(null, () => clock);
-  const first = await store.ingest('scraper-a', [line(), line({ propId: '1002', player: 'Other Player', line: 40.5 })],
+  const first = await store.ingest('scraper-a', [line(), line({ projection_id: '1002', player_name: 'Other Player', line: 40.5 })],
     { complete: true, apps: ['prizepicks'] });
   assert.deepEqual([first.added, first.moved, first.unchanged], [2, 0, 0]);
   // The same pull again adds nothing; a moved number replaces the old one and keeps it as previous.
-  const second = await store.ingest('scraper-a', [line({ line: 66.5 }), line({ propId: '1002', player: 'Other Player', line: 40.5 })],
+  const second = await store.ingest('scraper-a', [line({ line: 66.5 }), line({ projection_id: '1002', player_name: 'Other Player', line: 40.5 })],
     { complete: true, apps: ['prizepicks'] });
   assert.deepEqual([second.added, second.moved, second.unchanged], [0, 1, 1]);
   const moved = (await store.active()).find((item) => item.appLineId === '1001')!;
   assert.deepEqual([moved.line, moved.previousLine], [66.5, 64.5]);
   assert.equal((await store.active()).length, 2, 'no duplicate records');
   // A second source reporting the same line confirms it.
-  await store.ingest('scraper-b', [line({ propId: 'b-77', line: 66.5 })], { complete: false, apps: ['prizepicks'] });
+  await store.ingest('scraper-b', [line({ projection_id: 'b-77', line: 66.5 })], { complete: false, apps: ['prizepicks'] });
   assert.deepEqual([...(await store.active()).find((item) => item.appLineId === 'b-77')!.confirmedBy].sort(), ['scraper-a', 'scraper-b']);
   // A complete pull that no longer lists a line takes it down; a cut-short pull never does.
   await store.ingest('scraper-a', [line({ line: 66.5 })], { complete: false, apps: ['prizepicks'] });
   assert.ok((await store.active()).some((item) => item.appLineId === '1002'));
-  const removal = await store.ingest('scraper-a', [line({ line: 66.5 }), line({ propId: 'b-77', line: 66.5 })], { complete: true, apps: ['prizepicks'] });
+  const removal = await store.ingest('scraper-a', [line({ line: 66.5 }), line({ projection_id: 'b-77', line: 66.5 })], { complete: true, apps: ['prizepicks'] });
   assert.equal(removal.removed, 1);
   assert.equal((await store.active()).some((item) => item.appLineId === '1002'), false);
-  // A source that covers part of the app (The Odds API) never takes down what only the other sources list, and a line
-  // another source still lists stays when this one drops it.
-  const partial = await store.ingest('the-odds-api', [line({ propId: 'odds-9', player: 'Odds Only', line: 10.5 })],
+  // A source that covers part of the app never takes down what only the other sources list, and a line another source
+  // still lists stays when this one drops it.
+  const partial = await store.ingest('partial-source', [line({ projection_id: 'odds-9', player_name: 'Odds Only', line: 10.5 })],
     { complete: true, apps: ['prizepicks'] });
   assert.equal(partial.removed, 0);
-  assert.ok((await store.active()).some((item) => item.appLineId === '1001'), 'a scraper line survives the Odds API pull');
-  const dropped = await store.ingest('the-odds-api', [], { complete: true, apps: ['prizepicks'] });
-  assert.equal(dropped.removed, 1, 'only the line the Odds API alone listed goes');
+  assert.ok((await store.active()).some((item) => item.appLineId === '1001'), 'a full-board line survives the partial pull');
+  const dropped = await store.ingest('partial-source', [], { complete: true, apps: ['prizepicks'] });
+  assert.equal(dropped.removed, 1, 'only the line the partial source alone listed goes');
   assert.equal((await store.restoreRemoved(new Date('2030-01-01T00:00:00Z'))) >= 1, true, 'a bad pull can be undone');
   // Once the game starts the line is frozen and leaves the active board.
   clock = new Date('2030-10-04T17:30:00.000Z');
@@ -91,18 +93,18 @@ test('the store keeps one record per line, replaces moved numbers, confirms acro
 
 test('stored PrizePicks lines become board lines with model market keys, full NFL team names and stable ids', async () => {
   const store = new ScrapedLineStore(null, () => now);
-  await store.ingest('scraper-a', [line(), line({ propId: '2001', player: 'Test Linebacker', team: 'CIN', teamName: 'Bengals',
-    opponent: 'JAC', market: 'Tackles+Ast', line: 6.5 }), line({ propId: '3001', platform: 'underdog', oddsType: 'balanced' })],
+  await store.ingest('scraper-a', [line(), line({ projection_id: '2001', player_name: 'Test Linebacker', player_team: 'CIN',
+    player_team_name: 'Bengals', stat_short: 'Tackles+Ast', line: 6.5 }), line({ projection_id: '3001' }, 'underdog')],
     { complete: true, apps: ['prizepicks', 'underdog'] });
   const lines = await new ScrapedPrizePicksProvider(store).fetchPrizePicksLines();
   assert.equal(lines.length, 2, 'Underdog lines stay off the PrizePicks board');
   const receiver = lines.find((item) => item.sourceLineId === '1001')!;
   assert.deepEqual([receiver.id, receiver.sport, receiver.market, receiver.team, receiver.opponent],
     ['pp:1001', 'NFL', 'player_reception_yds', 'Jacksonville Jaguars', 'Cincinnati Bengals']);
-  // Same player id scheme as the Odds API provider, so history and models line up.
+  // One player id scheme across providers, so history and models line up.
   assert.match(receiver.playerId, /^americanfootball_nfl:[0-9a-f]{24}$/);
   assert.deepEqual([receiver.awayTeam, receiver.homeTeam].sort(), ['Cincinnati Bengals', 'Jacksonville Jaguars']);
-  assert.equal(receiver.eventName, 'Cincinnati Bengals vs Jacksonville Jaguars');
+  assert.equal(receiver.eventName, 'Jacksonville Jaguars @ Cincinnati Bengals');
   assert.equal(receiver.playerImageUrl, 'https://static.prizepicks.com/images/players/test.png');
   assert.equal(lines.find((item) => item.sourceLineId === '2001')!.market, 'player_tackles_assists');
   assert.deepEqual([marketKey('MLB', 'Hits+Runs+RBIs'), marketKey('NBA', '3-PT Made'), marketKey('NFL', 'Longest Rec')],
@@ -114,7 +116,7 @@ test('stored PrizePicks lines become board lines with model market keys, full NF
 test('the puller runs each source on its schedule, within one daily spend cap, and rebuilds only when lines change', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'crowniq-scraper-'));
   try {
-    let runs = 0, rebuilds = 0, rows: unknown[] = [row(), row({ propId: '1002', player: 'Other Player' })];
+    let runs = 0, rebuilds = 0, rows: unknown[] = [row(), row({ projection_id: '1002', player_name: 'Other Player' })];
     let status = 'SUCCEEDED';
     const charges: number[] = [];
     const apify = { runActor: async (_actor: string, _input: unknown, options: { maxChargeUsd: number }) => {
@@ -123,78 +125,46 @@ test('the puller runs each source on its schedule, within one daily spend cap, a
       return { id: 'run', status, datasetId: 'ds', usageUsd }; },
       datasetItems: async () => rows } as unknown as ApifyClient;
     const budget = new DailySpendBudget(join(folder, 'spend.json'), 4.5, () => now);
-    const capped = { ...lergassy, rowCap: 2 };
+    const capped = { ...actorSource, rowCap: 2 };
     const puller = new ScraperPuller(apify, new ScrapedLineStore(join(folder, 'lines.json'), () => now), budget,
-      [{ source: capped, hoursEt: [16] }, { source: zenPrizePicks, hoursEt: [] }], { maxRunUsd: 1.5 }, () => now);
+      [{ source: capped, hoursEt: [16] }, { source: otherSource, hoursEt: [] }], { maxRunUsd: 1.5 }, () => now);
     puller.whenLinesChange(() => { rebuilds++; });
-    const first = await puller.pull('lergassy');
+    const first = await puller.pull('test-actor');
     assert.deepEqual([first.status, first.rows, first.truncated, first.costUsd, first.ingest?.added], ['SUCCEEDED', 2, true, 1.4, 2]);
     assert.equal(rebuilds, 1);
     rows = [row()];
-    const second = await puller.pull('lergassy');
+    const second = await puller.pull('test-actor');
     assert.deepEqual([second.status, second.truncated, second.ingest?.added, second.ingest?.removed], ['SUCCEEDED', false, 0, 1]);
     assert.equal(rebuilds, 2);
     // A run stopped at the spend cap keeps what it saved but never counts as a complete board.
     status = 'ABORTED';
-    const aborted = await puller.pull('lergassy');
+    const aborted = await puller.pull('test-actor');
     assert.deepEqual([aborted.status, aborted.reason, aborted.truncated], ['SUCCEEDED', 'RUN_ABORTED', true]);
     // 4.20 of 4.50 spent: the next run may spend only the 0.30 left, and then the cap is reached.
-    await puller.pull('lergassy');
-    assert.deepEqual([(await puller.pull('lergassy')).reason, (await puller.pull('nope')).reason], ['DAILY_BUDGET_REACHED', 'UNKNOWN_SOURCE']);
+    await puller.pull('test-actor');
+    assert.deepEqual([(await puller.pull('test-actor')).reason, (await puller.pull('nope')).reason], ['DAILY_BUDGET_REACHED', 'UNKNOWN_SOURCE']);
     assert.equal(runs, 4);
     assert.deepEqual(charges.map((charge) => Math.round(charge * 100) / 100), [1.5, 1.5, 1.5, 0.3]);
     assert.equal(Math.round(await budget.spent() * 100) / 100, 4.5);
     // The schedule: 20:00 UTC is 16:00 Eastern, so only the source scheduled then runs, once.
     const scheduled = new ScraperPuller(apify, new ScrapedLineStore(null, () => now),
       new DailySpendBudget(join(folder, 'spend2.json'), 10, () => now),
-      [{ source: lergassy, hoursEt: [16] }, { source: zenPrizePicks, hoursEt: [9] }], { maxRunUsd: 1.5 }, () => now);
-    assert.deepEqual((await scheduled.tick()).map((report) => report.source), ['lergassy']);
+      [{ source: actorSource, hoursEt: [16] }, { source: otherSource, hoursEt: [9] }], { maxRunUsd: 1.5 }, () => now);
+    assert.deepEqual((await scheduled.tick()).map((report) => report.source), ['test-actor']);
     assert.deepEqual(await scheduled.tick(), []);
     assert.deepEqual((await scheduled.status()).sources.map((item) => [item.id, item.last?.source ?? null]),
-      [['lergassy', 'lergassy'], ['zen-studio-prizepicks', null]]);
+      [['test-actor', 'test-actor'], ['test-other', null]]);
   } finally { await rm(folder, { recursive: true, force: true }); }
-});
-
-// Rows shaped like zen-studio scraper output; synthetic players and numbers.
-const zenRow = (overrides: Record<string, unknown> = {}) => ({ projection_id: '1001', line: 64.5, stat: 'Receiving Yards',
-  stat_short: 'Rec Yards', odds_tier: 'standard', status: 'pre_game', is_live: false, in_game: false, event_type: 'team',
-  allowed_wager_types: 'under_or_over', player_name: 'Test Receiver', player_team: 'JAC', player_team_name: 'Jaguars',
-  player_image: 'https://static.prizepicks.com/images/teams/nfl/x/1.webp', player_combo: false, league: 'NFL',
-  game_external_id: 'NFL_game_1', start_time: '2030-10-04T13:00:00.000-04:00', game_start: '2030-10-04T13:00:00.000-04:00',
-  home_team: 'CIN', home_team_name: 'Bengals', away_team: 'JAC', away_team_name: 'Jaguars', ...overrides });
-const udRow = (overrides: Record<string, unknown> = {}) => ({ projection_id: 'ud-1', line: 48.5, stat: 'rushing_yds',
-  stat_display: 'Rush Yards', status: 'active', is_live: false, player_name: 'Test Back', player_team: 'BAL',
-  player_team_name: 'Baltimore Ravens', player_image: 'https://assets.underdogfantasy.com/player-images/nfl/x.png',
-  league: 'NFL', game_start: '2030-10-04T17:00:00Z', game_status: 'scheduled', home_team: 'BAL', away_team: 'TEN',
-  home_team_name: 'Baltimore Ravens', away_team_name: 'Tennessee Titans', line_type: 'balanced', category: 'player_prop',
-  higher_payout_multiplier: '1.0', lower_payout_multiplier: '0.9', ...overrides });
-
-test('Zen Studio rows read like lergassy rows, with home and away teams and Underdog payouts per side', () => {
-  const zen = zenPrizePicks.read(zenRow(), now);
-  assert.ok('line' in zen);
-  assert.deepEqual([zen.line.appLineId, zen.line.stat, zen.line.opponent, zen.line.home?.abbreviation, zen.line.away?.abbreviation,
-    zen.line.startTime, zen.line.imageUrl], ['1001', 'Rec Yards', 'CIN', 'CIN', 'JAC', '2030-10-04T17:00:00.000Z', null]);
-  const skip = (result: ReturnType<typeof zenPrizePicks.read>) => 'skip' in result ? result.skip : null;
-  assert.equal(skip(zenPrizePicks.read(zenRow({ player_combo: true }), now)), 'COMBO_PLAYER');
-  assert.equal(skip(zenPrizePicks.read(zenRow({ in_game: true }), now)), 'LIVE_OR_STARTED');
-  const ud = zenUnderdog.read(udRow(), now);
-  assert.ok('line' in ud);
-  assert.deepEqual([ud.line.app, ud.line.tier, ud.line.directions, ud.line.multipliers, ud.line.opponent],
-    ['underdog', 'REGULAR', ['MORE', 'LESS'], { MORE: 1, LESS: 0.9 }, 'TEN']);
-  const higherOnly = zenUnderdog.read(udRow({ lower_payout_multiplier: null }), now);
-  assert.ok('line' in higherOnly && higherOnly.line.directions.length === 1 && higherOnly.line.directions[0] === 'MORE');
-  assert.equal(skip(zenUnderdog.read(udRow({ higher_payout_multiplier: null, lower_payout_multiplier: null }), now)), 'NO_SIDES');
 });
 
 test('two sources reporting the same PrizePicks line confirm it, and each field keeps the best value', async () => {
   const store = new ScrapedLineStore(null, () => now);
-  // lergassy has the headshot but not home/away; Zen Studio has home/away but only a team logo.
-  await store.ingest('lergassy', [line()], { complete: false, apps: ['prizepicks'] });
-  const zen = zenPrizePicks.read(zenRow(), now);
-  assert.ok('line' in zen);
-  await store.ingest('zen-studio-prizepicks', [zen.line], { complete: false, apps: ['prizepicks'] });
+  // One source has the headshot but not home/away; the other has home/away but only a team logo.
+  await store.ingest('source-a', [{ ...line(), home: null, away: null }], { complete: false, apps: ['prizepicks'] });
+  await store.ingest('source-b', [line({ player_image: 'https://static.prizepicks.com/images/teams/nfl/x/1.webp' })],
+    { complete: false, apps: ['prizepicks'] });
   const [stored] = await store.active();
-  assert.deepEqual([...stored.confirmedBy].sort(), ['lergassy', 'zen-studio-prizepicks']);
+  assert.deepEqual([...stored.confirmedBy].sort(), ['source-a', 'source-b']);
   assert.equal(stored.imageUrl, 'https://static.prizepicks.com/images/players/test.png');
   assert.deepEqual([stored.home?.abbreviation, stored.away?.abbreviation], ['CIN', 'JAC']);
   const [board] = await new ScrapedPrizePicksProvider(store).fetchPrizePicksLines();
@@ -239,39 +209,6 @@ test('a board built from scraped lines is dated by the scrape and carries their 
   assert.equal(snapshot.playerMedia?.[playerId]?.photoUrl, 'https://static.prizepicks.com/images/players/test.png');
 });
 
-test('Odds API lines join their Over and Under, collapse onto the scraper line for the same pick, and share its game', async () => {
-  const { oddsApiSource } = await import('../src/scrapers/odds-api-source.js');
-  const { propLineSchema } = await import('@crowniq/contracts');
-  const odds = (id: string, direction: 'MORE' | 'LESS', overrides: Record<string, unknown> = {}) => propLineSchema.parse({
-    id, provider: 'prizepicks', sourceLineId: 'sid-' + id, sport: 'NFL', league: 'NFL', eventId: 'odds-event-1',
-    eventName: 'Jacksonville Jaguars @ Cincinnati Bengals', eventStartTime: '2030-10-04T17:02:00.000Z', playerId: 'p',
-    playerName: 'Test Receiver', team: null, opponent: null, homeTeam: 'Cincinnati Bengals', awayTeam: 'Jacksonville Jaguars',
-    market: 'player_reception_yds', threshold: 64.5, availableDirections: [direction], lineType: 'REGULAR',
-    fetchedAt: now.toISOString(), payoutMultiplier: 1, ...overrides });
-  const provider = { id: 'fake-odds', fetchPrizePicksLines: async () => [odds('o', 'MORE'), odds('u', 'LESS'),
-    odds('x', 'MORE', { playerName: 'Odds Only', playerId: 'q', threshold: 30.5 })],
-    normalize: (raw: unknown) => raw as never };
-  const source = oddsApiSource(provider, () => now);
-  const { rows, complete } = await source.run!();
-  assert.equal(complete, true);
-  const read = rows.map((row) => source.read(row, now)).flatMap((result) => 'line' in result ? [result.line] : []);
-  assert.deepEqual(read.map((item) => [item.player, item.directions, item.league, item.marketKey]),
-    [['Test Receiver', ['MORE', 'LESS'], 'NFL', 'player_reception_yds'], ['Odds Only', ['MORE'], 'NFL', 'player_reception_yds']]);
-  const store = new ScrapedLineStore(null, () => now);
-  // The scraper says Rec Yards 64.5 under PrizePicks' own id; the Odds API says the same line under its sid.
-  await store.ingest('zen-studio-prizepicks', [(() => { const r = zenPrizePicks.read(zenRow(), now); assert.ok('line' in r); return r.line; })()],
-    { complete: false, apps: ['prizepicks'] });
-  await store.ingest('the-odds-api', read, { complete: false, apps: ['prizepicks'] });
-  const shared = (await store.active()).find((item) => item.appLineId.startsWith('sid-o'))!;
-  assert.deepEqual([...shared.confirmedBy].sort(), ['the-odds-api', 'zen-studio-prizepicks']);
-  const board = await new ScrapedPrizePicksProvider(store).fetchPrizePicksLines();
-  assert.equal(board.length, 2, 'the shared pick appears once');
-  const pick = board.find((item) => item.playerName === 'Test Receiver')!;
-  assert.equal(pick.sourceLineId, '1001', 'the app id wins');
-  // The Odds-only line joins the app's game id, so Crown same-game rules see one game.
-  assert.equal(board.find((item) => item.playerName === 'Odds Only')!.eventId, pick.eventId);
-});
-
 test('runs that come back empty are counted so a broken scraper shows up', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'crowniq-blank-'));
   try {
@@ -279,24 +216,19 @@ test('runs that come back empty are counted so a broken scraper shows up', async
     const apify = { runActor: async () => ({ id: 'run', status: 'SUCCEEDED', datasetId: 'ds', usageUsd: 0.05 }),
       datasetItems: async () => rows } as unknown as ApifyClient;
     const puller = new ScraperPuller(apify, new ScrapedLineStore(null, () => now), new DailySpendBudget(join(folder, 's.json'), 10, () => now),
-      [{ source: zenPrizePicks, hoursEt: [] }], { maxRunUsd: 1 }, () => now);
-    await puller.pull('zen-studio-prizepicks'); await puller.pull('zen-studio-prizepicks');
+      [{ source: actorSource, hoursEt: [] }], { maxRunUsd: 1 }, () => now);
+    await puller.pull('test-actor'); await puller.pull('test-actor');
     const blank = (await puller.status()).sources[0];
     assert.deepEqual([blank.last?.reason, blank.blankRunsInARow], ['NO_ROWS', 2]);
-    rows = [zenRow()];
-    await puller.pull('zen-studio-prizepicks');
+    rows = [row()];
+    await puller.pull('test-actor');
     assert.equal((await puller.status()).sources[0].blankRunsInARow, 0);
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
 
 test('Goblins and Demons stay MORE-only whatever side label a source sends', () => {
-  for (const odds_tier of ['goblin', 'demon']) {
-    const read = zenPrizePicks.read(zenRow({ odds_tier, allowed_wager_types: 'under_or_over' }), now);
-    assert.ok('line' in read);
-    assert.deepEqual(read.line.directions, ['MORE']);
-  }
-  const regular = zenPrizePicks.read(zenRow(), now);
-  assert.ok('line' in regular && regular.line.directions.length === 2);
+  for (const odds_tier of ['goblin', 'demon']) assert.deepEqual(line({ odds_tier, allowed_wager_types: 'under_or_over' }).directions, ['MORE']);
+  assert.equal(line().directions.length, 2);
 });
 
 test('a restart or an overlapping deployment never repeats a scheduled pull, and both see the same spending', async () => {
@@ -316,30 +248,6 @@ test('a restart or an overlapping deployment never repeats a scheduled pull, and
     await a.record(1.5);
     assert.equal(await b.remaining(), 9.5);
   } finally { await rm(folder, { recursive: true, force: true }); }
-});
-
-test('DraftKings Pick6 rows are stored as Pick6 lines with both sides; live and alternate lines are skipped', async () => {
-  const { zenPick6 } = await import('../src/scrapers/zen-studio.js');
-  const row = (overrides: Record<string, unknown> = {}) => ({ platform: 'draftkings_pick6', player_name: 'Test Passer',
-    player_team: 'DET', player_team_name: 'DET', league: 'NFL', game_id: 6176180, game_start: '2030-10-05T00:20:00.0000000+00:00',
-    home_team: 'CAR', away_team: 'DET', projection_id: 'p6-1-2', line: 257.5, stat: 'Passing Yards', stat_display: 'Passing Yards',
-    status: 'pre_game', is_live: false, market_type: 'standard', is_alternate_line: false, over_multiplier: 1, under_multiplier: 1,
-    ...overrides });
-  const read = zenPick6.read(row(), now);
-  assert.ok('line' in read);
-  assert.deepEqual([read.line.app, read.line.directions, read.line.opponent, read.line.startTime],
-    ['pick6', ['MORE', 'LESS'], 'CAR', '2030-10-05T00:20:00.000Z']);
-  const skip = (value: ReturnType<typeof zenPick6.read>) => 'skip' in value ? value.skip : null;
-  assert.equal(skip(zenPick6.read(row({ status: 'live', is_live: true }), now)), 'LIVE_OR_STARTED');
-  assert.equal(skip(zenPick6.read(row({ is_alternate_line: true }), now)), 'ALTERNATE_LINE');
-  assert.equal(skip(zenPick6.read(row({ over_multiplier: null, under_multiplier: null }), now)), 'NO_SIDES');
-  // Promos: boosted payouts ride on the multipliers; a gimme or a promo-moved number is kept when Pick6 marks one.
-  const boosted = zenPick6.read(row({ over_multiplier: 1.2, under_multiplier: 0.8 }), now);
-  assert.ok('line' in boosted);
-  assert.deepEqual([boosted.line.multipliers, boosted.line.promo], [{ MORE: 1.2, LESS: 0.8 }, undefined]);
-  const promo = zenPick6.read(row({ is_gimme: true, original_line: 262.5 }), now);
-  assert.ok('line' in promo);
-  assert.deepEqual(promo.line.promo, { gimme: true, originalLine: 262.5 });
 });
 
 test('claims and charges made at the same moment are never lost', async () => {
@@ -389,12 +297,4 @@ test('the daily budget counts Eastern days and the account real spend, whichever
     const failing = new DailySpendBudget(join(folder, 'spend.json'), 25, () => now, async () => { throw new Error('down'); });
     assert.equal(await failing.spent(), 0, 'a new Eastern day starts at zero; an unreadable Apify falls back to the local count');
   } finally { await rm(folder, { recursive: true, force: true }); }
-});
-
-test('the esports pull asks the PrizePicks actor for esports only and reads rows like the full board', async () => {
-  const { zenPrizePicksEsports, zenPrizePicks: full } = await import('../src/scrapers/zen-studio.js');
-  assert.equal(zenPrizePicksEsports.id, 'zen-studio-prizepicks-esports');
-  assert.equal(zenPrizePicksEsports.actor, full.actor);
-  assert.deepEqual(zenPrizePicksEsports.input(), { leagues: ['Esports'], extraLeagues: 'R6' });
-  assert.equal(zenPrizePicksEsports.read, full.read);
 });

@@ -13,8 +13,8 @@ for a long-running server, so it is not used here (it could hold the data later 
    (board, lines, picks, accounts, spend counters), so it survives restarts and redeploys.
 3. **Variables** (service → Variables). Paste values in Railway, never in chat or the repo:
    - `ODDS_PROVIDER=scrapers`
-   - `APIFY_TOKEN` (Apify → Settings → API & Integrations)
-   - `THE_ODDS_API_KEY` (optional third PrizePicks source, used on the owner's pull)
+   - `PROPLINE_API_KEY` (the line source)
+   - `APIFY_TOKEN` (Apify → Settings → API & Integrations; injuries and soccer history)
    - `CROWNIQ_OWNER_PUBLIC_ID` (your profile id in the app) and `ADMIN_TOKEN` (any long random string)
    - `OPENAI_API_KEY` for web research, and later `ANTHROPIC_API_KEY`
    - **Scoring settings: the same ones the app was tuned with.** Railway only hosts the app; CrownIQ's own code and

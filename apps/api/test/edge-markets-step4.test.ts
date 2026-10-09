@@ -129,37 +129,37 @@ test('step 9: lopsided +EV two refreshes running flags a platform; two balanced 
   assert.ok(read!.warnings.some((warning) => warning.includes('two humps')));
 });
 
-test('TD totals: an Odds API total fills a game SharpAPI has not totaled; SharpAPI wins where both exist', async () => {
-  const { totalsFromOdds } = await import('../src/context/odds-api-totals.js');
-  const event = (point: number) => [{ id: 'abc', commence_time: start, home_team: 'Home', away_team: 'Away',
-    bookmakers: [{ key: 'fanduel', markets: [{ key: 'totals', outcomes: [{ name: 'Over', price: 1.91, point }, { name: 'Under', price: 1.91, point }] }] }] }];
-  const odds = totalsFromOdds(event(47.5), 'nfl');
-  assert.deepEqual(odds.map((game) => [game.side, game.line, game.eventId]), [['over', 47.5, 'odds-api:abc'], ['under', 47.5, 'odds-api:abc']]);
+// Game totals as the book feed gives them (both sides, raw implied chance).
+const totalsFrom = (events: readonly { id: string; home_team: string; away_team: string; point: number }[], league: string): GamePrice[] =>
+  events.flatMap((event) => (['over', 'under'] as const).map((side) => ({ book: 'fanduel', league, sport: league === 'nfl' ? 'NFL' : 'NCAAFB',
+    eventId: `book:${event.id}`, home: event.home_team, away: event.away_team, startTime: start, market: 'total' as const, line: event.point,
+    side, probability: 1 / 1.91, american: null })));
+
+test('TD totals: a second book total fills a game; the later-listed total wins where both exist', async () => {
+  const event = (point: number) => [{ id: 'abc', home_team: 'Home', away_team: 'Away', point }];
+  const odds = totalsFrom(event(47.5), 'nfl');
   const rates = Array.from({ length: 24 }, (_, index) => .05 + .5 * ((index * 5) % 24) / 24);
   const scale = 47.5 * .105 / rates.reduce((a, b) => a + b, 0), fair = rates.map((rate) => 1 - Math.exp(-rate * scale));
   const rows = fair.map((p, index) => row({ market_type: 'anytime_touchdown_scorer', selection_type: 'other', line: null,
     player_name: `Player ${index}`, odds_probability: Math.min(.95, p * 1.3) }));
   const filled = scorerFairPrices(rows, odds);
-  assert.equal(filled.length, 24, 'the Odds API total prices the game');
+  assert.equal(filled.length, 24, 'the total prices the game');
   for (const [index, price] of filled.entries()) assert.ok(Math.abs(price.fairOver - fair[index]!) < .01);
-  // A SharpAPI total of 40.5 for the same game outranks the Odds API's 47.5 (listed after it).
+  // A total of 40.5 for the same game listed after the 47.5 outranks it.
   const sharp = (side: 'over' | 'under'): GamePrice => ({ book: 'draftkings', league: 'nfl', sport: 'football', eventId: 'g1', home: 'Home',
     away: 'Away', startTime: start, market: 'total', line: 40.5, side, probability: .524, american: -110 });
-  const both = scorerFairPrices(rows, [...totalsFromOdds(event(47.5), 'nfl'), sharp('over'), sharp('under')]);
+  const both = scorerFairPrices(rows, [...totalsFrom(event(47.5), 'nfl'), sharp('over'), sharp('under')]);
   assert.ok(both[0]!.fairOver < filled[0]!.fairOver, 'fewer expected points, lower TD chances');
 });
 
 test('TD totals: team names that differ between sources still find their one game that day', async () => {
-  const { totalsFromOdds } = await import('../src/context/odds-api-totals.js');
-  const odds = totalsFromOdds([{ id: 'x', commence_time: start, home_team: 'Detroit Lions', away_team: 'Arizona Cardinals',
-    bookmakers: [{ key: 'fanduel', markets: [{ key: 'totals', outcomes: [{ name: 'Over', price: 1.91, point: 47.5 }, { name: 'Under', price: 1.91, point: 47.5 }] }] }] }], 'nfl');
+  const odds = totalsFrom([{ id: 'x', home_team: 'Detroit Lions', away_team: 'Arizona Cardinals', point: 47.5 }], 'nfl');
   const rates = Array.from({ length: 24 }, (_, index) => .05 + .5 * ((index * 5) % 24) / 24);
   const scale = 47.5 * .105 / rates.reduce((a, b) => a + b, 0), fair = rates.map((rate) => 1 - Math.exp(-rate * scale));
   const rows = fair.map((p, index) => row({ event_id: 'nfl_cardinals_lions_b2', home_team: 'Detroit Lions', away_team: 'ARI Cardinals',
     market_type: 'anytime_touchdown_scorer', selection_type: 'other', line: null, player_name: `Player ${index}`, odds_probability: Math.min(.95, p * 1.3) }));
   assert.equal(scorerFairPrices(rows, odds).length, 24);
   const college = rows.map((item) => ({ ...item, home_team: 'Georgia', away_team: 'Duke' }));
-  assert.equal(scorerFairPrices(college, totalsFromOdds([{ id: 'y', commence_time: start, home_team: 'Georgia Tech Yellow Jackets',
-    away_team: 'Clemson Tigers', bookmakers: [{ key: 'fanduel', markets: [{ key: 'totals', outcomes: [{ name: 'Over', price: 1.91, point: 47.5 },
-      { name: 'Under', price: 1.91, point: 47.5 }] }] }] }], 'ncaaf')).length, 0, 'Georgia is not Georgia Tech when the other team differs');
+  assert.equal(scorerFairPrices(college, totalsFrom([{ id: 'y', home_team: 'Georgia Tech Yellow Jackets',
+    away_team: 'Clemson Tigers', point: 47.5 }], 'ncaaf')).length, 0, 'Georgia is not Georgia Tech when the other team differs');
 });

@@ -107,8 +107,6 @@ const DEMO_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
 export interface ServerOptions {
   provider?: OddsProvider | null;
-  /** The Odds API consensus books' fair prices from the last PrizePicks pull (step 5a), for Edge only. */
-  oddsConsensus?: () => readonly FairPrice[];
   /** Folder holding the exported web app, served at every non-API path. */
   webAppDir?: string | null;
   research?: ResearchAdapter | null;
@@ -162,6 +160,8 @@ export interface ServerOptions {
   proplineResults?: PropLineResults | null;
   /** Display-only game context feeds (injuries, Pinnacle); never scored. */
   contextFeeds?: ContextFeeds | null;
+  /** Game lines (moneyline, spread, total) from PropLine, for game script, tips and the player page. Display only. */
+  gameLines?: (() => Promise<GameLine[]>) | null;
   /** DraftKings and Hard Rock prop prices (SharpAPI) for reference odds and CrownIQ's own +EV; never scored. */
   sharpProps?: SharpPropsFeed | null;
   /** Break-even chance per pick for +EV (default 54.21%, PrizePicks' best Flex). */
@@ -187,8 +187,6 @@ export interface ServerOptions {
     recentGames?(target: import('@crowniq/engine').ResearchTarget): Promise<{ date: string; opponent: string | null; value: number }[] | null> } | null;
   /** CrownIQ's own archive of game logs, graded results and lines. */
   historyArchive?: HistoryArchive | null;
-  /** Reads The Odds API's credit balance (a free call), for the owner. */
-  oddsApiQuota?: (() => Promise<{ status: number; remaining: number | null; used: number | null }>) | null;
   /** CrownIQ Edge: a standalone probability engine with its own Top Picks, Board and Gen; never reads or changes GKR. */
   edge?: { enabled?: boolean; ledger?: EdgeLedger | null; snapshots?: SnapshotStore | null;
     /** GKR+ (owner-only): its own ledger, graded like Edge's. */
@@ -375,8 +373,8 @@ export function buildServer(options: ServerOptions = {}) {
         if(beta.direction==='PASS')picks.push({kind:'beta-pass',line,side:beta.gkr.direction,strength:beta.gkr.score});
         else picks.push({kind:'beta',line,side:beta.direction,strength:beta.score});
       }
-      if(options.contextFeeds){
-        const games=(await options.contextFeeds.items<GameLine>('pinnacle')).items;
+      if(options.gameLines){
+        const games=await options.gameLines().catch(()=>[]);
         for(const analysis of board.analyses){
           const line=lines.get(analysis.lineId);
           if(!line||analysis.direction==='PASS'||analysis.score===null||!scriptEligible(line))continue;
@@ -645,7 +643,7 @@ export function buildServer(options: ServerOptions = {}) {
         today:now().toISOString().slice(0,10)});
       console.log(`[tips] read ${read.tips.length} picks`);
       if(!read.tips.length)return reply.code(422).send({code:'NO_TIPS_FOUND'});
-      const lines=options.contextFeeds?(await options.contextFeeds.items<GameLine>('pinnacle')).items:[];
+      const lines=options.gameLines?await options.gameLines().catch(()=>[]):[];
       const from=now().getTime();
       const tips=await options.tips.store.add(user.accountId,input.data.source??read.source??'Unnamed service',read.tips,
         read.tips.map((tip)=>marketRead(tip,lines,tip.eventDate?Date.parse(tip.eventDate):from)));
@@ -907,14 +905,10 @@ export function buildServer(options: ServerOptions = {}) {
       if(!input.success)return reply.code(428).send({code:'PROVIDER_CREDITS_CONFIRMATION_REQUIRED',
         message:'A PrizePicks provider refresh may consume credits.'});
       // PropLine (owner, 2026-10-08) is the PrizePicks source: the owner's pull runs it (inside the plan's daily requests) and
-      // the board rebuilds once its lines are stored. The Odds API (paid credits) runs only when PropLine isn't configured.
+      // the board rebuilds once its lines are stored.
       if(options.scraperPuller?.hasSource('propline-prizepicks')){
         void options.scraperPuller.pull('propline-prizepicks');
         return reply.code(202).send({started:true,job:currentJob(),source:'propline-prizepicks'});
-      }
-      if(options.scraperPuller?.hasSource('the-odds-api')){
-        void options.scraperPuller.pull('the-odds-api');
-        return reply.code(202).send({started:true,job:currentJob(),source:'the-odds-api'});
       }
       const started=startOwnerBoardRefresh();
       return reply.code(202).send({started,job:currentJob()});
@@ -1218,16 +1212,16 @@ export function buildServer(options: ServerOptions = {}) {
     if(!parsed.success)return reply.code(400).send({code:'INVALID_LINE'});
     const line=service.getBoard()?.board.lines.find((item)=>item.id===parsed.data.lineId);
     if(!line)return reply.code(404).send({code:'LINE_NOT_FOUND'});
-    if(!options.contextFeeds)return {injury:null,teamInjuries:[],game:[],markets:[]};
-    const [injuries,pinnacle]=await Promise.all([options.contextFeeds.items<InjuryNote>('injuries'),
-      options.contextFeeds.items<GameLine>('pinnacle')]);
-    const game=gameLinesFor(line,pinnacle.items);
+    if(!options.contextFeeds&&!options.gameLines)return {injury:null,teamInjuries:[],game:[],markets:[]};
+    const [injuries,games]=await Promise.all([options.contextFeeds?options.contextFeeds.items<InjuryNote>('injuries'):{items:[] as InjuryNote[],fetchedAt:null},
+      options.gameLines?options.gameLines().catch(()=>[]):[]]);
+    const game=gameLinesFor(line,games);
     const team=line.team;
     const teamInjuries=team?injuries.items.filter((item)=>item.league.toUpperCase()===line.league.toUpperCase()&&
       (item.teamAbbreviation?.toUpperCase()===team.toUpperCase()||normalizedName(item.team)===normalizedName(team)))
       .slice(0,8):[];
     return {injury:injuryFor(line,injuries.items),teamInjuries,game,
-      markets:[],fetchedAt:{injuries:injuries.fetchedAt,pinnacle:pinnacle.fetchedAt}};
+      markets:[],fetchedAt:{injuries:injuries.fetchedAt}};
   });
   // Each app's payouts and the per-pick hit rate every entry needs to break even.
   const payouts=options.payouts??DEFAULT_PAYOUTS;
@@ -1458,7 +1452,7 @@ export function buildServer(options: ServerOptions = {}) {
     if(prices.length&&fetchedAt)movement.observe(prices,Date.parse(fetchedAt));}).catch(()=>undefined);
   const edge=options.edge&&options.edge.enabled!==false?new EdgeService({board:()=>service.getBoard(),
     // SharpAPI's book prices plus the Odds API consensus books from the PrizePicks pull (step 5a; their age discounts them).
-    sharp:options.sharpProps?{prices:async()=>[...(await options.sharpProps!.current()).prices,...(options.oddsConsensus?.()??[])],
+    sharp:options.sharpProps?{prices:async()=>(await options.sharpProps!.current()).prices,
       pickem:async()=>(await options.sharpProps!.pickemLines()).lines}:null,
     appBoards:options.scrapedLines??null,pick6PayoutsConfirmed:options.edge.pick6PayoutsConfirmed===true,
     history:options.internalHistory??null,values:(line)=>historyReads.valuesFor(line),ledger:options.edge.ledger??null,
@@ -1467,9 +1461,9 @@ export function buildServer(options: ServerOptions = {}) {
     valuesCacheFile:options.edge.valuesCacheFile??null,movement,snapshots:options.edge.snapshots??null,
     alertsFile:options.edge.alertsFile??null,staleLogFile:options.edge.staleLogFile??null,dispersion:options.edge.dispersion??null,bookWeights:options.edge.bookWeights??null,
     injuries:options.contextFeeds?async()=>(await options.contextFeeds!.items<InjuryNote>('injuries')).items:null,
-    // Pinnacle's game lines plus SharpAPI's KBO run totals and run lines (step 6), for the game environment.
-    gameLines:options.contextFeeds||options.sharpProps?async()=>[
-      ...(options.contextFeeds?(await options.contextFeeds.items<GameLine>('pinnacle')).items:[]),
+    // PropLine's game lines plus SharpAPI's KBO run totals and run lines (step 6), for the game environment.
+    gameLines:options.gameLines||options.sharpProps?async()=>[
+      ...(options.gameLines?await options.gameLines().catch(()=>[]):[]),
       ...(options.sharpProps?sharpGameLines((await options.sharpProps.extras()).games.filter((game)=>game.league==='kbo')):[])]:null,
     clock:()=>now()}):null;
   const edgeWorker=edge&&options.edge?.ledger?new EdgeResultsWorker(options.edge.ledger,options.internalHistory??null,
@@ -1492,8 +1486,7 @@ export function buildServer(options: ServerOptions = {}) {
       health:async()=>({board:{fetchedAt:service.getBoard()?.board.fetchedAt??null},
         sharpApi:options.sharpProps?await options.sharpProps.status():null,
         scrapers:options.scraperPuller?await options.scraperPuller.status():null,
-        contextFeeds:options.contextFeeds?await options.contextFeeds.status():null,
-        oddsApi:options.oddsApiQuota?await options.oddsApiQuota().catch(()=>null):null})});
+        contextFeeds:options.contextFeeds?await options.contextFeeds.status():null})});
     // GKR+ (owner only): Edge's read blended with history at the number and GKR's side, on every platform; its own ledger.
     const gkrPlusLedger=options.edge?.gkrPlusLedger??null;
     const gkrPlusWorker=gkrPlusLedger?new EdgeResultsWorker(gkrPlusLedger,options.internalHistory??null,options.edge?.boxScores??null,()=>now(),
@@ -2146,8 +2139,6 @@ export function buildServer(options: ServerOptions = {}) {
       if (!authorized(request, options.adminToken)) return reply.code(401).send({ code: 'UNAUTHORIZED' });
     });
     admin.get('/status', async () => service.getStatus());
-    admin.get('/odds-api', async (_request, reply) => options.oddsApiQuota ? options.oddsApiQuota()
-      : reply.code(503).send({ code: 'ODDS_API_KEY_MISSING' }));
     // What CrownIQ has stored for itself: player game history, graded decisions, line history and the side records.
     admin.get('/history', async () => {
       const lines=options.scrapedLines?await options.scrapedLines.active():[];
@@ -2311,7 +2302,7 @@ export function buildServer(options: ServerOptions = {}) {
       ? { feeds: await options.contextFeeds.status(), sharpProps: await options.sharpProps?.status() ?? null } : reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' }));
     // One context feed's saved items (read-only), for the owner to check what a feed holds.
     admin.get('/context/:id/items', async (request, reply) => {
-      const parsed=z.object({id:z.enum(['injuries','pinnacle'])}).safeParse(request.params);
+      const parsed=z.object({id:z.enum(['injuries'])}).safeParse(request.params);
       if(!parsed.success||!options.contextFeeds)return reply.code(404).send({code:'UNKNOWN_FEED'});
       return options.contextFeeds.items(parsed.data.id);
     });
@@ -2319,7 +2310,7 @@ export function buildServer(options: ServerOptions = {}) {
     admin.post('/context/pull', async (request, reply) => {
       if (!options.contextFeeds) return reply.code(503).send({ code: 'CONTEXT_FEEDS_UNCONFIGURED' });
       if (request.headers['x-confirm-provider-cost'] !== 'yes') return reply.code(428).send({ code: 'COST_CONFIRMATION_REQUIRED' });
-      const input = z.object({ source: z.enum(['injuries', 'pinnacle']) }).safeParse(request.body);
+      const input = z.object({ source: z.enum(['injuries']) }).safeParse(request.body);
       if (!input.success) return reply.code(400).send({ code: 'INVALID_CONTEXT_SOURCE' });
       return options.contextFeeds.pull(input.data.source);
     });
