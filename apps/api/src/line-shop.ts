@@ -46,6 +46,24 @@ export function bestFor(offers: readonly ShopOffer[], side: PlayableDirection) {
   return { source: best.source, threshold: best.threshold };
 }
 
+/**
+ * One offer per app: its main number. Apps that list a ladder (Pick6 and Underdog alternates) keep the line with both
+ * sides, nearest the sportsbooks' number (else the middle of every app's numbers); alternates never make a "gap".
+ */
+export function mainOffers(offers: readonly ShopOffer[], anchor: number | null): ShopOffer[] {
+  const sorted = offers.map((offer) => offer.threshold).sort((a, b) => a - b);
+  const target = anchor ?? sorted[Math.floor(sorted.length / 2)] ?? 0;
+  const best = new Map<string, ShopOffer>();
+  const rank = (offer: ShopOffer) => [offer.sides.length > 1 ? 0 : 1, Math.abs(offer.threshold - target)] as const;
+  for (const offer of offers) {
+    const current = best.get(offer.source);
+    if (!current) { best.set(offer.source, offer); continue; }
+    const [a1, a2] = rank(offer), [b1, b2] = rank(current);
+    if (a1 < b1 || (a1 === b1 && a2 < b2)) best.set(offer.source, offer);
+  }
+  return [...best.values()];
+}
+
 export function lineShop(prizePicks: readonly PropLine[], apps: readonly AppLine[], prices: readonly FairPrice[],
   picks: ReadonlyMap<string, ShopPick>, now: Date): ShopEntry[] {
   type Group = { sample: { sport: string; league: string; playerName: string; team: string | null; market: string;
@@ -89,16 +107,16 @@ export function lineShop(prizePicks: readonly PropLine[], apps: readonly AppLine
       overAmerican: price.overAmerican, underAmerican: price.underAmerican });
   }
   const out: ShopEntry[] = [];
-  for (const [key, { sample, offers, books, pick }] of groups) {
+  for (const [key, { sample, offers: listed, books, pick }] of groups) {
     // Worth shopping: two apps list it, or one app and a sportsbook.
-    const apps = new Set(offers.map((offer) => offer.source));
+    const apps = new Set(listed.map((offer) => offer.source));
     if (apps.size < 2 && !(apps.size === 1 && books.length)) continue;
-    const thresholds = offers.map((offer) => offer.threshold);
     const counts = new Map<number, number>();
     for (const book of books) counts.set(book.line, (counts.get(book.line) ?? 0) + 1);
     const booksLine = books.length ? [...counts].sort((a, b) => b[1] - a[1] ||
       Math.abs(books.find((item) => item.line === a[0])!.fairOver - 0.5) - Math.abs(books.find((item) => item.line === b[0])!.fairOver - 0.5))[0][0] : null;
     const atLine = books.filter((book) => book.line === booksLine);
+    const offers = mainOffers(listed, booksLine), thresholds = offers.map((offer) => offer.threshold);
     out.push({ key, ...sample, offers: [...offers].sort((a, b) => a.threshold - b.threshold), bestMore: bestFor(offers, 'MORE'),
       bestLess: bestFor(offers, 'LESS'), spread: Math.round((Math.max(...thresholds) - Math.min(...thresholds)) * 10) / 10,
       books, booksLine, booksOver: atLine.length ? Math.round(atLine.reduce((sum, book) => sum + book.fairOver, 0) / atLine.length * 1000) / 1000 : null,

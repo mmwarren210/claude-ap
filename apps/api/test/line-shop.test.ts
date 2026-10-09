@@ -35,3 +35,11 @@ test('line shop: one app alone with no sportsbook is not worth shopping; started
   assert.equal(lineShop([pp('pp1', 5.5)], [], [], new Map(), now).length, 0);
   assert.equal(lineShop([pp('pp1', 5.5)], [app('underdog', 4.5)], [], new Map(), new Date('2030-10-05T21:00:00Z')).length, 0);
 });
+
+test('line shop: an app ladder (Pick6 alternates) shows one main line per app, so alternates never make a gap', () => {
+  const alt = (threshold: number) => ({ ...app('pick6', threshold), id: `pick6:${threshold}`, availableDirections: ['MORE'] }) as unknown as AppLine;
+  const entries = lineShop([pp('pp1', 5.5)], [app('pick6', 5.5), alt(2.5), alt(8.5), alt(10.5)],
+    [price('draftkings', 5.5, 0.5)], new Map(), now);
+  assert.deepEqual(entries[0]!.offers.map((offer) => `${offer.source}:${offer.threshold}`), ['prizepicks:5.5', 'pick6:5.5']);
+  assert.equal(entries[0]!.spread, 0);
+});
