@@ -180,7 +180,18 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     const snapshot = await edge.snapshot(platform.success ? platform.data.platform : 'prizepicks');
     if (!snapshot) return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
     const pick = pickForLine(snapshot, params.data.lineId);
-    if (pick) return { pick, referenceEntry: snapshot.response.referenceEntry, distribution: distributionPoints(pick),
+    // Every number this player has for this stat on this platform (Regular, Goblin, Demon, alternates), each with Edge's own
+    // side, chance and EV, so the app can switch between them; numbers Edge can't read are listed as no read.
+    const ladder = pick ? [
+      ...snapshot.response.picks.filter((item) => item.eventId === pick.eventId && item.playerId === pick.playerId && item.market === pick.market)
+        .map((item) => ({ lineId: item.lineId, threshold: item.threshold, lineType: item.lineType, side: item.side, probability: item.probability,
+          edge: item.edge, ev: item.ev ?? null, rating: item.rating, payoutMultiplier: item.payoutMultiplier ?? null, read: true })),
+      ...snapshot.unpriced.filter(({ line }) => line.eventId === pick.eventId && line.playerId === pick.playerId && line.market === pick.market)
+        .map(({ line }) => ({ lineId: line.id, threshold: line.threshold, lineType: line.lineType, side: null, probability: null, edge: null,
+          ev: null, rating: 'NONE', payoutMultiplier: line.payoutMultiplier ?? null, read: false })),
+    ].filter((item, index, all) => all.findIndex((other) => other.lineId === item.lineId) === index)
+      .sort((a, b) => a.threshold - b.threshold) : [];
+    if (pick) return { pick, ladder, referenceEntry: snapshot.response.referenceEntry, distribution: distributionPoints(pick),
       movement: deps.snapshots ? lineMovement(deps.snapshots, pick, now().getTime()) : [] };
     const unread = snapshot.unpriced.find((item) => item.line.id === params.data.lineId);
     return unread ? reply.code(404).send({ code: 'EDGE_LINE_UNPRICED', reason: unread.reason, note: unread.note })

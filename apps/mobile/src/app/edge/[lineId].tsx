@@ -19,7 +19,7 @@ const american = (decimal: number | null) => decimal === null ? '—'
 export default function EdgeDetail() {
   const { request } = useAuth();
   const { lineId, platform } = useLocalSearchParams<{ lineId: string; platform?: string }>();
-  const [state, setState] = useState<{ id: string; pick: EdgePick | null; message: string; distribution?: Point[]; movement?: Movement[] } | null>(null);
+  const [state, setState] = useState<{ id: string; pick: EdgePick | null; message: string; distribution?: Point[]; movement?: Movement[]; ladder?: Rung[] } | null>(null);
   const slip = useEdgeSlip();
   useEffect(() => {
     let active = true;
@@ -27,8 +27,9 @@ export default function EdgeDetail() {
       if (!active) return;
       if (!response.ok) { setState({ id: lineId, pick: null, message: response.status === 404
         ? (await response.json().catch(() => null) as { note?: string } | null)?.note ?? 'Edge has no read for this line.' : 'Could not load this line.' }); return; }
-      const body = await response.json() as { pick: unknown; distribution?: Point[]; movement?: Movement[] };
-      setState({ id: lineId, pick: edgePickSchema.parse(body.pick), message: '', distribution: body.distribution ?? [], movement: body.movement ?? [] });
+      const body = await response.json() as { pick: unknown; distribution?: Point[]; movement?: Movement[]; ladder?: Rung[] };
+      setState({ id: lineId, pick: edgePickSchema.parse(body.pick), message: '', distribution: body.distribution ?? [], movement: body.movement ?? [],
+        ladder: body.ladder ?? [] });
     }).catch(() => { if (active) setState({ id: lineId, pick: null, message: 'Could not load this line.' }); });
     return () => { active = false; };
   }, [lineId, platform, request]);
@@ -53,6 +54,18 @@ export default function EdgeDetail() {
       <Pressable accessibilityRole="button" onPress={() => edgeSlip.toggle(pick)} style={[styles.button, inSlip && styles.buttonOn]}>
         <Text style={styles.link}>{inSlip ? '✓ In slip (tap to remove)' : '+ Add to slip'}</Text></Pressable>
     </View>
+    {current?.ladder && current.ladder.length > 1 && <Section title="THIS PLAYER'S LINES">
+      <Text style={styles.muted}>Every number this platform lists for this stat. Tap one to see its own side, chance and EV.</Text>
+      {current.ladder.map((rung) => <Pressable key={rung.lineId} accessibilityRole="button" disabled={!rung.read || rung.lineId === pick.lineId}
+        onPress={() => router.setParams({ lineId: rung.lineId })} style={[styles.bookRow, styles.rung, rung.lineId === pick.lineId && styles.rungOn]}>
+        <Text style={[styles.text, styles.bookName, rung.lineId === pick.lineId && styles.own]}>
+          {formatLine(rung.threshold)}{rung.lineType !== 'REGULAR' ? ` · ${rung.lineType}` : ''}</Text>
+        <Text style={styles.text}>{rung.side === 'MORE' ? 'More' : rung.side === 'LESS' ? 'Less' : ''}</Text>
+        <Text style={styles.text}>{rung.probability === null ? '' : pct(rung.probability, 0)}</Text>
+        <Text style={styles.muted}>{rung.ev !== null ? `EV ${rung.ev >= 0 ? '+' : ''}${(rung.ev * 100).toFixed(1)}%` : ''}</Text>
+        <Text style={[styles.text, styles.verdict, rungVerdict(rung) === 'PLAY' && styles.own]}>{rungVerdict(rung)}</Text>
+      </Pressable>)}
+    </Section>}
     <Section title="WHY">{pick.reasons.map((reason) => <Text key={reason} style={styles.text}>• {reason}</Text>)}</Section>
     {pick.warnings.length > 0 && <Section title="GOOD TO KNOW">{pick.warnings.map((warning) =>
       <Text key={warning} style={styles.muted}>• {warning}</Text>)}</Section>}
@@ -133,6 +146,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return <View style={styles.section}><Text style={styles.sectionTitle}>{title}</Text>{children}</View>;
 }
 
+interface Rung { lineId: string; threshold: number; lineType: string; side: 'MORE' | 'LESS' | null; probability: number | null;
+  edge: number | null; ev: number | null; rating: string; payoutMultiplier: number | null; read: boolean }
+const rungVerdict = (rung: Rung) => !rung.read ? 'no read' : rung.edge === null ? 'chance only'
+  : rung.edge > 0 && rung.rating !== 'NONE' ? 'PLAY' : 'PASS';
+
 const styles = StyleSheet.create({
   link: { color: palette.green, fontSize: 13, fontWeight: '800' },
   hero: { backgroundColor: palette.card, borderWidth: 1, borderColor: palette.border, borderRadius: 20, padding: 18, gap: 6 },
@@ -149,6 +167,9 @@ const styles = StyleSheet.create({
   bookRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
   bookName: { flex: 1 },
   own: { color: palette.green, fontWeight: '800' },
+  rung: { paddingVertical: 6, paddingHorizontal: 6, borderRadius: 10 },
+  rungOn: { backgroundColor: palette.greenDim },
+  verdict: { width: 78, textAlign: 'right', fontWeight: '800' },
   chart: { flexDirection: 'row', alignItems: 'flex-end', height: 90, gap: 1 },
   chartColumn: { flex: 1, height: '100%', justifyContent: 'flex-end' },
   chartBar: { borderTopLeftRadius: 2, borderTopRightRadius: 2 },
