@@ -588,7 +588,7 @@ export class SharpPropsFeed {
       /** Pause between requests; SharpAPI's Hobby plan allows 120 a minute. */
       requestGapMs?: number; retryScale?: number;
       /** Rows from PropLine instead of SharpAPI (owner, 2026-10-08): the same row shape, so everything downstream is unchanged. */
-      propLineRows?: () => Promise<{ rows: unknown[]; gameRows: unknown[]; failed: string[]; unmapped: Record<string, number>; requests: number }> } = {},
+      propLineRows?: () => Promise<{ rows: unknown[]; gameRows: unknown[]; failed: string[]; unmapped: Record<string, number>; requests: number; reused?: number }> } = {},
     private readonly fetchFn: typeof fetch = fetch, private readonly clock: () => Date = () => new Date()) {}
 
   private loading: Promise<void> | null = null;
@@ -769,7 +769,7 @@ export class SharpPropsFeed {
       this.emptyBooks = (this.options.books ?? []).filter((book) => !books.includes(book) && !/^(prizepicks|underdog|pick6|sleeper|dabble|betr)/.test(book));
       this.unavailable = []; this.notSelected = null;
       console.log(`[propline-books] ${pulled.rows.length} prop rows and ${pulled.gameRows.length} game rows in ${pulled.requests} requests; books ${JSON.stringify(books)}; ` +
-        `failed ${JSON.stringify(pulled.failed)}; unmapped markets ${JSON.stringify(pulled.unmapped)}`);
+        `failed ${JSON.stringify(pulled.failed)} (${pulled.reused ?? 0} kept from the last good pull); unmapped markets ${JSON.stringify(pulled.unmapped)}`);
       if (!pulled.rows.length) { this.lastError = pulled.failed.length ? 'PROPLINE_FAILED' : 'NO_PRICES'; return this.status(); }
       await this.publish(rows, gameRows, [...new Set(rows.map((row) => String((row as Row).league)))]);
     } catch (error) {

@@ -84,25 +84,46 @@ export function proplineRows(event: Event, sportKey: string, unmapped: Map<strin
   return { rows, gameRows };
 }
 
-/** Every discovered sport's prop markets for the price books, as feed rows (a few bulk requests per sport). */
-export async function fetchPropLineRows(client: PropLineClient, books: readonly string[] = PROPLINE_PRICE_BOOKS):
-  Promise<{ rows: unknown[]; gameRows: unknown[]; failed: string[]; unmapped: Record<string, number>; requests: number }> {
+/** The last good answer per sport and market chunk, so a chunk that fails keeps its prices instead of emptying them. */
+export type PropLineRowMemory = Map<string, { at: number; rows: unknown[]; gameRows: unknown[] }>;
+
+/**
+ * Every discovered sport's prop markets for the price books, as feed rows (a few bulk requests per sport). A chunk that
+ * fails is tried once more; if it still fails, its last good rows (up to 2 hours old) stand in, so one slow answer never
+ * leaves Edge without book prices.
+ */
+export async function fetchPropLineRows(client: PropLineClient, books: readonly string[] = PROPLINE_PRICE_BOOKS,
+  memory: PropLineRowMemory | null = null, clock: () => number = Date.now):
+  Promise<{ rows: unknown[]; gameRows: unknown[]; failed: string[]; unmapped: Record<string, number>; requests: number; reused?: number }> {
   const before = client.requests, failed: string[] = [];
   const markets = await client.propMarkets(failed);
   const rows: unknown[] = [], gameRows: unknown[] = [], unmapped = new Map<string, number>();
+  let reused = 0;
+  const add = (part: { rows: unknown[]; gameRows: unknown[] }) => {
+    for (const row of part.rows) rows.push(row);
+    for (const row of part.gameRows) gameRows.push(row);
+  };
   await Promise.all([...markets].map(async ([sportKey, keys]) => {
     if (!sharpLeagueFor(sportKey)) return;
     const wanted = [...keys, 'totals'];
     for (let index = 0; index < wanted.length; index += 15) {
-      const chunk = wanted.slice(index, index + 15);
-      try {
-        const body = await client.get<unknown>(`/v1/sports/${sportKey}/odds?markets=${chunk.join(',')}&bookmakers=${books.join(',')}`);
-        const events = Array.isArray(body) ? body as Event[] : [];
-        for (const event of events) { const out = proplineRows(event, sportKey, unmapped);
-          for (const row of out.rows) rows.push(row);
-          for (const row of out.gameRows) gameRows.push(row); }
-      } catch { failed.push(`${sportKey}:${index / 15}`); }
+      const chunk = wanted.slice(index, index + 15), key = `${sportKey}|${chunk.join(',')}`;
+      const path = `/v1/sports/${sportKey}/odds?markets=${chunk.join(',')}&bookmakers=${books.join(',')}`;
+      const body = await client.get<unknown>(path).catch(() => client.get<unknown>(path)).catch(() => undefined);
+      if (body === undefined) {
+        failed.push(`${sportKey}:${index / 15}`);
+        const last = memory?.get(key);
+        if (last && clock() - last.at < 2 * 3600_000) { add(last); reused++; }
+        continue;
+      }
+      const part = { rows: [] as unknown[], gameRows: [] as unknown[] };
+      for (const event of Array.isArray(body) ? body as Event[] : []) { const out = proplineRows(event, sportKey, unmapped);
+        for (const row of out.rows) part.rows.push(row);
+        for (const row of out.gameRows) part.gameRows.push(row); }
+      memory?.set(key, { at: clock(), ...part });
+      add(part);
     }
   }));
-  return { rows, gameRows, failed, unmapped: Object.fromEntries([...unmapped].sort((a, b) => b[1] - a[1]).slice(0, 25)), requests: client.requests - before };
+  return { rows, gameRows, failed, unmapped: Object.fromEntries([...unmapped].sort((a, b) => b[1] - a[1]).slice(0, 25)),
+    requests: client.requests - before, ...(memory ? { reused } : {}) };
 }

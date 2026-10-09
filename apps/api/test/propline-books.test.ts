@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { proplineRows, sharpLeagueFor } from '../src/context/propline-books.js';
+import { fetchPropLineRows, proplineRows, sharpLeagueFor } from '../src/context/propline-books.js';
+import type { PropLineRowMemory } from '../src/context/propline-books.js';
+import type { PropLineClient } from '../src/scrapers/propline.js';
 import { fairPrices, gamePrices, normalizeRow } from '../src/context/sharp-props.js';
 
 // Synthetic values in PropLine's odds shape (checked live 2026-10-08).
@@ -35,3 +37,25 @@ test('PropLine sportsbook odds become the feed rows Edge, the book tabs and line
   assert.equal(sharpLeagueFor('soccer_epl'), 'england_-_premier_league');
   assert.equal(sharpLeagueFor('cricket'), null);
 });
+
+test('a failed price chunk is tried again, then keeps its last good rows instead of emptying Edge', async () => {
+  let mode: 'ok' | 'flaky' | 'down' = 'ok', calls = 0;
+  const client = { requests: 0, propMarkets: async () => new Map([['football_nfl', ['player_pass_yds']]]),
+    get: async () => { calls++; if (mode === 'down' || (mode === 'flaky' && calls % 2 === 1)) throw new Error('PROPLINE_HTTP_504'); return [event]; },
+  } as unknown as PropLineClient;
+  const memory: PropLineRowMemory = new Map();
+  let now = 0;
+  const first = await fetchPropLineRows(client, ['draftkings'], memory, () => now);
+  assert.ok(first.rows.length > 0);
+  assert.deepEqual(first.failed, []);
+  mode = 'flaky'; calls = 0;
+  const retried = await fetchPropLineRows(client, ['draftkings'], memory, () => now);
+  assert.deepEqual([retried.failed, retried.rows.length], [[], first.rows.length], 'the second try answered');
+  mode = 'down'; now = 3600_000;
+  const kept = await fetchPropLineRows(client, ['draftkings'], memory, () => now);
+  assert.deepEqual([kept.failed, kept.rows.length, kept.reused], [['football_nfl:0'], first.rows.length, 1]);
+  now = 3 * 3600_000;
+  const stale = await fetchPropLineRows(client, ['draftkings'], memory, () => now);
+  assert.equal(stale.rows.length, 0, 'prices over two hours old are not reused');
+});
+

@@ -191,7 +191,7 @@ const sharpProps=new SharpPropsFeed((process.env.SHARPAPI_KEY ?? process.env.sha
   process.env.CROWNIQ_SHARP_PROPS_FILE ?? `${dataDir}/sharp-props.json`,
   {books:(process.env.CROWNIQ_SHARP_BOOKS??'draftkings,fanduel,hardrock,betmgm,caesars,prizepicks').split(',').map((book)=>book.trim()).filter(Boolean),
     // DraftKings, Hard Rock and the line-shopping books from PropLine (owner, 2026-10-08); CROWNIQ_BOOKS_SOURCE=sharpapi goes back.
-    ...(propLine&&process.env.CROWNIQ_BOOKS_SOURCE!=='sharpapi'?{propLineRows:()=>fetchPropLineRows(propLine)}:{}),
+    ...(propLine&&process.env.CROWNIQ_BOOKS_SOURCE!=='sharpapi'?{propLineRows:(()=>{const memory=new Map();return ()=>fetchPropLineRows(propLine,undefined,memory);})()}:{}),
     maxPagesPerLeague:100,
     ...(process.env.CROWNIQ_SHARP_LEAGUES?.trim()?{leagues:process.env.CROWNIQ_SHARP_LEAGUES.split(',').map((league)=>league.trim()).filter(Boolean)}:{})});
 // A bad CROWNIQ_PAYOUTS falls back to the defaults rather than stopping the server.
