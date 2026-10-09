@@ -557,8 +557,9 @@ export class EdgeService {
     // A platform's own book never prices it, and pick'em apps' rows are payouts, never prices.
     const nowIso = now.toISOString(), own = [...new Set([...ownBooks[set.platform], 'prizepicks', 'prizepicks_flex', 'underdog', 'pick6', 'dabble'])];
     const matched = prices.length && set.lines.length ? matchBookPrices(set.lines, prices, nowIso, own, set.promos) : null;
-    // Pick6's entry chart isn't public: until the owner confirms it, its picks get a chance but no edge.
-    const unconfirmed = set.platform === 'pick6' && !this.options.pick6PayoutsConfirmed;
+    // Pick6's entry chart isn't public: until the owner confirms it, its picks get a chance but no edge. A pick'em app with
+    // no payout chart at all (Dabble, until its chart is added) is the same: chances only, never an assumed payout.
+    const unconfirmed = (set.platform === 'pick6' && !this.options.pick6PayoutsConfirmed) || (isPickem(set.platform) && !set.entries.length);
     const sidePayout = set.payouts ? (line: PropLine, side: PlayableDirection): SidePayout => {
       const payout = set.payouts!.get(line.id)?.[side] ?? { kind: 'ENTRY', multiplier: 1 };
       return unconfirmed && payout.kind === 'ENTRY' ? { ...payout, multiplier: null } : payout;

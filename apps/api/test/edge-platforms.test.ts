@@ -21,7 +21,7 @@ const price = (book: string, name: string, index: number, line: number, over: nu
   home: index < 2 ? 'Home A' : 'Home B', away: index < 2 ? 'Away A' : 'Away B', observedAt: now.toISOString() });
 const prices = players.flatMap((name, index) => [price('fanduel', name, index, 23.5, -115, -105), price('betrivers', name, index, 23.5, -120, 100),
   price('draftkings', name, index, 20.5, 150, -180), price('hardrock', name, index, 22.5, 120, -150)]);
-const stored = (app: 'underdog' | 'pick6', name: string, index: number, multipliers: Record<string, number>, gimme = false): StoredLine => ({
+const stored = (app: 'underdog' | 'pick6' | 'dabble', name: string, index: number, multipliers: Record<string, number>, gimme = false): StoredLine => ({
   app, appLineId: `${app}-${index}`, league: 'NBA', gameId: index < 2 ? 'g-a' : 'g-b', player: name, team: null, teamName: null, opponent: null,
   stat: 'Points', marketKey: 'player_points', line: 20.5, tier: 'REGULAR', directions: ['MORE', 'LESS'], startTime: start, imageUrl: null,
   home: { abbreviation: index < 2 ? 'HA' : 'HB', name: index < 2 ? 'Home A' : 'Home B' }, away: { abbreviation: 'AW', name: index < 2 ? 'Away A' : 'Away B' },
@@ -31,7 +31,7 @@ const stored = (app: 'underdog' | 'pick6', name: string, index: number, multipli
 test('Edge P2: every platform priced against its own payout, a platform never prices itself', async () => {
   const service = new EdgeService({ board: () => board, payouts: DEFAULT_PAYOUTS, clock: () => now,
     sharp: { prices: async () => prices, pickem: async () => [] },
-    appBoards: { active: async (app) => players.map((name, index) => stored(app as 'underdog' | 'pick6', name, index,
+    appBoards: { active: async (app) => players.map((name, index) => stored(app as 'underdog' | 'pick6' | 'dabble', name, index,
       app === 'underdog' ? { MORE: index === 0 ? 1.1 : 1, LESS: 1 } : { MORE: 1, LESS: 1 }, app === 'pick6' && index === 1)) } });
   const [pp, ud, p6, dk, hr] = await Promise.all((['prizepicks', 'underdog', 'pick6', 'draftkings', 'hardrock'] as const)
     .map((platform) => service.snapshot(platform)));
@@ -50,4 +50,7 @@ test('Edge P2: every platform priced against its own payout, a platform never pr
   assert.equal(dk!.response.entries[0]!.type, 'PARLAY');
   assert.equal(hr!.response.entries.at(-1)!.size, 20);
   assert.equal(service.status().reports.draftkings!.platform, 'draftkings');
+  // Dabble: no payout chart at all, so chances only, never an edge or a rating (no payout is invented).
+  const db = await service.snapshot('dabble');
+  assert.ok(db!.response.picks.length > 0 && db!.response.picks.every((pick) => pick.edge === null && pick.rating === 'NONE'));
 });
