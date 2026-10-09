@@ -401,17 +401,27 @@ export class EdgeService {
     }
     // Soonest games first: they matter most and their lines go first.
     queue.sort((a, b) => a[1].eventStartTime.localeCompare(b[1].eventStartTime));
-    const deadline = nowMs + (budgetMs ?? this.options.valuesBudgetMs ?? 45_000);
+    // A hard limit on the whole step (owner, 2026-10-09: steadier passes): at the deadline the pass goes on with what it has.
+    // A lookup still running keeps going and is saved when it lands, so the next pass reads it.
+    const deadline = nowMs + (budgetMs ?? this.options.valuesBudgetMs ?? 30_000);
+    let timer: NodeJS.Timeout | undefined;
+    const stop = new Promise<'STOP'>((done) => { timer = setTimeout(() => done('STOP'), Math.max(0, deadline - Date.now())); });
+    const keep = (key: string, result: { values: number[] } | null) => {
+      const values = result?.values.length ? result.values : null;
+      this.valuesCache.set(key, { until: Date.now() + (values ? 6 : 1) * 3600_000, values });
+      return values;
+    };
     const worker = async () => {
       for (let item = queue.shift(); item && Date.now() < deadline; item = queue.shift()) {
-        const result = await this.options.values!(item[1]).catch(() => undefined);
-        if (result === undefined) continue; // a failed lookup is retried next pass
-        const values = result?.values.length ? result.values : null;
-        this.valuesCache.set(item[0], { until: Date.now() + (values ? 6 : 1) * 3600_000, values });
-        if (values) found.set(item[0], values);
+        const key = item[0];
+        const lookup = this.options.values!(item[1]).then((result) => keep(key, result)).catch(() => undefined); // a failure is retried next pass
+        const values = await Promise.race([lookup, stop]);
+        if (values === 'STOP') return;
+        if (values) found.set(key, values);
       }
     };
     await Promise.all(Array.from({ length: 8 }, worker));
+    clearTimeout(timer);
     if (this.valuesCache.size > 50_000) for (const [key, value] of this.valuesCache) if (value.until <= nowMs) this.valuesCache.delete(key);
     if (this.options.valuesCacheFile) {
       const file = this.options.valuesCacheFile, temporary = `${file}.tmp`;
