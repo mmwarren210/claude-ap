@@ -81,6 +81,17 @@ export class ScrapedLineStore {
    * when no source lists it any more. (One source covering part of an app, like The Odds API's share of PrizePicks, never
    * clears what the other sources found.)
    */
+  /**
+   * Retired sources (feeds the server no longer pulls): the lines only they still hold leave now, instead of lingering at
+   * old numbers until the 26-hour unseen rule clears them. Lines another source lists just lose the retired source.
+   */
+  async retire(sources: readonly string[]): Promise<number> {
+    let removed = 0;
+    for (const source of sources)
+      removed += (await this.ingest(source, [], { complete: true, apps: ['prizepicks', 'underdog', 'pick6', 'dabble'] })).removed;
+    return removed;
+  }
+
   async ingest(source: string, lines: readonly ScrapedLine[], options: { complete: boolean; apps: readonly DfsApp[];
     /** A partial pull (some leagues only) takes down only lines inside this scope. */
     scope?: (line: StoredLine) => boolean }): Promise<IngestReport> {

@@ -96,6 +96,11 @@ const nonNegativeNumber=(name:string,fallback:number)=>{
 };
 const scrapedLines=providerName==='scrapers'
   ? new ScrapedLineStore(process.env.CROWNIQ_SCRAPED_LINES_FILE ?? `${dataDir}/scraped-lines.json`,undefined,historyArchive):null;
+// Feeds removed on 2026-10-09 (PropLine replaced them): their saved lines leave at startup, so no player is listed twice
+// under two game ids (Edge can't place a book price on either) and no line sits at a number nobody updates.
+if(scrapedLines)void scrapedLines.retire(['underdog-direct','zen-studio-underdog','zen-studio-pick6','zen-studio-prizepicks',
+  'zen-studio-prizepicks-esports','lergassy','the-odds-api']).then((removed)=>{if(removed)console.log(`[startup] ${removed} lines from removed feeds taken down`);})
+  .catch(()=>undefined);
 // Each source on its own Eastern-time schedule ("" turns one off), under one shared daily cap.
 const hoursEt=(name:string,fallback:string)=>(process.env[name] ?? fallback).split(',').map((hour)=>hour.trim())
   .filter(Boolean).map(Number).filter((hour)=>Number.isInteger(hour)&&hour>=0&&hour<=23);

@@ -298,3 +298,13 @@ test('the daily budget counts Eastern days and the account real spend, whichever
     assert.equal(await failing.spent(), 0, 'a new Eastern day starts at zero; an unreadable Apify falls back to the local count');
   } finally { await rm(folder, { recursive: true, force: true }); }
 });
+
+test('a retired source takes down the lines only it held; lines another source lists stay', async () => {
+  const store = new ScrapedLineStore(null, () => now);
+  await store.ingest('old-feed', [line(), line({ projection_id: '1002', player_name: 'Old Only' })], { complete: true, apps: ['prizepicks'] });
+  await store.ingest('new-feed', [line()], { complete: true, apps: ['prizepicks'] });
+  assert.equal(await store.retire(['old-feed']), 1);
+  const active = await store.active();
+  assert.deepEqual(active.map((item) => [item.player, item.confirmedBy]), [['Test Receiver', ['new-feed']]]);
+});
+
