@@ -27,6 +27,7 @@ function ProfileRouter(){
         <Stack.Screen name="edge/[lineId]" />
         <Stack.Screen name="social/[publicId]" />
         <Stack.Screen name="social/crown/[id]" />
+        <Stack.Screen name="guide" />
         <Stack.Screen name="owner/board" />
         <Stack.Screen name="owner/research" />
         <Stack.Screen name="owner/learning" />

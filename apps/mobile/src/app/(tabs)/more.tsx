@@ -238,6 +238,7 @@ export default function MoreScreen() {
 
       <Text style={styles.heading}>App Settings</Text>
       <View style={styles.group}>
+        <Row icon="help-circle-outline" title="How to use CrownIQ" detail="What each tab does" onPress={() => go('/guide')} />
         <Row icon="account-outline" title="Account" detail="Display username" onPress={() => setSheet('account')} />
         <Row icon="view-grid-outline" title="Board view" detail={viewMode === 'LITE' ? 'Lite · top qualified' : 'Full · every line'}
           onPress={ready ? () => setViewMode(viewMode === 'LITE' ? 'FULL' : 'LITE') : undefined} />
