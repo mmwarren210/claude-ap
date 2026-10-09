@@ -16,6 +16,7 @@ import { statApiValueFor } from './stat-api-gkr-evidence.js';
 import type { HistoryRead } from './history-read.js';
 import { twoMaps } from './player-history.js';
 import type { PlayerHistory } from './player-history.js';
+import type { PropLineHistory } from './propline-history.js';
 import { FeedbackStore } from './feedback.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { appendFile, mkdir, readdir, readFile, stat } from 'node:fs/promises';
@@ -176,6 +177,8 @@ export interface ServerOptions {
   feedback?: FeedbackStore | null;
   /** Free public history (ESPN tennis, OpenDota, Leaguepedia) for the cards' game logs. */
   playerHistory?: PlayerHistory | null;
+  /** Player game logs from PropLine's box scores, first in line for every history read. */
+  proplineHistory?: PropLineHistory | null;
   /** UFC fighters' fight history (UFCStats) for History Read and Edge on PrizePicks' UFC lines. */
   ufcHistory?: import('./ufc-history.js').UfcHistory | null;
   /** Soccer players' full match stats (Sofascore) for lines ESPN's logs can't read, fantasy score included. */
@@ -1382,7 +1385,7 @@ export function buildServer(options: ServerOptions = {}) {
     const found=await options.soccerHistory.values(line.playerName,line.market,line.eventStartTime).catch(()=>null);
     return found&&found.values.length>=5?found:null;
   };
-  const historyReads=new HistoryReads(async(line)=>{
+  const otherHistory=async(line:PropLine)=>{
     // Fantasy score is read on PrizePicks only (owner, 2026-10-07: Underdog and Pick6 fantasy lines get no read).
     if(fantasyBlocked(line))return null;
     // Soccer fantasy score: PrizePicks' chart over Sofascore's full match stats (PrizePicks only).
@@ -1431,6 +1434,15 @@ export function buildServer(options: ServerOptions = {}) {
     const free=options.playerHistory?.supports(line.sport)?await options.playerHistory.values(line.sport,line.playerName,line.market).catch(()=>null):null;
     if(!free||(free.perMap&&twoMaps(line.market)))return null;
     return {values:free.values.map((game)=>game.value),source:free.source};
+  };
+  // PropLine's box scores first when it holds 10+ games for the stat (owner, 2026-10-09: PropLine is the source of truth);
+  // the other sources fill in where its archive (from April 2026) is thin, and 5-9 PropLine games are the last resort.
+  const historyReads=new HistoryReads(async(line)=>{
+    const propline=options.proplineHistory?await options.proplineHistory.values(line).catch(()=>null):null;
+    if(propline&&propline.values.length>=10)return propline;
+    const other=await otherHistory(line);
+    if(other)return other;
+    return propline&&propline.values.length>=5?propline:null;
   },()=>now());
   // CrownIQ Edge (Edge 2.0): its own reads of every platform, warmed in the background like the app boards.
   const movement=new MovementTracker();
@@ -2145,6 +2157,7 @@ export function buildServer(options: ServerOptions = {}) {
       let booksHistoryRows=0;
       try{if(options.booksHistoryFile)booksHistoryRows=(await readFile(options.booksHistoryFile,'utf8')).split('\n').filter(Boolean).length;}catch{/* none yet */}
       return {playerHistory:await options.internalHistory?.status()??null,freeHistory:options.playerHistory?.lastRefresh??null,
+        proplineHistory:options.proplineHistory?.status()??null,
         trackedDecisions:(await options.product?.listDecisions(0,1))?.total??null,
         activeAppLines:lines.length,booksHistoryRows,
         shadow:await options.shadowRecord?.status()??null,

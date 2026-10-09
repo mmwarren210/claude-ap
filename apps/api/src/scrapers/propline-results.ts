@@ -145,6 +145,13 @@ export class PropLineResults {
     return this.closingFor(picks, async (sportKey) => (await this.client?.propMarkets([]).catch(() => null))?.get(sportKey) ?? []);
   }
 
+  /** PropLine's sport key for a CrownIQ event it listed (soccer has one per league); null before the saved file is read. */
+  sportKeyFor(eventId: string): string | null {
+    if (!this.loaded) { void this.load(); return null; }
+    const game = proplineGameId(eventId);
+    return game ? this.data.sports[game] ?? null : null;
+  }
+
   /** A pick's actual stat value, when PropLine has graded that game, player and stat. */
   async actual(pick: { eventId: string; sport: string; playerName: string; market: string }): Promise<number | null> {
     await this.load();

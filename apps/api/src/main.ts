@@ -45,6 +45,7 @@ import { prizePicksPartner } from './scrapers/prizepicks-partner.js';
 import { PropLineClient, propLineBoard } from './scrapers/propline.js';
 import { PropLinePush } from './scrapers/propline-push.js';
 import { PropLineResults } from './scrapers/propline-results.js';
+import { PropLineHistory } from './propline-history.js';
 import { fetchPropLineRows } from './context/propline-books.js';
 import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
@@ -144,6 +145,12 @@ const propLine=process.env.PROPLINE_API_KEY?.trim()?new PropLineClient(process.e
 // PropLine's graded props, pushed as they settle and read back per game; Edge and GKR+ grade from them first.
 const proplineResults=propLine?new PropLineResults(propLine,`${dataDir}/propline-results.json`):null;
 const noteGame=proplineResults?(gameId:string,sportKey:string)=>proplineResults.noteGame(gameId,sportKey):undefined;
+// Player game logs from PropLine's box scores (one request per player, kept 6 hours, at most 40,000 a day), read first
+// for every history read. CROWNIQ_PROPLINE_HISTORY=off turns it off.
+const proplineHistory=propLine&&process.env.CROWNIQ_PROPLINE_HISTORY!=='off'?new PropLineHistory(propLine,`${dataDir}/propline-history.json`,
+  (eventId)=>proplineResults?.sportKeyFor(eventId)??null,
+  {dailyRequests:Number(process.env.CROWNIQ_PROPLINE_HISTORY_DAILY??40_000)||40_000}):null;
+if(proplineHistory)setInterval(()=>{void proplineHistory.save().catch(()=>undefined);},10*60_000).unref();
 const proplineEvery=Math.min(60,Math.max(5,Number(process.env.CROWNIQ_PROPLINE_EVERY_MINUTES??15)||15));
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
   // PrizePicks' partner address serves the whole board (esports, Goblins and Demons included) for free, every two hours.
@@ -434,7 +441,7 @@ const app = buildServer({ ufcHistory, soccerHistory, adminToken: process.env.ADM
     return {store,reader,grader:reader?new TipGrader(store,reader):null};})(),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
-  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,contextFeeds,gameLines:propLine?proplineGameLines(propLine):null,sharpProps,evBreakEven,payouts,
+  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,proplineHistory,contextFeeds,gameLines:propLine?proplineGameLines(propLine):null,sharpProps,evBreakEven,payouts,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,
