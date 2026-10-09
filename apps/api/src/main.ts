@@ -49,6 +49,7 @@ import { DailySpendBudget } from './scrapers/spend-budget.js';
 import { underdogDirect } from './scrapers/underdog-direct.js';
 import { prizePicksPartner } from './scrapers/prizepicks-partner.js';
 import { PropLineClient, propLineBoard } from './scrapers/propline.js';
+import { PropLinePush } from './scrapers/propline-push.js';
 import { fetchPropLineRows } from './context/propline-books.js';
 import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
@@ -203,6 +204,13 @@ const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBud
         .map((line)=>[regularKey(line.sport!,line.player,line.market!,new Date(line.startTime).toISOString()),line.line]))),
       hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ODDS_API','')}]:[])],
   {maxRunUsd:nonNegativeNumber('CROWNIQ_SCRAPER_MAX_RUN_USD',5),slots:scraperSlots}):null;
+// PropLine push (owner, 2026-10-09): line moves, pulled markets, grades and steam arrive the moment they happen, at no request
+// cost. A moved line re-pulls just that app's sport; a pulled market comes down at once. CROWNIQ_PROPLINE_PUSH=off turns it off.
+const publicUrl=(process.env.CROWNIQ_PUBLIC_URL??(process.env.RAILWAY_PUBLIC_DOMAIN?`https://${process.env.RAILWAY_PUBLIC_DOMAIN}`:'')).replace(/\/$/,'');
+const proplinePush=propLine&&scraperPuller&&publicUrl&&process.env.CROWNIQ_PROPLINE_PUSH!=='off'
+  ?new PropLinePush(propLine,`${publicUrl}/v1/hooks/propline`,`${dataDir}/propline-push.json`,{
+    pullSports:(app,sports)=>scraperPuller.pullSports(`propline-${app}`,sports),
+    suspend:(app,game,player,keys)=>scraperPuller.suspend(app,game,player,keys)}):null;
 // Display-only game context (never scored): injuries and Pinnacle game lines.
 const contextFeeds=process.env.APIFY_TOKEN?.trim()?new ContextFeeds(apify,scraperBudget,[
   {source:injuryReports,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_INJURIES','8')},
@@ -486,7 +494,7 @@ const app = buildServer({ ufcHistory, soccerHistory, oddsConsensus:oddsPrizePick
     return {store,reader,grader:reader?new TipGrader(store,reader):null};})(),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
-  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,contextFeeds,sharpProps,evBreakEven,payouts,
+  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,contextFeeds,sharpProps,evBreakEven,payouts,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,
@@ -511,4 +519,9 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 }
 
 await app.listen({ host, port });
+// Subscriptions are checked a minute after start (once discovery knows the active sports), then every 6 hours for new sports.
+if(proplinePush&&propLine){
+  const ensurePush=()=>{void propLine.propMarkets([]).then((markets)=>proplinePush.ensure([...markets.keys()])).catch(()=>undefined);};
+  setTimeout(ensurePush,60_000).unref();setInterval(ensurePush,6*3600_000).unref();
+}
 console.log('CrownIQ API listening on ' + host + ':' + port + ' · build ' + ((process.env.RAILWAY_GIT_COMMIT_SHA ?? '').slice(0, 7) || 'unknown'));

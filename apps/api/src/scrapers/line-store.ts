@@ -81,7 +81,9 @@ export class ScrapedLineStore {
    * when no source lists it any more. (One source covering part of an app, like The Odds API's share of PrizePicks, never
    * clears what the other sources found.)
    */
-  async ingest(source: string, lines: readonly ScrapedLine[], options: { complete: boolean; apps: readonly DfsApp[] }): Promise<IngestReport> {
+  async ingest(source: string, lines: readonly ScrapedLine[], options: { complete: boolean; apps: readonly DfsApp[];
+    /** A partial pull (some leagues only) takes down only lines inside this scope. */
+    scope?: (line: StoredLine) => boolean }): Promise<IngestReport> {
     await this.load();
     const now = this.clock(), at = now.toISOString(), started = (line: ScrapedLine) => Date.parse(line.startTime) <= now.getTime();
     let added = 0, moved = 0, unchanged = 0, frozen = 0, removed = 0;
@@ -112,7 +114,7 @@ export class ScrapedLineStore {
     if (options.complete) {
       for (const [id, line] of this.lines) {
         if (seen.has(id) || line.removedAt || started(line) || !options.apps.includes(line.app) ||
-          !line.confirmedBy.includes(source)) continue;
+          !line.confirmedBy.includes(source) || (options.scope && !options.scope(line))) continue;
         const confirmedBy = line.confirmedBy.filter((item) => item !== source);
         if (confirmedBy.length) { this.lines.set(id, { ...line, confirmedBy }); continue; }
         this.lines.set(id, { ...line, confirmedBy, removedAt: at }); removed++;
@@ -127,6 +129,23 @@ export class ScrapedLineStore {
     for (const [id, line] of this.lines) if (Date.parse(line.startTime) < now.getTime() - 2 * 86_400_000) this.lines.delete(id);
     await this.save();
     return { received: lines.length, added, moved, unchanged, frozen, removed };
+  }
+
+  /**
+   * A market an app pulled (PropLine's market_suspended push, e.g. a late scratch): that player's lines in that game come
+   * down now, for the stats named (all of the player's lines when `marketKeys` is empty). The next pull restores any that return.
+   */
+  async suspend(app: DfsApp, gameId: string, player: string, marketKeys: readonly string[]): Promise<number> {
+    await this.load();
+    const at = this.clock().toISOString(), name = player.trim().toLowerCase();
+    let removed = 0;
+    for (const [id, line] of this.lines) {
+      if (line.app !== app || line.gameId !== gameId || line.removedAt || line.player.trim().toLowerCase() !== name) continue;
+      if (marketKeys.length && !marketKeys.includes(line.marketKey ?? '')) continue;
+      this.lines.set(id, { ...line, removedAt: at }); removed++;
+    }
+    if (removed) await this.save();
+    return removed;
   }
 
   /** Puts back lines marked removed at or after `since` on games not yet started (undoing a bad pull). */

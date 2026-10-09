@@ -1,6 +1,6 @@
 import type { ApifyClient } from './apify-client.js';
 import type { IngestReport, ScrapedLineStore } from './line-store.js';
-import type { ScraperSource } from './scraped-line.js';
+import type { DfsApp, ScraperSource } from './scraped-line.js';
 import type { DailySpendBudget } from './spend-budget.js';
 import { nextSlot, SlotLedger } from './slot-ledger.js';
 
@@ -88,6 +88,33 @@ export class ScraperPuller {
         if (hoursEt.includes(easternHour(at))) { if (!best || at < best) best = at; break; }
     }
     return best;
+  }
+
+  /**
+   * Re-pulls only some sports of one source (after PropLine pushes a line move there). Its lines replace that source's
+   * lines in those leagues only; other leagues are untouched. Runs alongside the schedule, never twice at once.
+   */
+  async pullSports(sourceId: string, sportKeys: readonly string[]): Promise<IngestReport | null> {
+    const scheduled = this.sources.find(({ source }) => source.id === sourceId);
+    const source = scheduled?.source as (ScraperSource & { runSports?: (keys: readonly string[]) => Promise<{ rows: unknown[];
+      complete: boolean; leagues: string[] }> }) | undefined;
+    if (!source?.runSports || this.running.has(sourceId) || !sportKeys.length) return null;
+    this.running.add(sourceId);
+    try {
+      const { rows, complete, leagues } = await source.runSports(sportKeys);
+      const now = this.clock(), lines = rows.flatMap((row) => { const read = source.read(row, now); return 'line' in read ? [read.line] : []; });
+      const ingest = await this.store.ingest(source.id, lines, { complete, apps: source.apps,
+        scope: (line) => leagues.includes(line.league) });
+      if (ingest.added || ingest.moved || ingest.removed) { try { await this.onLinesChanged?.(); } catch { /* next pull retries */ } }
+      return ingest;
+    } finally { this.running.delete(sourceId); }
+  }
+
+  /** Takes down lines an app pulled (pushed market_suspended), then rebuilds the board when any came down. */
+  async suspend(app: DfsApp, gameId: string, player: string, marketKeys: readonly string[]): Promise<number> {
+    const removed = await this.store.suspend(app, gameId, player, marketKeys);
+    if (removed) { try { await this.onLinesChanged?.(); } catch { /* next pull retries */ } }
+    return removed;
   }
 
   hasSource(sourceId: string): boolean { return this.sources.some(({ source }) => source.id === sourceId); }

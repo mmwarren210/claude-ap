@@ -100,6 +100,17 @@ export class PropLineClient {
       this.waiting.shift()?.();
     }
   }
+
+  /** A write call (webhook subscriptions: create, update, delete). Errors carry the status; bodies are never logged. */
+  async send<T>(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T | null> {
+    const response = await this.fetchFn(`${this.baseUrl}${path}`, { method, signal: AbortSignal.timeout(30_000),
+      headers: { 'X-API-Key': this.key, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    this.requests++;
+    if (!response.ok) { await response.body?.cancel().catch(() => undefined); throw new Error(`PROPLINE_HTTP_${response.status}`); }
+    const text = await response.text();
+    return text ? JSON.parse(text) as T : null;
+  }
 }
 
 const list = <T>(body: unknown): T[] => Array.isArray(body) ? body as T[]
@@ -112,15 +123,19 @@ export interface PropLineReport { at: string; sports: number; events: number; re
  * One app's board from PropLine (PrizePicks first; Underdog and Pick6 use the same source later). Market discovery is cached
  * for `discoverEveryMs`; each run then costs about one request per sport per 30 markets.
  */
+/** A PropLine board that can also re-pull just some sports (after a pushed line move). */
+export type PropLineSource = ScraperSource & {
+  /** Pulls only these PropLine sport keys; `leagues` are the CrownIQ leagues the pull covers (its lines replace theirs). */
+  runSports(sportKeys: readonly string[]): Promise<{ rows: ScrapedLine[]; complete: boolean; leagues: string[] }>;
+};
+
 export function propLineBoard(client: PropLineClient, options: { app: DfsApp; bookmaker: string; discoverEveryMs?: number;
-  horizonDays?: number; clock?: () => Date; onReport?: (report: PropLineReport) => void }): ScraperSource {
+  horizonDays?: number; clock?: () => Date; onReport?: (report: PropLineReport) => void }): PropLineSource {
   const clock = options.clock ?? (() => new Date());
   const discover = (failed: string[]) => client.propMarkets(failed, clock, options.horizonDays, options.discoverEveryMs);
-  return {
-    id: `propline-${options.app}`, actor: null, apps: [options.app], rowCap: null, input: () => ({}),
-    async run() {
+  const pull = async (only: ReadonlySet<string> | null) => {
       const failed: string[] = [], before = client.requests;
-      const markets = await discover(failed);
+      const markets = new Map([...await discover(failed)].filter(([sportKey]) => !only || only.has(sportKey)));
       const rows: ScrapedLine[] = [];
       const dropped: Record<string, number> = {};
       const drop = (reason: string) => { dropped[reason] = (dropped[reason] ?? 0) + 1; };
@@ -140,11 +155,15 @@ export function propLineBoard(client: PropLineClient, options: { app: DfsApp; bo
       for (const row of rows) { byLeague[row.league] = (byLeague[row.league] ?? 0) + 1; byTier[row.tier] = (byTier[row.tier] ?? 0) + 1; }
       const report = { at: clock().toISOString(), sports: markets.size, events, requests: client.requests - before, failed, lines: rows.length,
         byLeague, byTier, dropped, remaining: client.remaining };
-      console.log(`[propline-${options.app}] ${JSON.stringify(report)}`);
-      options.onReport?.(report);
+      console.log(`[propline-${options.app}]${only ? ' (pushed move)' : ''} ${JSON.stringify(only ? { ...report, byLeague: undefined, byTier: undefined } : report)}`);
+      if (!only) options.onReport?.(report);
       // Only a pull with no failed request can take lines down.
-      return { rows, complete: failed.length === 0 && rows.length > 0 };
-    },
+      return { rows, complete: failed.length === 0 && rows.length > 0, leagues: [...new Set([...markets.keys()].map(proplineLeague))] };
+  };
+  return {
+    id: `propline-${options.app}`, actor: null, apps: [options.app], rowCap: null, input: () => ({}),
+    async run() { const { rows, complete } = await pull(null); return { rows, complete }; },
+    runSports: (sportKeys) => pull(new Set(sportKeys)),
     read(row: unknown, now: Date): ReadResult {
       const line = row as ScrapedLine;
       return Date.parse(line.startTime) <= now.getTime() ? { skip: 'LIVE_OR_STARTED' } : { line };

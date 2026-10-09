@@ -51,6 +51,7 @@ import { aiEligible, realNews } from './ai-picks.js';
 import { createHash } from 'node:crypto';
 import type { AiPickService, AiRead } from './ai-picks.js';
 import type { BoxScoreResults } from './box-score-results.js';
+import type { PropLinePush } from './scrapers/propline-push.js';
 import type { ScraperPuller } from './scrapers/scraper-puller.js';
 import type { ContextRefreshOptions, DailyLookupBudget } from './context-refresh.js';
 import type { ProviderName } from './provider-identity.js';
@@ -152,6 +153,8 @@ export interface ServerOptions {
   contextLookupBudget?: DailyLookupBudget | null;
   /** Scheduled Apify scraper pulls that feed the provider's line store. */
   scraperPuller?: ScraperPuller | null;
+  /** PropLine push deliveries (line moves, pulled markets, grades, steam). */
+  proplinePush?: PropLinePush | null;
   /** Display-only game context feeds (injuries, Pinnacle); never scored. */
   contextFeeds?: ContextFeeds | null;
   /** DraftKings and Hard Rock prop prices (SharpAPI) for reference odds and CrownIQ's own +EV; never scored. */
@@ -241,6 +244,8 @@ export function buildServer(options: ServerOptions = {}) {
     const path=request.url.split('?')[0];
     if(options.requireProfiles && path.startsWith('/v1/') &&
       !path.startsWith('/v1/admin/') && !path.startsWith('/v1/auth/') && !path.startsWith('/v1/demo/') &&
+      // PropLine's signed deliveries (checked against the subscription secret, not a member sign-in).
+      !path.startsWith('/v1/hooks/') &&
       path!=='/v1/version' &&
       !await currentUser(request))return reply.code(401).send({code:'PROFILE_REQUIRED'});
   });
@@ -263,8 +268,12 @@ export function buildServer(options: ServerOptions = {}) {
     // context refresh follows it, then ticks repeat on the configured interval.
     void restoring.then(()=>service.recoverStartupEvidence()).then(()=>contextScheduler?.tick());
     contextScheduler?.start();
-    // After a scraper pull changes lines, rebuild the board through the owner job (free; tracks picks).
-    options.scraperPuller?.whenLinesChange(()=>startOwnerBoardRefresh());
+    // After a scraper pull changes lines, rebuild the board through the owner job (free; tracks picks). A change that lands
+    // while a rebuild is already running (common with pushed moves) is picked up by one more rebuild right after it.
+    let rebuildAgain=false;
+    options.scraperPuller?.whenLinesChange(()=>{if(!startOwnerBoardRefresh())rebuildAgain=true;});
+    if(!options.clock){const again=setInterval(()=>{if(rebuildAgain&&ownerBoardRefresh.status!=='RUNNING'){rebuildAgain=false;startOwnerBoardRefresh();}},15_000);
+      again.unref();shadowTimers.push(again);}
     // Step 0: SharpAPI's PrizePicks lines are the primary source in the line store. A failed or empty pass ingests nothing
     // as a complete pull, so lines only SharpAPI listed leave the board (fail closed) and the backups carry it.
     if(options.scrapedLines&&options.sharpProps&&!options.clock){
@@ -1931,6 +1940,15 @@ export function buildServer(options: ServerOptions = {}) {
       return reply.header('content-encoding','gzip').header('content-length',cached.gz.length).send(cached.gz);
     return reply.send(cached.json);
   });
+  // PropLine push deliveries: the raw body is needed to check the signature, so this route reads it unparsed.
+  app.register(async(hooks)=>{
+    hooks.addContentTypeParser('application/json',{parseAs:'buffer'},(_request,body,done)=>done(null,body));
+    hooks.post('/v1/hooks/propline',async(request,reply)=>{
+      if(!options.proplinePush)return reply.code(404).send({code:'NOT_FOUND'});
+      const ok=await options.proplinePush.receive(request.body as Buffer,request.headers);
+      return ok?reply.code(200).send({ok:true}):reply.code(401).send({code:'BAD_SIGNATURE'});
+    });
+  });
   // When the next line pull starts and whether new lines are being scored now (the app's update countdown).
   app.get('/v1/board/updates', async (_request, reply) => {
     reply.header('cache-control','private, no-store');
@@ -2338,6 +2356,7 @@ export function buildServer(options: ServerOptions = {}) {
     // ?league= probes another league (e.g. which esports leagues SharpAPI carries for PrizePicks).
     // PropLine with the server's key (PROPLINE_API_KEY), read-only: one GET under /v1/, for checking coverage. The key never
     // leaves the server; the reply is the body plus the quota headers.
+    admin.get('/propline-push',async()=>options.proplinePush?.status()??{configured:false});
     admin.get('/propline',async(request,reply)=>{
       const key=process.env.PROPLINE_API_KEY?.trim();
       if(!key)return reply.code(503).send({code:'PROPLINE_UNCONFIGURED'});
