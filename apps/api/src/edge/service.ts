@@ -155,12 +155,15 @@ function evShape(picks: readonly EdgePick[]) {
     sport: tally((pick) => pick.sport), medianEv: evs.length ? Math.round(evs[Math.floor(evs.length / 2)]! * 1000) / 1000 : null };
 }
 
-export const EDGE_PLATFORMS: readonly EdgePlatform[] = ['prizepicks', 'underdog', 'pick6', 'dabble', 'draftkings', 'hardrock'];
+export const EDGE_PLATFORMS: readonly EdgePlatform[] = ['prizepicks', 'underdog', 'pick6', 'dabble', 'draftkings', 'hardrock', 'pinnacle', 'kalshi'];
+/** Platforms whose lines are a sportsbook's or exchange's own props, priced by their odds (owner, 2026-10-09: Pinnacle and Kalshi tabs). */
+export const BOOK_PLATFORMS = ['draftkings', 'hardrock', 'pinnacle', 'kalshi'] as const;
+export const isBookPlatform = (platform: string): platform is typeof BOOK_PLATFORMS[number] => (BOOK_PLATFORMS as readonly string[]).includes(platform);
 /** Each platform's book in SharpAPI, left out of its own fair price (a book never confirms its own price). */
 const ownBooks: Readonly<Record<EdgePlatform, readonly string[]>> = { prizepicks: ['prizepicks', 'prizepicks_flex'],
-  underdog: ['underdog'], pick6: ['pick6'], dabble: ['dabble'], draftkings: ['draftkings'], hardrock: ['hardrock'] };
-/** Largest parlay Edge builds per sportsbook (DraftKings 8, Hard Rock 20). */
-const parlayMax: Readonly<Partial<Record<EdgePlatform, number>>> = { draftkings: 8, hardrock: 20 };
+  underdog: ['underdog'], pick6: ['pick6'], dabble: ['dabble'], draftkings: ['draftkings'], hardrock: ['hardrock'], pinnacle: ['pinnacle'], kalshi: ['kalshi'] };
+/** Largest parlay Edge builds per sportsbook (DraftKings 8, Hard Rock 20, Pinnacle 10, Kalshi 10). */
+const parlayMax: Readonly<Partial<Record<EdgePlatform, number>>> = { draftkings: 8, hardrock: 20, pinnacle: 10, kalshi: 10 };
 
 export type EdgeView = 'edges' | 'alternates' | 'all';
 
@@ -322,7 +325,7 @@ export class EdgeService {
 
   /** A platform's entries: the app's own payout charts (Pick6 only once confirmed), or sportsbook parlays. */
   private entriesFor(platform: EdgePlatform): EntryDefinition[] {
-    if (platform === 'draftkings' || platform === 'hardrock') return parlayEntries(parlayMax[platform]!);
+    if (isBookPlatform(platform)) return parlayEntries(parlayMax[platform]!);
     return entriesFromTables(this.options.payouts[platform]);
   }
 
@@ -452,7 +455,7 @@ export class EdgeService {
         .slice(0, 5).map((line) => `${line.playerName} ${line.market} ${line.threshold} (was ${promos.get(line.id) ?? '?'})`))}`);
       sets.push({ platform: app, lines: lines.filter(open), payouts, promos, entries: this.entriesFor(app), minEvents: 2 });
     }
-    for (const book of ['draftkings', 'hardrock'] as const) {
+    for (const book of BOOK_PLATFORMS) {
       const { lines, payouts } = bookLines(prices, book, nowIso);
       sets.push({ platform: book, lines: lines.filter(open), payouts, entries: this.entriesFor(book), minEvents: 1 });
     }
@@ -631,7 +634,7 @@ export class EdgeService {
       stale: picks.filter((pick) => pick.stale).length, steam: picks.filter((pick) => pick.steam).length,
       injured: picks.filter((pick) => pick.injury).length,
       ...(set.sharpApi ? { sharpApi: set.sharpApi } : {}),
-      ...(set.platform === 'draftkings' || set.platform === 'hardrock' ? { evShape: evShape(picks) } : {}),
+      ...(isBookPlatform(set.platform) ? { evShape: evShape(picks) } : {}),
       match: matched?.report ?? null, historyValues: { asked: values.asked, found: values.found.size } };
     return { platform: set.platform, response, byLine, unpriced: priced.unpricedLines, lines: new Map(set.lines.map((line) => [line.id, line])),
       computedAt: now.getTime(), durationMs: Date.now() - startedAt, report, minEvents: set.minEvents };

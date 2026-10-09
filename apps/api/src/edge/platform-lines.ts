@@ -45,11 +45,21 @@ export function appLines(stored: readonly StoredLine[], app: 'underdog' | 'pick6
 }
 
 /** A sportsbook's SharpAPI prices as board lines, every rung it posts, each side at its decimal odds. */
+/**
+ * What a $1 stake really returns: Kalshi charges a trading fee on top of the contract price, ceil(0.07 × p × (1 − p)) to
+ * the cent, so its decimal odds are taken at price plus fee. Every other book's price already is the payout.
+ */
+export function afterFee(book: string, decimal: number | null): number | null {
+  if (decimal === null || book !== 'kalshi') return decimal;
+  const price = 1 / decimal, fee = Math.ceil(0.07 * price * (1 - price) * 100 - 1e-9) / 100;
+  return price + fee >= 1 ? null : Math.round(1 / (price + fee) * 10_000) / 10_000;
+}
+
 export function bookLines(prices: readonly FairPrice[], book: string, fetchedAt: string) {
   const lines: PropLine[] = [], payouts: PayoutBook = new Map();
   for (const price of prices) {
     if (price.book !== book || price.stale) continue;
-    const over = decimalOdds(price.overAmerican), under = decimalOdds(price.underAmerican);
+    const over = afterFee(book, decimalOdds(price.overAmerican)), under = afterFee(book, decimalOdds(price.underAmerican));
     if (!over && !under) continue;
     const event = eventKey(price.sport, price.home, price.away, price.startTime);
     const id = `${book}:${hash(`${event}|${normalizedName(price.player)}|${price.market}|${price.line}`)}`;

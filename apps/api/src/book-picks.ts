@@ -8,9 +8,9 @@ import type { FairPrice, OverOnlyPrice } from './context/sharp-props.js';
 // research of the same player and stat on the PrizePicks board (the same way GKR scores Underdog and Pick6 lines).
 // Only lines GKR picks a side on are kept; a PASS never shows.
 
-export const sportsbooks = ['draftkings', 'hardrock'] as const;
+export const sportsbooks = ['draftkings', 'hardrock', 'pinnacle', 'kalshi'] as const;
 export type Sportsbook = typeof sportsbooks[number];
-export const sportsbookNames: Readonly<Record<Sportsbook, string>> = { draftkings: 'DraftKings', hardrock: 'Hard Rock' };
+export const sportsbookNames: Readonly<Record<Sportsbook, string>> = { draftkings: 'DraftKings', hardrock: 'Hard Rock', pinnacle: 'Pinnacle', kalshi: 'Kalshi' };
 
 export interface BookPick {
   readonly id: string; readonly book: Sportsbook; readonly sport: string; readonly league: string;

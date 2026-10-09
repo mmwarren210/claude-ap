@@ -2,15 +2,15 @@ import { View } from 'react-native';
 import type { PickApp } from '../port';
 import { ChipRow, FilterChip, Segmented } from './ui/Controls';
 
-export type Sportsbook = 'draftkings' | 'hardrock';
+export type Sportsbook = 'draftkings' | 'hardrock' | 'pinnacle' | 'kalshi';
 /** Every board the Board tab can show: a pick'em app, a sportsbook or a prediction market. */
 export type BoardSource = PickApp | Sportsbook | 'shop';
 
 export const pickApps: readonly { value: PickApp; label: string }[] = [
   { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'Pick6' }, { value: 'dabble', label: 'Dabble' }];
 export const sourceNames: Readonly<Record<Sportsbook, string>> = { draftkings: 'DraftKings',
-  hardrock: 'Hard Rock' };
-const others: readonly Sportsbook[] = ['draftkings', 'hardrock'];
+  hardrock: 'Hard Rock', pinnacle: 'Pinnacle', kalshi: 'Kalshi' };
+const others: readonly Sportsbook[] = ['draftkings', 'hardrock', 'pinnacle', 'kalshi'];
 
 /** The pick'em apps on top, then the sportsbooks and prediction markets as chips. */
 export function BoardPicker({ value, onChange }: { value: BoardSource; onChange: (source: BoardSource) => void }) {

@@ -32,7 +32,7 @@ export type BookPick = { id: string; league: string; eventName?: string; playerN
   prizePicks: { line: number; lineType: string; sides: Side[];
     gkr: { direction: string; score: number | null; reasonCode: string | null } | null } | null };
 export const bookUrls: Readonly<Record<Sportsbook, string>> = { draftkings: 'https://sportsbook.draftkings.com/',
-  hardrock: 'https://app.hardrock.bet/' };
+  hardrock: 'https://app.hardrock.bet/', pinnacle: 'https://www.pinnacle.com/', kalshi: 'https://kalshi.com/' };
 export const odds = (american: number | null) => american === null ? '—' : american > 0 ? `+${american}` : `−${-american}`;
 const pct = (value: number | null) => value === null ? '—' : `${Math.round(value * 100)}%`;
 const impliedOf = (american: number | null) => american === null ? null

@@ -6,7 +6,7 @@ import { cdf, makeDistribution } from '@crowniq/edge';
 import { canonicalMarket, playerKey } from './market-map.js';
 import type { InternalHistoryStore } from '../internal-history.js';
 import type { EdgeLedger } from './ledger.js';
-import { backtestHistory, boardPage, customSlip, EDGE_PLATFORMS, pickForLine, searchPicks, viewPicks } from './service.js';
+import { backtestHistory, boardPage, customSlip, EDGE_PLATFORMS, isBookPlatform, pickForLine, searchPicks, viewPicks } from './service.js';
 import type { EdgeResultsWorker, EdgeService } from './service.js';
 import type { SnapshotStore } from './snapshots.js';
 
@@ -190,7 +190,7 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     if (slips.length < body.data.count) notes.push(slips.length
       ? `Only ${slips.length} of ${body.data.count} entries had enough distinct +EV legs; Edge does not pad entries with weak legs.`
       : 'Not enough +EV legs across two or more games for this entry right now.');
-    notes.push(body.data.platform === 'draftkings' || body.data.platform === 'hardrock'
+    notes.push(isBookPlatform(body.data.platform)
       ? 'A parlay pays the legs’ odds multiplied together and only if every leg wins; each leg also works as a single bet. Same-game legs are correlated.'
       : 'Payouts are the app’s published chart as CrownIQ keeps it, times each pick’s own multiplier; confirm in the app.');
     notes.push('Same-game legs are priced with CrownIQ’s prior correlations (QB + receiver +0.35, teammates’ points −0.05, ' +

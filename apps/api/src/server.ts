@@ -82,7 +82,7 @@ import type { HistoryArchive } from './history-archive.js';
 import type { ShadowPick, ShadowRecord } from './shadow-record.js';
 import type { BookPick, Sportsbook } from './book-picks.js';
 import { serveWebApp } from './web-app.js';
-import { EDGE_PLATFORMS, EdgeResultsWorker, EdgeService, searchPicks, viewPicks } from './edge/service.js';
+import { EDGE_PLATFORMS, EdgeResultsWorker, EdgeService, isBookPlatform, searchPicks, viewPicks } from './edge/service.js';
 import { blendPick, blendPicks, GKR_PLUS_VERSION } from './edge/blend.js';
 import type { GkrSide } from './edge/blend.js';
 import { canonicalMarket } from './edge/market-map.js';
@@ -1491,14 +1491,14 @@ export function buildServer(options: ServerOptions = {}) {
     options.proplineResults??null):null;
   if(edge){
     // Hard Rock joined with the book change (9b): its picks stay out of Top Picks and Gen until the side-bias check clears it.
-    const heldPlatforms=new Set((process.env.CROWNIQ_EDGE_HOLD??'hardrock').split(',').map((item)=>item.trim()).filter(Boolean));
+    const heldPlatforms=new Set((process.env.CROWNIQ_EDGE_HOLD??'hardrock,pinnacle,kalshi').split(',').map((item)=>item.trim()).filter(Boolean));
     // A platform is held while its +EV picks are lopsided (step 9), and a new feed (CROWNIQ_EDGE_HOLD) until it has passed the
     // side-bias check two refreshes running.
     // A book whose SharpAPI feed is down ("book_unavailable") says so on its tabs instead of looking empty.
     const feedNote=async(platform:string)=>{
-      if(platform!=='draftkings'&&platform!=='hardrock'||!options.sharpProps)return null;
+      if(!isBookPlatform(platform)||!options.sharpProps)return null;
       const status=await options.sharpProps.status();
-      return bookFeedNote(status,platform,platform==='hardrock'?'Hard Rock':'DraftKings');
+      return bookFeedNote(status,platform,({draftkings:'DraftKings',hardrock:'Hard Rock',pinnacle:'Pinnacle',kalshi:'Kalshi'} as const)[platform]);
     };
     registerEdgeRoutes(app,{edge,feedNote,held:(platform)=>edge.sideBiasFlagged(platform)||(heldPlatforms.has(platform)&&!edge.sideBiasCleared(platform)),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
       internalHistory:options.internalHistory??null,isOwner:(request)=>isOwner(request),now,

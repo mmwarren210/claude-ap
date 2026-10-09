@@ -44,7 +44,7 @@ const cardStat = (card: { market: string }) => card.market;
 const topLists: readonly { value: 'ALL' | 'GKR' | 'EV' | Exclude<PickSource, 'prizepicks'>; label: string }[] = [
   { value: 'ALL', label: 'All' }, { value: 'GKR', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' },
   { value: 'pick6', label: 'Pick6' }, { value: 'dabble', label: 'Dabble' }, { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' },
-  { value: 'EV', label: '+EV' }];
+  { value: 'pinnacle', label: 'Pinnacle' }, { value: 'kalshi', label: 'Kalshi' }, { value: 'EV', label: '+EV' }];
 
 type Card = RankingCard | SecondLookCard;
 type ListFilter = { lineType: string };
@@ -116,7 +116,7 @@ type EvPick = { lineId: string; playerName: string; market: string; threshold: n
   app?: 'prizepicks' | 'underdog' | 'pick6'; how?: 'EXACT' | 'BETWEEN' | 'FLOOR'; breakEven?: number;
   history?: { direction: string; score: number | null; text: string } | null };
 type EvResponse = { fetchedAt: string | null; breakEven: number; breakEvens?: Record<string, number>; picks: EvPick[] };
-const bookNames: Readonly<Record<string, string>> = { draftkings: 'DraftKings', hardrock: 'Hard Rock', fanduel: 'FanDuel' };
+const bookNames: Readonly<Record<string, string>> = { draftkings: 'DraftKings', hardrock: 'Hard Rock', pinnacle: 'Pinnacle', kalshi: 'Kalshi', fanduel: 'FanDuel' };
 const evApps = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'Pick6' } as const;
 
 function EvCard({ pick, onAdd }: { pick: EvPick; onAdd: () => void }) {

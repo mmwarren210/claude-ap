@@ -81,3 +81,12 @@ test('after a restart the first Edge pass is quick (shown, not recorded) and the
   for (let i = 0; i < 50 && !recorded.length; i++) { await service.snapshot('prizepicks'); await new Promise((done) => setTimeout(done, 20)); }
   assert.ok(recorded.length > 0, 'the full pass records');
 });
+
+test('Kalshi prices pay after its trading fee; other books pay their price', async () => {
+  const { afterFee } = await import('../src/edge/platform-lines.js');
+  // A 50-cent contract (+100) carries a 2-cent fee: $1 returns 1 / 0.52.
+  assert.equal(afterFee('kalshi', 2), Math.round(1 / 0.52 * 10_000) / 10_000);
+  assert.equal(afterFee('pinnacle', 2), 2);
+  assert.equal(afterFee('kalshi', null), null);
+  assert.equal(afterFee('kalshi', 1.005), null, 'a 99.5-cent contract plus fee costs a dollar or more');
+});

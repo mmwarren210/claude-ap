@@ -321,7 +321,7 @@ export const nflPassingResultSchema = z.object({
 
 // ---- CrownIQ Edge engine output (a standalone engine; never reads or changes GKR output) ----
 /** Every platform Edge reads. */
-export const edgePlatformSchema = z.enum(['prizepicks', 'underdog', 'pick6', 'dabble', 'draftkings', 'hardrock']);
+export const edgePlatformSchema = z.enum(['prizepicks', 'underdog', 'pick6', 'dabble', 'draftkings', 'hardrock', 'pinnacle', 'kalshi']);
 const probability = z.number().min(0).max(1);
 export const edgeTierSchema = z.enum(['SHARP', 'MARKET', 'MODEL', 'LADDER']);
 export const edgeRatingSchema = z.enum(['ELITE', 'STRONG', 'VALUE', 'THIN', 'NONE']);
@@ -389,7 +389,7 @@ export const edgePickSchema = z.object({
   // for this side there, its payout and edge.
   /** The player's headshot (the board's player photos, or the app line's own image), when there is one. */
   playerImageUrl: z.url().optional(),
-  elsewhere: z.array(z.object({ platform: z.enum(['prizepicks', 'underdog', 'pick6', 'dabble', 'draftkings', 'hardrock']),
+  elsewhere: z.array(z.object({ platform: z.enum(['prizepicks', 'underdog', 'pick6', 'dabble', 'draftkings', 'hardrock', 'pinnacle', 'kalshi']),
     lineId: identifier, threshold: z.number().finite(), side: playableDirectionSchema, probability, edge: z.number().finite().nullable(),
     payoutMultiplier: z.number().positive().finite().optional(), ev: z.number().finite().optional() })).optional(),
 });

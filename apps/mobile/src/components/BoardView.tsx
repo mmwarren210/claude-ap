@@ -52,7 +52,7 @@ export default function BoardView() {
   const [app, setAppState] = useState<BoardSource>(lastApp);
   const setApp = useCallback((next: BoardSource) => { lastApp = next; setAppState(next); }, []);
   if (app === 'shop') return <LineShopBoard onSource={setApp} />;
-  if (app === 'draftkings' || app === 'hardrock') return <BookBoard book={app} onSource={setApp} />;
+  if (app === 'draftkings' || app === 'hardrock' || app === 'pinnacle' || app === 'kalshi') return <BookBoard book={app} onSource={setApp} />;
   return app === 'prizepicks' ? <PrizePicksBoard onApp={setApp} /> : <AppBoard app={app} onApp={setApp} />;
 }
 

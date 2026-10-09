@@ -9,10 +9,11 @@ const listeners = new Set<() => void>();
 export const EDGE_PLATFORMS: readonly { value: EdgePlatform; label: string; short: string }[] = [
   { value: 'prizepicks', label: 'PrizePicks', short: 'PP' }, { value: 'underdog', label: 'Underdog', short: 'UD' },
   { value: 'pick6', label: 'Pick6', short: 'P6' }, { value: 'dabble', label: 'Dabble', short: 'DB' }, { value: 'draftkings', label: 'DraftKings', short: 'DK' },
-  { value: 'hardrock', label: 'Hard Rock', short: 'HR' }];
+  { value: 'hardrock', label: 'Hard Rock', short: 'HR' }, { value: 'pinnacle', label: 'Pinnacle', short: 'PIN' },
+  { value: 'kalshi', label: 'Kalshi', short: 'KAL' }];
 export const platformShort = (value: EdgePlatform) => EDGE_PLATFORMS.find((item) => item.value === value)?.short ?? 'PP';
 export const platformLabel = (value: EdgePlatform) => EDGE_PLATFORMS.find((item) => item.value === value)?.label ?? 'PrizePicks';
-export const isBook = (value: EdgePlatform) => value === 'draftkings' || value === 'hardrock';
+export const isBook = (value: EdgePlatform) => value === 'draftkings' || value === 'hardrock' || value === 'pinnacle' || value === 'kalshi';
 
 export const edgePlatform = {
   set(next: EdgePlatform) { if (next === platform) return; platform = next; edgeSlip.clear(); for (const listener of listeners) listener(); },

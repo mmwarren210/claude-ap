@@ -10,6 +10,8 @@ export const bookWeights: Readonly<Record<string, number>> = {
   fliff: .3, mybookieag: .3, betus: .3,
   // SharpAPI's book ids.
   hardrock: .5, betonline: .65, caesars: .55,
+  // Kalshi: an exchange; its asks are real prices but thin on props.
+  kalshi: .6,
 };
 export const sharpBooks = new Set(['pinnacle', 'circasports', 'novig', 'fanduel', 'prophetx']);
 export const defaultConsensusBooks = ['pinnacle', 'fanduel', 'draftkings', 'betmgm',

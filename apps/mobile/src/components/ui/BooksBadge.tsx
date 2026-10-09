@@ -4,7 +4,7 @@ import type { BookView } from '../../use-books';
 import { alpha } from './color';
 import { Icon } from './Icon';
 
-const names: Readonly<Record<string, string>> = { draftkings: 'DraftKings', hardrock: 'Hard Rock' };
+const names: Readonly<Record<string, string>> = { draftkings: 'DraftKings', hardrock: 'Hard Rock', pinnacle: 'Pinnacle', kalshi: 'Kalshi' };
 
 /**
  * Whether the sportsbooks back the same side as GKR at this exact number: "Books agree" or "Books lean …", with their

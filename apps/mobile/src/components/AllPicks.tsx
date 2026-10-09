@@ -51,7 +51,7 @@ export function AllPicks({ only }: { only?: PickSource } = {}) {
             startTime: line.eventStartTime, lineId: null, note: back.by === 'HISTORY' ? line.history?.text ?? null : null,
             photoUrl: line.playerImageUrl, playerId: line.playerId }] : [];
         })])),
-      ...Object.fromEntries((['draftkings', 'hardrock'] as const).map((book) => [book, async () =>
+      ...Object.fromEntries((['draftkings', 'hardrock', 'pinnacle', 'kalshi'] as const).map((book) => [book, async () =>
         ((await json<{ picks: BookPick[] }>(`/v1/books/${book}/picks`))?.picks ?? []).map((pick): AnyPick => ({
           key: `${pick.playerName}|${pick.market}`, source: book, sport: pick.sport, by: pick.by ?? 'GKR', title: pick.playerName,
           detail: `${marketLabel(pick.market)} · ${pick.side === 'MORE' ? 'Over' : 'Under'} ${formatLine(pick.line)}${odds(pick.american)}`,

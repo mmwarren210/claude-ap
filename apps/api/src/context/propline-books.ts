@@ -11,7 +11,7 @@ import { sharpTypeFor } from './sharp-props.js';
 
 /** The books priced for Edge and line shopping: the two book tabs first, then sharp and big books for fair prices. */
 export const PROPLINE_PRICE_BOOKS = ['draftkings', 'hardrock', 'fanduel', 'betmgm', 'betrivers', 'fanatics', 'pinnacle', 'bovada',
-  'novig', 'prophetx'];
+  'novig', 'prophetx', 'kalshi'];
 
 /** PropLine sport keys to the league keys the sportsbook feed maps to CrownIQ sports. */
 export function sharpLeagueFor(sportKey: string): string | null {

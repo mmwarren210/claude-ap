@@ -3,7 +3,7 @@ import { useCallback, useSyncExternalStore } from 'react';
 // Each provider's Crown legs outside PrizePicks (owner, 2026-10-05): the boards add picks here and the Crown tab builds,
 // shows and saves them. PrizePicks keeps its own draft (use-draft). Kept for the session; reopening the app starts fresh.
 
-export type CrownProvider = 'underdog' | 'pick6' | 'dabble' | 'draftkings' | 'hardrock';
+export type CrownProvider = 'underdog' | 'pick6' | 'dabble' | 'draftkings' | 'hardrock' | 'pinnacle' | 'kalshi';
 const legs = new Map<CrownProvider, readonly unknown[]>();
 const listeners = new Set<() => void>();
 const empty: readonly unknown[] = [];
