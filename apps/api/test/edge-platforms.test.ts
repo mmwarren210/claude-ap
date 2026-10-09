@@ -48,7 +48,7 @@ test('Edge P2: every platform priced against its own payout, a platform never pr
   assert.ok(dk!.response.picks.every((pick) => pick.sources.market?.books.every((quote) => quote.bookmaker !== 'draftkings')));
   assert.ok(hr!.response.picks.every((pick) => pick.sources.market?.books.every((quote) => quote.bookmaker !== 'hardrock')));
   assert.equal(dk!.response.entries[0]!.type, 'PARLAY');
-  assert.equal(hr!.response.entries.at(-1)!.size, 20);
+  assert.equal(hr!.response.entries.at(-1)!.size, 21);
   assert.equal(service.status().reports.draftkings!.platform, 'draftkings');
   // Dabble: priced against its own all-hit chart (2 picks pay 3x, so each needs about 57.7%).
   const db = await service.snapshot('dabble');

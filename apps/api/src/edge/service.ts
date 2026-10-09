@@ -162,8 +162,8 @@ export const isBookPlatform = (platform: string): platform is typeof BOOK_PLATFO
 /** Each platform's book in SharpAPI, left out of its own fair price (a book never confirms its own price). */
 const ownBooks: Readonly<Record<EdgePlatform, readonly string[]>> = { prizepicks: ['prizepicks', 'prizepicks_flex'],
   underdog: ['underdog'], pick6: ['pick6'], dabble: ['dabble'], draftkings: ['draftkings'], hardrock: ['hardrock'], pinnacle: ['pinnacle'], kalshi: ['kalshi'] };
-/** Largest parlay Edge builds per sportsbook (DraftKings 8, Hard Rock 20, Pinnacle 10, Kalshi 10). */
-const parlayMax: Readonly<Partial<Record<EdgePlatform, number>>> = { draftkings: 8, hardrock: 20, pinnacle: 10, kalshi: 10 };
+/** Largest parlay Edge builds per sportsbook (owner, 2026-10-09: Hard Rock 21; Kalshi has no cap, so Edge stops at 25). */
+const parlayMax: Readonly<Partial<Record<EdgePlatform, number>>> = { draftkings: 8, hardrock: 21, pinnacle: 10, kalshi: 25 };
 
 export type EdgeView = 'edges' | 'alternates' | 'all';
 
