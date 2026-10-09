@@ -21,7 +21,7 @@ import { formatLine, marketLabel } from '../insights';
 // Crown generators for the sportsbooks (DraftKings, Hard Rock), beside the
 // pick'em ones (owner, 2026-10-05). Each builds from its own board, which already carries GKR, the History Read at the
 // book's number and the books' fair prices; picks added on the board show here too. Sizes: DraftKings up to 8, Hard Rock
-// up to 21, Pinnacle 10, Kalshi 25 (no cap of its own).
+// up to 21, Pinnacle 21, Kalshi 50 (no cap of its own).
 
 function Remove({ onPress }: { onPress: () => void }) {
   return <Pressable accessibilityRole="button" onPress={onPress} style={styles.remove}>
@@ -45,7 +45,7 @@ export function BookCrown({ book }: { book: Sportsbook }) {
   const { picks, state } = usePicks<BookPick>(`/v1/books/${book}/picks`);
   const { nowMs } = useBoard();
   const [stored, setStored] = useCrownLegs<BookPick>(book);
-  const max = ({ draftkings: 8, hardrock: 21, pinnacle: 10, kalshi: 25 } as const)[book];
+  const max = ({ draftkings: 8, hardrock: 21, pinnacle: 21, kalshi: 50 } as const)[book];
   const [size, setSize] = useState(3), [kind, setKind] = useState<BookKind>('ANY'), [built, setBuilt] = useState(0);
   const [sports, setSports] = useState<string[]>([]), [picked, setPicked] = useState<string | null>(null);
   const days = useMemo(() => gameDays(picks.map((pick) => pick.eventStartTime), nowMs), [picks, nowMs]);
