@@ -221,6 +221,9 @@ function authorized(request: FastifyRequest, token?: string): boolean {
 
 const serverStartedAt=new Date().toISOString();
 export function buildServer(options: ServerOptions = {}) {
+  // Edge, the app boards and the sportsbook tabs re-run on this timer (owner, 2026-10-09: every 10 minutes instead of 3, so
+  // the server isn't always busy; lines arrive every 30 minutes and pushed moves rebuild on their own). CROWNIQ_WARM_MINUTES.
+  const warmMs=Math.max(2,Number(process.env.CROWNIQ_WARM_MINUTES??10)||10)*60_000;
   const app = Fastify({ logger: false, // Restoring a large saved board (44k lines) at startup takes longer than the 10 s default.
     pluginTimeout: 300_000 });
   registerCompression(app);
@@ -1627,7 +1630,7 @@ export function buildServer(options: ServerOptions = {}) {
     if(!options.clock){
       const warm=()=>{void edge.snapshot().catch(()=>undefined);};
       const first=setTimeout(warm,60_000);first.unref();
-      const every=setInterval(warm,3*60_000);every.unref();
+      const every=setInterval(warm,warmMs);every.unref();
       // Hourly health line for the logs (spec §10): snapshot rows and grading coverage.
       const healthLog=()=>{void (async()=>{
         const snap=options.edge?.snapshots?.status()??null;
@@ -1778,7 +1781,7 @@ export function buildServer(options: ServerOptions = {}) {
   }
   const warmAppBoards=()=>{for(const appName of otherApps)void cachedAppBoard(appName).catch(()=>undefined);};
   const warmAppsFirst=setTimeout(warmAppBoards,30_000);warmAppsFirst.unref();
-  const warmApps=setInterval(warmAppBoards,3*60_000);
+  const warmApps=setInterval(warmAppBoards,warmMs);
   warmApps.unref();shadowTimers.push(warmAppsFirst,warmApps);
   app.get('/v1/apps/:app/board',async(request,reply)=>{
     const parsed=z.object({app:z.enum(otherApps as [OtherApp,...OtherApp[]])}).safeParse(request.params);
@@ -1941,7 +1944,7 @@ export function buildServer(options: ServerOptions = {}) {
   // Keep the book picks warm so the tabs open fast.
   const warmPicks=()=>{for(const book of sportsbooks)void picksFor(book).catch(()=>undefined);};
   const warmFirst=setTimeout(warmPicks,45_000);warmFirst.unref();
-  const warmEvery=setInterval(warmPicks,3*60_000);warmEvery.unref();
+  const warmEvery=setInterval(warmPicks,warmMs);warmEvery.unref();
   shadowTimers.push(warmFirst,warmEvery);
   // Carry PrizePicks picks over to Underdog or Pick6: each pick's line on that app and how its number compares.
   app.post('/v1/apps/:app/port',async(request,reply)=>{
