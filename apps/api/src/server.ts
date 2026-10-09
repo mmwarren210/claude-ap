@@ -163,6 +163,8 @@ export interface ServerOptions {
   contextFeeds?: ContextFeeds | null;
   /** Game lines (moneyline, spread, total) from PropLine, for game script, tips and the player page. Display only. */
   gameLines?: (() => Promise<GameLine[]>) | null;
+  /** Injury reports (ESPN's free feed); the Apify injury feed is used only when this isn't set. */
+  injuries?: { items: () => Promise<InjuryNote[]>; fetchedAt: () => string | null } | null;
   /** DraftKings and Hard Rock prop prices (SharpAPI) for reference odds and CrownIQ's own +EV; never scored. */
   sharpProps?: SharpPropsFeed | null;
   /** Break-even chance per pick for +EV (default 54.21%, PrizePicks' best Flex). */
@@ -1215,8 +1217,9 @@ export function buildServer(options: ServerOptions = {}) {
     if(!parsed.success)return reply.code(400).send({code:'INVALID_LINE'});
     const line=service.getBoard()?.board.lines.find((item)=>item.id===parsed.data.lineId);
     if(!line)return reply.code(404).send({code:'LINE_NOT_FOUND'});
-    if(!options.contextFeeds&&!options.gameLines)return {injury:null,teamInjuries:[],game:[],markets:[]};
-    const [injuries,games]=await Promise.all([options.contextFeeds?options.contextFeeds.items<InjuryNote>('injuries'):{items:[] as InjuryNote[],fetchedAt:null},
+    if(!options.contextFeeds&&!options.gameLines&&!options.injuries)return {injury:null,teamInjuries:[],game:[],markets:[]};
+    const [injuries,games]=await Promise.all([options.injuries?options.injuries.items().then((items)=>({items,fetchedAt:options.injuries!.fetchedAt()})).catch(()=>({items:[] as InjuryNote[],fetchedAt:null}))
+      :options.contextFeeds?options.contextFeeds.items<InjuryNote>('injuries'):{items:[] as InjuryNote[],fetchedAt:null},
       options.gameLines?options.gameLines().catch(()=>[]):[]]);
     const game=gameLinesFor(line,games);
     const team=line.team;
@@ -1476,7 +1479,7 @@ export function buildServer(options: ServerOptions = {}) {
     ...(options.edge.alternateCurve?{alternateCurve:options.edge.alternateCurve}:{}),
     valuesCacheFile:options.edge.valuesCacheFile??null,movement,snapshots:options.edge.snapshots??null,
     alertsFile:options.edge.alertsFile??null,staleLogFile:options.edge.staleLogFile??null,dispersion:options.edge.dispersion??null,bookWeights:options.edge.bookWeights??null,
-    injuries:options.contextFeeds?async()=>(await options.contextFeeds!.items<InjuryNote>('injuries')).items:null,
+    injuries:options.injuries?()=>options.injuries!.items():options.contextFeeds?async()=>(await options.contextFeeds!.items<InjuryNote>('injuries')).items:null,
     // PropLine's game lines plus SharpAPI's KBO run totals and run lines (step 6), for the game environment.
     gameLines:options.gameLines||options.sharpProps?async()=>[
       ...(options.gameLines?await options.gameLines().catch(()=>[]):[]),

@@ -67,3 +67,20 @@ test('a context pull spends from the shared budget, keeps the last good snapshot
   spent = 14.8;
   assert.equal((await feeds.pull('injuries')).reason, 'DAILY_BUDGET_REACHED');
 });
+
+test('ESPN injury reports become injury notes; rows without a player or status are skipped', async () => {
+  const { espnInjuryNotes, espnInjuries } = await import('../src/context/espn-injuries.js');
+  const body = { injuries: [{ displayName: 'Chicago Bears', injuries: [
+    { status: 'Out', date: '2030-10-04T15:50Z', shortComment: 'Williams is out Sunday.',
+      athlete: { displayName: 'Caleb Williams', position: { abbreviation: 'QB' }, team: { abbreviation: 'CHI' }, links: [{ href: 'https://www.espn.com/x' }] },
+      details: { type: 'Hamstring', returnDate: '2030-10-11' } },
+    { status: 'Out', athlete: {} }] }] };
+  const notes = espnInjuryNotes(body, 'NFL');
+  assert.deepEqual(notes.map((note) => [note.player, note.team, note.teamAbbreviation, note.status, note.injury]),
+    [['Caleb Williams', 'Chicago Bears', 'CHI', 'Out', 'Hamstring']]);
+  assert.equal(injuryFor(line, notes)?.status, 'Out', 'matches a board line like the old feed did');
+  let calls = 0;
+  const feed = espnInjuries(async () => { calls++; return Response.json(body); }, 60_000, () => 0);
+  assert.equal((await feed.items()).length, 5, 'one player per league asked (five leagues)');
+  await feed.items(); assert.equal(calls, 5, 'kept for the cache window');
+});

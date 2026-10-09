@@ -25,6 +25,7 @@ import { SharpPropsFeed } from './context/sharp-props.js';
 import { SlotLedger } from './scrapers/slot-ledger.js';
 import { ContextFeeds, injuryReports } from './context/feeds.js';
 import { proplineGameLines } from './context/propline-game-lines.js';
+import { espnInjuries } from './context/espn-injuries.js';
 import { ClaudeWebResearchAdapter } from './claude-web-research.js';
 import { ProductLedger } from './product-ledger.js';
 import { ProductGradingWorker } from './background-grading.js';
@@ -184,7 +185,8 @@ const proplinePush=propLine&&scraperPuller&&publicUrl&&process.env.CROWNIQ_PROPL
     noteGame}):null;
 // Display-only game context (never scored): injuries. Game lines come from PropLine.
 const contextFeeds=process.env.APIFY_TOKEN?.trim()?new ContextFeeds(apify,scraperBudget,[
-  {source:injuryReports,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_INJURIES','8')}],
+  // Off by default: ESPN's free feed replaced it (2026-10-09); CROWNIQ_CONTEXT_HOURS_INJURIES turns it back on.
+  {source:injuryReports,hoursEt:hoursEt('CROWNIQ_CONTEXT_HOURS_INJURIES','')}],
 process.env.CROWNIQ_CONTEXT_FEEDS_FILE ?? `${dataDir}/context-feeds.json`,undefined,scraperSlots):null;
 // DraftKings, Hard Rock, FanDuel and BetRivers prop prices from SharpAPI (reference odds, +EV and Edge), refreshed hourly.
 // The owner's Railway variable is named `sharp_api`; SHARPAPI_KEY also works.
@@ -448,7 +450,7 @@ const app = buildServer({ ufcHistory, soccerHistory, adminToken: process.env.ADM
     return {store,reader,grader:reader?new TipGrader(store,reader):null};})(),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
-  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,proplineHistory,contextFeeds,gameLines:propLine?proplineGameLines(propLine):null,sharpProps,evBreakEven,payouts,
+  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,proplineHistory,contextFeeds,gameLines:propLine?proplineGameLines(propLine):null,injuries:process.env.CROWNIQ_ESPN_INJURIES==='off'?null:espnInjuries(),sharpProps,evBreakEven,payouts,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,
