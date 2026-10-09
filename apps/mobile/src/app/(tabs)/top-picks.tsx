@@ -36,6 +36,7 @@ import { picked } from '../../components/ui/MultiPick';
 import { emptyFilter, FilterBar } from '../../components/FilterBar';
 import type { FilterValue } from '../../components/FilterBar';
 import { useLeagueStatFilter } from '../../components/LeagueStatFilter';
+import { UpdateStatus } from '../../components/UpdateStatus';
 
 const cardStat = (card: { market: string }) => card.market;
 
@@ -192,6 +193,7 @@ export default function TopPicksScreen() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Top Picks" />
+      <UpdateStatus />
       <ChipRow>{topLists.map((item) => <FilterChip key={item.value} label={item.label} active={mode === item.value} chevron={false}
         onPress={() => setMode(item.value)} />)}</ChipRow>
       {mode === 'ALL' ? <AllPicks /> : mode !== 'GKR' && mode !== 'EV' ? <AllPicks key={mode} only={mode} /> : mode === 'EV' ? <>

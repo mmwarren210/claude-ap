@@ -1,9 +1,10 @@
 import type { BaseRates, Trend } from './base-rates.js';
 import { registerCompression } from './compress.js';
+import { promisify } from 'node:util';
 import { passwordMatches } from './secrets.js';
 import type { SecretUnlocks } from './secrets.js';
 import type { ActivityLog } from './activity.js';
-import { gzipSync } from 'node:zlib';
+import { gzip, gzipSync } from 'node:zlib';
 import { lineShop } from './line-shop.js';
 import { sameGame } from './team-match.js';
 import { bookLines } from './book-picks.js';
@@ -94,6 +95,8 @@ import type { TipModelRead } from './tip-models.js';
 import { gameCounts, marketCounts, registerEdgeRoutes, sportCounts } from './edge/routes.js';
 import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
+
+const gzipAsync = promisify(gzip);
 
 /** How far ahead the public demo shows real lines. */
 const DEMO_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
@@ -1908,9 +1911,34 @@ export function buildServer(options: ServerOptions = {}) {
     return snapshot ?? reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
   });
   // The Board list: upcoming games only, with slim PASS analyses. Free, like /v1/board.
-  app.get('/v1/board/lite', async (_request, reply) => {
+  // The Board list is built once per board (not per open), kept serialized and gzipped, and tagged: an app that already
+  // has this board gets a tiny 304 "nothing new" instead of the whole list again.
+  let liteCache:{key:string;built:Promise<{etag:string;json:string;gz:Buffer}>}|null=null;
+  app.get('/v1/board/lite', async (request, reply) => {
     const snapshot = service.getBoard();
-    return snapshot ? liteBoard(snapshot, now()) : reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
+    if(!snapshot)return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
+    const key=`${snapshot.builtAt}|${snapshot.board.fetchedAt}`;
+    if(liteCache?.key!==key){
+      const built=(async()=>{const json=JSON.stringify(liteBoard(snapshot,now()));
+        return {etag:`"lite-${createHash('sha1').update(key).digest('hex').slice(0,16)}"`,json,gz:await gzipAsync(Buffer.from(json),{level:6})};})();
+      liteCache={key,built};built.catch(()=>{if(liteCache?.built===built)liteCache=null;});
+    }
+    const cached=await liteCache.built;
+    reply.header('etag',cached.etag).header('cache-control','private, no-cache').header('vary','accept-encoding');
+    if(request.headers['if-none-match']===cached.etag)return reply.code(304).send();
+    reply.type('application/json; charset=utf-8');
+    if(/\bgzip\b/.test(String(request.headers['accept-encoding']??'')))
+      return reply.header('content-encoding','gzip').header('content-length',cached.gz.length).send(cached.gz);
+    return reply.send(cached.json);
+  });
+  // When the next line pull starts and whether new lines are being scored now (the app's update countdown).
+  app.get('/v1/board/updates', async (_request, reply) => {
+    reply.header('cache-control','private, no-store');
+    const snapshot=service.getBoard(),rebuild=service.rebuildStatus();
+    const next=options.scraperPuller?.nextPullAt(['propline-prizepicks','propline-underdog','propline-pick6','propline-dabble'])??null;
+    return {now:now().toISOString(),boardFetchedAt:snapshot?.board.fetchedAt??null,builtAt:snapshot?.builtAt??null,
+      nextPullAt:next?.toISOString()??null,
+      rescoring:rebuild.startedAt?{startedAt:rebuild.startedAt,expectedMs:rebuild.lastMs}:null};
   });
   const rankings=(snapshot:BoardResponse)=>{
     const watchlist=secondLookWatchlist(snapshot);

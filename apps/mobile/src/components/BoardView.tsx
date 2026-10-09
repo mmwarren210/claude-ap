@@ -27,6 +27,7 @@ import { AppHeader } from './ui/AppHeader';
 import { ChipRow, FilterChip, PrimaryButton, Segmented } from './ui/Controls';
 import { Icon } from './ui/Icon';
 import { ReportNudge } from './ReportNudge';
+import { UpdateStatus } from './UpdateStatus';
 
 export const windows: readonly { value: Window; label: string }[] = [
   { value: 'L5', label: 'L5' }, { value: 'L10', label: 'L10' }, { value: 'L15', label: 'L15' },
@@ -122,6 +123,7 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
       {data && <Pressable accessibilityRole="button" onPress={() => setSheet('ALL')} style={styles.more}>
         <Icon name="tune-variant" size={18} color={colors.text} /><Text style={styles.moreText}>More</Text></Pressable>}
     </View>
+    <UpdateStatus />
     <View style={styles.statusRow}>
       <Text style={[styles.status, warn && styles.warning]} numberOfLines={1}>
         {viewMode === 'LITE' ? `Top ${lines.length} qualified` : `${lines.length} players with a play`} · {data

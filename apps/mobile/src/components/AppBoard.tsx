@@ -225,7 +225,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
         : state === 'error' ? 'Board unavailable' : 'No lines right now'}
         detail={demo ? `The demo shows PrizePicks only. Sign in to see ${appNames[app]} lines.`
           : state === 'error' ? 'Could not reach CrownIQ. Try again in a moment.'
-            : `${appNames[app]} lines are pulled four times a day (9am, noon, 3pm and 6pm ET).`} />} />
+            : `${appNames[app]} lines refresh every 15 minutes. Check back shortly.`} />} />
     {slip.length > 0 && <View style={styles.tray}>
       <Text style={styles.trayText}>{slip.length} {slip.length === 1 ? 'pick' : 'picks'} in your {appNames[app]} Crown</Text>
       <PrimaryButton label="Open Crown" icon="crown" onPress={() => { openCrownOn(app); router.push('/(tabs)/crown'); }} />

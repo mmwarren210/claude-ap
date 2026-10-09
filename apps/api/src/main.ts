@@ -171,6 +171,7 @@ const oddsPrizePicks=apiKey?new FullPrizePicksProvider({apiKey,maxEvents,maxCred
   consensusBookmakers:(process.env.CROWNIQ_ODDS_CONSENSUS_BOOKS??'pinnacle,fanduel,draftkings,betmgm,williamhill_us,espnbet,betonlineag,betrivers,lowvig')
     .split(',').map((book)=>book.trim()).filter(Boolean)}):null;
 const propLine=process.env.PROPLINE_API_KEY?.trim()?new PropLineClient(process.env.PROPLINE_API_KEY.trim()):null;
+const proplineEvery=Math.min(60,Math.max(5,Number(process.env.CROWNIQ_PROPLINE_EVERY_MINUTES??15)||15));
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
   // Apify's plan stops at $100 a month (owner, 2026-10-08), so each full board is pulled once a day and the cap is about
   // $3.30 a day. Esports run on their own cheap pull (SharpAPI has no PrizePicks esports), first in line, twice a day;
@@ -179,10 +180,12 @@ const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBud
   // the Apify PrizePicks pulls stay as on-demand backups.
   [// PropLine (owner, 2026-10-08): the PrizePicks board for every sport it carries, hourly. The free partner feed stays
     // configured (off by CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER) for comparison.
-    ...(propLine?[{source:propLineBoard(propLine,{app:'prizepicks',bookmaker:'prizepicks'}),
+    // Every 15 minutes (owner, 2026-10-09; CROWNIQ_PROPLINE_EVERY_MINUTES): about 25 requests a pull per app, well inside
+    // the 250,000 a day. A pull that brings no change rebuilds nothing.
+    ...(propLine?[{source:propLineBoard(propLine,{app:'prizepicks',bookmaker:'prizepicks'}),everyMinutes:proplineEvery,
       hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PROPLINE_PRIZEPICKS',Array.from({length:24},(_,hour)=>hour).join(','))}]:[]),
     // Underdog and Pick6 from PropLine too; Underdog's own feed stays alongside for its payout multipliers.
-    ...(propLine?(['underdog','pick6','dabble'] as const).map((app)=>({source:propLineBoard(propLine,{app,bookmaker:app}),
+    ...(propLine?(['underdog','pick6','dabble'] as const).map((app)=>({source:propLineBoard(propLine,{app,bookmaker:app}),everyMinutes:proplineEvery,
       hoursEt:hoursEt(`CROWNIQ_SCRAPER_HOURS_PROPLINE_${app.toUpperCase()}`,Array.from({length:24},(_,hour)=>hour).join(','))})):[]),
     {source:prizePicksPartner(),hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER','7,9,11,13,15,17,19,21,23')},
     {source:zenPrizePicksEsports,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_ESPORTS','')},

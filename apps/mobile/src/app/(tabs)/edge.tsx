@@ -19,6 +19,7 @@ import { EdgeAlerts } from '../../components/EdgeAlerts';
 import { EdgeRecord } from '../../components/EdgeRecord';
 import { edgePlatform, EDGE_PLATFORMS, isBook, platformLabel, useEdgePlatform } from '../../edge-platform';
 import type { EdgeView } from '../../use-edge';
+import { UpdateStatus } from '../../components/UpdateStatus';
 
 const views: { key: EdgeView; label: string }[] = [
   { key: 'edges', label: 'Best edges' }, { key: 'alternates', label: 'Goblins & Demons' },
@@ -51,6 +52,7 @@ export default function EdgeScreen() {
   const filters = <EdgeFilters value={filter} onChange={setFilter} counts={data ? { ...data, sports: sportOptions } : null} />;
   const inSlip = new Set(slip.map((leg) => leg.lineId));
   return <Screen eyebrow={`CROWNIQ  /  EDGE  /  ${platformLabel(platform).toUpperCase()}`} title="Edge">
+    <UpdateStatus />
     <Text style={styles.intro}>CrownIQ&apos;s own probability engine. It reads every line on each app and book, sets its own line, and picks the side that beats that platform&apos;s payout. Lines it can&apos;t read say exactly what&apos;s missing.</Text>
     <View style={styles.chips}>{EDGE_PLATFORMS.map((item) => <Pressable key={item.value} accessibilityRole="button"
       accessibilityState={{ selected: platform === item.value }} onPress={() => edgePlatform.set(item.value)}

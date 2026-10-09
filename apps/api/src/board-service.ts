@@ -344,7 +344,16 @@ export class BoardService {
     };
   }
 
-  async refresh():Promise<BoardResponse>{return this.exclusive(()=>this.refreshNow());}
+  async refresh():Promise<BoardResponse>{return this.exclusive(async()=>{
+    // Timed, so the app can tell members new lines are being scored and about how long it takes.
+    const started=Date.now();this.rebuildStartedAt=new Date(started).toISOString();
+    try{return await this.refreshNow();}
+    finally{this.rebuildStartedAt=null;this.lastRebuildMs=Date.now()-started;}
+  });}
+  /** When the running rebuild (new lines being scored) started, or null; and how long the last one took. */
+  rebuildStatus(){return {startedAt:this.rebuildStartedAt,lastMs:this.lastRebuildMs};}
+  private rebuildStartedAt:string|null=null;
+  private lastRebuildMs:number|null=null;
 
   private async refreshNow(): Promise<BoardResponse> {
     if (!this.provider) throw new Error('ODDS_PROVIDER_UNCONFIGURED');

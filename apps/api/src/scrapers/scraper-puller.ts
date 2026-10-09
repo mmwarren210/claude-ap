@@ -21,7 +21,13 @@ export interface ScheduledSource {
   readonly source: ScraperSource;
   /** Eastern-time hours (0–23) when this source pulls. */
   readonly hoursEt: readonly number[];
+  /** Pull every this many minutes within those hours (15 = :00, :15, :30, :45); unset = once at the top of each hour. */
+  readonly everyMinutes?: number;
 }
+
+/** The slot a source runs in now: its hour, plus the minute block when it pulls more than once an hour. */
+const slotOf = (hour: number, now: Date, everyMinutes?: number) => everyMinutes && everyMinutes < 60
+  ? `${hour}:${String(Math.floor(now.getUTCMinutes() / everyMinutes) * everyMinutes).padStart(2, '0')}` : String(hour);
 
 export interface PullerOptions {
   /** Most one run may cost; also what must be left in today's budget to start one. */
@@ -59,13 +65,29 @@ export class ScraperPuller {
   /** Pulls every scheduled source now and marks each one's next scheduled run as done, so it is skipped. */
   async refreshAllSkipNext(): Promise<{ reports: PullReport[]; skipped: string[] }> {
     const scheduled = this.sources.filter(({ hoursEt }) => hoursEt.length), now = this.clock(), skipped: string[] = [];
-    for (const { source, hoursEt } of scheduled) {
+    for (const { source, hoursEt, everyMinutes } of scheduled) {
+      if (everyMinutes && everyMinutes < 60) continue; // pulled every few minutes anyway: nothing to skip
       const next = nextSlot(hoursEt, now);
       if (next && await this.slots.claim(next.day, `${next.hour}|${source.id}`)) skipped.push(`${source.id} ${next.day} ${next.hour}:00 ET`);
     }
     const reports: PullReport[] = [];
     for (const { source } of scheduled) reports.push(await this.pull(source.id));
     return { reports, skipped };
+  }
+
+  /** When the next scheduled pull of any of these sources starts (for the app's "next update" countdown). */
+  nextPullAt(sourceIds: readonly string[], now = this.clock()): Date | null {
+    let best: Date | null = null;
+    for (const { source, hoursEt, everyMinutes } of this.sources) {
+      if (!sourceIds.includes(source.id) || !hoursEt.length) continue;
+      const step = everyMinutes && everyMinutes < 60 ? everyMinutes : 60;
+      const start = new Date(now); start.setUTCSeconds(0, 0);
+      start.setUTCMinutes(Math.floor(start.getUTCMinutes() / step) * step + step);
+      // The first block boundary in a scheduled Eastern hour, within two days.
+      for (let at = start, i = 0; i < (48 * 60) / step; i++, at = new Date(at.getTime() + step * 60_000))
+        if (hoursEt.includes(easternHour(at))) { if (!best || at < best) best = at; break; }
+    }
+    return best;
   }
 
   hasSource(sourceId: string): boolean { return this.sources.some(({ source }) => source.id === sourceId); }
@@ -157,8 +179,8 @@ export class ScraperPuller {
     const now = this.clock(), hour = easternHour(now), day = easternDay(now);
     const due = this.sources.filter(({ hoursEt }) => hoursEt.includes(hour));
     const reports: PullReport[] = [];
-    for (const { source } of due) {
-      if (!await this.slots.claim(day, `${hour}|${source.id}`)) continue;
+    for (const { source, everyMinutes } of due) {
+      if (!await this.slots.claim(day, `${slotOf(hour, now, everyMinutes)}|${source.id}`)) continue;
       reports.push(await this.pull(source.id));
     }
     return reports;

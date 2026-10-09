@@ -56,10 +56,14 @@ export function BoardProvider({children}:{children:ReactNode}) {
     window.addEventListener('online',update);window.addEventListener('offline',update);
     return ()=>{window.removeEventListener('online',update);window.removeEventListener('offline',update);};
   },[]);
+  // The last board this device got opens instantly; the server is then asked only whether anything is new.
+  const etag=useRef<string|null>(null);
+  const cached=useRef<Promise<void>|null>(null);
   useEffect(()=>{
     let active=true;
     if(demo)return;
-    void loadBoard().then((cached)=>{if(active && cached){setData((current)=>current ?? cached);setStatus('available');}})
+    cached.current=loadBoard().then((saved)=>{if(active && saved){etag.current=saved.etag;
+      setData((current)=>current ?? saved.board);setStatus('available');}})
       .catch((error:unknown)=>reportMobileFailure('storage',error));
     return ()=>{active=false;};
   },[demo]);
@@ -69,8 +73,12 @@ export function BoardProvider({children}:{children:ReactNode}) {
     const controller=new AbortController();
     void (async()=>{
       try{
-        // The lighter Board list; servers without it get the full board.
-        let response=await request('/v1/board/lite',{signal:controller.signal});
+        // The lighter Board list; servers without it get the full board. With the saved board's tag, an unchanged board
+        // comes back as a tiny 304 and nothing is downloaded or redrawn.
+        await cached.current?.catch(()=>undefined);
+        let response=await request('/v1/board/lite',{signal:controller.signal,
+          ...(etag.current&&!demo?{headers:{'if-none-match':etag.current}}:{})});
+        if(response.status===304){if(!active)return;setReachable(true);setStatus('available');setMessage('');setNeedsBootstrap(false);return;}
         if(response.status===404)response=await request('/v1/board',{signal:controller.signal});
         if(!active)return;
         // Any HTTP response proves the API is reachable. A 503 means the board is
@@ -85,7 +93,8 @@ export function BoardProvider({children}:{children:ReactNode}) {
         const board=boardResponseSchema.parse(await response.json());
         if(!active)return;
         setData(board);setStatus('available');setMessage('');setNeedsBootstrap(false);
-        if(!demo)void saveBoard(board).catch((error:unknown)=>reportMobileFailure('storage',error));
+        etag.current=response.headers.get('etag');
+        if(!demo)void saveBoard(board,etag.current).catch((error:unknown)=>reportMobileFailure('storage',error));
         try{
           const summaryResponse=await request('/v1/board/summary',{signal:controller.signal});
           if(!active || !summaryResponse.ok)return;
