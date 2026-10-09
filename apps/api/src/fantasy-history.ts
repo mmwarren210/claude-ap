@@ -22,7 +22,7 @@ import type { PropLine } from '@crowniq/contracts';
 //   point. Underdog kickers aren't read.
 // - NHL goalies, both apps: win 6, save 0.6, goal against -3.
 // Not read: NHL skaters (both apps score blocked shots and hits, which ESPN's logs don't carry), soccer (PrizePicks scores
-// passes, tackles, clearances, dribbles and crosses, which aren't in ESPN's logs), UFC, DK Pick'em (its chart isn't
+// passes, tackles, clearances, dribbles and crosses, which aren't in ESPN's logs), UFC, Pick6 (its chart isn't
 // confirmed), and any segment line (1st half, 1st quarter). ESPN's logs carry no two-point conversions, and a
 // quarterback's log no fumbles lost, so those count 0 (a slight overstatement; receivers' and backs' fumbles count).
 
@@ -81,7 +81,7 @@ function hitter(row: Row, app: FantasyApp): number | null {
     + (v(row, 'walks') + v(row, 'hitByPitch')) * (ud ? 3 : 2) + v(row, 'stolenBases') * (ud ? 4 : 5);
 }
 
-/** A fantasy line's app from its id (Underdog and DK Pick'em lines carry their app; the rest are PrizePicks). */
+/** A fantasy line's app from its id (Underdog and Pick6 lines carry their app; the rest are PrizePicks). */
 export function fantasyApp(line: Pick<PropLine, 'id'>): FantasyApp | 'pick6' {
   return line.id.startsWith('underdog:') ? 'underdog' : line.id.startsWith('pick6:') ? 'pick6' : 'prizepicks';
 }

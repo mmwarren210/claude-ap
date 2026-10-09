@@ -64,8 +64,14 @@ export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000, fetchLimitM
     incoming.set(request, { what: `${request.method} ${request.url?.split('?')[0]} ${request.headers['content-length'] ?? '-'}B`, since: Date.now() });
     request.once('close', () => incoming.delete(request));
   });
-  let lastLog = 0;
+  let lastLog = 0, lastTick = Date.now();
   const timer = setInterval(() => {
+    // A late tick means the event loop was blocked: every request waited that long. Logged with what was being served,
+    // so the step that froze the app shows in the logs next to it.
+    const late = Date.now() - lastTick - everyMs;
+    lastTick = Date.now();
+    if (late > 2000) console.warn(`[lag] event loop blocked ${(late / 1000).toFixed(1)}s | serving ${JSON.stringify(
+      [...incoming.values()].map((item) => `${item.what} ${Math.round((Date.now() - item.since) / 1000)}s`).slice(0, 6))}`);
     const memory = process.memoryUsage(), mb = (bytes: number) => Math.round(bytes / 1_048_576);
     if (mb(memory.rss) < thresholdMb || Date.now() - lastLog < 4000) return;
     lastLog = Date.now();

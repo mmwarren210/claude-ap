@@ -7,7 +7,7 @@ export type Sportsbook = 'draftkings' | 'hardrock';
 export type BoardSource = PickApp | Sportsbook | 'shop';
 
 export const pickApps: readonly { value: PickApp; label: string }[] = [
-  { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'DK Pick’em' }];
+  { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'Pick6' }];
 export const sourceNames: Readonly<Record<Sportsbook, string>> = { draftkings: 'DraftKings',
   hardrock: 'Hard Rock' };
 const others: readonly Sportsbook[] = ['draftkings', 'hardrock'];

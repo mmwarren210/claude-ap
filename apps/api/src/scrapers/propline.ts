@@ -143,6 +143,8 @@ export function propLineBoard(client: PropLineClient, options: { app: DfsApp; bo
 }
 
 const tiers: Readonly<Record<string, ScrapedTier>> = { standard: 'REGULAR', goblin: 'GOBLIN', demon: 'DEMON' };
+/** Pick6's alternate numbers are ordinary picks at their own number (no Goblin/Demon on Pick6). */
+const pick6Tiers: Readonly<Record<string, ScrapedTier>> = { standard: 'REGULAR', alternate: 'REGULAR' };
 
 /** One event's lines for the app: each player, market, tier and number once, with the sides the app really offers. */
 export function eventLines(event: Event, league: string, sport: Sport, options: { app: DfsApp; bookmaker: string },
@@ -160,7 +162,7 @@ export function eventLines(event: Event, league: string, sport: Sport, options: 
       if (!side) { drop('NOT_OVER_UNDER'); continue; }
       // PrizePicks tags every line; other apps' lines are regular unless tagged.
       const flavor = (outcome.dfs_odds_type ?? 'standard').toLowerCase();
-      const tier = tiers[flavor];
+      const tier = (options.app === 'pick6' ? pick6Tiers : tiers)[flavor];
       if (!tier) { drop(`TIER_${flavor.toUpperCase()}`); continue; }
       // Goblins and Demons are MORE-only on PrizePicks: an "Under" on one is not a pick that exists.
       if (tier !== 'REGULAR' && side === 'LESS') { drop('ALTERNATE_UNDER'); continue; }

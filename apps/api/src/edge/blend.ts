@@ -8,7 +8,7 @@ import { rankScore } from '@crowniq/edge';
 // 1. Edge's chance (books, stats and the other apps' numbers, as priced).
 // 2. History at this exact number: the player's hit rate over recent games, shrunk toward 50/50 ((hits + 1) / (games + 2))
 //    and weighted by sample size (0.6 × games / (games + 10): 15 games count 0.36 of Edge's weight).
-// 3. GKR's side where GKR plays the line (PrizePicks, and Underdog / DK Pick'em / the books where GKR scores them): a nudge
+// 3. GKR's side where GKR plays the line (PrizePicks, and Underdog / Pick6 / the books where GKR scores them): a nudge
 //    of up to 0.3 in log-odds toward GKR's side, or away from it when GKR plays the other side, scaled by GKR's score.
 // Blended in log-odds; the edge is the blended chance less the same break-even Edge uses. Picks Edge holds back (held for
 // review, unbacked book bets, far rungs, promos) stay unranked here too.

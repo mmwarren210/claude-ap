@@ -22,7 +22,7 @@ import { Icon } from './ui/Icon';
 import { PlayerAvatar } from './ui/PlayerAvatar';
 import { ScoreRing } from './ui/ScoreRing';
 
-// The Crown generator on Underdog and DK Pick'em (owner, 2026-10-05): built from that app's own lines and numbers, laid
+// The Crown generator on Underdog and Pick6 (owner, 2026-10-05): built from that app's own lines and numbers, laid
 // out like the PrizePicks Crown (summary, scored legs, projected payout). These apps have no Goblins or Demons; a pick's
 // own payout multiplier shows instead. Legs: GKR at 80+, then Scout's plays, then History plays. It builds one as soon as
 // the lines load.
@@ -102,7 +102,7 @@ export function AppCrown({ app, size }: { app: 'underdog' | 'pick6'; size: numbe
   const gkrLegs = backs.filter((item) => item.by === 'GKR').length;
   const confidence = average === null ? '—' : average >= 90 ? 'High' : average >= 85 ? 'Strong' : average >= 75 ? 'Solid' : 'Low';
   const crownName = name ?? `${appNames[app]} Crown`;
-  // Underdog and DK Pick'em multiply the entry's payout by each pick's own multiplier (a boost above 1x, a cut below).
+  // Underdog and Pick6 multiply the entry's payout by each pick's own multiplier (a boost above 1x, a cut below).
   const boost = Math.round(legs.reduce((product, leg) => product * (leg.line.multipliers?.[leg.side] ?? 1), 1) * 100) / 100;
   const outlook = (mode: 'POWER' | 'FLEX') => legs.length >= 2 ? entryOutlook(payouts, legs.length, mode) : null;
   const power = outlook('POWER'), flex = outlook('FLEX');

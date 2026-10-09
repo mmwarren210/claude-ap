@@ -31,7 +31,7 @@ import { canonicalMarket, matchBookPrices, playerKey } from './market-map.js';
 import type { MatchReport } from './market-map.js';
 
 // CrownIQ Edge (Edge 2.0): a standalone engine on every platform the app supports: PrizePicks (the scraped board plus any
-// line SharpAPI lists that the scrapers missed), Underdog and DK Pick'em (their scraped boards with each pick's
+// line SharpAPI lists that the scrapers missed), Underdog and Pick6 (their scraped boards with each pick's
 // multiplier), DraftKings and Hard Rock (their SharpAPI prices). Each line is priced from the other sportsbooks' prices
 // (a platform never confirms its own price), CrownIQ's game rows and the same History values every tab uses, then held
 // against that platform's own payout: the entry's break-even over the pick's multiplier, or 1 / the book's odds. Every
@@ -41,7 +41,7 @@ export interface EdgeServiceOptions {
   readonly board: () => BoardResponse | null;
   /** SharpAPI's latest book prices and PrizePicks lines. */
   readonly sharp?: { prices(): Promise<readonly FairPrice[]>; pickem(): Promise<readonly PickemLine[]> } | null;
-  /** The scraped Underdog and DK Pick'em boards. */
+  /** The scraped Underdog and Pick6 boards. */
   readonly appBoards?: { active(app: 'underdog' | 'pick6'): Promise<readonly StoredLine[]> } | null;
   readonly history?: InternalHistoryStore | null;
   /** A player's recent values for a line's stat (the shared History values), newest first. */
@@ -51,7 +51,7 @@ export interface EdgeServiceOptions {
   readonly alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>;
   /** Goblin/Demon factor curve exponents (pricing.ts alternateFactorFor). */
   readonly alternateCurve?: Partial<Record<'GOBLIN' | 'DEMON', number>>;
-  /** DK Pick'em has no public payout chart: its entry tables only count once the owner confirms them (EDGE_PICK6_PAYOUTS_CONFIRMED). */
+  /** Pick6 has no public payout chart: its entry tables only count once the owner confirms them (EDGE_PICK6_PAYOUTS_CONFIRMED). */
   readonly pick6PayoutsConfirmed?: boolean;
   readonly clock?: () => Date;
   /** Reprice at least this often (drops started games, picks up new prices and history). */
@@ -115,7 +115,7 @@ export interface EdgeReport {
   readonly lines: number; readonly read: number; readonly noRead: number;
   readonly noReadByReason: Readonly<Record<string, number>>;
   readonly plusEv: number;
-  /** Reads left with edge = null (no confirmed payout: Goblins/Demons, unconfirmed DK Pick'em tables, promos). */
+  /** Reads left with edge = null (no confirmed payout: Goblins/Demons, unconfirmed Pick6 tables, promos). */
   readonly edgeNull: number;
   readonly byTier: Readonly<Record<string, number>>;
   /** +EV reads by rating (THIN is under 2 points). */
@@ -318,7 +318,7 @@ export class EdgeService {
     }
   }
 
-  /** A platform's entries: the app's own payout charts (DK Pick'em only once confirmed), or sportsbook parlays. */
+  /** A platform's entries: the app's own payout charts (Pick6 only once confirmed), or sportsbook parlays. */
   private entriesFor(platform: EdgePlatform): EntryDefinition[] {
     if (platform === 'draftkings' || platform === 'hardrock') return parlayEntries(parlayMax[platform]!);
     return entriesFromTables(this.options.payouts[platform]);
@@ -546,7 +546,7 @@ export class EdgeService {
     // A platform's own book never prices it, and pick'em apps' rows are payouts, never prices.
     const nowIso = now.toISOString(), own = [...new Set([...ownBooks[set.platform], 'prizepicks', 'prizepicks_flex', 'underdog', 'pick6'])];
     const matched = prices.length && set.lines.length ? matchBookPrices(set.lines, prices, nowIso, own, set.promos) : null;
-    // DK Pick'em's entry chart isn't public: until the owner confirms it, its picks get a chance but no edge.
+    // Pick6's entry chart isn't public: until the owner confirms it, its picks get a chance but no edge.
     const unconfirmed = set.platform === 'pick6' && !this.options.pick6PayoutsConfirmed;
     const sidePayout = set.payouts ? (line: PropLine, side: PlayableDirection): SidePayout => {
       const payout = set.payouts!.get(line.id)?.[side] ?? { kind: 'ENTRY', multiplier: 1 };
@@ -641,7 +641,7 @@ export class EdgeService {
         if (favors && appChanged !== null && appChanged !== undefined && appChanged < moved.lastMoveAt &&
           Math.abs(gap) >= .5 * pick.projection.sd) {
           const minutesAgo = Math.max(0, Math.round((nowMs - moved.lastMoveAt) / 60_000));
-          const name = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'DK Pick’em' }[set.platform as 'prizepicks'];
+          const name = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'Pick6' }[set.platform as 'prizepicks'];
           pick = { ...pick, stale: { minutesAgo, books: moved.books, direction: moved.direction },
             reasons: [`Books moved ${moved.direction === 'UP' ? 'up' : 'down'} ${minutesAgo} min ago (${moved.books} book${moved.books === 1 ? '' : 's'}, first ${moved.firstMover}); ${name} hasn’t.`, ...pick.reasons] };
         }

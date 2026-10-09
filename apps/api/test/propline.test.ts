@@ -61,3 +61,15 @@ test('a full pull: discovery, one bulk request per sport, and a failed request n
   assert.deepEqual(calls.filter((path) => !path.includes('/odds')), []);
   assert.equal(second.complete, false, 'a failed sport request never counts as a complete pull');
 });
+
+test('Pick6 alternates are ordinary picks at their own number; Underdog lines are regular with both sides', () => {
+  const pick6 = { ...event, bookmakers: [{ key: 'pick6', markets: [{ key: 'player_pass_yds', outcomes: [
+    outcome('Over', 'Dak Prescott', 245.5, 'standard'), outcome('Under', 'Dak Prescott', 245.5, 'standard'),
+    outcome('Over', 'Dak Prescott', 275.5, 'alternate')] }] }] };
+  assert.deepEqual(eventLines(pick6, 'NFL', 'NFL', { app: 'pick6', bookmaker: 'pick6' }).map((line) => [line.line, line.tier, line.directions.join('/')]),
+    [[245.5, 'REGULAR', 'MORE/LESS'], [275.5, 'REGULAR', 'MORE']]);
+  const underdog = { ...event, bookmakers: [{ key: 'underdog', markets: [{ key: 'player_pass_yds', outcomes: [
+    outcome('Over', 'Dak Prescott', 245.5, null), outcome('Under', 'Dak Prescott', 245.5, null)] }] }] };
+  assert.deepEqual(eventLines(underdog, 'NFL', 'NFL', { app: 'underdog', bookmaker: 'underdog' }).map((line) => [line.app, line.tier, line.directions.join('/')]),
+    [['underdog', 'REGULAR', 'MORE/LESS']]);
+});

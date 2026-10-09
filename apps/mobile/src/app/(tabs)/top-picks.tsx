@@ -35,7 +35,7 @@ import type { PickSource } from '../../all-picks';
 /** Top Picks by provider: everything together, PrizePicks' GKR rankings, each other board, and +EV. */
 const topLists: readonly { value: 'ALL' | 'GKR' | 'EV' | Exclude<PickSource, 'prizepicks'>; label: string }[] = [
   { value: 'ALL', label: 'All' }, { value: 'GKR', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' },
-  { value: 'pick6', label: 'DK Pick’em' }, { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' },
+  { value: 'pick6', label: 'Pick6' }, { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' },
   { value: 'EV', label: '+EV' }];
 
 type Card = RankingCard | SecondLookCard;
@@ -109,7 +109,7 @@ type EvPick = { lineId: string; playerName: string; market: string; threshold: n
   history?: { direction: string; score: number | null; text: string } | null };
 type EvResponse = { fetchedAt: string | null; breakEven: number; breakEvens?: Record<string, number>; picks: EvPick[] };
 const bookNames: Readonly<Record<string, string>> = { draftkings: 'DraftKings', hardrock: 'Hard Rock', fanduel: 'FanDuel' };
-const evApps = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'DK Pick’em' } as const;
+const evApps = { prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'Pick6' } as const;
 
 function EvCard({ pick, onAdd }: { pick: EvPick; onAdd: () => void }) {
   const agrees = pick.gkr && pick.gkr.direction === pick.side && pick.gkr.score !== null;

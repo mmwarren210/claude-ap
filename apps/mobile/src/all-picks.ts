@@ -17,7 +17,7 @@ export interface AnyPick {
   /** A PrizePicks board line id, when the pick opens the player screen. */
   readonly lineId: string | null;
   readonly note: string | null;
-  /** The app line's own player image (Underdog, DK Pick'em), when it has one. */
+  /** The app line's own player image (Underdog, Pick6), when it has one. */
   readonly photoUrl?: string | null;
   /** For other apps' and books' picks: the PrizePicks player id, to find the player's panel and photo. */
   readonly playerId?: string | null;
@@ -34,7 +34,7 @@ export function rankAll(picks: readonly AnyPick[], nowMs: number): AnyPick[] {
 }
 
 export const sourceLabels: Readonly<Record<PickSource, string>> = { prizepicks: 'PrizePicks', underdog: 'Underdog',
-  pick6: 'DK Pick’em', draftkings: 'DraftKings', hardrock: 'Hard Rock' };
+  pick6: 'Pick6', draftkings: 'DraftKings', hardrock: 'Hard Rock' };
 export const byLabels: Readonly<Record<PickBy, string>> = { GKR: 'GKR', SCOUT: 'Scout', HISTORY: 'History', VALUE: 'Value',
   EDGE: 'Edge' };
 
@@ -43,7 +43,7 @@ const plainName = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u
 
 /**
  * Points another app's or a book's pick at the player's panel: a PrizePicks line for the same player (by id, which
- * Underdog and DK Pick'em share, else by name for the books), the same stat first. Picks with no such line stay as they are.
+ * Underdog and Pick6 share, else by name for the books), the same stat first. Picks with no such line stay as they are.
  */
 export function linkPanels(picks: readonly AnyPick[], lines: readonly PanelLine[], nowMs: number): AnyPick[] {
   const byId = new Map<string, PanelLine[]>(), byName = new Map<string, string>();

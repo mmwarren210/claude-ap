@@ -36,10 +36,10 @@ import { chosenDay, gameDays, onDay } from '../../game-days';
 import type { CrownProvider } from '../../crown-legs';
 
 const crownProviders: readonly { value: CrownProvider | 'prizepicks'; label: string }[] = [
-  { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'DK Pick’em' },
+  { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'Pick6' },
   { value: 'draftkings', label: 'DraftKings' }, { value: 'hardrock', label: 'Hard Rock' }];
 
-/** PrizePicks takes up to 6 picks; Underdog and DK Pick’em up to 8. */
+/** PrizePicks takes up to 6 picks; Underdog and Pick6 up to 8. */
 const sizesFor = (most: number) => Array.from({ length: most - 1 }, (_, index) => index + 2).map((value) => ({ value,
   label: most > 6 ? `${value}` : `Top ${value}` }));
 
@@ -186,7 +186,7 @@ export default function CrownScreen() {
     } catch { setMessage('Could not reach CrownIQ. Your draft is still on this device.'); }
   };
 
-  // Every provider has its own Crown: Underdog and DK Pick'em from their own lines (no Goblins or Demons), the
+  // Every provider has its own Crown: Underdog and Pick6 from their own lines (no Goblins or Demons), the
   // sportsbooks and prediction markets from their boards.
   const appPicker = <ChipRow>{crownProviders.map((item) => <FilterChip key={item.value} label={item.label}
     active={provider === item.value} chevron={false} onPress={() => { setProvider(item.value); openCrownOn(item.value);
@@ -310,7 +310,7 @@ export default function CrownScreen() {
         profile as a personal Crown, outside GKR’s tracked record and the Social Top 10.</Text>}
       {legs.length >= 2 && <View style={styles.panel}>
         <Text style={styles.panelTitle}>Play it on</Text>
-        <Text style={styles.legMeta}>Copy these picks and open the app. Underdog and DK Pick’em show each player’s line there first.</Text>
+        <Text style={styles.legMeta}>Copy these picks and open the app. Underdog and Pick6 show each player’s line there first.</Text>
         <View style={styles.actions}>{(['prizepicks', 'underdog', 'pick6'] as const).map((app) => <GhostButton key={app}
           label={appNames[app]} style={styles.action} onPress={() => setPortApp(app)} />)}</View>
       </View>}

@@ -238,7 +238,7 @@ export default function OwnerBoardScreen(){
       detail="Board analysis controls are only available to the owner profile configured on the server."/>}
     {access==='ALLOWED'&&<>
       <Notice title="Refresh everything now"
-        detail="Pulls the PrizePicks, Underdog and DK Pick'em scrapers, injuries, Pinnacle and the sportsbook feed now, and skips each one's next scheduled pull so you don't pay twice. Takes a few minutes on the server."/>
+        detail="Pulls the PrizePicks, Underdog and Pick6 scrapers, injuries, Pinnacle and the sportsbook feed now, and skips each one's next scheduled pull so you don't pay twice. Takes a few minutes on the server."/>
       <Pressable accessibilityRole="button" disabled={busy} onPress={()=>void refreshAllNow()}
         style={[styles.action,busy&&styles.disabled]}>
         <Text style={styles.actionText}>Refresh all now · skip next scheduled</Text>

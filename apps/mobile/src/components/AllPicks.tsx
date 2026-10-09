@@ -83,7 +83,7 @@ export function AllPicks({ only }: { only?: PickSource } = {}) {
     }
     return out;
   }, [board, ranked, scout, history]);
-  // Every app's and book's pick opens the player's panel and shows the photo (Underdog and DK Pick'em share PrizePicks'
+  // Every app's and book's pick opens the player's panel and shows the photo (Underdog and Pick6 share PrizePicks'
   // player ids; books match by name).
   const linked = useMemo(() => linkPanels(others, board?.board.lines ?? [], nowMs), [others, board, nowMs]);
   const photoFor = (pick: AnyPick) => pick.photoUrl ?? (() => {

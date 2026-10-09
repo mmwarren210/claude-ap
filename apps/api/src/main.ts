@@ -180,6 +180,9 @@ const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBud
     // configured (off by CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER) for comparison.
     ...(propLine?[{source:propLineBoard(propLine,{app:'prizepicks',bookmaker:'prizepicks'}),
       hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PROPLINE_PRIZEPICKS',Array.from({length:24},(_,hour)=>hour).join(','))}]:[]),
+    // Underdog and Pick6 from PropLine too; Underdog's own feed stays alongside for its payout multipliers.
+    ...(propLine?(['underdog','pick6'] as const).map((app)=>({source:propLineBoard(propLine,{app,bookmaker:app}),
+      hoursEt:hoursEt(`CROWNIQ_SCRAPER_HOURS_PROPLINE_${app.toUpperCase()}`,Array.from({length:24},(_,hour)=>hour).join(','))})):[]),
     {source:prizePicksPartner(),hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_PRIZEPICKS_PARTNER','7,9,11,13,15,17,19,21,23')},
     {source:zenPrizePicksEsports,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_ESPORTS','')},
     {source:zenPrizePicks,hoursEt:hoursEt('CROWNIQ_SCRAPER_HOURS_ZEN_PRIZEPICKS','')},
@@ -442,7 +445,7 @@ const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',dispersion:edgeDisp
   snapshots:edgeSnapshots,alternateFactors:edgeAlternateFactors,alternateCurve:edgeAlternateCurve,
   boxScores:new BoxScoreResults(fetch,undefined,historyArchive),
   valuesCacheFile:`${dataDir}/edge/history-values.json`,
-  // DK Pick'em: the owner set the published minimums as floors (2026-10-06); EDGE_PICK6_PAYOUTS_CONFIRMED=false turns edges off.
+  // Pick6: the owner set the published minimums as floors (2026-10-06); EDGE_PICK6_PAYOUTS_CONFIRMED=false turns edges off.
   pick6PayoutsConfirmed:process.env.EDGE_PICK6_PAYOUTS_CONFIRMED!=='false',
   alertsFile:`${dataDir}/edge/alerts.json`,staleLogFile:`${dataDir}/edge/stale-events.jsonl`};
 

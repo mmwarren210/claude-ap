@@ -1142,7 +1142,7 @@ export function buildServer(options: ServerOptions = {}) {
   app.post('/v1/me/crowns',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     // `personal` Crowns hold the user's own calls (one side per line in `directions`) and skip GKR's rules.
-    // Underdog and DK Pick'em take up to 8 picks; PrizePicks up to 6.
+    // Underdog and Pick6 take up to 8 picks; PrizePicks up to 6.
     const input=z.object({lineIds:z.array(z.string().min(1).max(300)).min(2).max(8),personal:z.literal(true).optional(),
       directions:z.record(z.string(),z.enum(['MORE','LESS'])).optional(),app:z.enum(['underdog','pick6']).optional()})
       .strict().refine((value)=>!value.personal||value.lineIds.every((id)=>value.directions?.[id]))
@@ -1361,7 +1361,7 @@ export function buildServer(options: ServerOptions = {}) {
     return found&&found.values.length>=5?found:null;
   };
   const historyReads=new HistoryReads(async(line)=>{
-    // Fantasy score is read on PrizePicks only (owner, 2026-10-07: Underdog and DK Pick'em fantasy lines get no read).
+    // Fantasy score is read on PrizePicks only (owner, 2026-10-07: Underdog and Pick6 fantasy lines get no read).
     if(fantasyBlocked(line))return null;
     // Soccer fantasy score: PrizePicks' chart over Sofascore's full match stats (PrizePicks only).
     if(line.sport==='SOCCER'&&isFantasyMarket(line.market))return fantasyApp(line)==='prizepicks'?soccerValues(line):null;
@@ -1371,7 +1371,7 @@ export function buildServer(options: ServerOptions = {}) {
       const found=await options.ufcHistory.values(line.playerName,line.market).catch(()=>null);
       return found&&found.values.length>=4?found:null;
     }
-    // Fantasy score: each app's own chart over ESPN's box scores (DK Pick'em's chart isn't confirmed: no read).
+    // Fantasy score: each app's own chart over ESPN's box scores (Pick6's chart isn't confirmed: no read).
     if(isFantasyMarket(line.market)){
       const app=fantasyApp(line);
       if(line.sport==='TENNIS'){

@@ -146,7 +146,7 @@ export function matchBookPrices(lines: readonly PropLine[], prices: readonly Fai
 
 /**
  * Drops quotes whose implied mean is more than 3 SD from the board's regular line for the same player and stat.
- * A promo line (DK Pick'em moving Dak Prescott's passing yards to 0.5) is checked at its original number, or not at all without one.
+ * A promo line (Pick6 moving Dak Prescott's passing yards to 0.5) is checked at its original number, or not at all without one.
  */
 export function rejectMismatches(lines: readonly PropLine[], quotes: readonly MarketQuote[],
   promos: ReadonlyMap<string, number | null> = new Map()) {

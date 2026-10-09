@@ -53,7 +53,7 @@ const cfbTouchdowns = spec((r) => sum(n(r, 'rushingTouchdowns') ?? 0, n(r, 'rece
 const cfbScrimmage = spec((r) => sum(n(r, 'rushingYards') ?? 0, n(r, 'receivingYards') ?? 0), 'yards', {
   expected_touches: touchesOf, historical_volume: (r) => sum(n(r, 'rushingYards') ?? 0, n(r, 'receivingYards') ?? 0) });
 
-/** WNBA box-score stats under every key the apps' labels become (PrizePicks, Underdog and DK Pick'em name them differently). */
+/** WNBA box-score stats under every key the apps' labels become (PrizePicks, Underdog and Pick6 name them differently). */
 function wnbaSpecs(): Record<string, HistorySpec> {
   const minutes = (r: Row) => n(r, 'minutes');
   const hoops = (value: (r: Row) => number | null, unit: string) => spec(value, unit, { minutes, historical_volume: value });
