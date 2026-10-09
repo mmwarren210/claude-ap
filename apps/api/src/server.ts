@@ -2356,7 +2356,12 @@ export function buildServer(options: ServerOptions = {}) {
     // ?league= probes another league (e.g. which esports leagues SharpAPI carries for PrizePicks).
     // PropLine with the server's key (PROPLINE_API_KEY), read-only: one GET under /v1/, for checking coverage. The key never
     // leaves the server; the reply is the body plus the quota headers.
-    admin.get('/propline-push',async()=>options.proplinePush?.status()??{configured:false});
+    // ?ensure=1 sets the subscriptions up now (and reports why if it can't).
+    admin.get('/propline-push',async(request)=>{
+      if(!options.proplinePush)return {configured:false};
+      if((request.query as {ensure?:string}).ensure==='1')await options.proplinePush.ensureNow();
+      return options.proplinePush.status();
+    });
     admin.get('/propline',async(request,reply)=>{
       const key=process.env.PROPLINE_API_KEY?.trim();
       if(!key)return reply.code(503).send({code:'PROPLINE_UNCONFIGURED'});

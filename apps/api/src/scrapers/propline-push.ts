@@ -40,6 +40,9 @@ export class PropLinePush {
   constructor(private readonly client: PropLineClient, private readonly url: string, private readonly file: string,
     private readonly handlers: PushHandlers, private readonly flushMs = 60_000) {}
 
+  /** Which call setup was on, for the owner page when it fails. */
+  private step = 'start';
+
   private async load(): Promise<void> {
     if (this.loaded) return;
     this.loaded = true;
@@ -68,7 +71,9 @@ export class PropLinePush {
    */
   async ensure(sportKeys: readonly string[]): Promise<void> {
     await this.load();
+    if (sportKeys.length) this.sportKeys = sportKeys;
     try {
+      this.step = 'list';
       const listed = await this.client.get<unknown>('/v1/webhooks');
       const existing = (Array.isArray(listed) ? listed : (listed as { data?: unknown[]; webhooks?: unknown[] })?.data
         ?? (listed as { webhooks?: unknown[] })?.webhooks ?? []) as { id: number; url?: string | null; events?: string[] }[];
@@ -77,6 +82,7 @@ export class PropLinePush {
         const mine = this.saved.subscriptions.find((item) => item.name === name);
         if (mine && existing.some((hook) => hook.id === mine.id)) {
           // Keep filters current (new sports), then catch up on anything missed.
+          this.step = `update ${name}`;
           await this.client.send('PATCH', `/v1/webhooks/${mine.id}`, body).catch(() => undefined);
           keep.push(mine); continue;
         }
@@ -84,18 +90,25 @@ export class PropLinePush {
         for (const hook of existing) if (hook.url === this.url && JSON.stringify(hook.events ?? []) === JSON.stringify(body.events)
           && !this.saved.subscriptions.some((item) => item.id === hook.id))
           await this.client.send('DELETE', `/v1/webhooks/${hook.id}`).catch(() => undefined);
+        this.step = `create ${name}`;
         const created = await this.client.send<{ id: number; secret: string }>('POST', '/v1/webhooks', body);
         if (created?.id && created.secret) keep.push({ name, id: created.id, secret: created.secret, lastSeq: 0 });
       }
       this.saved = { subscriptions: keep };
       await this.save();
       this.stats.ensuredAt = new Date().toISOString();
+      this.step = 'replay';
       for (const subscription of keep) await this.replay(subscription).catch(() => undefined);
     } catch (error) {
-      this.stats.lastError = error instanceof Error ? error.message : 'ENSURE_FAILED';
+      const cause = (error as { cause?: { code?: string; message?: string } })?.cause;
+      this.stats.lastError = `${error instanceof Error ? error.message : 'ENSURE_FAILED'}${cause ? ` (${cause.code ?? cause.message ?? ''})` : ''} at ${this.step}`;
       console.warn(`[propline-push] subscriptions not set up: ${this.stats.lastError}`);
     }
   }
+
+  /** The sports last asked for, so the owner page can re-run setup. */
+  private sportKeys: readonly string[] = [];
+  ensureNow(): Promise<void> { return this.ensure(this.sportKeys); }
 
   /** Events missed while CrownIQ was down (PropLine keeps 2 days), oldest first. */
   private async replay(subscription: Subscription): Promise<void> {
