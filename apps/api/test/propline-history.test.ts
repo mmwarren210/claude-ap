@@ -43,8 +43,10 @@ test('one request per player serves every stat, is cached, skips NFL preseason a
       { commence_time: '2030-10-11T00:00:00Z', status: 'in_progress', opponent: 'Z', stats: { passing_yards: 90 } }] };
   } } as unknown as PropLineClient;
   const history = new PropLineHistory(client, null, () => null, { dailyRequests: 2, ttlMs: 1000 }, () => now);
-  assert.deepEqual((await history.values(line('NFL', 'passing_yards')))?.values, [301, 250]);
-  assert.deepEqual((await history.values(line('NFL', 'player_rush_yds')))?.values, [12, 30]);
+  const valuesOf = async (found: Promise<{ values: number[] } | null | 'PENDING'>) => { const result = await found;
+    return result === 'PENDING' ? 'PENDING' : result?.values; };
+  assert.deepEqual(await valuesOf(history.values(line('NFL', 'passing_yards'))), [301, 250]);
+  assert.deepEqual(await valuesOf(history.values(line('NFL', 'player_rush_yds'))), [12, 30]);
   assert.equal(asked.length, 1);
   assert.match(asked[0]!, /^\/v1\/sports\/football_nfl\/players\/Test%20Player\/games\?limit=30$/);
   now = 2000; await history.values(line('NFL', 'passing_yards')); assert.equal(asked.length, 2, 'refetched once the cache is stale');
@@ -57,3 +59,15 @@ test('one request per player serves every stat, is cached, skips NFL preseason a
   await soccer.values(line('SOCCER', 'shots'));
   assert.match(asked.at(-1)!, /^\/v1\/sports\/soccer_epl\//);
 });
+
+test('a caller that cannot wait gets PENDING while the request keeps going, and the next call reads it', async () => {
+  let answer: (body: unknown) => void = () => undefined;
+  const client = { get: () => new Promise((done) => { answer = done; }) } as unknown as PropLineClient;
+  const history = new PropLineHistory(client, null);
+  assert.equal(await history.values(line('MLB', 'batter_hits'), 10), 'PENDING');
+  answer({ games: [{ commence_time: '2030-10-01T00:00:00Z', status: 'final', opponent: 'A', stats: { hits: 2 } }] });
+  await new Promise((done) => setImmediate(done));
+  const found = await history.values(line('MLB', 'batter_hits'), 10);
+  assert.deepEqual(found === 'PENDING' ? found : found?.values, [2]);
+});
+

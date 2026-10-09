@@ -168,12 +168,19 @@ export class PropLineHistory {
     try { return await request; } catch { this.stats.failed++; return undefined; }
   }
 
-  /** The player's values for the line's stat from games before it (newest first), or null when PropLine has none. */
-  async values(line: Pick<PropLine, 'sport' | 'eventId' | 'eventStartTime' | 'playerName' | 'market'>):
-    Promise<{ values: number[]; source: string } | null> {
+  /**
+   * The player's values for the line's stat from games before it (newest first), or null when PropLine has none.
+   * 'PENDING' when the player's games haven't arrived within `waitMs`: the request keeps going and the next call reads it,
+   * so a caller never waits on PropLine.
+   */
+  async values(line: Pick<PropLine, 'sport' | 'eventId' | 'eventStartTime' | 'playerName' | 'market'>, waitMs = Infinity):
+    Promise<{ values: number[]; source: string } | null | 'PENDING'> {
     const read = proplineStat(line.sport, line.market), sportKey = this.sportKey(line);
     if (!read || !sportKey) return null;
-    const games = await this.games(sportKey, line.playerName);
+    const request = this.games(sportKey, line.playerName);
+    const games = Number.isFinite(waitMs) ? await Promise.race([request, new Promise<'PENDING'>((done) => {
+      setTimeout(() => done('PENDING'), waitMs); })]) : await request;
+    if (games === 'PENDING') return 'PENDING';
     if (!games) return null;
     const values = valuesFrom(games, read, Date.parse(line.eventStartTime));
     return values.length ? { values, source: 'PropLine box scores' } : null;

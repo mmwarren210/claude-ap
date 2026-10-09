@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Analysis, BoardResponse, Evidence, PropLine } from '@crowniq/contracts';
 import { auditCrown } from '@crowniq/engine';
@@ -229,6 +229,9 @@ function leaders(data:Data){return data.profiles.filter((item)=>item.socialEnabl
 /** Single-process durable JSON ledger; no separate DB or provider requests. */
 export class ProductLedger {
   private chain:Promise<unknown>=Promise.resolve();
+  /** The parsed ledger and the file's size and time it came from: re-read only when the file changes (it is 20+ MB,
+   * and every signed-in screen asks for it). */
+  private parsed:{data:Data;mtimeMs:number;size:number}|null=null;
   private authCache:{accounts:Map<string,Account>;lifetime:Set<string>;profiles:Map<string,PublicProfile>;
     sessions:Map<string,Session>}|null=null;
   private topCache:{expires:number;value:unknown}|null=null;
@@ -261,7 +264,10 @@ export class ProductLedger {
       snapshotAgeMinutes:Math.max(0,Math.round((this.clock().getTime()-fetched)/60_000))};
   }
   private async read():Promise<Data> {
-    try {const raw=await readFile(this.path,'utf8'),value=JSON.parse(raw) as Data|LegacyData;
+    try {
+      const info=await stat(this.path);
+      if(this.parsed&&this.parsed.mtimeMs===info.mtimeMs&&this.parsed.size===info.size)return this.parsed.data;
+      const raw=await readFile(this.path,'utf8'),value=JSON.parse(raw) as Data|LegacyData;
       if((value.version!==1 && value.version!==2) || !Array.isArray(value.decisions) || !Array.isArray(value.profiles) ||
         !Array.isArray(value.crowns) || !Array.isArray(value.follows) || !Array.isArray(value.publicCredits))
         throw new Error('INVALID_PRODUCT_LEDGER');
@@ -274,6 +280,7 @@ export class ProductLedger {
         await writeFile(`${this.path}.backup-${this.clock().toISOString().replace(/[:.]/g,'-')}`,raw,{mode:0o600});
         await this.write(data);
       }
+      this.parsed={data,mtimeMs:info.mtimeMs,size:info.size};
       return data;
     } catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return blank();throw error;}
   }
@@ -281,7 +288,10 @@ export class ProductLedger {
     await mkdir(dirname(this.path),{recursive:true});
     const temporary=`${this.path}.${randomUUID()}.tmp`;
     try {await writeFile(temporary,JSON.stringify(value),{mode:0o600});await rename(temporary,this.path);}
+    catch(error){this.parsed=null;throw error;}
     finally {await rm(temporary,{force:true});}
+    const info=await stat(this.path).catch(()=>null);
+    this.parsed=info?{data:value,mtimeMs:info.mtimeMs,size:info.size}:null;
     this.indexAuth(value);
     this.topCache=null;
     this.recentCache=null;
@@ -292,7 +302,8 @@ export class ProductLedger {
     sessions:new Map(data.sessions.map((item)=>[item.hash,item])),
   };}
   private exclusive<T>(task:()=>Promise<T>):Promise<T>{
-    const result=this.chain.then(task);this.chain=result.catch(()=>undefined);return result;
+    // A change that failed partway may have edited the shared copy without saving it: read the file again next time.
+    const result=this.chain.then(task);this.chain=result.catch(()=>{this.parsed=null;});return result;
   }
   private session(data:Data,account:Account){
     const token=randomBytes(32).toString('base64url'),now=this.clock().toISOString();

@@ -1437,11 +1437,15 @@ export function buildServer(options: ServerOptions = {}) {
   };
   // PropLine's box scores first when it holds 10+ games for the stat (owner, 2026-10-09: PropLine is the source of truth);
   // the other sources fill in where its archive (from April 2026) is thin, and 5-9 PropLine games are the last resort.
+  // PropLine gets two seconds: a player still loading is asked again on the next read (never waited on), unless another
+  // source already answered.
   const historyReads=new HistoryReads(async(line)=>{
-    const propline=options.proplineHistory?await options.proplineHistory.values(line).catch(()=>null):null;
+    const found=options.proplineHistory?await options.proplineHistory.values(line,2_000).catch(()=>null):null;
+    const propline=found==='PENDING'?null:found;
     if(propline&&propline.values.length>=10)return propline;
     const other=await otherHistory(line);
     if(other)return other;
+    if(found==='PENDING')throw new Error('HISTORY_PENDING');
     return propline&&propline.values.length>=5?propline:null;
   },()=>now());
   // CrownIQ Edge (Edge 2.0): its own reads of every platform, warmed in the background like the app boards.

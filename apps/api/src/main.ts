@@ -147,9 +147,11 @@ const proplineResults=propLine?new PropLineResults(propLine,`${dataDir}/propline
 const noteGame=proplineResults?(gameId:string,sportKey:string)=>proplineResults.noteGame(gameId,sportKey):undefined;
 // Player game logs from PropLine's box scores (one request per player, kept 6 hours, at most 40,000 a day), read first
 // for every history read. CROWNIQ_PROPLINE_HISTORY=off turns it off.
-const proplineHistory=propLine&&process.env.CROWNIQ_PROPLINE_HISTORY!=='off'?new PropLineHistory(propLine,`${dataDir}/propline-history.json`,
+// Its own client (4 requests at a time), so history lookups never hold up the line pulls' requests.
+const proplineHistory=propLine&&process.env.CROWNIQ_PROPLINE_HISTORY!=='off'?new PropLineHistory(
+  new PropLineClient(process.env.PROPLINE_API_KEY!.trim(),undefined,4),`${dataDir}/propline-history.json`,
   (eventId)=>proplineResults?.sportKeyFor(eventId)??null,
-  {dailyRequests:Number(process.env.CROWNIQ_PROPLINE_HISTORY_DAILY??40_000)||40_000}):null;
+  {dailyRequests:Number(process.env.CROWNIQ_PROPLINE_HISTORY_DAILY??40_000)||40_000,concurrency:4}):null;
 if(proplineHistory)setInterval(()=>{void proplineHistory.save().catch(()=>undefined);},10*60_000).unref();
 const proplineEvery=Math.min(60,Math.max(5,Number(process.env.CROWNIQ_PROPLINE_EVERY_MINUTES??15)||15));
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,

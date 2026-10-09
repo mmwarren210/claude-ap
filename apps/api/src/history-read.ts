@@ -70,7 +70,10 @@ export class HistoryReads {
     const app = /fantasy/.test(line.market) ? `|${line.id.split(':')[0]}` : '';
     const key = `${line.sport}|${line.playerId}|${line.market}${app}`, now = this.clock().getTime(), cached = this.cache.get(key);
     if (cached && cached.until > now) return cached.value;
-    const value = this.lookup(line).catch(() => null);
+    // A lookup that fails (a source still loading) isn't kept: the next read asks again. Callers that can wait for the
+    // next pass (Edge) see the failure; History Reads below treat it as no history for now.
+    const value = this.lookup(line);
+    void value.catch(() => { if (this.cache.get(key)?.value === value) this.cache.delete(key); });
     this.cache.set(key, { until: now + 10 * 60_000, value });
     if (this.cache.size > 20_000) this.cache.clear();
     return value;
@@ -84,7 +87,7 @@ export class HistoryReads {
     let cursor = 0;
     await Promise.all(Array.from({ length: Math.min(8, open.length) }, async () => {
       for (let index = cursor++; index < open.length; index = cursor++) {
-        const line = open[index], found = await this.values(line);
+        const line = open[index], found = await this.values(line).catch(() => null);
         const read = found ? historyRead(line, found.values, booksMore(line.id), found.source) : null;
         if (read) out.set(line.id, read);
       }
