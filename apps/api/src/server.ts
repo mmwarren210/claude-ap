@@ -181,6 +181,8 @@ export interface ServerOptions {
   playerHistory?: PlayerHistory | null;
   /** Player game logs from PropLine's box scores, first in line for every history read. */
   proplineHistory?: PropLineHistory | null;
+  /** Each book's accuracy against actual stats (PropLine finished games), for the owner. */
+  bookAccuracy?: { report(): Promise<unknown> } | null;
   /** UFC fighters' fight history (UFCStats) for History Read and Edge on PrizePicks' UFC lines. */
   ufcHistory?: import('./ufc-history.js').UfcHistory | null;
   /** Soccer players' full match stats (Sofascore) for lines ESPN's logs can't read, fantasy score included. */
@@ -2166,6 +2168,8 @@ export function buildServer(options: ServerOptions = {}) {
       if (!authorized(request, options.adminToken)) return reply.code(401).send({ code: 'UNAUTHORIZED' });
     });
     admin.get('/status', async () => service.getStatus());
+    admin.get('/book-accuracy', async (_request, reply) => options.bookAccuracy ? options.bookAccuracy.report()
+      : reply.code(503).send({ code: 'BOOK_ACCURACY_UNCONFIGURED' }));
     // What CrownIQ has stored for itself: player game history, graded decisions, line history and the side records.
     admin.get('/history', async () => {
       const lines=options.scrapedLines?await options.scrapedLines.active():[];

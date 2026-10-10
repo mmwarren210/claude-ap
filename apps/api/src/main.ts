@@ -48,6 +48,7 @@ import { PropLinePush } from './scrapers/propline-push.js';
 import { PropLineResults } from './scrapers/propline-results.js';
 import { PropLineHistory } from './propline-history.js';
 import { PropLineGkrEvidence } from './propline-gkr-evidence.js';
+import { PropLineAccuracy } from './edge/propline-accuracy.js';
 import { fetchPropLineRows } from './context/propline-books.js';
 import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
@@ -417,7 +418,14 @@ const edgeSnapshots=process.env.EDGE_ENGINE==='false'?null:(()=>{
 })();
 const edgeDispersion=new DispersionStore(`${dataDir}/edge/edge-dispersion-v1.json`);
 await edgeDispersion.load();
-const edgeBookWeights=new BookWeightStore(`${dataDir}/edge/edge-book-weights-v1.json`);
+// Each book's closing line against the actual stat, from PropLine's finished games (every 6 hours, the last 3 days each
+// time): these scores join the book-versus-book ones Edge learns its book weights from.
+const bookAccuracy=propLine?new PropLineAccuracy(new PropLineClient(process.env.PROPLINE_API_KEY!.trim(),undefined,3),`${dataDir}/edge/book-accuracy.json`):null;
+const edgeBookWeights=new BookWeightStore(`${dataDir}/edge/edge-book-weights-v1.json`,undefined,bookAccuracy?()=>bookAccuracy.scores():null);
+if(bookAccuracy){
+  const runAccuracy=()=>{void bookAccuracy.refresh().then((games)=>{if(games){edgeBookWeights.markDue();console.log(`[book-accuracy] ${games} games scored`);}}).catch(()=>undefined);};
+  setTimeout(runAccuracy,10*60_000).unref();setInterval(runAccuracy,6*3600_000).unref();
+}
 await edgeBookWeights.load();
 const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',dispersion:edgeDispersion,bookWeights:edgeBookWeights,
   ledger:new EdgeLedger(process.env.CROWNIQ_EDGE_LEDGER_FILE ?? `${dataDir}/edge/ledger.json`),
@@ -453,7 +461,7 @@ const app = buildServer({ ufcHistory, soccerHistory, adminToken: process.env.ADM
     return {store,reader,grader:reader?new TipGrader(store,reader):null};})(),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
-  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,proplineHistory,contextFeeds,gameLines:propLine?proplineGameLines(propLine):null,injuries:process.env.CROWNIQ_ESPN_INJURIES==='off'?null:espnInjuries(),sharpProps,evBreakEven,payouts,
+  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,proplineHistory,bookAccuracy,contextFeeds,gameLines:propLine?proplineGameLines(propLine):null,injuries:process.env.CROWNIQ_ESPN_INJURIES==='off'?null:espnInjuries(),sharpProps,evBreakEven,payouts,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,

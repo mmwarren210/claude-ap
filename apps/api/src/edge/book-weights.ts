@@ -75,7 +75,12 @@ interface WeightsFile { version: number; fittedAt: string; scores: number; weigh
 export class BookWeightStore {
   private table: WeightsFile | null = null;
   private running = false;
-  constructor(private readonly path: string | null, private readonly clock: () => Date = () => new Date()) {}
+  constructor(private readonly path: string | null, private readonly clock: () => Date = () => new Date(),
+    /** More scores to fit with (each book's closing line against the actual stat, from PropLine). */
+    private readonly extraScores: (() => Promise<readonly BookScore[]>) | null = null) {}
+
+  /** Refits on the next pass (new accuracy scores arrived). */
+  markDue(): void { if (this.table) this.table = { ...this.table, fittedAt: new Date(0).toISOString() }; }
 
   async load(): Promise<void> {
     if (!this.path) return;
@@ -105,6 +110,7 @@ export class BookWeightStore {
         await yieldToLoop();
         scores.push(...scoreEvent(snapshots.bookRows(event)));
       }
+      scores.push(...await this.extraScores?.().catch(() => []) ?? []);
       const learned = learnBookWeights(scores);
       this.table = { version: BOOK_WEIGHTS_VERSION, fittedAt: new Date(now).toISOString(), scores: scores.length,
         weights: Object.fromEntries([...learned].map(([key, value]) => [key, { weight: round(value.weight), n: value.n, mse: round(value.mse), prior: value.prior }])) };
