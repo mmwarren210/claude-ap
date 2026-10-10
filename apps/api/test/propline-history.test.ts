@@ -14,9 +14,16 @@ test('markets map to PropLine box-score stats, combos sum, and a missing stat is
   assert.deepEqual(proplineStat('SOCCER', 'goals_plus_assists'), ['goals', 'assists']);
   assert.equal(proplineStat('NFL', 'player_fantasy_points'), null, 'fantasy is not a box-score stat');
   assert.equal(proplineStat('LOL', 'kills'), null);
+  assert.equal(proplineStat('CS2', 'map_1_kills'), 'kills_map_1');
+  assert.equal(proplineStat('CS2', 'MAPS 1-2 Headshots'), 'headshots_maps_1_2');
+  assert.equal(proplineStat('CS2', 'maps_1_3_kills'), 'kills_maps_1_2_3');
+  assert.equal(proplineStat('CS2', 'kills'), null, 'no map scope, no read');
   assert.equal(gameValue({ receptions: 4, receiving_yards: 51 }, 'receiving_tds'), 0, 'caught passes, no TD row: none scored');
   assert.equal(gameValue({ passing_yards: 250 }, 'receiving_tds'), null, 'a quarterback says nothing about receiving');
   assert.equal(gameValue({ goals: 1, assists: 1 }, ['goals', 'assists']), 2);
+  assert.equal(gameValue({ kills_map_1: 0, map_1_gradeable: 0, kills_maps_1_2: 27, maps_1_2_gradeable: 1 }, 'kills_map_1'), null,
+    'an ungraded map scope is no game, not a zero');
+  assert.equal(gameValue({ kills_map_1: 0, map_1_gradeable: 0, kills_maps_1_2: 27, maps_1_2_gradeable: 1 }, 'kills_maps_1_2'), 27);
 });
 
 test('values come newest first from games before the line, and pitchers read their starts', () => {

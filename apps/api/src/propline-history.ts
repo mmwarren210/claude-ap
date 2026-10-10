@@ -15,7 +15,7 @@ interface Entry { readonly at: number; readonly games: readonly Game[] | null }
 
 /** CrownIQ's sport → PropLine's sport key, for sports with one key (soccer needs the league, from the game itself). */
 const SPORT_KEYS: Readonly<Record<string, string>> = { NFL: 'football_nfl', NCAAFB: 'football_ncaaf', NBA: 'basketball_nba',
-  WNBA: 'basketball_wnba', NCAAB: 'basketball_ncaab', MLB: 'baseball_mlb', NHL: 'hockey_nhl', TENNIS: 'tennis' };
+  WNBA: 'basketball_wnba', NCAAB: 'basketball_ncaab', MLB: 'baseball_mlb', NHL: 'hockey_nhl', TENNIS: 'tennis', CS2: 'esports' };
 
 type Read = string | readonly string[];
 const basketball: Readonly<Record<string, Read>> = { player_points: 'points', points: 'points', player_rebounds: 'rebounds',
@@ -61,6 +61,14 @@ const PITCHING = new Set(['strikeouts', 'outs', 'earned_runs', 'hits_allowed', '
 
 /** The PropLine stat (or stats, summed) a market reads, or null when PropLine's box score doesn't carry it. */
 export function proplineStat(sport: string, market: string): Read | null {
+  // CS2 (owner, 2026-10-09): kills and headshots per map scope, from PropLine's esports box scores. A line with no map
+  // scope isn't read (the box score has no whole-match total).
+  if (sport === 'CS2') {
+    const m = market.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    const kind = /headshot/.test(m) ? 'headshots' : /kill/.test(m) ? 'kills' : null;
+    const scope = /1_2_3|1_3\b|maps_1_3/.test(m) ? 'maps_1_2_3' : /1_2|1_plus_2/.test(m) ? 'maps_1_2' : /map_?1/.test(m) ? 'map_1' : null;
+    return kind && scope ? `${kind}_${scope}` : null;
+  }
   const table = READS[sport];
   if (!table) return null;
   return table[market] ?? table[canonicalMarket(sport, market)] ?? null;
@@ -69,6 +77,9 @@ export function proplineStat(sport: string, market: string): Read | null {
 /** One game's value for a stat; null when the game says nothing about it. */
 export function gameValue(stats: Stats, read: Read): number | null {
   const one = (key: string) => {
+    // CS2 map stats count only where PropLine marks that map scope gradeable (an ungraded scope comes through as 0).
+    const scope = /_(map_1|maps_1_2|maps_1_2_3)$/.exec(key)?.[1];
+    if (scope && `${scope}_gradeable` in stats && stats[`${scope}_gradeable`] !== 1) return null;
     if (Number.isFinite(stats[key])) return stats[key]!;
     const family = FAMILIES.find((list) => list.includes(key));
     return family && family.some((other) => Number.isFinite(stats[other])) ? 0 : null;
