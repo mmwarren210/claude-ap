@@ -836,6 +836,8 @@ export function buildServer(options: ServerOptions = {}) {
         ...ownerStatus } = service.getStatus();
       return { status: 'ok', ...ownerStatus };
     });
+    ownerBoard.get('/book-accuracy',async(_request,reply)=>options.bookAccuracy?options.bookAccuracy.report()
+      :reply.code(503).send({code:'BOOK_ACCURACY_UNCONFIGURED'}));
     ownerBoard.get('/diagnostics',async(_request,reply)=>{
       const snapshot=service.getBoard();
       if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});

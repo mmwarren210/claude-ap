@@ -5,6 +5,7 @@ import { Notice, Screen } from '../../components/Screen';
 import { useAuth } from '../../auth';
 import { useBoard } from '../../use-board';
 import { palette } from '../../theme';
+import { BookAccuracy } from '../../components/BookAccuracy';
 
 type Funnel={started:number;eventStarted:number;marketNotModeled:number;
   modeledButUnapproved:{total:number;reasons:Record<string,number>};unknownAlternate:number;
@@ -358,6 +359,7 @@ export default function OwnerBoardScreen(){
       {!!message&&<Text accessibilityRole="alert" style={styles.success}>{message}</Text>}
       {!!error&&error!=='BOARD_UNAVAILABLE'&&<Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
     </>}
+    <BookAccuracy />
   </Screen>;
 }
 
