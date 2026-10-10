@@ -304,6 +304,10 @@ export class EdgeService {
   private computedAt = 0;
   /** The last pass was the quick one after a restart (thin history): shown, not recorded, and redone in full next. */
   private quickPass = false;
+  /** The last full pass's inputs, so one player's lines can be repriced the same way between passes. */
+  private lastPass: { board: BoardResponse; prices: readonly FairPrice[]; pickem: readonly PickemLine[];
+    calibration: CalibrationModel; forecast: ReturnType<typeof forecastReport>; rows: Map<string, InternalHistoryRow[]>;
+    values: { found: Map<string, number[]>; asked: number }; injured: ReadonlyMap<string, string>; anchors: AnchorIndex } | null = null;
   private key: string | null = null;
   private pending: Promise<void> | null = null;
   private lastError: string | null = null;
@@ -538,6 +542,7 @@ export class EdgeService {
       // One platform at a time, yielding between them so requests keep being answered while the board reprices.
       const each: EdgeSnapshot[] = [];
       const anchors = dfsAnchors(sets);
+      this.lastPass = { board, prices, pickem, calibration, forecast, rows, values, injured, anchors };
       lap('inputs');
       for (const set of sets) {
         await yieldToLoop();
@@ -571,6 +576,34 @@ export class EdgeService {
       this.lastError = error instanceof Error ? error.message : 'EDGE_PRICING_FAILED';
       console.error(JSON.stringify({ event: 'crowniq_edge_pricing_failed', error: this.lastError }));
     }
+  }
+
+  /**
+   * Reprices just these players' lines on one platform with the last full pass's inputs (owner, 2026-10-09: a pushed line
+   * move updates that player alone; everything else waits for the next full pass). Their old picks are swapped out for
+   * the new ones; entries and cross-app comparisons refresh on the next full pass. Returns how many picks came back.
+   */
+  async repricePlayers(platform: EdgePlatform, players: readonly string[]): Promise<number> {
+    const last = this.lastPass, current = this.current.get(platform);
+    if (!last || !current || !players.length) return 0;
+    const names = new Set(players.map((name) => normalizedName(name)));
+    const now = this.clock();
+    const set = (await this.platformSets(last.board, last.prices, last.pickem, now)).find((item) => item.platform === platform);
+    if (!set) return 0;
+    const open = (line: PropLine) => names.has(normalizedName(line.playerName));
+    const part = this.priceSet({ ...set, lines: set.lines.filter(open) }, last.board, last.prices, now, last.calibration,
+      last.forecast, last.rows, last.values, Date.now(), last.injured, [], last.anchors);
+    const fresh = this.current.get(platform);
+    if (!fresh) return 0;
+    const old = new Set([...fresh.lines.values()].filter(open).map((line) => line.id));
+    const keep = <T,>(entries: Iterable<[string, T]>) => new Map([...entries].filter(([id]) => !old.has(id)));
+    const byLine = keep(fresh.byLine), lines = keep(fresh.lines);
+    for (const [id, pick] of part.byLine) byLine.set(id, pick);
+    for (const [id, line] of part.lines) lines.set(id, line);
+    this.current.set(platform, { ...fresh, byLine, lines,
+      response: { ...fresh.response, picks: [...fresh.response.picks.filter((pick) => !old.has(pick.lineId)), ...part.response.picks] },
+      unpriced: [...fresh.unpriced.filter((item) => !old.has(item.line.id)), ...part.unpriced] });
+    return part.response.picks.length;
   }
 
   private priceSet(set: PlatformSet, board: BoardResponse, prices: readonly FairPrice[], now: Date,

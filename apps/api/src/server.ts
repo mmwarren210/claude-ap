@@ -1629,6 +1629,11 @@ export function buildServer(options: ServerOptions = {}) {
     }
     if(!options.clock){
       const warm=()=>{void edge.snapshot().catch(()=>undefined);};
+      // A pushed line move reprices that player alone on that app, right after its re-pull (owner, 2026-10-09).
+      options.proplinePush?.onMoved((app,players)=>{
+        void edge.repricePlayers(app,players).then((picks)=>console.log(`[edge-player] ${app} ${players.length} players repriced, ${picks} picks`))
+          .catch(()=>undefined);
+      });
       const first=setTimeout(warm,60_000);first.unref();
       const every=setInterval(warm,warmMs);every.unref();
       // Hourly health line for the logs (spec §10): snapshot rows and grading coverage.

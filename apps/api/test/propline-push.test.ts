@@ -83,3 +83,19 @@ test('PropLine steam feeds the movement tracker: 3+ agreeing books read as steam
   assert.equal(summary?.direction, 'UP');
   assert.equal(movement.pushedSteam[0]?.books, 3);
 });
+
+test('after a pushed move is re-pulled, the moved players are named for Edge', async () => {
+  const { PropLinePush } = await import('../src/scrapers/propline-push.js');
+  const pulled: string[] = [], named: [string, string[]][] = [];
+  const push = new PropLinePush({} as never, 'https://crowniq.test/v1/hooks/propline', null as never, {
+    pullSports: async (app: string, sports: readonly string[]) => { pulled.push(`${app}:${sports.join(',')}`); },
+    suspend: async () => 0 } as never);
+  push.onMoved((app, players) => named.push([app, players]));
+  const move = (player: string) => ({ event_type: 'line_movement', bookmaker_key: 'underdog', sport_key: 'basketball_wnba', player_name: player,
+    previous: { point: 20.5 }, current: { point: 21.5 } });
+  (push as unknown as { apply(event: unknown): void }).apply(move('Alpha Guard'));
+  (push as unknown as { apply(event: unknown): void }).apply(move('Beta Wing'));
+  await push.flush();
+  assert.deepEqual(pulled, ['underdog:basketball_wnba']);
+  assert.deepEqual(named, [['underdog', ['Alpha Guard', 'Beta Wing']]]);
+});

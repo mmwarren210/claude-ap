@@ -37,6 +37,10 @@ export class PropLinePush {
   private steamListeners: ((event: PushEvent) => void)[] = [];
   /** Steam deliveries also go to these (Edge's movement tracker, set up by the server). */
   onSteam(listener: (event: PushEvent) => void): void { this.steamListeners.push(listener); }
+  private movedListeners: ((app: DfsApp, players: string[]) => void)[] = [];
+  /** Called after a pushed move's re-pull, with the players whose lines moved (Edge reprices just them). */
+  onMoved(listener: (app: DfsApp, players: string[]) => void): void { this.movedListeners.push(listener); }
+  private readonly movedPlayers = new Map<DfsApp, Set<string>>();
   readonly stats = { deliveries: 0, events: {} as Record<string, number>, rejected: 0, lastAt: null as string | null,
     pulls: 0, suspended: 0, lastError: null as string | null, ensuredAt: null as string | null,
     /** The latest delivery of each type, for the owner page (shapes, not secrets). */
@@ -167,6 +171,8 @@ export class PropLinePush {
     const moved = !before || !after || before.point !== after.point || before.price_american !== after.price_american;
     if (type === 'line_movement' && APPS.includes(app) && sportKey && moved) {
       const set = this.dirty.get(app) ?? new Set<string>(); set.add(sportKey); this.dirty.set(app, set);
+      const player = typeof event.player_name === 'string' ? event.player_name : typeof event.description === 'string' ? event.description : null;
+      if (player) { const moved = this.movedPlayers.get(app) ?? new Set<string>(); moved.add(player); this.movedPlayers.set(app, moved); }
       this.schedule();
     } else if (type === 'market_suspended' && APPS.includes(app)) {
       const game = (event.event as { id?: unknown } | undefined)?.id, player = typeof event.subject === 'string' ? event.subject : null;
@@ -188,10 +194,13 @@ export class PropLinePush {
   }
 
   async flush(): Promise<void> {
-    const work = [...this.dirty]; this.dirty.clear();
+    const work = [...this.dirty], players = new Map(this.movedPlayers); this.dirty.clear(); this.movedPlayers.clear();
     for (const [app, sports] of work) {
-      try { await this.handlers.pullSports(app, [...sports]); this.stats.pulls++; }
-      catch (error) { this.stats.lastError = error instanceof Error ? error.message : 'PULL_FAILED'; }
+      try {
+        await this.handlers.pullSports(app, [...sports]); this.stats.pulls++;
+        const moved = [...players.get(app) ?? []];
+        if (moved.length) for (const listener of this.movedListeners) listener(app, moved);
+      } catch (error) { this.stats.lastError = error instanceof Error ? error.message : 'PULL_FAILED'; }
     }
   }
 

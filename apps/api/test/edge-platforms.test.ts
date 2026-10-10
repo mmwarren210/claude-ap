@@ -90,3 +90,20 @@ test('Kalshi prices pay after its trading fee; other books pay their price', asy
   assert.equal(afterFee('kalshi', null), null);
   assert.equal(afterFee('kalshi', 1.005), null, 'a 99.5-cent contract plus fee costs a dollar or more');
 });
+
+test('a pushed move reprices that player alone; everyone else keeps the last pass', async () => {
+  let moved = false;
+  const service = new EdgeService({ board: () => board, payouts: DEFAULT_PAYOUTS, clock: () => now,
+    sharp: { prices: async () => prices, pickem: async () => [] },
+    appBoards: { active: async (app) => players.map((name, index) => ({ ...stored(app as 'underdog', name, index, { MORE: 1, LESS: 1 }),
+      ...(moved && index === 0 ? { line: 25.5 } : {}) } as StoredLine)) } });
+  const before = await service.snapshot('underdog');
+  const others = before!.response.picks.filter((pick) => pick.playerName !== 'Alpha Guard');
+  moved = true;
+  assert.ok(await service.repricePlayers('underdog', ['Alpha Guard']) > 0);
+  const after = await service.snapshot('underdog');
+  const alpha = after!.response.picks.filter((pick) => pick.playerName === 'Alpha Guard');
+  assert.ok(alpha.length > 0 && alpha.every((pick) => pick.threshold === 25.5), 'the moved player shows the new number');
+  assert.deepEqual(after!.response.picks.filter((pick) => pick.playerName !== 'Alpha Guard'), others, 'nobody else changed');
+  assert.equal(await service.repricePlayers('prizepicks', []), 0);
+});
