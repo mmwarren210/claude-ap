@@ -18,6 +18,9 @@ test('markets map to PropLine box-score stats, combos sum, and a missing stat is
   assert.equal(proplineStat('CS2', 'MAPS 1-2 Headshots'), 'headshots_maps_1_2');
   assert.equal(proplineStat('CS2', 'maps_1_3_kills'), 'kills_maps_1_2_3');
   assert.equal(proplineStat('CS2', 'kills'), null, 'no map scope, no read');
+  assert.equal(proplineStat('UFC', 'significant_strikes'), 'significant_strikes');
+  assert.equal(proplineStat('UFC', 'Takedowns'), 'takedowns');
+  assert.equal(proplineStat('UFC', 'fight_time'), null);
   assert.equal(gameValue({ receptions: 4, receiving_yards: 51 }, 'receiving_tds'), 0, 'caught passes, no TD row: none scored');
   assert.equal(gameValue({ passing_yards: 250 }, 'receiving_tds'), null, 'a quarterback says nothing about receiving');
   assert.equal(gameValue({ goals: 1, assists: 1 }, ['goals', 'assists']), 2);
@@ -76,5 +79,21 @@ test('a caller that cannot wait gets PENDING while the request keeps going, and 
   await new Promise((done) => setImmediate(done));
   const found = await history.values(line('MLB', 'batter_hits'), 10);
   assert.deepEqual(found === 'PENDING' ? found : found?.values, [2]);
+});
+
+test('UFC lines read PropLine fight stats; a soccer line with no league tries the soccer leagues in turn', async () => {
+  const asked: string[] = [];
+  const client = { get: async (path: string) => { asked.push(path);
+    if (path.includes('/mma_ufc/')) return { games: [{ commence_time: '2030-09-01T00:00:00Z', status: 'final', stats: { significant_strikes: 61 } }] };
+    if (path.includes('/soccer_bundesliga/')) return { games: [{ commence_time: '2030-09-01T00:00:00Z', status: 'final', stats: { shots: 3 } }] };
+    return { games: [] }; } } as unknown as PropLineClient;
+  const history = new PropLineHistory(client, null);
+  const ufc = await history.values({ ...line('OTHER', 'significant_strikes'), league: 'UFC' });
+  assert.deepEqual(ufc === 'PENDING' ? ufc : ufc?.values, [61]);
+  const soccer = await history.values({ ...line('SOCCER', 'shots'), league: 'SOCCER' });
+  assert.deepEqual(soccer === 'PENDING' ? soccer : soccer?.values, [3]);
+  assert.ok(asked.some((path) => path.includes('/soccer_epl/')) && asked.at(-1)!.includes('/soccer_bundesliga/'));
+  await history.values({ ...line('SOCCER', 'shots', 'Fresh Striker'), league: 'EPL' });
+  assert.ok(asked.at(-1)!.includes('/soccer_epl/'), 'a labeled league asks that league');
 });
 

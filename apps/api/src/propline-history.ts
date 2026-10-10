@@ -15,7 +15,12 @@ interface Entry { readonly at: number; readonly games: readonly Game[] | null }
 
 /** CrownIQ's sport → PropLine's sport key, for sports with one key (soccer needs the league, from the game itself). */
 const SPORT_KEYS: Readonly<Record<string, string>> = { NFL: 'football_nfl', NCAAFB: 'football_ncaaf', NBA: 'basketball_nba',
-  WNBA: 'basketball_wnba', NCAAB: 'basketball_ncaab', MLB: 'baseball_mlb', NHL: 'hockey_nhl', TENNIS: 'tennis', CS2: 'esports' };
+  WNBA: 'basketball_wnba', NCAAB: 'basketball_ncaab', MLB: 'baseball_mlb', NHL: 'hockey_nhl', TENNIS: 'tennis', CS2: 'esports', UFC: 'mma_ufc' };
+/** Soccer leagues PropLine carries, by the board's league label; a line with no league label tries them in this order. */
+const SOCCER_KEYS: Readonly<Record<string, string>> = { EPL: 'soccer_epl', 'LA LIGA': 'soccer_la_liga', BUNDESLIGA: 'soccer_bundesliga',
+  'SERIE A': 'soccer_serie_a', 'LIGUE 1': 'soccer_ligue_1', MLS: 'soccer_mls', 'LIGA MX': 'soccer_liga_mx', CHAMPIONSHIP: 'soccer_championship' };
+/** UFC lines are filed under OTHER with a UFC or MMA league label. */
+const sportOf = (line: { sport: string; league?: string | null }) => /^(UFC|MMA)/i.test(line.league ?? '') ? 'UFC' : line.sport;
 
 type Read = string | readonly string[];
 const basketball: Readonly<Record<string, Read>> = { player_points: 'points', points: 'points', player_rebounds: 'rebounds',
@@ -63,6 +68,11 @@ const PITCHING = new Set(['strikeouts', 'outs', 'earned_runs', 'hits_allowed', '
 export function proplineStat(sport: string, market: string): Read | null {
   // CS2 (owner, 2026-10-09): kills and headshots per map scope, from PropLine's esports box scores. A line with no map
   // scope isn't read (the box score has no whole-match total).
+  // UFC (owner, 2026-10-09): significant strikes and takedowns from PropLine's fight box scores.
+  if (sport === 'UFC') {
+    const m = market.toLowerCase();
+    return /fantasy|time|round/.test(m) ? null : /sig|strike/.test(m) ? 'significant_strikes' : /takedown/.test(m) ? 'takedowns' : null;
+  }
   if (sport === 'CS2') {
     const m = market.toLowerCase().replace(/[^a-z0-9]+/g, '_');
     const kind = /headshot/.test(m) ? 'headshots' : /kill/.test(m) ? 'kills' : null;
@@ -113,8 +123,8 @@ export class PropLineHistory {
     private readonly options: { dailyRequests?: number; concurrency?: number; ttlMs?: number } = {},
     private readonly clock: () => number = Date.now) {}
 
-  sportKey(line: Pick<PropLine, 'sport' | 'eventId'>): string | null {
-    return this.sportKeyForEvent(line.eventId) ?? SPORT_KEYS[line.sport] ?? null;
+  sportKey(line: Pick<PropLine, 'sport' | 'eventId'> & { league?: string | null }): string | null {
+    return this.sportKeyForEvent(line.eventId) ?? SOCCER_KEYS[(line.league ?? '').toUpperCase()] ?? SPORT_KEYS[sportOf(line)] ?? null;
   }
 
   private async load() {
@@ -184,11 +194,16 @@ export class PropLineHistory {
    * 'PENDING' when the player's games haven't arrived within `waitMs`: the request keeps going and the next call reads it,
    * so a caller never waits on PropLine.
    */
-  async values(line: Pick<PropLine, 'sport' | 'eventId' | 'eventStartTime' | 'playerName' | 'market'>, waitMs = Infinity):
-    Promise<{ values: number[]; source: string } | null | 'PENDING'> {
-    const read = proplineStat(line.sport, line.market), sportKey = this.sportKey(line);
-    if (!read || !sportKey) return null;
-    const request = this.games(sportKey, line.playerName);
+  async values(line: Pick<PropLine, 'sport' | 'eventId' | 'eventStartTime' | 'playerName' | 'market'> & { league?: string | null },
+    waitMs = Infinity): Promise<{ values: number[]; source: string } | null | 'PENDING'> {
+    const read = proplineStat(sportOf(line), line.market), sportKey = this.sportKey(line);
+    // A soccer line with no league to go on tries PropLine's soccer leagues in turn (each answer is kept 6 hours).
+    const keys = sportKey ? [sportKey] : line.sport === 'SOCCER' ? Object.values(SOCCER_KEYS) : [];
+    if (!read || !keys.length) return null;
+    const request = (async () => {
+      for (const key of keys) { const games = await this.games(key, line.playerName); if (games !== null) return games; }
+      return null;
+    })();
     const games = Number.isFinite(waitMs) ? await Promise.race([request, new Promise<'PENDING'>((done) => {
       setTimeout(() => done('PENDING'), waitMs); })]) : await request;
     if (games === 'PENDING') return 'PENDING';

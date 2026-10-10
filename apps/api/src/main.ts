@@ -47,6 +47,7 @@ import { PropLineClient, propLineBoard } from './scrapers/propline.js';
 import { PropLinePush } from './scrapers/propline-push.js';
 import { PropLineResults } from './scrapers/propline-results.js';
 import { PropLineHistory } from './propline-history.js';
+import { PropLineGkrEvidence } from './propline-gkr-evidence.js';
 import { fetchPropLineRows } from './context/propline-books.js';
 import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
@@ -330,7 +331,9 @@ const gkrResearch=primaryEvidenceAdapters.length===0?null:primaryEvidenceAdapter
 const espnEvidence=process.env.GKR_ESPN_EVIDENCE==='false'?null:new EspnGkrEvidence(fetch,{allowedKeys:approvedModelKeys,archive:historyArchive,
   maxPlayers:process.env.GKR_ESPN_MAX_PLAYERS?Number(process.env.GKR_ESPN_MAX_PLAYERS):undefined});
 const freeHistoryEvidence=playerHistory?new FreeHistoryEvidence(playerHistory,approvedModelKeys):null;
-const secondLookAdapters=[statEvidence,currentContext,espnEvidence,freeHistoryEvidence]
+// PropLine's box scores for every approved model's stat (owner, 2026-10-09), after the sources GKR already had.
+const proplineEvidence=proplineHistory?new PropLineGkrEvidence(proplineHistory,approvedModelKeys):null;
+const secondLookAdapters=[statEvidence,currentContext,espnEvidence,freeHistoryEvidence,proplineEvidence]
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const secondLookResearch=secondLookAdapters.length===0?null:secondLookAdapters.length===1
   ? secondLookAdapters[0]:new CompositeResearchAdapter(secondLookAdapters);
