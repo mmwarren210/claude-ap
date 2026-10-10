@@ -48,7 +48,8 @@ export class ScrapedLineStore {
     private readonly archive: HistoryArchive | null = null,
     /** A line no source has seen for this long is treated as gone: a source that stopped running (the lergassy backup was
      * turned off, owner 2026-10-08) never takes its lines down, and a daily pull re-sees every live line within a day. */
-    private readonly maxUnseenMs = 26 * 3600_000) {}
+    // 10 hours (2026-10-09): PropLine pulls hourly; the free PrizePicks feed's longest gap is overnight (11 PM to 7 AM).
+    private readonly maxUnseenMs = 10 * 3600_000) {}
 
   private loading: Promise<void> | null = null;
   /**
@@ -83,7 +84,7 @@ export class ScrapedLineStore {
    */
   /**
    * Retired sources (feeds the server no longer pulls): the lines only they still hold leave now, instead of lingering at
-   * old numbers until the 26-hour unseen rule clears them. Lines another source lists just lose the retired source.
+   * old numbers until the 10-hour unseen rule clears them. Lines another source lists just lose the retired source.
    */
   async retire(sources: readonly string[]): Promise<number> {
     let removed = 0;

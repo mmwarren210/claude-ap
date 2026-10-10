@@ -33,7 +33,7 @@ export const windows: readonly { value: Window; label: string }[] = [
   { value: 'L5', label: 'L5' }, { value: 'L10', label: 'L10' }, { value: 'L15', label: 'L15' },
   { value: 'H2H', label: 'H2H' }, { value: 'AVG', label: 'Avg' }];
 
-const chipKeys: readonly (keyof Filters)[] = ['sport', 'game', 'market', 'lineType', 'evidence', 'date'];
+const chipKeys: readonly (keyof Filters)[] = ['date', 'sport', 'game', 'market', 'lineType', 'evidence'];
 const chipNames: Readonly<Partial<Record<keyof Filters, string>>> = { sport: 'All Sports', game: 'Games', market: 'Market',
   lineType: 'Line Style', evidence: 'Evidence', date: 'Date' };
 

@@ -375,7 +375,8 @@ export class BoardService {
       normalizedCount = lines.length;
       this.lastRefreshCounts = { ...this.lastRefreshCounts, normalized: normalizedCount };
       // The board is as old as its oldest line: a source may hand over lines it captured earlier.
-      const capturedAt = lines.reduce((earliest, line) => line.fetchedAt < earliest ? line.fetchedAt : earliest, fetchedAt);
+      // When the board was last pulled: the newest line's time (one leftover line no feed re-sends no longer dates the board).
+      const capturedAt = lines.length ? lines.reduce((latest, line) => line.fetchedAt > latest ? line.fetchedAt : latest, lines[0]!.fetchedAt) : fetchedAt;
       const board = boardSchema.parse({ provider: 'prizepicks', fetchedAt: capturedAt, lines });
 
       this.lastRefreshStage = 'research';
