@@ -19,6 +19,8 @@ export interface HistoryRead {
   readonly lean?: boolean;
   /** A Trend from CrownIQ's own graded lines, not the player's history. */
   readonly trend?: boolean;
+  /** A sudden role change against this side: a warning only. */
+  readonly roleChange?: string;
 }
 
 export const MIN_GAMES = 5;
@@ -47,19 +49,20 @@ export function historyRead(line: Pick<PropLine, 'threshold' | 'lineType' | 'ava
   const side = (need: number) => canMore && more >= need && average > line.threshold ? 'MORE' as const
     : canLess && 1 - more >= need && average < line.threshold ? 'LESS' as const : null;
   const play = side(bar), leaning = play ? null : side(LEAN_BAR[line.lineType] ?? 0.55);
-  const picked = play ?? leaning ?? 'PASS', changed = roleChange(line.threshold, values, picked);
-  const direction = changed ? 'PASS' : picked;
+  // A role change is a warning on the read, never a pass (owner, 2026-10-10: a good matchup can still make it right).
+  const direction = play ?? leaning ?? 'PASS', changed = roleChange(line.threshold, values, direction);
   const text = `Over in ${over} of last ${values.length} · avg ${average.toFixed(1)} vs ${line.threshold}` +
     (books === null ? '' : ` · books ${Math.round(books * 100)}% over`) + (changed ? ` · ${changed}` : '');
   return { direction, score: direction === 'PASS' ? null : Math.round((direction === 'MORE' ? more : 1 - more) * 100),
-    over, under, games: values.length, average: Math.round(average * 10) / 10, books, text, source, ...(leaning ? { lean: true } : {}) };
+    over, under, games: values.length, average: Math.round(average * 10) / 10, books, text, source, ...(leaning ? { lean: true } : {}),
+    ...(changed ? { roleChange: changed } : {}) };
 }
 
 /**
  * A sudden role change (owner, 2026-10-10: Jaziun Patterson had 7, 3, 0 carries, then 16 and 18 once the starter was hurt,
  * and still got LESS 16.5 at 99): the last two games both sit far from the earlier games' average (half again as much,
  * or a third less) and their average reaches the line against the pick. The older games no longer describe the
- * player's job, so the pick is passed. Values are newest first. Returns the plain reason, or null.
+ * player's job, so the pick gets a warning (never a pass: owner, 2026-10-10). Values are newest first. Returns the plain reason, or null.
  */
 export function roleChange(threshold: number, recent: readonly number[], direction: 'MORE' | 'LESS' | 'PASS'): string | null {
   const values = recent.filter((value) => Number.isFinite(value));
@@ -71,7 +74,7 @@ export function roleChange(threshold: number, recent: readonly number[], directi
   const down = direction === 'MORE' && now < before && now <= threshold * 1.1;
   if (!up && !down) return null;
   return `Role change: last 2 games ${last.join(' and ')} vs an average of ${before.toFixed(1)} before, near or ${up ? 'over' : 'under'} ` +
-    `${threshold}. The older games no longer fit, so this ${direction} is passed.`;
+    `${threshold}. Check the matchup and team news before playing this ${direction}.`;
 }
 
 /** True when the last two games both sit far from the earlier games' average, the same way (a new role, either way). */

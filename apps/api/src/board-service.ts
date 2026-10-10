@@ -75,7 +75,7 @@ export class BoardService {
     private readonly startupResearch: ResearchAdapter | null = null,
   ) {}
 
-  /** Recent values (newest first) for a line's player and stat, already looked up elsewhere; used to pass picks a role change broke. */
+  /** Recent values (newest first) for a line's player and stat, already looked up elsewhere; used to warn on picks a role change works against. */
   private recentValues: ((line: PropLine) => readonly number[] | null) | null = null;
   setRecentValues(lookup: (line: PropLine) => readonly number[] | null) { this.recentValues = lookup; }
 
@@ -244,8 +244,9 @@ export class BoardService {
     const analyses=result.analyses.map((scored)=>{
       const line=lineFor.get(scored.lineId),values=line&&this.recentValues?this.recentValues(line):null;
       const changed=line&&values?roleChange(line.threshold,values,scored.direction):null;
-      const analysis=changed?{...scored,direction:'PASS' as const,score:null,scoreBand:'PASS' as const,reasonCode:'ROLE_CHANGE',
-        rationale:changed,opposingFactors:[changed,...scored.opposingFactors]}:scored;
+      // A warning only: the score stays (owner, 2026-10-10: a favorable matchup can still make it a good pick).
+      const analysis=changed?{...scored,ruleChecks:[...scored.ruleChecks,'ROLE_CHANGE'],
+        opposingFactors:[changed,...scored.opposingFactors]}:scored;
       const audit=this.secondLookAudits[analysis.lineId];
       return audit?{...analysis,reviewStatus:'SECOND_LOOK' as const,secondLook:audit}:
         {...analysis,reviewStatus:'STANDARD' as const,secondLook:null};

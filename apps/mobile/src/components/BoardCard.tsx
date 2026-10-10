@@ -113,6 +113,8 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
       <View style={styles.evidence}><EvidenceBadge quality={analysis?.evidenceQuality ?? 'NONE'}
         detail={evidenceDetail(analysis)} /></View>
       <BooksBadge view={books?.get(line.id)} side={pass ? null : direction} />
+      {!gkrPass && analysis?.ruleChecks.includes('ROLE_CHANGE') && <Text style={[styles.aiNote, { color: colors.red }]}>
+        ⚠ {analysis.opposingFactors[0]}</Text>}
       {!!betaLine && <Text style={[styles.aiNote, { color: colors.gold }]}>{betaLine}</Text>}
       {!gkrPass && <ScoutVerdict read={ai} gkrDirection={analysis?.direction} />}
       {aiPick && <ScoutVerdict read={ai} gkrDirection={undefined} />}

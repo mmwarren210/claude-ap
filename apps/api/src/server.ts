@@ -10,7 +10,7 @@ import { sameGame } from './team-match.js';
 import { bookLines } from './book-picks.js';
 import type { BookFallback } from './book-picks.js';
 import type { ShopEntry, ShopPick } from './line-shop.js';
-import { HistoryReads, roleShift } from './history-read.js';
+import { HistoryReads } from './history-read.js';
 import { fantasyApp, fantasyBlocked, isFantasyMarket } from './fantasy-history.js';
 import { statApiValueFor } from './stat-api-gkr-evidence.js';
 import type { HistoryRead } from './history-read.js';
@@ -1482,12 +1482,7 @@ export function buildServer(options: ServerOptions = {}) {
     sharp:options.sharpProps?{prices:async()=>(await options.sharpProps!.current()).prices,
       pickem:async()=>(await options.sharpProps!.pickemLines()).lines}:null,
     appBoards:options.scrapedLines??null,pick6PayoutsConfirmed:options.edge.pick6PayoutsConfirmed===true,
-    history:options.internalHistory??null,values:async(line)=>{
-      // A role change (a starter hurt, a new job) makes the older games misleading, so Edge keeps only the last two and
-      // leans on the books instead.
-      const found=await historyReads.valuesFor(line);
-      return found&&roleShift(found.values)?{...found,values:found.values.slice(0,2)}:found;
-    },ledger:options.edge.ledger??null,
+    history:options.internalHistory??null,values:(line)=>historyReads.valuesFor(line),ledger:options.edge.ledger??null,
     payouts:options.payouts??DEFAULT_PAYOUTS,...(options.edge.alternateFactors?{alternateFactors:options.edge.alternateFactors}:{}),
     ...(options.edge.alternateCurve?{alternateCurve:options.edge.alternateCurve}:{}),
     valuesCacheFile:options.edge.valuesCacheFile??null,movement,snapshots:options.edge.snapshots??null,
