@@ -1,3 +1,4 @@
+import { roleChange } from './history-read.js';
 import { boardSchema, propLineSchema } from '@crowniq/contracts';
 import type { Analysis, Board, BoardResponse, Evidence, PlayerMedia, PropLine, SecondLookAudit } from '@crowniq/contracts';
 import { collectResearch, effectiveEvidenceExpiry, evaluateBoard, evaluateLine, ModelRegistry, researchTargetsFor } from '@crowniq/engine';
@@ -73,6 +74,10 @@ export class BoardService {
     /** Local history only: startup must never invoke paid or remote research adapters. */
     private readonly startupResearch: ResearchAdapter | null = null,
   ) {}
+
+  /** Recent values (newest first) for a line's player and stat, already looked up elsewhere; used to pass picks a role change broke. */
+  private recentValues: ((line: PropLine) => readonly number[] | null) | null = null;
+  setRecentValues(lookup: (line: PropLine) => readonly number[] | null) { this.recentValues = lookup; }
 
   /** Exclusive, so a refresh started while a large board is still restoring waits for it instead of being overwritten. */
   async restore():Promise<boolean>{return this.exclusive(()=>this.restoreNow());}
@@ -235,7 +240,12 @@ export class BoardService {
   private publish(source: Board, evidence: readonly Evidence[], now: Date): BoardResponse {
     const board = this.withIdentity(source, evidence, now);
     const result = evaluateBoard(board, evidence, this.models, now);
-    const analyses=result.analyses.map((analysis)=>{
+    const lineFor=new Map(board.lines.map((line)=>[line.id,line]));
+    const analyses=result.analyses.map((scored)=>{
+      const line=lineFor.get(scored.lineId),values=line&&this.recentValues?this.recentValues(line):null;
+      const changed=line&&values?roleChange(line.threshold,values,scored.direction):null;
+      const analysis=changed?{...scored,direction:'PASS' as const,score:null,scoreBand:'PASS' as const,reasonCode:'ROLE_CHANGE',
+        rationale:changed,opposingFactors:[changed,...scored.opposingFactors]}:scored;
       const audit=this.secondLookAudits[analysis.lineId];
       return audit?{...analysis,reviewStatus:'SECOND_LOOK' as const,secondLook:audit}:
         {...analysis,reviewStatus:'STANDARD' as const,secondLook:null};

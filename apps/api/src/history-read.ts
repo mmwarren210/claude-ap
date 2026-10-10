@@ -47,11 +47,41 @@ export function historyRead(line: Pick<PropLine, 'threshold' | 'lineType' | 'ava
   const side = (need: number) => canMore && more >= need && average > line.threshold ? 'MORE' as const
     : canLess && 1 - more >= need && average < line.threshold ? 'LESS' as const : null;
   const play = side(bar), leaning = play ? null : side(LEAN_BAR[line.lineType] ?? 0.55);
-  const direction = play ?? leaning ?? 'PASS';
+  const picked = play ?? leaning ?? 'PASS', changed = roleChange(line.threshold, values, picked);
+  const direction = changed ? 'PASS' : picked;
   const text = `Over in ${over} of last ${values.length} · avg ${average.toFixed(1)} vs ${line.threshold}` +
-    (books === null ? '' : ` · books ${Math.round(books * 100)}% over`);
+    (books === null ? '' : ` · books ${Math.round(books * 100)}% over`) + (changed ? ` · ${changed}` : '');
   return { direction, score: direction === 'PASS' ? null : Math.round((direction === 'MORE' ? more : 1 - more) * 100),
     over, under, games: values.length, average: Math.round(average * 10) / 10, books, text, source, ...(leaning ? { lean: true } : {}) };
+}
+
+/**
+ * A sudden role change (owner, 2026-10-10: Jaziun Patterson had 7, 3, 0 carries, then 16 and 18 once the starter was hurt,
+ * and still got LESS 16.5 at 99): the last two games both sit far from the earlier games' average (half again as much,
+ * or a third less) and their average reaches the line against the pick. The older games no longer describe the
+ * player's job, so the pick is passed. Values are newest first. Returns the plain reason, or null.
+ */
+export function roleChange(threshold: number, recent: readonly number[], direction: 'MORE' | 'LESS' | 'PASS'): string | null {
+  const values = recent.filter((value) => Number.isFinite(value));
+  if (direction === 'PASS' || !roleShift(values)) return null;
+  const last = values.slice(0, 2), prior = values.slice(2, 12);
+  const now = (last[0] + last[1]) / 2, before = prior.reduce((sum, value) => sum + value, 0) / prior.length;
+  // The new role has to reach the line (within a tenth of it) against the pick's side.
+  const up = direction === 'LESS' && now > before && now >= threshold * 0.9;
+  const down = direction === 'MORE' && now < before && now <= threshold * 1.1;
+  if (!up && !down) return null;
+  return `Role change: last 2 games ${last.join(' and ')} vs an average of ${before.toFixed(1)} before, near or ${up ? 'over' : 'under'} ` +
+    `${threshold}. The older games no longer fit, so this ${direction} is passed.`;
+}
+
+/** True when the last two games both sit far from the earlier games' average, the same way (a new role, either way). */
+export function roleShift(recent: readonly number[]): boolean {
+  const values = recent.filter((value) => Number.isFinite(value));
+  if (values.length < 5) return false;
+  const last = values.slice(0, 2), prior = values.slice(2, 12), before = prior.reduce((sum, value) => sum + value, 0) / prior.length;
+  const margin = Math.max(1, before * 0.5);
+  return last.every((value) => value >= before + margin && value >= before * 1.5) ||
+    last.every((value) => value <= before - margin && value <= before / 1.5);
 }
 
 /** Where a player's recent values for a stat come from (CrownIQ's history, then the free public sources). */
@@ -60,20 +90,31 @@ export type HistoryValues = (line: PropLine) => Promise<{ values: number[]; sour
 /** History Reads for many lines, each player and stat looked up once per ten minutes. */
 export class HistoryReads {
   private cache = new Map<string, { until: number; value: Promise<{ values: number[]; source: string } | null> }>();
+  /** The last values each lookup returned, for callers that can't wait (the GKR board's role-change check). */
+  private settled = new Map<string, readonly number[]>();
   constructor(private readonly lookup: HistoryValues, private readonly clock: () => Date = () => new Date()) {}
 
   /** A player's recent values for a line's stat (newest first), cached for 10 minutes; null without any. */
   valuesFor(line: PropLine) { return this.values(line); }
 
-  private values(line: PropLine) {
+  /** The values already looked up for a line's player and stat (newest first), without waiting; null when none yet. */
+  knownValues(line: Pick<PropLine, 'sport' | 'playerId' | 'market' | 'id'>) { return this.settled.get(this.key(line)) ?? null; }
+
+  private key(line: Pick<PropLine, 'sport' | 'playerId' | 'market' | 'id'>) {
     // Fantasy score differs by app (PrizePicks full PPR, Underdog half PPR...), so its values are cached per app.
     const app = /fantasy/.test(line.market) ? `|${line.id.split(':')[0]}` : '';
-    const key = `${line.sport}|${line.playerId}|${line.market}${app}`, now = this.clock().getTime(), cached = this.cache.get(key);
+    return `${line.sport}|${line.playerId}|${line.market}${app}`;
+  }
+
+  private values(line: PropLine) {
+    const key = this.key(line), now = this.clock().getTime(), cached = this.cache.get(key);
     if (cached && cached.until > now) return cached.value;
     // A lookup that fails (a source still loading) isn't kept: the next read asks again. Callers that can wait for the
     // next pass (Edge) see the failure; History Reads below treat it as no history for now.
     const value = this.lookup(line);
-    void value.catch(() => { if (this.cache.get(key)?.value === value) this.cache.delete(key); });
+    void value.then((found) => { if (found?.values.length) this.settled.set(key, found.values); },
+      () => { if (this.cache.get(key)?.value === value) this.cache.delete(key); });
+    if (this.settled.size > 40_000) this.settled.clear();
     this.cache.set(key, { until: now + 10 * 60_000, value });
     if (this.cache.size > 20_000) this.cache.clear();
     return value;
