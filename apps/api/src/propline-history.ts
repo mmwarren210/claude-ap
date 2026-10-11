@@ -10,12 +10,16 @@ import type { PropLineClient } from './scrapers/propline.js';
 // April 2026 and has gaps for some players, so a read is "the last games PropLine holds", never "the last games played".
 
 type Stats = Readonly<Record<string, number>>;
-interface Game { readonly at: string; readonly opponent: string | null; readonly stats: Stats }
+export interface Game { readonly at: string; readonly opponent: string | null; readonly stats: Stats;
+  /** The game's two teams (PropLine's own player_team/opponent fields are sometimes swapped, so these decide). */
+  readonly home?: string | null; readonly away?: string | null }
 interface Entry { readonly at: number; readonly games: readonly Game[] | null;
   /** How long this entry stays fresh: the nightly pull keeps its answers ~26 hours (default: the 6-hour TTL). */
   readonly keepMs?: number;
   /** Fetched with the deep game log (up to 100 games, owner 2026-10-11); older entries hold 30 and get refetched at night. */
-  readonly deep?: boolean }
+  readonly deep?: boolean;
+  /** Games carry their two teams (GKR 2's opponent read); entries without them are refetched at night. */
+  readonly teams?: boolean }
 /** The nightly pull's answers last until the next night's run (owner, 2026-10-11). */
 export const NIGHTLY_KEEP_MS = 26 * 3600_000;
 
@@ -167,7 +171,7 @@ export class PropLineHistory {
     const key = `${sportKey}|${normalizedName(playerName)}`, now = this.clock();
     const cached = this.cache.get(key);
     // The nightly pull also refetches anything from before the deep game log, however fresh.
-    if (cached && (!refresh || cached.deep) && now - cached.at < (refresh ? refresh.olderThanMs : cached.keepMs ?? this.options.ttlMs ?? 6 * 3600_000))
+    if (cached && (!refresh || (cached.deep && cached.teams)) && now - cached.at < (refresh ? refresh.olderThanMs : cached.keepMs ?? this.options.ttlMs ?? 6 * 3600_000))
       return cached.games;
     const pending = this.loading.get(key);
     if (pending) return pending;
@@ -177,19 +181,20 @@ export class PropLineHistory {
     this.stats.requests++;
     const request = this.slot(async () => {
       const body = await this.client.get<{ games?: { commence_time?: string; status?: string; opponent?: string | null;
-        stats?: Record<string, unknown> }[] }>(`/v1/sports/${sportKey}/players/${encodeURIComponent(playerName)}/games?limit=100`);
+        home_team?: string | null; away_team?: string | null; stats?: Record<string, unknown> }[] }>(`/v1/sports/${sportKey}/players/${encodeURIComponent(playerName)}/games?limit=100`);
       return (body.games ?? []).flatMap((game): Game[] => {
         if (game.status !== 'final' || !game.commence_time || Number.isNaN(Date.parse(game.commence_time))) return [];
         // NFL preseason (July and August) is not the player's real workload.
         if (sportKey === 'football_nfl' && /^\d{4}-0[78]-/.test(game.commence_time)) return [];
         const stats = Object.fromEntries(Object.entries(game.stats ?? {}).filter((entry): entry is [string, number] =>
           typeof entry[1] === 'number' && Number.isFinite(entry[1])));
-        return [{ at: new Date(game.commence_time).toISOString(), opponent: game.opponent ?? null, stats }];
+        return [{ at: new Date(game.commence_time).toISOString(), opponent: game.opponent ?? null, stats,
+          home: game.home_team ?? null, away: game.away_team ?? null }];
       });
     }).then((games) => {
       const found = games.length ? games : null;
       if (found) this.stats.found++; else this.stats.empty++;
-      this.cache.set(key, { at: this.clock(), games: found, deep: true, ...(refresh ? { keepMs: refresh.keepMs } : {}) });
+      this.cache.set(key, { at: this.clock(), games: found, deep: true, teams: true, ...(refresh ? { keepMs: refresh.keepMs } : {}) });
       this.dirty = true;
       return found;
     }).finally(() => this.loading.delete(key));
@@ -204,20 +209,44 @@ export class PropLineHistory {
    */
   async values(line: Pick<PropLine, 'sport' | 'eventId' | 'eventStartTime' | 'playerName' | 'market'> & { league?: string | null },
     waitMs = Infinity): Promise<{ values: number[]; source: string } | null | 'PENDING'> {
-    const read = proplineStat(sportOf(line), line.market), sportKey = this.sportKey(line);
+    const read = proplineStat(sportOf(line), line.market);
+    if (!read) return null;
+    const games = await this.gamesFor(line, waitMs);
+    if (games === 'PENDING') return 'PENDING';
+    if (!games) return null;
+    const values = valuesFrom(games, read, Date.parse(line.eventStartTime));
+    return values.length ? { values, source: 'PropLine box scores' } : null;
+  }
+
+  /** The player's PropLine games with every stat (any order), null when PropLine has none; 'PENDING' as in `values`. */
+  async gamesFor(line: Pick<PropLine, 'sport' | 'eventId' | 'playerName'> & { league?: string | null },
+    waitMs = Infinity): Promise<readonly Game[] | null | 'PENDING'> {
+    const sportKey = this.sportKey(line);
     // A soccer line with no league to go on tries PropLine's soccer leagues in turn (each answer is kept 6 hours).
     const keys = sportKey ? [sportKey] : line.sport === 'SOCCER' ? Object.values(SOCCER_KEYS) : [];
-    if (!read || !keys.length) return null;
+    if (!keys.length) return null;
     const request = (async () => {
       for (const key of keys) { const games = await this.games(key, line.playerName); if (games !== null) return games; }
       return null;
     })();
     const games = Number.isFinite(waitMs) ? await Promise.race([request, new Promise<'PENDING'>((done) => {
       setTimeout(() => done('PENDING'), waitMs); })]) : await request;
-    if (games === 'PENDING') return 'PENDING';
-    if (!games) return null;
-    const values = valuesFrom(games, read, Date.parse(line.eventStartTime));
-    return values.length ? { values, source: 'PropLine box scores' } : null;
+    return games === 'PENDING' ? 'PENDING' : games ?? null;
+  }
+
+  /** The player's cached PropLine games (no request), null when none are cached. */
+  async cachedFor(line: Pick<PropLine, 'sport' | 'eventId' | 'playerName'> & { league?: string | null }): Promise<readonly Game[] | null> {
+    await this.load();
+    const sportKey = this.sportKey(line);
+    const keys = sportKey ? [sportKey] : line.sport === 'SOCCER' ? Object.values(SOCCER_KEYS) : [];
+    for (const key of keys) { const games = this.cache.get(`${key}|${normalizedName(line.playerName)}`)?.games; if (games) return games; }
+    return null;
+  }
+
+  /** The cached players' games for one PropLine sport (no requests): what the opponent index reads. */
+  cachedGames(sportKey: string): (readonly Game[])[] {
+    const prefix = `${sportKey}|`;
+    return [...this.cache].flatMap(([key, entry]) => key.startsWith(prefix) && entry.games ? [entry.games] : []);
   }
 
   /**

@@ -100,6 +100,7 @@ import type { TipModelRead, TipSuggestion } from './tip-models.js';
 import { gameCounts, marketCounts, registerEdgeRoutes, sportCounts } from './edge/routes.js';
 import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
+import type { Gkr2 } from './gkr2.js';
 
 const gzipAsync = promisify(gzip);
 
@@ -173,6 +174,8 @@ export interface ServerOptions {
   payouts?: Payouts;
   /** Shadow records: Books picks, sportsbook-tab picks and game-script snapshots, graded in their own record. */
   shadowRecord?: ShadowRecord | null;
+  /** GKR 2 (owner, 2026-10-11), scored in shadow beside GKR on the lines it can read. */
+  gkr2?: Gkr2 | null;
   /** Every standard line graded after its game, for Trends (CrownIQ's own hit rates). */
   baseRates?: BaseRates | null;
   /** Beta feedback: testers' bug reports and suggestions, and the patch notes that answer them. */
@@ -392,6 +395,16 @@ export function buildServer(options: ServerOptions = {}) {
           if(!line||analysis.direction==='PASS'||analysis.score===null||!scriptEligible(line))continue;
           const script=gameScriptFor(line,games);
           if(script)picks.push({kind:'script',line,side:analysis.direction,strength:analysis.score,script});
+        }
+      }
+      // GKR 2 and GKR on the same lines (only lines GKR 2 could read), so the two records compare fairly.
+      if(options.gkr2){
+        const live=new Map(board.analyses.map((analysis)=>[analysis.lineId,analysis]));
+        for(const analysis of await options.gkr2.analyses(board.board.lines,service.getEvidence())){
+          const line=lines.get(analysis.lineId),gkr=live.get(analysis.lineId);
+          if(!line)continue;
+          if(analysis.direction!=='PASS'&&analysis.score!==null)picks.push({kind:'gkr2',line,side:analysis.direction,strength:analysis.score});
+          if(gkr&&gkr.direction!=='PASS'&&gkr.score!==null)picks.push({kind:'gkr1',line,side:gkr.direction,strength:gkr.score});
         }
       }
       // Free History Reads on PrizePicks lines GKR doesn't play, graded in their own record.
@@ -1961,6 +1974,12 @@ export function buildServer(options: ServerOptions = {}) {
   });
   app.get('/v1/version',async()=>({commit:(process.env.RAILWAY_GIT_COMMIT_SHA??process.env.CROWNIQ_COMMIT??'').slice(0,7)||null,
     startedAt:serverStartedAt}));
+  // GKR's real hit rate by cushion (display only, never a score), kept 10 minutes.
+  let hitCurve:{at:number;value:unknown}|null=null;
+  app.get('/v1/gkr/hit-curve',async()=>{
+    if(!hitCurve||now().getTime()-hitCurve.at>10*60_000)hitCurve={at:now().getTime(),value:await options.product?.gkrHitCurve()??null};
+    return {curve:hitCurve.value};
+  });
   // CrownIQ's own track record: each source's graded hit rate by sport and stat, and the base rates behind Trends.
   app.get('/v1/hit-rates',async()=>({sources:{...await options.shadowRecord?.hitRates()??{},...await options.aiPicks?.hitRates()??{}},
     baseRates:await options.baseRates?.status()??null}));
@@ -2431,6 +2450,8 @@ export function buildServer(options: ServerOptions = {}) {
     });
     admin.get('/members', async (_request, reply) => options.product ? options.product.membership()
       : reply.code(503).send({ code: 'PRODUCT_UNCONFIGURED' }));
+    admin.get('/gkr2', async (_request, reply) => options.shadowRecord ? options.shadowRecord.compare(['gkr1','gkr2'])
+      : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
     admin.get('/shadow', async (_request, reply) => options.shadowRecord ? options.shadowRecord.status()
       : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
     admin.post('/shadow/record', async (_request, reply) => options.shadowRecord ? (await recordShadow()) ?? { found: {}, added: 0 }

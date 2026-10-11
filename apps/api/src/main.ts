@@ -25,6 +25,7 @@ import { SharpPropsFeed } from './context/sharp-props.js';
 import { SlotLedger } from './scrapers/slot-ledger.js';
 import { ContextFeeds, injuryReports } from './context/feeds.js';
 import { proplineGameLines } from './context/propline-game-lines.js';
+import { createGkr2Registry, Gkr2 } from './gkr2.js';
 import { espnInjuries } from './context/espn-injuries.js';
 import { ClaudeWebResearchAdapter } from './claude-web-research.js';
 import { ProductLedger } from './product-ledger.js';
@@ -336,6 +337,12 @@ const espnEvidence=process.env.GKR_ESPN_EVIDENCE==='false'?null:new EspnGkrEvide
   maxPlayers:process.env.GKR_ESPN_MAX_PLAYERS?Number(process.env.GKR_ESPN_MAX_PLAYERS):undefined});
 const freeHistoryEvidence=playerHistory?new FreeHistoryEvidence(playerHistory,approvedModelKeys):null;
 // PropLine's box scores for every approved model's stat (owner, 2026-10-09), after the sources GKR already had.
+// Game lines, shared by the server (game script, player page) and GKR 2.
+const gameLines=propLine?proplineGameLines(propLine):null;
+// GKR 2 (owner, 2026-10-11): GKR's approved models, direction-aware, every factor from PropLine box scores plus the
+// opponent and game script, scored in shadow beside GKR. CROWNIQ_GKR2=off leaves it out.
+const gkr2=proplineHistory&&process.env.CROWNIQ_GKR2!=='off'?new Gkr2(proplineHistory,
+  (()=>{const registry=createGkr2Registry(models.versions(),(key)=>approvedModelKeys.includes(key));return ()=>registry;})(),gameLines):null;
 const proplineEvidence=proplineHistory?new PropLineGkrEvidence(proplineHistory,approvedModelKeys):null;
 const secondLookAdapters=[statEvidence,currentContext,espnEvidence,freeHistoryEvidence,proplineEvidence]
   .filter((item):item is NonNullable<typeof item>=>!!item);
@@ -466,7 +473,7 @@ const app = buildServer({ ufcHistory, soccerHistory, adminToken: process.env.ADM
     return {store,reader,grader:reader?new TipGrader(store,reader):null};})(),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
-  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,proplineHistory,bookAccuracy,contextFeeds,gameLines:propLine?proplineGameLines(propLine):null,injuries:process.env.CROWNIQ_ESPN_INJURIES==='off'?null:espnInjuries(),sharpProps,evBreakEven,payouts,
+  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,proplineHistory,bookAccuracy,contextFeeds,gameLines,gkr2,injuries:process.env.CROWNIQ_ESPN_INJURIES==='off'?null:espnInjuries(),sharpProps,evBreakEven,payouts,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,

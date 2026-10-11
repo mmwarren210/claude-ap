@@ -390,8 +390,41 @@ export class ProductLedger {
     const group=(key:(row:(typeof decided)[number])=>string)=>Object.fromEntries([...new Set(decided.map(key))].sort()
       .map((name)=>{const rows=decided.filter((row)=>key(row)===name);return [name,{graded:rows.length,
         hitRate:Math.round(rows.filter((row)=>row.grade==='WIN').length/rows.length*1000)/1000,buckets:table(rows)}];}));
+    // What actually predicts a hit: the cushion (projection to line, in spreads) and, for contrast, the context score.
+    const banded=(value:(row:(typeof decided)[number])=>number|null|undefined,edges:readonly number[])=>group((row)=>{
+      const v=value(row);if(v===null||v===undefined)return 'unknown';
+      const low=[...edges].reverse().find((edge)=>v>=edge);return low===undefined?`<${edges[0]}`:`>=${low}`;});
     return {graded:decided.length,overall:table(decided),bySport:group((row)=>row.sport),bySide:group((row)=>row.direction),
-      byVersionFamily:group((row)=>row.modelVersion.includes('-SH2-')?'SH2':row.modelVersion.includes('LESS')?'LESS-AWARE':'v1')};
+      byVersionFamily:group((row)=>/-SH\d-/.exec(row.modelVersion)?.[0].slice(1,4)??'v1'),
+      byCushion:banded((row)=>row.thresholdCushion,[0,.25,.5,.75,1,1.5,2]),byContext:banded((row)=>row.contextScore,[0,60,70,80,90]),
+      byLineType:group((row)=>row.lineType),hitCurve:await this.gkrHitCurve()};
+  }
+  /**
+   * GKR's real hit rate by cushion (owner, 2026-10-11, the calibration fix): of 962 graded GKR picks, the cushion — how many
+   * spreads the projection clears the line by — is what tracks hits (1.5+ spreads hit ~80%, under a quarter ~53%), while
+   * the score's context part does not. Each band's rate comes from graded picks, smoothed so a bigger cushion never shows
+   * a lower rate. Display only: it never changes a GKR score. Null until 150 picks are graded.
+   */
+  async gkrHitCurve(){
+    const decided=(await this.read()).decisions.filter((item)=>(item.grade==='WIN'||item.grade==='LOSS')&&item.thresholdCushion!==null);
+    if(decided.length<150)return null;
+    const edges=[0,.25,.5,.75,1,1.5,Infinity];
+    let bands=edges.slice(0,-1).map((from,index)=>{const rows=decided.filter((row)=>row.thresholdCushion!>=from&&row.thresholdCushion!<edges[index+1]);
+      return {from,to:edges[index+1]===Infinity?null:edges[index+1],graded:rows.length,won:rows.filter((row)=>row.grade==='WIN').length};})
+      .filter((band)=>band.graded>0);
+    // Pool adjacent bands that break the order (or hold under 20 picks) until rates only rise with the cushion.
+    for(let changed=true;changed;){
+      changed=false;
+      for(let index=0;index<bands.length-1;index++){
+        const a=bands[index]!,b=bands[index+1]!;
+        if(a.won/a.graded>b.won/b.graded||a.graded<20||b.graded<20){
+          bands=[...bands.slice(0,index),{from:a.from,to:b.to,graded:a.graded+b.graded,won:a.won+b.won},...bands.slice(index+2)];
+          changed=true;break;
+        }
+      }
+    }
+    return {graded:decided.length,bands:bands.map((band)=>({from:band.from,to:band.to,graded:band.graded,
+      hitRate:Math.round(band.won/band.graded*1000)/1000}))};
   }
   /** Issues one member key for a paid plan (shown once; only its hash is kept). */
   async issueMemberKey(plan:PaidPlan){return this.exclusive(async()=>{

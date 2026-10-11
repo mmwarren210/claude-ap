@@ -16,8 +16,9 @@ import { normalizedName } from './context/match.js';
 // - history: a free History Read's side (recent results against the line) where GKR doesn't play.
 // - script: a GKR decision with the game's expected script saved beside it (favorite and margin, total), for the
 //   game-script proposal (docs/PROPOSAL_GAME_SCRIPT.md).
+// - gkr1 / gkr2: GKR's play and GKR 2's (owner, 2026-10-11) on the lines GKR 2 could read, graded side by side.
 
-export type ShadowKind = 'books' | 'book:draftkings' | 'book:hardrock' | 'book:pinnacle' | 'book:kalshi' | 'script' | 'gkr' | 'beta' | 'beta-pass' | 'history' | 'trend' | 'book-history' | 'book-value';
+export type ShadowKind = 'books' | 'book:draftkings' | 'book:hardrock' | 'book:pinnacle' | 'book:kalshi' | 'script' | 'gkr' | 'beta' | 'beta-pass' | 'history' | 'trend' | 'book-history' | 'book-value' | 'gkr1' | 'gkr2';
 export type ShadowGrade = 'PENDING' | 'WIN' | 'LOSS' | 'PUSH' | 'DNP' | 'VOID';
 
 /** The game's expected script when the pick was saved. */
@@ -157,6 +158,31 @@ export class ShadowRecord {
       .map((entry) => ({ probability: entry.strength! / 100, hit: entry.grade === 'WIN', sport: entry.lineSnapshot.sport }));
   }
 
+  /** Graded record of some kinds by score bucket and sport, for comparing two models on the same lines (GKR and GKR 2). */
+  async compare(kinds: readonly ShadowKind[]) {
+    await this.load();
+    const buckets = [[0, 67], [68, 74], [75, 79], [80, 84], [85, 89], [90, 94], [95, 100]] as const;
+    const empty = () => ({ picks: 0, graded: 0, wins: 0, hitRate: null as number | null });
+    const tally = (row: ReturnType<typeof empty>, entry: ShadowEntry) => {
+      row.picks++;
+      if (entry.grade === 'WIN' || entry.grade === 'LOSS') { row.graded++; if (entry.grade === 'WIN') row.wins++; }
+      row.hitRate = row.graded ? Math.round(row.wins / row.graded * 1000) / 1000 : null;
+    };
+    return Object.fromEntries(kinds.map((kind) => {
+      const all = empty(), byBucket: Record<string, ReturnType<typeof empty>> = {}, bySport: Record<string, ReturnType<typeof empty>> = {},
+        bySide: Record<string, ReturnType<typeof empty>> = {};
+      for (const entry of this.entries.values()) {
+        if (entry.kind !== kind) continue;
+        tally(all, entry);
+        const score = entry.strength ?? 0, bucket = buckets.find(([low, high]) => score >= low && score < high + 1);
+        if (bucket) tally(byBucket[`${bucket[0]}-${bucket[1]}`] ??= empty(), entry);
+        tally(bySport[entry.lineSnapshot.sport] ??= empty(), entry);
+        tally(bySide[entry.side] ??= empty(), entry);
+      }
+      return [kind, { all, byBucket, bySport, bySide }];
+    }));
+  }
+
   /** Graded record by source and sport, and by source, sport and stat (wins over wins plus losses). */
   async hitRates(): Promise<Record<string, { graded: number; wins: number; hitRate: number }>> {
     await this.load();
@@ -181,7 +207,7 @@ export class ShadowRecord {
       const wins = done.filter((entry) => entry.grade === 'WIN').length;
       return { picks: group.length, graded: done.length, wins, hitRate: done.length ? Math.round(wins / done.length * 1000) / 1000 : null };
     };
-    const kinds: ShadowKind[] = ['books', 'book:draftkings', 'book:hardrock', 'book:pinnacle', 'book:kalshi', 'script', 'gkr', 'beta', 'beta-pass', 'history', 'trend', 'book-history', 'book-value'];
+    const kinds: ShadowKind[] = ['books', 'book:draftkings', 'book:hardrock', 'book:pinnacle', 'book:kalshi', 'script', 'gkr', 'beta', 'beta-pass', 'history', 'trend', 'book-history', 'book-value', 'gkr1', 'gkr2'];
     // Game script: how GKR's side did with the script for it or against it. A team favored by 7+ or a high total
     // favors MORE on volume stats; an underdog by 7+ or a low total favors LESS.
     const scripts = all.filter((entry) => entry.kind === 'script' && entry.script);

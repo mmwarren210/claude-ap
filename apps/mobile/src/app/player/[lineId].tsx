@@ -15,6 +15,7 @@ import { BooksBadge } from '../../components/ui/BooksBadge';
 import { useBooks } from '../../use-books';
 import { BookLadder } from '../../components/BookLadder';
 import { useBeta } from '../../use-model';
+import { hitBand, useHitCurve } from '../../use-hit-curve';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { alpha } from '../../components/ui/color';
 import { GhostButton, PrimaryButton, Segmented } from '../../components/ui/Controls';
@@ -120,6 +121,9 @@ export default function PlayerResearch() {
   const line = data?.board.lines.find((item) => item.id === (selectedId ?? lineId));
   const analyses = useMemo(() => new Map(data?.analyses.map((item) => [item.lineId, item])), [data]);
   const analysis = line ? analyses.get(line.id) : undefined;
+  // How often graded GKR picks this far from the line have hit (the calibration fix, 2026-10-11). Display only.
+  const curve = useHitCurve();
+  const hitRate = analysis && analysis.direction !== 'PASS' ? hitBand(curve, analysis.thresholdCushion) : null;
   const related = useMemo(() => line ? data?.board.lines.filter((item) => item.eventId === line.eventId &&
     item.playerId === line.playerId) ?? [] : [], [data, line]);
   const ladder = useMemo(() => line ? related.filter((item) => item.market === line.market &&
@@ -246,6 +250,8 @@ export default function PlayerResearch() {
             tint={colors.mint} who={SCOUT} /><Text style={styles.scoutTag}>{SCOUT.toUpperCase()}</Text></View>
             : <ScoreRing score={analysis?.score ?? null} band={analysis?.scoreBand} size={84} />}
         </View>
+        {hitRate && !aiSide ? <Text style={styles.hitRate}>GKR picks this far from the line have hit {Math.round(hitRate.hitRate * 100)}%
+          ({hitRate.graded} graded)</Text> : null}
         <View style={styles.styles}>
           {(['GOBLIN', 'KINGS', 'DEMON'] as const).map((style) => {
             const available = ladder.some((item) => lineStyleOf(item.lineType) === style);
@@ -418,6 +424,7 @@ export default function PlayerResearch() {
 }
 
 const styles = StyleSheet.create({
+  hitRate: { color: colors.textMuted, fontSize: 12, marginTop: 8, textAlign: 'center' },
   scoutTag: { color: colors.blue, fontSize: 11, fontWeight: '800', letterSpacing: 1, marginTop: 2 },
   safe: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 28, gap: 14 },
