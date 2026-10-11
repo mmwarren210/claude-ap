@@ -23,7 +23,7 @@ function guestDeviceId():string{
 const noSubscription=()=>()=>undefined;
 const guestMessages:Record<string,string>={TRIALS_ALL_USED:'All free trial keys have been claimed. Thanks for your interest in CrownIQ! Watch for the next round.',
   GUEST_PASS_FULL:'This guest link or trial key has already been used.',
-  GUEST_PASS_EXPIRED:'Your free trial has ended. Thanks for testing CrownIQ! Sign up below to keep your picks and profile.',
+  GUEST_PASS_EXPIRED:'Your free trial has ended. Thanks for testing CrownIQ! Answer 3 quick questions for 7 more free days, or sign up below to keep your picks and profile.',
   GUEST_PASS_INVALID:'This guest link is not valid.',TOO_MANY_ATTEMPTS:'Too many attempts. Please wait a minute.'};
 
 type Profile={publicId:string;username:string;email:string|null;plan:'FREE'|'LIFETIME'|'GUEST'|'SUSPENDED'|'DEMO';
@@ -41,8 +41,11 @@ type AuthContext={profile:Profile|null;register:(username:string,email:string,pa
   resetPassword:(login:string,code:string,next:string)=>Promise<void>;
   /** True in demo mode: sample data, no account, no server calls. */
   demo:boolean;enterDemo:()=>void;
-  /** A guest link is signing in, or why it could not. */
-  guest:{signingIn:boolean;message:string}};
+  /** A guest link is signing in, or why it could not. `expired`: a trial pass that ended (it can still take the poll). */
+  guest:{signingIn:boolean;message:string;expired:boolean};
+  /** Answers the end-of-trial poll (7 more free days): signed in, or with the trial link after the pass ended. */
+  answerTrialPoll:(answers:TrialPollAnswers)=>Promise<void>};
+export type TrialPollAnswers={recommend:'YES'|'MAYBE'|'NO';liked:string[];improve:string|null};
 const Context=createContext<AuthContext|null>(null);
 const base=apiBaseUrl();
 
@@ -94,8 +97,8 @@ export function AuthProvider({children}:{children:ReactNode}){
   const guestLink=useSyncExternalStore(noSubscription,()=>!!guestCode()&&!!base,()=>false);
   const [demoChoice,setDemo]=useState<boolean|null>(null);
   const demo=demoChoice??demoLink;
-  const [guestResult,setGuestResult]=useState<{done:boolean;message:string}>({done:false,message:''});
-  const guest=useMemo(()=>({signingIn:guestLink&&!guestResult.done,message:guestResult.message}),[guestLink,guestResult]);
+  const [guestResult,setGuestResult]=useState<{done:boolean;message:string;expired?:boolean}>({done:false,message:''});
+  const guest=useMemo(()=>({signingIn:guestLink&&!guestResult.done,message:guestResult.message,expired:!!guestResult.expired}),[guestLink,guestResult]);
   useEffect(()=>{
     const code=guestCode();
     if(!code||!base)return;
@@ -105,6 +108,7 @@ export function AuthProvider({children}:{children:ReactNode}){
         const response=await fetch(`${base}/v1/auth/guest`,{method:'POST',headers:{'content-type':'application/json'},
           body:JSON.stringify({code,deviceId:guestDeviceId()})});
         if(!response.ok){const payload=await response.json().catch(()=>({})) as {code?:string};
+          if(payload.code==='GUEST_PASS_EXPIRED'){if(active)setGuestResult({done:true,message:guestMessages.GUEST_PASS_EXPIRED,expired:true});return;}
           throw new Error(guestMessages[payload.code??'']??'Could not open the guest link. Try again.');}
         const value=await parseSession(response);
         if(active){signIn(value);setGuestResult({done:true,message:''});
@@ -120,6 +124,17 @@ export function AuthProvider({children}:{children:ReactNode}){
   const value=useMemo<AuthContext>(()=>({
     profile:session?.profile??(demo?demoProfile:null),demo,guest,
     enterDemo:()=>setDemo(true),
+    answerTrialPoll:async(answers)=>{
+      if(!base)throw new Error('Set EXPO_PUBLIC_API_URL to your CrownIQ server first.');
+      const signedIn=!!session?.token, code=guestCode();
+      const response=await fetch(`${base}${signedIn?'/v1/trial/poll':'/v1/auth/trial-poll'}`,{method:'POST',
+        headers:{'content-type':'application/json',...(signedIn?{authorization:`Bearer ${session!.token}`}:{})},
+        body:JSON.stringify(signedIn?answers:{code,deviceId:guestDeviceId(),answers})});
+      if(!response.ok){const payload=await response.json().catch(()=>({})) as {code?:string};
+        throw new Error(payload.code==='POLL_ALREADY_ANSWERED'?'You already answered the poll. Thanks!'
+          :payload.code==='TRIAL_NOT_FOUND'?'This poll is for the 2-day trial passes.':'Could not send your answers. Try again.');}
+      signIn(await parseSession(response));setGuestResult({done:true,message:''});
+    },
     register:async(username,email,password)=>{
       if(!base)throw new Error('Set EXPO_PUBLIC_API_URL to your CrownIQ server first.');
       const response=await fetch(`${base}/v1/auth/register`,{method:'POST',

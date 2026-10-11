@@ -7,6 +7,7 @@ import { useDraft } from '../../use-draft';
 import { useGkrPlusAccess } from '../../use-gkr-plus';
 import { View } from 'react-native';
 import { NoticeBanner } from '../../components/NoticeBanner';
+import { TrialPollCard } from '../../components/TrialPoll';
 
 function TabIcon({ name, active, color, focused }: { name: IconName; active: IconName; color: ColorValue;
   focused: boolean }) {
@@ -18,7 +19,7 @@ const icon = (name: IconName, active: IconName) => function tabIcon({ color, foc
 export default function TabLayout() {
   const { legs } = useDraft();
   const gkrPlus = useGkrPlusAccess();
-  return <View style={{ flex: 1 }}><NoticeBanner /><Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.mint,
+  return <View style={{ flex: 1 }}><NoticeBanner /><TrialPollCard /><Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.mint,
     tabBarInactiveTintColor: colors.textMuted,
     tabBarStyle: { backgroundColor: colors.background, borderTopColor: colors.border },
     tabBarLabelStyle: { fontSize: 10, fontWeight: '700' },

@@ -31,3 +31,23 @@ test('trial keys: single use, 2 days from first use, off the member list after, 
   assert.equal(await ledger.isTrialKey('nope'), false);
   assert.ok(other);
 });
+
+test('end-of-trial poll: opens in the last day, works after the pass ends, adds 7 days once', async () => {
+  let now = new Date('2026-10-11T12:00:00Z');
+  const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'poll-')), 'ledger.json'), 'CROWN_STRONG', () => now);
+  const [key] = await ledger.issueTrialKeys(1);
+  const device = 'device-pollpollpollpoll';
+  const session = await ledger.trialLogin(key, device);
+  const accountId = (await ledger.authenticate(session.token))!.accountId;
+  assert.equal((await ledger.trialPollStatus(accountId)).eligible, false, 'not in the first day');
+  await assert.rejects(ledger.answerTrialPoll({ accountId }, { recommend: 'YES', liked: [], improve: null }), /POLL_NOT_OPEN/);
+  now = new Date('2026-10-13T20:00:00Z'); // the pass ended at 12:00
+  await assert.rejects(ledger.trialLogin(key, device), /GUEST_PASS_EXPIRED/);
+  const renewed = await ledger.answerTrialPoll({ code: key, deviceId: device }, { recommend: 'YES', liked: ['Vetted'], improve: 'More sports' });
+  assert.ok(renewed.guestExpiresAt?.startsWith('2026-10-20T20:00'));
+  assert.ok(await ledger.authenticate(renewed.token));
+  await assert.rejects(ledger.answerTrialPoll({ code: key, deviceId: device }, { recommend: 'NO', liked: [], improve: null }), /POLL_ALREADY_ANSWERED/);
+  const results = await ledger.trialPollResults();
+  assert.equal(results.answered, 1); assert.equal(results.recommend.YES, 1); assert.equal(results.liked.Vetted, 1);
+  await assert.rejects(ledger.answerTrialPoll({ code: key, deviceId: 'someone-elses-device-x' }, { recommend: 'YES', liked: [], improve: null }), /TRIAL_NOT_FOUND/);
+});

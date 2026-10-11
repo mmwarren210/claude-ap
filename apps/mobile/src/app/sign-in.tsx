@@ -4,6 +4,7 @@ import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollVie
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiBaseUrl } from '../api-base';
 import { useAuth } from '../auth';
+import { TrialPollForm } from '../components/TrialPoll';
 import { AppIcon } from '../components/ui/AppHeader';
 import { GhostButton, PrimaryButton } from '../components/ui/Controls';
 import { colors, radius } from '../theme';
@@ -62,6 +63,7 @@ export default function SignIn() {
           {guest.signingIn ? <><Text style={styles.detail}>Opening CrownIQ with your guest pass…</Text>
             <ActivityIndicator color={colors.mint} style={styles.busy} /></>
             : <Text accessibilityRole="alert" style={styles.error}>{guest.message}</Text>}
+          {guest.expired && <TrialPollForm />}
         </View>}
         <View style={styles.panel}>
           <Text style={styles.title}>{resetting ? 'Reset your password' : creating ? 'Create your profile' : 'Welcome back'}</Text>

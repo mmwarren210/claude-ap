@@ -53,7 +53,15 @@ interface Account {id:string;username:string;email:string|null;passwordSalt:stri
   /** A one-time password-reset code the owner issued (stored hashed), until it is used or expires. */
   reset?:{hash:string;expiresAt:string};
   /** A guest-pass account: no username or password, full access until `expiresAt`, kept afterwards for its picks. */
-  guest?:{pass:string;deviceHash:string;expiresAt:string}}
+  guest?:{pass:string;deviceHash:string;expiresAt:string;
+    /** The end-of-trial poll (owner, 2026-10-11): answering it once adds 7 free days. */
+    poll?:TrialPollAnswer&{at:string}}}
+/** End-of-trial poll answers. */
+export interface TrialPollAnswer {recommend:'YES'|'MAYBE'|'NO';liked:string[];improve:string|null}
+/** Free days added for answering the end-of-trial poll. */
+export const TRIAL_POLL_DAYS=7;
+/** The poll shows in a trial's last day, and after it ends. */
+const POLL_WINDOW_MS=24*60*60_000;
 /** A shared guest link: up to `maxGuests` devices each get their own account for `days` days. */
 export interface GuestPass {code:string;maxGuests:number;days:number}
 /**
@@ -345,6 +353,38 @@ export class ProductLedger {
    * back, whichever key it clicks. A key someone else used hands over the next free key in issue order (then wraps), and
    * says which; when all are used, TRIALS_ALL_USED. Each account lasts its key's days from first use.
    */
+  /** Whether a signed-in trial account can take the poll now (its last day, not answered yet). */
+  async trialPollStatus(accountId:string){
+    const data=await this.read(),account=data.accounts.find((item)=>item.id===accountId);
+    const trial=!!account?.guest&&(data.trialKeys??[]).some((key)=>key.hash===account.guest!.pass);
+    if(!account?.guest||!trial)return {eligible:false,done:false,expiresAt:null,days:TRIAL_POLL_DAYS};
+    const left=Date.parse(account.guest.expiresAt)-this.clock().getTime();
+    return {eligible:!account.guest.poll&&left<=POLL_WINDOW_MS,done:!!account.guest.poll,expiresAt:account.guest.expiresAt,days:TRIAL_POLL_DAYS};
+  }
+  /**
+   * Saves a trial's poll answers once and adds 7 days from the later of now and its end. Found by the signed-in account, or
+   * (after the pass ended, when sign-in no longer works) by the trial key and the device that used it. Returns a new session.
+   */
+  async answerTrialPoll(who:{accountId:string}|{code:string;deviceId:string},answers:TrialPollAnswer){return this.exclusive(async()=>{
+    const data=await this.read(),keys=data.trialKeys??[],now=this.clock();
+    const account='accountId' in who?data.accounts.find((item)=>item.id===who.accountId)
+      :keys.some((key)=>key.hash===tokenHash(who.code.trim()))?data.accounts.find((item)=>!!item.guest&&keys.some((key)=>key.hash===item.guest!.pass)&&
+        item.guest.deviceHash===tokenHash(`${item.guest.pass}:${who.deviceId}`)):undefined;
+    if(!account?.guest||!keys.some((key)=>key.hash===account.guest!.pass))throw new Error('TRIAL_NOT_FOUND');
+    if(account.status==='SUSPENDED')throw new Error('ACCOUNT_SUSPENDED');
+    if(account.guest.poll)throw new Error('POLL_ALREADY_ANSWERED');
+    if(Date.parse(account.guest.expiresAt)-now.getTime()>POLL_WINDOW_MS)throw new Error('POLL_NOT_OPEN');
+    account.guest.poll={...answers,liked:answers.liked.slice(0,6),improve:answers.improve?.slice(0,500)??null,at:now.toISOString()};
+    account.guest.expiresAt=new Date(Math.max(now.getTime(),Date.parse(account.guest.expiresAt))+TRIAL_POLL_DAYS*24*60*60_000).toISOString();
+    const result=this.session(data,account);await this.write(data);return result;
+  });}
+  /** Every trial's poll answers for the owner (no names): counts and the written suggestions. */
+  async trialPollResults(){
+    const data=await this.read(),answers=data.accounts.flatMap((item)=>item.guest?.poll?[item.guest.poll]:[]);
+    const count=(values:string[])=>values.reduce<Record<string,number>>((out,value)=>{out[value]=(out[value]??0)+1;return out;},{});
+    return {answered:answers.length,recommend:count(answers.map((item)=>item.recommend)),liked:count(answers.flatMap((item)=>item.liked)),
+      improve:answers.filter((item)=>item.improve).map((item)=>({text:item.improve,at:item.at}))};
+  }
   async trialLogin(code:string,deviceId:string){return this.exclusive(async()=>{
     const data=await this.read(),keys=data.trialKeys??[],now=this.clock(),clicked=keys.findIndex((item)=>item.hash===tokenHash(code.trim()));
     if(clicked<0)throw new Error('GUEST_PASS_INVALID');

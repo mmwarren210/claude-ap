@@ -567,6 +567,32 @@ export function buildServer(options: ServerOptions = {}) {
       if(code==='GUEST_PASS_INVALID'||code==='ACCOUNT_SUSPENDED')return reply.code(404).send({code:'GUEST_PASS_INVALID'});
       return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
   });
+  // End-of-trial poll (owner, 2026-10-11): a trial in its last day (or already ended) answers 3 questions for 7 more free days.
+  const pollAnswer=z.object({recommend:z.enum(['YES','MAYBE','NO']),liked:z.array(z.string().trim().min(1).max(40)).max(6),
+    improve:z.string().trim().max(500).nullable().optional()}).strict();
+  const pollError=(reply:FastifyReply,error:unknown)=>{const code=(error as Error).message;
+    if(code==='POLL_ALREADY_ANSWERED'||code==='POLL_NOT_OPEN')return reply.code(409).send({code});
+    if(code==='TRIAL_NOT_FOUND'||code==='ACCOUNT_SUSPENDED')return reply.code(404).send({code:'TRIAL_NOT_FOUND'});
+    return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});};
+  app.get('/v1/trial/poll',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    return options.product?options.product.trialPollStatus(user.accountId):{eligible:false,done:false,expiresAt:null,days:7};
+  });
+  app.post('/v1/trial/poll',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    const input=pollAnswer.safeParse(request.body);if(!input.success||!options.product)return reply.code(400).send({code:'INVALID_POLL'});
+    try{return await options.product.answerTrialPoll({accountId:user.accountId},{...input.data,improve:input.data.improve??null});}
+    catch(error){return pollError(reply,error);}
+  });
+  // After the pass has ended (sign-in no longer works): the trial key and the device that used it.
+  app.post('/v1/auth/trial-poll',async(request,reply)=>{
+    if(limited(`guest:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
+    const input=z.object({code:z.string().trim().min(1).max(100),deviceId:z.string().min(16).max(100),answers:pollAnswer}).strict().safeParse(request.body);
+    if(!input.success||!options.product)return reply.code(400).send({code:'INVALID_POLL'});
+    try{return await options.product.answerTrialPoll({code:input.data.code,deviceId:input.data.deviceId},
+      {...input.data.answers,improve:input.data.answers.improve??null});}
+    catch(error){return pollError(reply,error);}
+  });
   app.get('/v1/auth/me',async(request,reply)=>{
     const user=await currentUser(request);
     return user?{profile:{publicId:user.publicId,username:user.username,email:user.email,
@@ -2276,6 +2302,7 @@ export function buildServer(options: ServerOptions = {}) {
       return { keys: await options.product.issueTrialKeys(input.data.count, input.data.days) };
     });
     // Vetted as the owner sees it, hidden picks included (no tipster names), for checking the GKR/Edge filter.
+    admin.get('/trial-poll', async (_request, reply) => options.product ? options.product.trialPollResults() : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
     admin.get('/tips-summary', async (_request, reply) => options.tips ? options.tips.store.summary() : reply.code(503).send({ code: 'TIPS_UNAVAILABLE' }));
     admin.get('/vetted', async (_request, reply) => {
       if (!options.tips) return reply.code(503).send({ code: 'TIPS_UNAVAILABLE' });
