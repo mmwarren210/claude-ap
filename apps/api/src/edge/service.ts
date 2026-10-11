@@ -506,7 +506,14 @@ export class EdgeService {
         within(this.gatherValues(allLines, quick ? 5_000 : undefined), 6_000, { found: new Map<string, number[]>(), asked: 0 })]);
       lap('history');
       const calibrationRows = await this.options.ledger?.calibrationRows().catch(() => []) ?? [];
-      const calibration = fitCalibration(calibrationRows);
+      // Picks saved before raw chances were kept (2026-10-11) only hold the corrected chance; once a sport has 150 picks with
+      // the raw chance, its correction is learned from those alone.
+      const withRaw = calibrationRows.filter((row) => row.rawProbability !== undefined);
+      const learnFrom = [...new Set(calibrationRows.map((row) => row.sport))].flatMap((sport) => {
+        const own = withRaw.filter((row) => row.sport === sport);
+        return own.length >= 150 ? own : calibrationRows.filter((row) => row.sport === sport);
+      });
+      const calibration = fitCalibration(learnFrom);
       const forecast = forecastReport(calibrationRows);
       const injured = new Map<string, string>();
       for (const note of await this.options.injuries?.().catch(() => []) ?? [])

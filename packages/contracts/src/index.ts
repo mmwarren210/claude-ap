@@ -344,6 +344,8 @@ export const edgePickSchema = z.object({
   lineType: lineTypeSchema,
   side: playableDirectionSchema,
   probability, pushProbability: probability, oppositeProbability: probability,
+  /** The chance before the graded-record correction (the correction is learned from it). */
+  rawProbability: probability.optional(),
   breakEven: probability,
   // p − break-even for standard-payout lines; null when the payout factor is unknown.
   edge: z.number().finite().nullable(),

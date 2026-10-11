@@ -149,6 +149,14 @@ export class ShadowRecord {
     return graded;
   }
 
+  /** Graded wins and losses of one kind as forecasts (the pick's strength as a 0-1 chance), for a calibration curve. */
+  async forecastRows(kind: ShadowKind): Promise<{ probability: number; hit: boolean; sport: string }[]> {
+    await this.load();
+    return [...this.entries.values()].filter((entry) => entry.kind === kind && entry.strength !== null &&
+      (entry.grade === 'WIN' || entry.grade === 'LOSS'))
+      .map((entry) => ({ probability: entry.strength! / 100, hit: entry.grade === 'WIN', sport: entry.lineSnapshot.sport }));
+  }
+
   /** Graded record by source and sport, and by source, sport and stat (wins over wins plus losses). */
   async hitRates(): Promise<Record<string, { graded: number; wins: number; hitRate: number }>> {
     await this.load();

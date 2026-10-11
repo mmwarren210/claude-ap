@@ -19,6 +19,8 @@ export interface HistoryRead {
   readonly lean?: boolean;
   /** A Trend from CrownIQ's own graded lines, not the player's history. */
   readonly trend?: boolean;
+  /** The chance before the graded-record correction (what the shadow record keeps and the correction learns from). */
+  readonly rawScore?: number | null;
   /** A sudden role change against this side: a warning only. */
   readonly roleChange?: string;
 }
@@ -35,7 +37,7 @@ export const LEAN_BAR: Readonly<Record<string, number>> = { REGULAR: 0.55, GOBLI
  * side is a play only when that chance clears the bar and the average agrees with it.
  */
 export function historyRead(line: Pick<PropLine, 'threshold' | 'lineType' | 'availableDirections'>, recent: readonly number[],
-  booksMore: number | null, source: string): HistoryRead | null {
+  booksMore: number | null, source: string, correct: (chance: number) => number = (chance) => chance): HistoryRead | null {
   const values = recent.filter((value) => Number.isFinite(value)).slice(0, 15);
   if (values.length < MIN_GAMES) return null;
   const over = values.filter((value) => value > line.threshold).length;
@@ -46,14 +48,18 @@ export function historyRead(line: Pick<PropLine, 'threshold' | 'lineType' | 'ava
   const more = books === null ? fromHistory : (fromHistory + books) / 2;
   const bar = HISTORY_BAR[line.lineType] ?? 0.6;
   const canMore = line.availableDirections.includes('MORE'), canLess = line.availableDirections.includes('LESS');
-  const side = (need: number) => canMore && more >= need && average > line.threshold ? 'MORE' as const
-    : canLess && 1 - more >= need && average < line.threshold ? 'LESS' as const : null;
+  // Each side's chance after the correction learned from History's graded picks (owner, 2026-10-11: the shown chance should
+  // match how often such picks hit).
+  const moreChance = correct(more), lessChance = correct(1 - more);
+  const side = (need: number) => canMore && moreChance >= need && average > line.threshold ? 'MORE' as const
+    : canLess && lessChance >= need && average < line.threshold ? 'LESS' as const : null;
   const play = side(bar), leaning = play ? null : side(LEAN_BAR[line.lineType] ?? 0.55);
   // A role change is a warning on the read, never a pass (owner, 2026-10-10: a good matchup can still make it right).
   const direction = play ?? leaning ?? 'PASS', changed = roleChange(line.threshold, values, direction);
   const text = `Over in ${over} of last ${values.length} · avg ${average.toFixed(1)} vs ${line.threshold}` +
     (books === null ? '' : ` · books ${Math.round(books * 100)}% over`) + (changed ? ` · ${changed}` : '');
-  return { direction, score: direction === 'PASS' ? null : Math.round((direction === 'MORE' ? more : 1 - more) * 100),
+  return { direction, score: direction === 'PASS' ? null : Math.round((direction === 'MORE' ? moreChance : lessChance) * 100),
+    rawScore: direction === 'PASS' ? null : Math.round((direction === 'MORE' ? more : 1 - more) * 100),
     over, under, games: values.length, average: Math.round(average * 10) / 10, books, text, source, ...(leaning ? { lean: true } : {}),
     ...(changed ? { roleChange: changed } : {}) };
 }
@@ -95,7 +101,10 @@ export class HistoryReads {
   private cache = new Map<string, { until: number; value: Promise<{ values: number[]; source: string } | null> }>();
   /** The last values each lookup returned, for callers that can't wait (the GKR board's role-change check). */
   private settled = new Map<string, readonly number[]>();
+  /** The graded-record correction per sport (identity until History has enough graded picks). */
+  private correction: (sport: string, chance: number) => number = (_sport, chance) => chance;
   constructor(private readonly lookup: HistoryValues, private readonly clock: () => Date = () => new Date()) {}
+  setCorrection(correct: (sport: string, chance: number) => number) { this.correction = correct; }
 
   /** A player's recent values for a line's stat (newest first), cached for 10 minutes; null without any. */
   valuesFor(line: PropLine) { return this.values(line); }
@@ -132,7 +141,8 @@ export class HistoryReads {
     await Promise.all(Array.from({ length: Math.min(8, open.length) }, async () => {
       for (let index = cursor++; index < open.length; index = cursor++) {
         const line = open[index], found = await this.values(line).catch(() => null);
-        const read = found ? historyRead(line, found.values, booksMore(line.id), found.source) : null;
+        const read = found ? historyRead(line, found.values, booksMore(line.id), found.source,
+          (chance) => this.correction(line.sport, chance)) : null;
         if (read) out.set(line.id, read);
       }
     }));

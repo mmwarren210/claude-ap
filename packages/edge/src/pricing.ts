@@ -326,13 +326,14 @@ export function priceBoard(input: PricingInput): PricingResult {
         const payout = payoutOf(line, side);
         const raw = side === 'MORE' ? over : 1 - over;
         const rawProportional = overProportional === null ? raw : side === 'MORE' ? overProportional : 1 - overProportional;
-        const probability = applyCalibration(input.calibration, line.sport, payout.kind === 'ODDS' ? Math.min(raw, rawProportional) : raw);
+        const rawProbability = payout.kind === 'ODDS' ? Math.min(raw, rawProportional) : raw;
+        const probability = applyCalibration(input.calibration, line.sport, rawProbability);
         // Each side against its own bar: a pick'em leg needs the entry's break-even divided by its multiplier; a sportsbook
         // bet needs 1 / decimal odds.
         const breakEven = payout.kind === 'ODDS' ? 1 / payout.decimal
           : payout.multiplier ? reference / payout.multiplier : reference;
         const edge = payout.kind === 'ENTRY' && (payout.multiplier === null || payout.blocked) ? null : probability - breakEven;
-        return { line, side, probability, payout, breakEven, edge };
+        return { line, side, probability, rawProbability, payout, breakEven, edge };
       }).sort((a, b) => (b.edge ?? -9) - (a.edge ?? -9) || b.probability - a.probability);
       const best = scored[0];
       const opposite = scored.find((item) => item.side !== best.side) ?? null;
@@ -417,7 +418,7 @@ export function priceBoard(input: PricingInput): PricingResult {
         eventName: best.line.eventName, eventStartTime: best.line.eventStartTime,
         playerId: best.line.playerId, playerName: best.line.playerName, team: best.line.team ?? null, market: best.line.market,
         threshold, lineType: best.line.lineType, side,
-        probability: round(p), pushProbability: round(outcome.push), oppositeProbability: round(1 - p),
+        probability: round(p), rawProbability: round(best.rawProbability), pushProbability: round(outcome.push), oppositeProbability: round(1 - p),
         breakEven: round(best.breakEven), edge: edge === null ? null : round(edge),
         requiredPayoutFactor: round((best.payout.kind === 'ODDS' ? 1 : reference) / Math.max(p, 1e-4), 3), edgeScore, rating, tier,
         projection: { mean: round(dist.mean, 2), median: median(dist), sd: round(Math.sqrt(dist.variance), 2),

@@ -269,3 +269,17 @@ test('Edge Gen builds distinct entries within filters', () => {
   assert.ok(inChoice('NFL,NBA', 'NBA') && !inChoice('NFL,NBA', 'MLB') && inChoice(undefined, 'MLB'));
   assert.equal(generateEntries(result.picks, power3, { from: Date.parse('2026-10-07T00:00:00Z'), nowMs: now.getTime() }).length, 0);
 });
+
+test('isotonic correction brings overconfident top buckets down to what they hit, and learns from raw chances', async () => {
+  const { applyCalibration, fitCalibration } = await import('../src/calibration.js');
+  const rows: { probability: number; rawProbability: number; hit: boolean; sport: string }[] = [];
+  // Middle buckets honest; 95%+ hits 78%.
+  for (let i = 0; i < 1000; i++) rows.push({ probability: .9, rawProbability: .6, hit: i % 10 < 6, sport: 'WNBA' });
+  for (let i = 0; i < 400; i++) rows.push({ probability: .5, rawProbability: .97, hit: i % 100 < 78, sport: 'WNBA' });
+  const model = fitCalibration(rows);
+  const top = applyCalibration(model, 'WNBA', .97), middle = applyCalibration(model, 'WNBA', .6);
+  assert.ok(top > .76 && top < .82, String(top));
+  assert.ok(Math.abs(middle - .6) < .01, String(middle));
+  assert.ok(applyCalibration(model, 'WNBA', .99) <= .99 && applyCalibration(model, 'WNBA', .99) >= top);
+  assert.ok(applyCalibration(model, 'WNBA', .8) >= middle && applyCalibration(model, 'WNBA', .8) <= top);
+});

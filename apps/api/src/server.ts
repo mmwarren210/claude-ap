@@ -86,7 +86,7 @@ import { EDGE_PLATFORMS, EdgeResultsWorker, EdgeService, isBookPlatform, searchP
 import { blendPick, blendPicks, GKR_PLUS_VERSION } from './edge/blend.js';
 import type { GkrSide } from './edge/blend.js';
 import { canonicalMarket } from './edge/market-map.js';
-import { buildSlips, inChoice } from '@crowniq/edge';
+import { applyCalibration, buildSlips, fitCalibration, inChoice } from '@crowniq/edge';
 import { easternDay } from './edge/routes.js';
 import type { EdgePick, EdgePlatform } from '@crowniq/contracts';
 import type { EdgeLedger } from './edge/ledger.js';
@@ -395,7 +395,7 @@ export function buildServer(options: ServerOptions = {}) {
       // Free History Reads on PrizePicks lines GKR doesn't play, graded in their own record.
       for(const [lineId,read] of Object.entries(await boardHistoryReads(board))){
         const line=lines.get(lineId);
-        if(line&&read.direction!=='PASS'&&!read.lean)picks.push({kind:'history',line,side:read.direction,strength:read.score});
+        if(line&&read.direction!=='PASS'&&!read.lean)picks.push({kind:'history',line,side:read.direction,strength:read.rawScore??read.score});
       }
       // Trends, graded in their own record.
       for(const [lineId,trend] of Object.entries(historyCache?.trends??{})){
@@ -1459,6 +1459,15 @@ export function buildServer(options: ServerOptions = {}) {
     return propline&&propline.values.length>=5?propline:null;
   },()=>now());
   service.setRecentValues((line)=>historyReads.knownValues(line));
+  // History's chances corrected by its own graded record (owner, 2026-10-11), refit hourly. Picks saved before raw chances
+  // were kept hold the then-shown chance, which was the raw one (no correction existed), so they're used as they are.
+  if(options.shadowRecord){
+    const shadowRecord=options.shadowRecord;
+    const refit=async()=>{const model=fitCalibration(await shadowRecord.forecastRows('history'));
+      historyReads.setCorrection((sport,chance)=>applyCalibration(model,sport,chance));};
+    void refit().catch(()=>undefined);
+    const refitting=setInterval(()=>{void refit().catch(()=>undefined);},60*60_000);refitting.unref();
+  }
   // CrownIQ Edge (Edge 2.0): its own reads of every platform, warmed in the background like the app boards.
   const movement=new MovementTracker();
   // PropLine steam (pushed): a player prop several books moved the same way feeds Edge's steam badge and stale-line check.

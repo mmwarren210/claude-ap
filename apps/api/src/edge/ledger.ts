@@ -19,6 +19,8 @@ export interface TrackedEdgePick {
   awayTeam: string | null; market: string; threshold: number;
   lineType: string; side: 'MORE' | 'LESS'; tier: string; rating: string;
   firstProbability: number; probability: number; breakEven: number; edge: number | null;
+  /** The chance before the correction, at the last sighting (the correction is learned from this, not `probability`). */
+  rawProbability?: number;
   firstSeenAt: string; lastSeenAt: string; modelVersion: string;
   outcome: EdgeOutcome; actual: number | null; gradedAt: string | null; resultSource: string | null;
   /** Flagged STALE (books moved past the app's number) at any point before the start. */
@@ -142,7 +144,7 @@ export class EdgeLedger {
         const existing = byId.get(id);
         if (existing) {
           if (existing.outcome !== 'PENDING') continue;
-          Object.assign(existing, { probability: pick.probability, edge: pick.edge, rating: pick.rating,
+          Object.assign(existing, { probability: pick.probability, ...(pick.rawProbability !== undefined ? { rawProbability: pick.rawProbability } : {}), edge: pick.edge, rating: pick.rating,
             tier: pick.tier, breakEven: pick.breakEven, lastSeenAt: iso, lineId: pick.lineId,
             ...(pick.stale ? { stale: true } : {}), ...(pick.decimalOdds ? { decimal: pick.decimalOdds } : {}),
             ...(pick.sources.stats ? { statsMean: pick.sources.stats.mean } : {}), ...(pick.sources.market ? { marketMean: pick.sources.market.mean } : {}) });
@@ -154,7 +156,8 @@ export class EdgeLedger {
           playerId: pick.playerId, playerName: pick.playerName, team: side.team, homeTeam: side.home, awayTeam: side.away,
           market: pick.market, threshold: pick.threshold,
           lineType: pick.lineType, side: pick.side, tier: pick.tier, rating: pick.rating,
-          firstProbability: pick.probability, probability: pick.probability, breakEven: pick.breakEven, firstBreakEven: pick.breakEven,
+          firstProbability: pick.probability, probability: pick.probability,
+          ...(pick.rawProbability !== undefined ? { rawProbability: pick.rawProbability } : {}), breakEven: pick.breakEven, firstBreakEven: pick.breakEven,
           edge: pick.edge, firstSeenAt: iso, lastSeenAt: iso, modelVersion: pick.modelVersion,
           outcome: 'PENDING', actual: null, gradedAt: null, resultSource: null,
           ...(pick.stale ? { stale: true } : {}), ...(pick.decimalOdds ? { firstDecimal: pick.decimalOdds, decimal: pick.decimalOdds } : {}),
@@ -288,7 +291,8 @@ export class EdgeLedger {
   async calibrationRows(): Promise<GradedForecast[]> {
     return this.exclusive(async () => (await this.read()).picks
       .filter((pick) => pick.outcome === 'WIN' || pick.outcome === 'LOSS')
-      .map((pick) => ({ probability: pick.probability, hit: pick.outcome === 'WIN', sport: pick.sport })));
+      .map((pick) => ({ probability: pick.probability, ...(pick.rawProbability !== undefined ? { rawProbability: pick.rawProbability } : {}),
+        hit: pick.outcome === 'WIN', sport: pick.sport })));
   }
 
   /** Edge's record on its own terms, overall and per platform, tier, rating and sport. */
