@@ -2250,6 +2250,7 @@ export function buildServer(options: ServerOptions = {}) {
       return { keys: await options.product.issueTrialKeys(input.data.count, input.data.days) };
     });
     // Vetted as the owner sees it, hidden picks included (no tipster names), for checking the GKR/Edge filter.
+    admin.get('/tips-summary', async (_request, reply) => options.tips ? options.tips.store.summary() : reply.code(503).send({ code: 'TIPS_UNAVAILABLE' }));
     admin.get('/vetted', async (_request, reply) => options.tips ? options.tips.store.vetted() : reply.code(503).send({ code: 'TIPS_UNAVAILABLE' }));
     admin.get('/members', async (_request, reply) => options.product ? options.product.membership()
       : reply.code(503).send({ code: 'PRODUCT_UNCONFIGURED' }));

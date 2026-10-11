@@ -273,6 +273,17 @@ export class TipStore {
     });
   }
 
+  /** Owner diagnostics: how many tips there are, by AI verdict and status, with the newest few (no tipster names). */
+  async summary() {
+    const tips = (await this.load()).tips, count = (pick: (tip: Tip) => string) => tips.reduce<Record<string, number>>((out, tip) => {
+      const key = pick(tip); out[key] = (out[key] ?? 0) + 1; return out; }, {});
+    return { total: tips.length, verdicts: count((tip) => tip.analysis?.verdict ?? (tip.analyzing ? 'ANALYZING' : 'NONE')),
+      statuses: count((tip) => tip.status), checks: count((tip) => tip.modelCheck ? `${tip.modelCheck.edge}/${tip.modelCheck.gkr}` : 'none'),
+      newest: [...tips].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 15).map((tip) => ({ createdAt: tip.createdAt,
+        selection: tip.selection, market: tip.market, line: tip.line, side: tip.side, status: tip.status, verdict: tip.analysis?.verdict ?? null,
+        chance: tip.analysis?.chance ?? null, price: tip.analysis?.price ?? null, ev: tip.analysis?.ev ?? null, check: tip.modelCheck ?? null })) };
+  }
+
   /** PLAY player props still waiting for GKR's and Edge's check (pending games only). */
   async uncheckedPlays(limit = 40): Promise<Tip[]> {
     return (await this.load()).tips.filter((tip) => tip.analysis?.verdict === 'PLAY' && tip.status === 'PENDING' &&
