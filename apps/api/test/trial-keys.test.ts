@@ -67,3 +67,28 @@ test('Trial users lists every trial account: on trial, ended and signed up, with
   assert.deepEqual(trials.map((trial) => [trial.keyNumber, trial.status]).sort(), [[1, 'ENDED'], [2, 'SIGNED_UP']]);
   assert.equal((await ledger.members()).length, 1, 'the member list still drops the ended trial');
 });
+
+test('payments: "I have paid" gives a trial 24 hours once; a member key turns the trial into a paid member; keys work once', async () => {
+  let now = new Date('2026-10-11T12:00:00Z');
+  const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'pay-')), 'ledger.json'), 'CROWN_STRONG', () => now);
+  const [trialKey] = await ledger.issueTrialKeys(1);
+  const device = 'device-paypaypaypaypay';
+  const session = await ledger.trialLogin(trialKey, device);
+  const accountId = (await ledger.authenticate(session.token))!.accountId;
+  const first = await ledger.requestPayment(accountId, 'MONTH', 'Cash App');
+  assert.equal(first.graced, true);
+  assert.ok(first.guestExpiresAt?.startsWith('2026-10-14T12:00'), 'two days plus 24 hours');
+  assert.equal((await ledger.requestPayment(accountId, 'MONTH', 'Cash App')).graced, false, 'only once');
+  assert.equal((await ledger.payments()).requests.length, 2);
+  const key = await ledger.issueMemberKey('MONTH');
+  await assert.rejects(ledger.register('x@example.com', 'a-good-password-1', 'Payer', { code: 'trial', deviceId: device }, 'CIQM-NOPE-NOPE-NOPE'), /MEMBER_KEY_INVALID/);
+  const member = await ledger.register('x@example.com', 'a-good-password-1', 'Payer', { code: 'trial', deviceId: device }, key);
+  assert.equal(member.profile.plan, 'FREE');
+  assert.equal((await ledger.trialUsers())[0].status, 'SIGNED_UP');
+  assert.deepEqual((await ledger.payments()).keys.map((item) => item.used), [true]);
+  const renewal = await ledger.issueMemberKey('MONTH');
+  now = new Date('2026-10-20T12:00:00Z');
+  const renewed = await ledger.redeemMemberKey(accountId, renewal);
+  assert.ok(renewed.paid?.until?.startsWith('2026-12-10'), 'a renewal adds 30 days to what was left');
+  await assert.rejects(ledger.redeemMemberKey(accountId, renewal), /MEMBER_KEY_INVALID/);
+});

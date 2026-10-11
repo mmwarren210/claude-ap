@@ -50,6 +50,10 @@ interface Account {id:string;username:string;email:string|null;passwordSalt:stri
   lifetime?:true;
   /** Signed up with the shared family code as the password; must set their own before anything else. */
   mustChangePassword?:true;
+  /** A paid plan from a member key the owner issued after checking the payment (owner, 2026-10-11). */
+  paid?:{plan:PaidPlan;paidAt:string;until:string|null};
+  /** Tapped "I've paid" while on a trial: 24 extra hours were given once while the owner checks the payment. */
+  payGrace?:string;
   /** Signed up from a trial key (owner, 2026-10-11): kept so Trial users still lists them after they became members. */
   fromTrial?:{keyNumber:number|null;startedAt:string;convertedAt:string;poll?:TrialPollAnswer&{at:string}};
   /** A one-time password-reset code the owner issued (stored hashed), until it is used or expires. */
@@ -64,6 +68,9 @@ export interface TrialPollAnswer {recommend:'YES'|'MAYBE'|'NO';liked:string[];im
   plan?:TrialPlan|null;price?:string|null}
 export const TRIAL_PLANS=['WEEK','MONTH','QUARTER','HALF_YEAR','YEAR','LIFETIME','NONE'] as const;
 export type TrialPlan=typeof TRIAL_PLANS[number];
+export type PaidPlan=Exclude<TrialPlan,'NONE'>;
+/** Days each paid plan lasts from activation (null: lifetime). */
+export const PLAN_DAYS:Readonly<Record<PaidPlan,number|null>>={WEEK:7,MONTH:30,QUARTER:91,HALF_YEAR:182,YEAR:365,LIFETIME:null};
 /** Free days added for answering the end-of-trial poll. */
 export const TRIAL_POLL_DAYS=7;
 /** The poll shows in a trial's last day, and after it ends. */
@@ -110,7 +117,11 @@ interface LegacyData {version:1;decisions:TrackedDecision[];profiles:PublicProfi
 interface Data extends Omit<LegacyData,'version'> {version:2;accounts:Account[];sessions:Session[];
   savedPicks:SavedPick[];privateCrowns:PrivateCrown[];
   /** Owner-issued trial keys (stored hashed): each opens one guest account for `days` days from its first use. */
-  trialKeys?:{hash:string;days:number;createdAt:string}[]}
+  trialKeys?:{hash:string;days:number;createdAt:string}[];
+  /** Member keys (stored hashed): each activates one paid plan once, issued by the owner after a payment is confirmed. */
+  memberKeys?:{hash:string;plan:PaidPlan;createdAt:string;usedBy?:string;usedAt?:string}[];
+  /** "I've paid" requests from trial users, for the owner to match against payments. */
+  payRequests?:{id:string;accountId:string;username:string;plan:PaidPlan;method:string;at:string}[]}
 /** Trial keys (owner, 2026-10-11): 10 single-use keys, 2 days each from first use, never taking one of the 100 seats. */
 export const TRIAL_KEY_DAYS=2;
 const blank=():Data=>({version:2,decisions:[],profiles:[],crowns:[],follows:[],
@@ -359,6 +370,49 @@ export class ProductLedger {
    * back, whichever key it clicks. A key someone else used hands over the next free key in issue order (then wraps), and
    * says which; when all are used, TRIALS_ALL_USED. Each account lasts its key's days from first use.
    */
+  /** Issues one member key for a paid plan (shown once; only its hash is kept). */
+  async issueMemberKey(plan:PaidPlan){return this.exclusive(async()=>{
+    const data=await this.read(),raw=randomBytes(6).toString('hex').toUpperCase(),key=`CIQM-${raw.slice(0,4)}-${raw.slice(4,8)}-${raw.slice(8)}`;
+    (data.memberKeys??=[]).push({hash:tokenHash(key),plan,createdAt:this.clock().toISOString()});
+    await this.write(data);return key;
+  });}
+  private applyMemberKey(data:Data,account:Account,key:string){
+    const entry=(data.memberKeys??[]).find((item)=>item.hash===tokenHash(key.trim().toUpperCase())&&!item.usedBy);
+    if(!entry)throw new Error('MEMBER_KEY_INVALID');
+    const now=this.clock(),days=PLAN_DAYS[entry.plan];
+    // A renewal adds its days to whatever is left of the current plan.
+    const from=Math.max(now.getTime(),account.paid?.until?Date.parse(account.paid.until):0);
+    const lifetime=days===null||(!!account.paid&&account.paid.until===null);
+    account.paid={plan:lifetime&&days!==null?account.paid!.plan:entry.plan,paidAt:now.toISOString(),
+      until:lifetime?null:new Date(from+days*86_400_000).toISOString()};
+    entry.usedBy=account.id;entry.usedAt=now.toISOString();
+  }
+  /** A signed-in member redeems a key (a renewal or an upgrade). */
+  async redeemMemberKey(accountId:string,key:string){return this.exclusive(async()=>{
+    const data=await this.read(),account=data.accounts.find((item)=>item.id===accountId);
+    if(!account||account.guest)throw new Error('SIGN_UP_FIRST');
+    this.applyMemberKey(data,account,key);
+    const result=this.session(data,account);await this.write(data);return {...result,paid:account.paid};
+  });}
+  /** "I've paid" from a trial: notes it for the owner and gives 24 more hours once, so access doesn't lapse while it's checked. */
+  async requestPayment(accountId:string,plan:PaidPlan,method:string){return this.exclusive(async()=>{
+    const data=await this.read(),account=data.accounts.find((item)=>item.id===accountId),now=this.clock();
+    if(!account)throw new Error('NOT_FOUND');
+    const profile=data.profiles.find((item)=>item.actorKey===account.id);
+    (data.payRequests??=[]).push({id:randomUUID(),accountId,username:profile?.displayName??account.username,plan,method:method.slice(0,20),at:now.toISOString()});
+    let graced=false;
+    if(account.guest&&!account.payGrace){
+      account.guest.expiresAt=new Date(Math.max(now.getTime(),Date.parse(account.guest.expiresAt))+24*3600_000).toISOString();
+      account.payGrace=now.toISOString();graced=true;
+    }
+    const result=this.session(data,account);await this.write(data);return {...result,graced};
+  });}
+  /** Owner view: the latest "I've paid" requests and member keys (no key values). */
+  async payments(){
+    const data=await this.read();
+    return {requests:[...(data.payRequests??[])].reverse().slice(0,100),
+      keys:(data.memberKeys??[]).map((item)=>({plan:item.plan,createdAt:item.createdAt,used:!!item.usedBy,usedAt:item.usedAt??null}))};
+  }
   /** Whether a signed-in trial account can take the poll now (its last day, not answered yet). */
   async trialPollStatus(accountId:string){
     const data=await this.read(),account=data.accounts.find((item)=>item.id===accountId);
@@ -450,8 +504,11 @@ export class ProductLedger {
       guests:data.accounts.filter((item)=>item.guest).length,
       suspended:data.accounts.filter((item)=>!item.guest&&item.status==='SUSPENDED').length};
   }
-  async register(email:string,password:string,username:string,guest?:{code:string;deviceId:string}){return this.exclusive(async()=>{
+  async register(email:string,password:string,username:string,guest?:{code:string;deviceId:string},memberKey?:string){return this.exclusive(async()=>{
     const data=await this.read(),name=username.trim(),address=normalizedEmail(email);
+    // A member key (a confirmed payment) works as the invite too, and sets the paid plan on the new account.
+    if(memberKey&&!(data.memberKeys??[]).some((item)=>item.hash===tokenHash(memberKey.trim().toUpperCase())&&!item.usedBy))
+      throw new Error('MEMBER_KEY_INVALID');
     // A trial (guest) account signing up keeps its profile and picks and becomes a member: it takes one of the seats
     // (owner, 2026-10-11). Its key works as the invite, so closed sign-up doesn't block it.
     // The device's own trial (by any key) or its guest-link account.
@@ -469,12 +526,13 @@ export class ProductLedger {
       if(keyIndex>=0)trial.fromTrial={keyNumber:keyIndex+1,startedAt:trial.createdAt,convertedAt:this.clock().toISOString(),
         ...(trial.guest!.poll?{poll:trial.guest!.poll}:{})};
       delete trial.guest;profile.displayName=name;
+      if(memberKey)this.applyMemberKey(data,trial,memberKey);
       const result=this.session(data,trial);await this.write(data);return result;
     }
     // The family code as the first password makes a lifetime family account (while the 20 seats last).
     const family=!!this.familyCode&&sameSecret(password,this.familyCode);
     if(family&&lifetimeIds(data.accounts).size>=LIFETIME_MEMBERS)throw new Error('LIFETIME_FULL');
-    if(!family&&!this.signupOpen)throw new Error('SIGNUP_CLOSED');
+    if(!family&&!memberKey&&!this.signupOpen)throw new Error('SIGNUP_CLOSED');
     if(!family)this.assertSeat(data.accounts);
     if(data.accounts.some((item)=>item.email===address))throw new Error('EMAIL_TAKEN');
     if(data.profiles.some((item)=>normalizedName(item.displayName)===normalizedName(name)))
@@ -483,6 +541,7 @@ export class ProductLedger {
     const account:Account={id:randomUUID(),username:name,email:address,passwordSalt:salt,
       passwordHash:hash,identities:[],createdAt:this.clock().toISOString(),status:'FREE',
       ...(family?{lifetime:true as const,mustChangePassword:true as const}:{})};
+    if(memberKey)this.applyMemberKey(data,account,memberKey);
     data.accounts.push(account);data.profiles.push({publicId:randomUUID(),actorKey:account.id,
       displayName:name,avatarUrl:null,socialEnabled:true,profileVisible:true,
       isSuspended:false,createdAt:account.createdAt});

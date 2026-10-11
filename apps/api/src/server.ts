@@ -517,12 +517,13 @@ export function buildServer(options: ServerOptions = {}) {
     if(!options.product)return reply.code(503).send({code:'PROFILES_UNCONFIGURED'});
     if(limited(`register:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
     const input=z.object({username,email,password,guestCode:z.string().trim().min(1).max(100).optional(),
-      deviceId:z.string().min(16).max(100).optional()}).strict().safeParse(request.body);
+      deviceId:z.string().min(16).max(100).optional(),memberKey:z.string().trim().min(8).max(40).optional()}).strict().safeParse(request.body);
     if(!input.success)return reply.code(400).send({code:'INVALID_REGISTRATION'});
     try{return reply.code(201).send(await options.product.register(input.data.email,
       input.data.password,input.data.username,input.data.guestCode&&input.data.deviceId?
-        {code:input.data.guestCode,deviceId:input.data.deviceId}:undefined));}
+        {code:input.data.guestCode,deviceId:input.data.deviceId}:undefined,input.data.memberKey));}
     catch(error){const code=(error as Error).message;
+      if(code==='MEMBER_KEY_INVALID')return reply.code(404).send({code});
       if(code==='ACCOUNT_SUSPENDED')return reply.code(403).send({code});
       if(code==='USERNAME_TAKEN'||code==='EMAIL_TAKEN')return reply.code(409).send({code});
       if(code==='MEMBERS_FULL'||code==='LIFETIME_FULL'||code==='SIGNUP_CLOSED')return reply.code(403).send({code});
@@ -566,6 +567,36 @@ export function buildServer(options: ServerOptions = {}) {
       if(code==='GUEST_PASS_FULL'||code==='GUEST_PASS_EXPIRED')return reply.code(403).send({code});
       if(code==='GUEST_PASS_INVALID'||code==='ACCOUNT_SUSPENDED')return reply.code(404).send({code:'GUEST_PASS_INVALID'});
       return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
+  });
+  // Subscriptions (owner, 2026-10-11): manual payments. Prices (CROWNIQ_PLAN_PRICES, JSON of plan → USD) and the payment
+  // handles (CROWNIQ_PAYMENT_INFO, JSON) live in Railway Variables, not the code. Trial users get 10% off. A member pays,
+  // texts the screenshot to the owner, taps "I've paid" (24 more hours once), and enters the member key the owner sends.
+  const PLAN_LABELS:Record<string,string>={WEEK:'1 week',MONTH:'1 month',QUARTER:'3 months',HALF_YEAR:'6 months',YEAR:'1 year',LIFETIME:'Lifetime'};
+  const paidPlan=z.enum(['WEEK','MONTH','QUARTER','HALF_YEAR','YEAR','LIFETIME']);
+  const jsonEnv=(name:string)=>{try{return JSON.parse(process.env[name]??'null') as unknown;}catch{return null;}};
+  app.get('/v1/subscribe',async(request)=>{
+    const user=await currentUser(request);
+    const prices=(jsonEnv('CROWNIQ_PLAN_PRICES')??{}) as Record<string,unknown>;
+    const discount=!user||user.plan==='GUEST'?0.1:0;
+    const plans=Object.keys(PLAN_LABELS).map((plan)=>{const price=typeof prices[plan]==='number'?prices[plan] as number:null;
+      return {plan,label:PLAN_LABELS[plan],price,discounted:price===null?null:Math.round(price*(1-discount)*100)/100};});
+    const info=(jsonEnv('CROWNIQ_PAYMENT_INFO')??{}) as {methods?:{name:string;handle:string;note?:string}[];textTo?:string};
+    return {plans,discount,priced:plans.some((item)=>item.price!==null),methods:Array.isArray(info.methods)?info.methods.slice(0,8):[],
+      textTo:typeof info.textTo==='string'?info.textTo:null,paid:null};
+  });
+  app.post('/v1/subscribe/paid',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    const input=z.object({plan:paidPlan,method:z.string().trim().min(1).max(20)}).strict().safeParse(request.body);
+    if(!input.success||!options.product)return reply.code(400).send({code:'INVALID_PAYMENT'});
+    return options.product.requestPayment(user.accountId,input.data.plan,input.data.method);
+  });
+  app.post('/v1/subscribe/redeem',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(limited(`redeem:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
+    const input=z.object({key:z.string().trim().min(8).max(40)}).strict().safeParse(request.body);
+    if(!input.success||!options.product)return reply.code(400).send({code:'MEMBER_KEY_INVALID'});
+    try{return await options.product.redeemMemberKey(user.accountId,input.data.key);}
+    catch(error){const code=(error as Error).message;return reply.code(code==='MEMBER_KEY_INVALID'?404:409).send({code});}
   });
   // End-of-trial poll (owner, 2026-10-11): a trial in its last day (or already ended) answers 3 questions for 7 more free days.
   const pollAnswer=z.object({recommend:z.enum(['YES','MAYBE','NO']),liked:z.array(z.string().trim().min(1).max(40)).max(6),
@@ -2315,6 +2346,13 @@ export function buildServer(options: ServerOptions = {}) {
       return { keys: await options.product.issueTrialKeys(input.data.count, input.data.days) };
     });
     // Vetted as the owner sees it, hidden picks included (no tipster names), for checking the GKR/Edge filter.
+    // Member keys: the owner confirms a payment, asks for a key, and sends it to the member. Shown once.
+    admin.post('/member-keys', async (request, reply) => {
+      const input = z.object({ plan: z.enum(['WEEK','MONTH','QUARTER','HALF_YEAR','YEAR','LIFETIME']) }).safeParse(request.body ?? {});
+      if (!input.success || !options.product) return reply.code(400).send({ code: 'INVALID_REQUEST' });
+      return { key: await options.product.issueMemberKey(input.data.plan), plan: input.data.plan };
+    });
+    admin.get('/payments', async (_request, reply) => options.product ? options.product.payments() : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
     admin.get('/trial-poll', async (_request, reply) => options.product ? options.product.trialPollResults() : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
     admin.get('/tips-summary', async (_request, reply) => options.tips ? options.tips.store.summary() : reply.code(503).send({ code: 'TIPS_UNAVAILABLE' }));
     admin.get('/vetted', async (_request, reply) => {

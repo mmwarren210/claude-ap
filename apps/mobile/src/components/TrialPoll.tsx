@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { router } from 'expo-router';
 import { useAuth } from '../auth';
 import type { TrialPlan, TrialPollAnswers } from '../auth';
 import { colors, radius } from '../theme';
@@ -91,8 +92,8 @@ export function TrialPollCard() {
   if (!guest || (!status?.eligible && !thanks)) return null;
   const hours = status?.hours ?? null;
   return <>
-    <Pressable accessibilityRole="button" disabled={thanks} onPress={() => setOpen(true)} style={styles.card}>
-      <Text style={styles.cardText}>{thanks ? `🎉 Thanks! 7 more free days added. ${TRIAL_AFTER_NOTE}`
+    <Pressable accessibilityRole="button" onPress={() => thanks ? router.push('/subscribe') : setOpen(true)} style={styles.card}>
+      <Text style={styles.cardText}>{thanks ? `🎉 Thanks! 7 more free days added. ${TRIAL_AFTER_NOTE} Tap to see plans (10% off now) →`
         : `⏳ Your free pass ends in ${hours ?? 'a few'} ${hours === 1 ? 'hour' : 'hours'}. Answer a few quick questions for 7 more days free  →`}</Text>
     </Pressable>
     <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>

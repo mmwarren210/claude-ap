@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiBaseUrl } from '../api-base';
 import { useAuth } from '../auth';
 import { TrialPollForm } from '../components/TrialPoll';
+import { SubscribePanel } from '../components/Subscribe';
 import { AppIcon } from '../components/ui/AppHeader';
 import { GhostButton, PrimaryButton } from '../components/ui/Controls';
 import { colors, radius } from '../theme';
@@ -64,6 +65,7 @@ export default function SignIn() {
             <ActivityIndicator color={colors.mint} style={styles.busy} /></>
             : <Text accessibilityRole="alert" style={styles.error}>{guest.message}</Text>}
           {guest.expired && <TrialPollForm />}
+          {guest.expired && <><Text style={styles.title}>Or subscribe now</Text><SubscribePanel /></>}
         </View>}
         <View style={styles.panel}>
           <Text style={styles.title}>{resetting ? 'Reset your password' : creating ? 'Create your profile' : 'Welcome back'}</Text>

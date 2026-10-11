@@ -29,8 +29,9 @@ const guestMessages:Record<string,string>={TRIALS_ALL_USED:'All free trial keys 
 type Profile={publicId:string;username:string;email:string|null;plan:'FREE'|'LIFETIME'|'GUEST'|'SUSPENDED'|'DEMO';
   /** Signed in with the shared family code: must set their own password first. */
   mustChangePassword?:boolean};
-type Session={token:string;profile:Profile};
-type AuthContext={profile:Profile|null;register:(username:string,email:string,password:string)=>Promise<void>;
+type AuthContext={profile:Profile|null;register:(username:string,email:string,password:string,memberKey?:string)=>Promise<void>;
+  /** Uses a fresh session the server returned (e.g. after a trial got more time). */
+  adoptSession:(value:Session)=>void;
   login:(emailOrUsername:string,password:string)=>Promise<void>;logout:()=>Promise<void>;
   request:(path:string,init?:RequestInit)=>Promise<Response>;setUsername:(username:string)=>void;
   /** Replaces the family code with the member's own password (current: the code, when this device didn't just use it). */
@@ -45,6 +46,7 @@ type AuthContext={profile:Profile|null;register:(username:string,email:string,pa
   guest:{signingIn:boolean;message:string;expired:boolean};
   /** Answers the end-of-trial poll (7 more free days): signed in, or with the trial link after the pass ended. */
   answerTrialPoll:(answers:TrialPollAnswers)=>Promise<void>};
+export type Session={token:string;profile:Profile};
 export type TrialPlan='WEEK'|'MONTH'|'QUARTER'|'HALF_YEAR'|'YEAR'|'LIFETIME'|'NONE';
 export type TrialPollAnswers={recommend:'YES'|'MAYBE'|'NO';liked:string[];improve:string|null;plan:TrialPlan|null;price:string|null};
 const Context=createContext<AuthContext|null>(null);
@@ -54,6 +56,7 @@ async function parseSession(response:Response):Promise<Session>{
   if(!response.ok){const payload=await response.json().catch(()=>({})) as {code?:string};
     const messages:Record<string,string>={EMAIL_TAKEN:'Email already has an account. Sign in instead.',
       USERNAME_TAKEN:'That display username is taken.',
+      MEMBER_KEY_INVALID:'That member key isn’t right or was already used. Check it with the owner.',
       MEMBERS_FULL:'CrownIQ is full right now (100 members). Ask the owner for a spot or a guest link.',
       LIFETIME_FULL:'All 20 lifetime family spots are taken. Ask the owner.',
       SIGNUP_CLOSED:'Sign-up is invite-only for now. Enter your access code, or contact the owner for one.',
@@ -136,12 +139,13 @@ export function AuthProvider({children}:{children:ReactNode}){
           :payload.code==='TRIAL_NOT_FOUND'?'This poll is for the 2-day trial passes.':'Could not send your answers. Try again.');}
       signIn(await parseSession(response));setGuestResult({done:true,message:''});
     },
-    register:async(username,email,password)=>{
+    adoptSession:(next)=>signIn(next),
+    register:async(username,email,password,memberKey)=>{
       if(!base)throw new Error('Set EXPO_PUBLIC_API_URL to your CrownIQ server first.');
       const response=await fetch(`${base}/v1/auth/register`,{method:'POST',
-        // Opened from a guest link or trial key: signing up turns that trial account into a member (picks kept).
         headers:{'content-type':'application/json'},body:JSON.stringify({username,email,password,
-          ...(guestCode()?{guestCode:guestCode(),deviceId:guestDeviceId()}:{})})});
+          // This device's trial (by its id) becomes the member account, keeping its picks; a member key sets the paid plan.
+          guestCode:guestCode()??'trial',deviceId:guestDeviceId(),...(memberKey?{memberKey}:{})})});
       const created=await parseSession(response);
       setFamilyPassword(created.profile.mustChangePassword?password:'');
       signIn(created);
