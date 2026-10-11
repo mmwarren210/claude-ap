@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { openExternal } from '../../port';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useAuth } from '../../auth';
+import { useAuth, useTrial } from '../../auth';
 import { evidenceDetail, matchup } from '../../components/BoardCard';
 import { windows } from '../../components/BoardView';
 import { Notice } from '../../components/Screen';
@@ -106,6 +106,7 @@ function contextLines(context: GameContext, playerName: string): string[] {
 
 export default function PlayerResearch() {
   const { request, demo } = useAuth();
+  const trial = useTrial();
   const { lineId } = useLocalSearchParams<{ lineId: string }>();
   const { data, freshness, nowMs } = useBoard();
   const { legs } = useDraft();
@@ -310,7 +311,7 @@ export default function PlayerResearch() {
         </ScrollView>
       </View>}
 
-      {breakdown && <View style={styles.section}>
+      {breakdown && !trial && <View style={styles.section}>
         <Text style={styles.sectionTitle}>Why GKR {Math.round(analysis!.score!)}</Text>
         <View style={styles.panel}>
           <Text style={styles.groupTitle}>Player context · {breakdown.contextTotal.toFixed(1)}</Text>
@@ -336,7 +337,7 @@ export default function PlayerResearch() {
         </View>
       </View>}
 
-      {analysis && (analysis.supportingFactors.length > 0 || analysis.opposingFactors.length > 0) && <View style={styles.section}>
+      {analysis && !trial && (analysis.supportingFactors.length > 0 || analysis.opposingFactors.length > 0) && <View style={styles.section}>
         <Text style={styles.sectionTitle}>Supporting and risk factors</Text>
         <View style={styles.panel}>
           {analysis.supportingFactors.map((item, index) => <Text key={`s${index}`} style={styles.factorLine}>

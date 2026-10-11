@@ -1,5 +1,6 @@
 import type { Href } from 'expo-router';
 import { router } from 'expo-router';
+import { useTrial } from '../auth';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Screen } from '../components/Screen';
@@ -52,6 +53,11 @@ const topics: readonly Topic[] = [
 /** How to use CrownIQ, tab by tab: tap a topic to open it. */
 export default function Guide() {
   const [open, setOpen] = useState<string | null>('start');
+  const trial = useTrial();
+  if (trial) return <Screen eyebrow="MORE  /  GUIDE" title="How to use CrownIQ">
+    <Pressable accessibilityRole="button" onPress={() => router.back()}><Text style={styles.back}>← Back</Text></Pressable>
+    <Text style={styles.intro}>The full guide comes with membership. During your trial, open any pick to see its score and result.</Text>
+  </Screen>;
   return <Screen eyebrow="MORE  /  GUIDE" title="How to use CrownIQ">
     <Pressable accessibilityRole="button" onPress={() => router.back()}><Text style={styles.back}>← Back</Text></Pressable>
     <Text style={styles.intro}>CrownIQ tells you which way to go on a pick, and why. Tap a topic to see what it does.</Text>

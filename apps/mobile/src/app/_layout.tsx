@@ -8,6 +8,7 @@ import { SetPassword } from '../components/SetPassword';
 import { useAutoUpdate } from '../auto-update';
 import { useActivityBeat } from '../use-activity';
 import { IntroSplash } from '../components/IntroSplash';
+import { Watermark } from '../components/Watermark';
 import { useState } from 'react';
 import { View } from 'react-native';
 
@@ -36,8 +37,10 @@ function ProfileRouter(){
     </Stack>;
   // A family member who signed in with the shared code sets their own password before anything else.
   if(profile?.mustChangePassword)return <SetPassword />;
+  const day=new Date().toLocaleDateString('en-US',{month:'short',day:'numeric'});
   return profile?<BoardProvider key={profile.publicId}><DraftProvider key={profile.publicId} profileId={profile.publicId}>
     {navigator}
+    {profile.plan==='GUEST'&&<Watermark label={`CrownIQ · ${profile.username} · ${profile.publicId.slice(0,6)} · ${day}`} />}
   </DraftProvider></BoardProvider>:navigator;
 }
 // The opening plays once each time the app opens (not on every screen change).

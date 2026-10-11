@@ -182,3 +182,6 @@ export function AuthProvider({children}:{children:ReactNode}){
 export function useAuth(){const value=useContext(Context);
   if(!value)throw new Error('AuthProvider required');return value;}
 
+
+/** A trial or guest-link account (owner, 2026-10-11): sees picks and scores, not how CrownIQ makes them, under a watermark. */
+export function useTrial():boolean{return useAuth().profile?.plan==='GUEST';}

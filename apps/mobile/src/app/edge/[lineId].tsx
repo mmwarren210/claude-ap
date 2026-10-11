@@ -3,7 +3,7 @@ import type { EdgePick } from '@crowniq/contracts';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { useAuth } from '../../auth';
+import { useAuth, useTrial } from '../../auth';
 import { Notice, Screen } from '../../components/Screen';
 import { edgeSummary, formatLine, headline, pct, ratingLabel, signedPoints, tierLabel } from '../../edge-format';
 import { edgeSlip, useEdgeSlip } from '../../edge-slip';
@@ -18,6 +18,7 @@ const american = (decimal: number | null) => decimal === null ? '—'
 
 export default function EdgeDetail() {
   const { request } = useAuth();
+  const trial = useTrial();
   const { lineId, platform } = useLocalSearchParams<{ lineId: string; platform?: string }>();
   const [state, setState] = useState<{ id: string; pick: EdgePick | null; message: string; distribution?: Point[]; movement?: Movement[]; ladder?: Rung[] } | null>(null);
   const slip = useEdgeSlip();
@@ -66,14 +67,14 @@ export default function EdgeDetail() {
         <Text style={[styles.text, styles.verdict, rungVerdict(rung) === 'PLAY' && styles.own]}>{rungVerdict(rung)}</Text>
       </Pressable>)}
     </Section>}
-    <Section title="WHY">{pick.reasons.map((reason) => <Text key={reason} style={styles.text}>• {reason}</Text>)}</Section>
+    {!trial && <Section title="WHY">{pick.reasons.map((reason) => <Text key={reason} style={styles.text}>• {reason}</Text>)}</Section>}
     {pick.warnings.length > 0 && <Section title="GOOD TO KNOW">{pick.warnings.map((warning) =>
       <Text key={warning} style={styles.muted}>• {warning}</Text>)}</Section>}
-    <Section title="PROJECTION">
+    {!trial && <Section title="PROJECTION">
       {current?.distribution?.length ? <DistributionChart points={current.distribution} threshold={pick.threshold} side={pick.side} /> : null}
       <Text style={styles.text}>Mean {formatLine(pick.projection.mean)} · median {formatLine(pick.projection.median)} · SD {formatLine(pick.projection.sd)}</Text>
       <Text style={styles.muted}>{pick.projection.family === 'NORMAL' ? 'Normal' : pick.projection.family === 'POISSON' ? 'Poisson' : 'Negative binomial'} distribution, widened for estimate uncertainty.</Text>
-    </Section>
+    </Section>}
     {pick.elsewhere && pick.elsewhere.length > 0 && <Section title="EVERY PLATFORM'S NUMBER">
       {[{ platform: pick.platform, threshold: pick.threshold, side: pick.side, probability: pick.probability, payoutMultiplier: pick.payoutMultiplier, ev: pick.ev, own: true },
         ...pick.elsewhere.map((item) => ({ ...item, own: false }))].sort((a, b) => a.threshold - b.threshold).map((item) =>
@@ -88,7 +89,7 @@ export default function EdgeDetail() {
       {current.movement.filter((item) => item.points.length > 1).map((item) => <Sparkline key={item.platform} label={platformNames[item.platform] ?? bookNames[item.platform] ?? item.platform} points={item.points} />)}
       <Text style={styles.muted}>Each platform&apos;s number when it changed (snapshot store).</Text>
     </Section>}
-    {market && <Section title={`SPORTSBOOKS · ${pct(market.weight, 0)} WEIGHT`}>
+    {!trial && market && <Section title={`SPORTSBOOKS · ${pct(market.weight, 0)} WEIGHT`}>
       <Text style={styles.muted}>Fair probabilities remove each book&apos;s margin (power method).</Text>
       {market.books.map((book) => <View key={book.bookmaker + book.point} style={styles.bookRow}>
         <Text style={[styles.text, styles.bookName]}>{bookNames[book.bookmaker] ?? book.bookmaker}</Text>
@@ -98,12 +99,12 @@ export default function EdgeDetail() {
       </View>)}
       <Text style={styles.muted}>Market-implied mean {formatLine(market.mean)}</Text>
     </Section>}
-    {stats && <Section title={`STATS MODEL · ${pct(stats.weight, 0)} WEIGHT`}>
+    {!trial && stats && <Section title={`STATS MODEL · ${pct(stats.weight, 0)} WEIGHT`}>
       <Text style={styles.text}>Projection {formatLine(stats.mean)} from {stats.samples} games</Text>
       <Text style={styles.muted}>Last 5 avg {formatLine(stats.recentMean)} · sample avg {formatLine(stats.seasonMean)}
         {stats.hitRateAtLine !== null ? ` · ${pick.side} hit ${pct(stats.hitRateAtLine, 0)} of games` : ''}</Text>
     </Section>}
-    {ladder && <Section title={`REGULAR-LINE LADDER · ${pct(ladder.weight, 0)} WEIGHT`}>
+    {!trial && ladder && <Section title={`REGULAR-LINE LADDER · ${pct(ladder.weight, 0)} WEIGHT`}>
       <Text style={styles.text}>Regular line {formatLine(ladder.regularThreshold)} treated as a 50/50 anchor</Text>
     </Section>}
     <Text style={styles.muted}>Model {pick.modelVersion}{pick.calibrated ? ' · calibrated on graded results' : ' · not yet calibrated'}. Probabilities are estimates; confirm the line is still offered.</Text>

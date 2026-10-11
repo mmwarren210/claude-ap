@@ -1,9 +1,12 @@
 import { router } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 import { colors, radius } from '../../theme';
+import { useTrial } from '../../auth';
 
 /** A slim label under a tab's header naming the model behind the screen (owner, 2026-10-11), with a link to the guide. */
 export function ModelBanner({ title, text }: { title: string; text: string }) {
+  // Trial accounts see the model's name only, not how it works.
+  if (useTrial()) return <View style={styles.banner} accessibilityRole="header"><Text style={styles.title}>{title}</Text></View>;
   return <View style={styles.banner} accessibilityRole="header">
     <Text style={styles.title}>{title}</Text>
     <Text style={styles.text}>{text}{' '}
