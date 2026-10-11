@@ -50,11 +50,13 @@ export interface ContextRefreshOptions {
 export class ContextRefreshScheduler {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  /** Held while the PropLine pull runs, so GKR's picks change once, after all of it is in (owner, 2026-10-11). */
+  paused = false;
 
   constructor(private readonly service: BoardService, private readonly options: ContextRefreshOptions) {}
 
   async tick(): Promise<ContextRefreshReport | null> {
-    if (this.running) return null;
+    if (this.running || this.paused) return null;
     this.running = true;
     try {
       return await this.service.refreshContext(this.options.adapter, { windowHours: this.options.windowHours });

@@ -1619,9 +1619,17 @@ export function buildServer(options: ServerOptions = {}) {
   // every player on every board gets PropLine's box scores fetched fresh and kept ~26 hours, and the books' accuracy job runs
   // its big batch. No AI runs on any of it. The day's reads then come from the cache instead of live PropLine requests.
   let nightlyDay='';
-  const nightly={last:null as null|{at:string;players:number;found:number;empty:number;skipped:number;accuracyGames:number|null;ms:number}};
+  const nightly={running:false,last:null as null|{at:string;players:number;found:number;empty:number;skipped:number;accuracyGames:number|null;ms:number;
+    requests:number;accuracyRequests:number;refreshed:boolean}};
   const runNightly=async()=>{
+    if(nightly.running)return;
+    nightly.running=true;
+    // GKR's picks hold still during the pull and update once at the end, with everything in.
+    if(contextScheduler)contextScheduler.paused=true;
     const started=Date.now();
+    const historyBefore=options.proplineHistory?.status().requests??0;
+    const accuracyBefore=(options.bookAccuracy as {stats?:{requests:number}}|null|undefined)?.stats?.requests??0;
+    try{
     const lines:PropLine[]=[...(service.getBoard()?.board.lines??[])];
     if(options.scrapedLines)for(const app of otherApps){
       const board=await appBoard(options.scrapedLines,app,service.getBoard()).catch(()=>null);
@@ -1630,9 +1638,13 @@ export function buildServer(options: ServerOptions = {}) {
     const open=lines.filter((line)=>Date.parse(line.eventStartTime)>now().getTime());
     const warmed=options.proplineHistory?await options.proplineHistory.warm(open).catch(()=>null):null;
     const accuracyGames=options.bookAccuracy?.refresh?await options.bookAccuracy.refresh(300).catch(()=>null):null;
+    if(contextScheduler)contextScheduler.paused=false;
+    const refreshed=contextScheduler?!!(await contextScheduler.tick().catch(()=>null)):false;
     nightly.last={at:now().toISOString(),players:warmed?.players??0,found:warmed?.found??0,empty:warmed?.empty??0,skipped:warmed?.skipped??0,
-      accuracyGames,ms:Date.now()-started};
-    console.log(`[nightly] PropLine pull: ${nightly.last.players} players (${nightly.last.found} with games), accuracy ${accuracyGames??'-'} games, ${Math.round(nightly.last.ms/1000)}s`);
+      accuracyGames,ms:Date.now()-started,requests:Math.max(0,(options.proplineHistory?.status().requests??0)-historyBefore),
+      accuracyRequests:Math.max(0,((options.bookAccuracy as {stats?:{requests:number}}|null|undefined)?.stats?.requests??0)-accuracyBefore),refreshed};
+    console.log(`[nightly] PropLine pull: ${nightly.last.players} players (${nightly.last.found} with games), ${nightly.last.requests} history requests, accuracy ${accuracyGames??'-'} games (${nightly.last.accuracyRequests} requests), ${Math.round(nightly.last.ms/1000)}s`);
+    }finally{nightly.running=false;if(contextScheduler)contextScheduler.paused=false;}
   };
   if(!options.clock&&(options.proplineHistory||options.bookAccuracy)){
     const central=(at:Date)=>Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',hourCycle:'h23',
@@ -2404,6 +2416,11 @@ export function buildServer(options: ServerOptions = {}) {
       return { key: await options.product.issueMemberKey(input.data.plan), plan: input.data.plan };
     });
     admin.get('/payments', async (_request, reply) => options.product ? options.product.payments() : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
+    // The PropLine pull now (as at night): GKR holds its picks until it's done, then updates once.
+    admin.post('/nightly-pull', async () => { if (nightly.running) return { started: false, running: true };
+      void runNightly().catch((error) => console.warn('[nightly] failed', error instanceof Error ? error.message : error));
+      return { started: true }; });
+    admin.get('/nightly-pull', async () => nightly);
     admin.get('/trial-poll', async (_request, reply) => options.product ? options.product.trialPollResults() : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
     admin.get('/tips-summary', async (_request, reply) => options.tips ? options.tips.store.summary() : reply.code(503).send({ code: 'TIPS_UNAVAILABLE' }));
     admin.get('/vetted', async (_request, reply) => {
