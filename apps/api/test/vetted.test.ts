@@ -21,7 +21,7 @@ test('Vetted scoreboard: record, units at the price, streak', async () => {
   const now = new Date('2026-10-11T12:00:00Z'), store = new TipStore(null, () => now);
   const draft = { text: 'x', sport: 'NBA', league: 'NBA', selection: 'A', opponent: null, market: 'MONEYLINE' as const, line: null,
     side: null, stat: null, odds: 150, eventDate: null };
-  const tips = await store.add('o', 's', [draft, draft, draft], [null, null, null]);
+  const tips = await store.add('o', 's', [draft, { ...draft, selection: 'B' }, { ...draft, selection: 'C' }], [null, null, null]);
   const analysis = { verdict: 'PLAY' as const, chance: .5, chanceSource: 'Claude' as const, price: 150, priceSource: 'the post', ev: .25,
     fairOdds: 100, reasons: [], event: null, start: null, analyzedAt: now.toISOString() };
   await store.setAnalyses(tips.map((tip) => tip.id), new Map(tips.map((tip) => [tip.id, analysis])));
@@ -32,4 +32,26 @@ test('Vetted scoreboard: record, units at the price, streak', async () => {
   assert.equal(scoreboard.allTime.units, 0.5);
   assert.equal(scoreboard.pending, 1);
   assert.equal(scoreboard.streak?.length, 1);
+});
+
+test('duplicates are never re-checked or re-graded, Vetted shows them once with the first submitter', async () => {
+  const { analyzeTips } = await import('../src/tips.js');
+  const now = new Date('2026-10-11T12:00:00Z'), store = new TipStore(null, () => now);
+  const draft = { text: 'x', sport: 'NBA', league: 'NBA', selection: 'Lakers', opponent: 'Celtics', market: 'MONEYLINE' as const,
+    line: null, side: null, stat: null, odds: 120, eventDate: '2026-10-12' };
+  let analyzed = 0;
+  const reader = { read: async () => ({ source: null, tips: [] }), grade: async () => [],
+    analyze: async (tips: readonly { id: string }[]) => { analyzed += tips.length;
+      return tips.map((tip) => ({ id: tip.id, chance: .55, verdict: 'PLAY' as const, marketOdds: 120, oddsSource: null, event: null, start: null, reasons: [] })); } };
+  const first = await store.add('a', 'svc', [draft, draft], [null, null], 'alice');
+  await analyzeTips(store, reader, first, () => now);
+  assert.equal(analyzed, 1, 'the same pick twice in one upload is checked once');
+  const second = await store.add('b', 'svc', [draft], [null], 'bob');
+  await analyzeTips(store, reader, second, () => now);
+  assert.equal(analyzed, 1, 'a later upload of the same pick reuses the verdict');
+  const vetted = await store.vetted();
+  assert.equal(vetted.picks.length, 1);
+  assert.equal(vetted.picks[0].submittedBy, 'alice');
+  const settled = await store.settle([{ id: first[0].id, status: 'WON', result: 'Lakers won' }]);
+  assert.equal(settled, 3, 'one grade settles every copy');
 });

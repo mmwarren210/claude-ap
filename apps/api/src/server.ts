@@ -93,7 +93,7 @@ import type { EdgeLedger } from './edge/ledger.js';
 import type { SnapshotStore } from './edge/snapshots.js';
 import type { BookWeightStore } from './edge/book-weights.js';
 import type { DispersionStore } from './edge/dispersion-store.js';
-import { analyzeTips, DAILY_TIP_UPLOADS, marketRead } from './tips.js';
+import { analyzeTips, DAILY_TIP_UPLOADS, marketRead, USER_DAILY_UPLOADS } from './tips.js';
 import type { TipDraft, TipGrader, TipReader, TipStore } from './tips.js';
 import { matchTip, modelRead } from './tip-models.js';
 import type { TipModelRead } from './tip-models.js';
@@ -632,26 +632,36 @@ export function buildServer(options: ServerOptions = {}) {
   let sportMix:((platform:EdgePlatform)=>Promise<unknown>)|null=null;
   // Set once Edge is running: each tip's Edge and GKR+ read from the boards.
   let tipModelReads:((tips:readonly (TipDraft&{id:string})[])=>Promise<Map<string,{edge:TipModelRead|null;gkrPlus:TipModelRead|null}>>)|null=null;
+  // Everyone can submit screenshots and see their own picks (owner, 2026-10-11); Edge/GKR+ reads stay the owner's.
   app.get('/v1/tips',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
-    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
     if(!options.tips)return reply.code(503).send({code:'TIPS_UNAVAILABLE'});
     const mine=await options.tips.store.mine(user.accountId);
+    const owner=await isOwner(request);
+    const uploadsLeft=owner?null:Math.max(0,USER_DAILY_UPLOADS-await options.tips.store.uploadsToday(user.accountId));
+    if(!owner){
+      // Trial accounts get verdicts and numbers, not the reasons behind them.
+      const tips=mine.tips.map((tip)=>user.plan==='GUEST'&&tip.analysis?{...tip,analysis:{...tip.analysis,reasons:[]}}:tip);
+      return {...mine,tips,reading:!!options.tips.reader,uploadsLeft,dailyLimit:USER_DAILY_UPLOADS};
+    }
     // Edge's and GKR+'s reads on each prop tip, fresh on every load (the Edge tab's own pricing; nothing is pulled).
     const reads=tipModelReads?await tipModelReads(mine.tips).catch(()=>null):null;
-    return {...mine,tips:mine.tips.map((tip)=>({...tip,models:reads?.get(tip.id)??null})),reading:!!options.tips.reader};
+    return {...mine,tips:mine.tips.map((tip)=>({...tip,models:reads?.get(tip.id)??null})),reading:!!options.tips.reader,uploadsLeft:null,dailyLimit:null};
   });
   // Vetted: every outside tip CrownIQ rated PLAY, for every signed-in user; never who posted it. Trial accounts don't get the
   // reasons (owner, 2026-10-11: they see picks, not how CrownIQ makes them).
+  let vettedCache:{at:number;value:ReturnType<TipStore['vetted']>}|null=null;
   app.get('/v1/vetted',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     if(!options.tips)return {picks:[],record:{won:0,lost:0,push:0,units:0,roi:null},scoreboard:null};
-    const vetted=await options.tips.store.vetted();
+    // Built at most once a minute for everyone (apps poll every 5 minutes), so a busy evening doesn't load the server.
+    if(!vettedCache||Date.now()-vettedCache.at>60_000)vettedCache={at:Date.now(),value:options.tips.store.vetted()};
+    const vetted=await vettedCache.value;
     return user.plan==='GUEST'?{...vetted,picks:vetted.picks.map(({reasons:_reasons,...pick})=>pick)}:vetted;
   });
   app.post('/v1/tips/upload',{bodyLimit:8_000_000},async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
-    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    const owner=await isOwner(request);
     if(!options.tips?.reader)return reply.code(503).send({code:'TIPS_READER_UNAVAILABLE'});
     const input=z.object({image:z.object({data:z.string().min(100).max(7_500_000).regex(/^[A-Za-z0-9+/=]+$/),
       mediaType:z.enum(['image/png','image/jpeg','image/webp','image/gif'])}).optional(),
@@ -663,7 +673,9 @@ export function buildServer(options: ServerOptions = {}) {
     if(!input.success){console.warn(`[tips] upload rejected (${attempt}): ${input.error.issues.map((issue)=>`${issue.path.join('.')} ${issue.message}`).join('; ').slice(0,300)}`);
       return reply.code(400).send({code:'INVALID_TIPS_UPLOAD'});}
     console.log(`[tips] upload (${attempt})`);
-    if(await options.tips.store.uploadsToday(user.accountId)>=DAILY_TIP_UPLOADS)return reply.code(429).send({code:'DAILY_LIMIT'});
+    // Everyone but the owner: 2 screenshots a day while in beta (paid tiers decide their own allotment before launch).
+    if(await options.tips.store.uploadsToday(user.accountId)>=(owner?DAILY_TIP_UPLOADS*100:USER_DAILY_UPLOADS))
+      return reply.code(429).send({code:'DAILY_LIMIT',limit:owner?null:USER_DAILY_UPLOADS});
     try{
       const read=await options.tips.reader.read({...input.data.image?{image:input.data.image}:{},...input.data.text?{text:input.data.text}:{},
         today:now().toISOString().slice(0,10)});
@@ -672,7 +684,7 @@ export function buildServer(options: ServerOptions = {}) {
       const lines=options.gameLines?await options.gameLines().catch(()=>[]):[];
       const from=now().getTime();
       const tips=await options.tips.store.add(user.accountId,input.data.source??read.source??'Unnamed service',read.tips,
-        read.tips.map((tip)=>marketRead(tip,lines,tip.eventDate?Date.parse(tip.eventDate):from)));
+        read.tips.map((tip)=>marketRead(tip,lines,tip.eventDate?Date.parse(tip.eventDate):from)),user.username);
       // CrownIQ's opinion runs in the background (a web search per batch); the app refreshes until it lands.
       void analyzeTips(options.tips.store,options.tips.reader,tips,now);
       return reply.code(201).send({source:tips[0]!.source,tips:tips.map(({accountId:_account,...tip})=>tip)});

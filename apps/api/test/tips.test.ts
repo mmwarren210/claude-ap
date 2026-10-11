@@ -88,8 +88,13 @@ test('tips routes: upload a screenshot, see it under its service, mark and remov
     assert.equal((await app.inject({ method: 'DELETE', url: `/v1/tips/${kaz.id}`, headers: auth })).statusCode, 200);
     const other = await product.register('other@example.org', 'another-private-password', 'Other_2');
     const outsider = { authorization: `Bearer ${other.token}` };
-    assert.equal((await app.inject({ url: '/v1/tips', headers: outsider })).statusCode, 404, 'owner-only for now');
-    assert.equal((await app.inject({ method: 'POST', url: '/v1/tips/upload', headers: outsider, payload: { text: 'Spain ML' } })).statusCode, 404);
+    // Everyone can submit (2 a day) and sees only their own picks; patching results stays the owner's.
+    const theirs = (await app.inject({ url: '/v1/tips', headers: outsider })).json();
+    assert.equal(theirs.tips.length, 0); assert.equal(theirs.uploadsLeft, 2);
+    for (let index = 0; index < 2; index++)
+      assert.equal((await app.inject({ method: 'POST', url: '/v1/tips/upload', headers: outsider, payload: { text: 'Spain ML' } })).statusCode, 201);
+    assert.equal((await app.inject({ method: 'POST', url: '/v1/tips/upload', headers: outsider, payload: { text: 'Spain ML' } })).statusCode, 429);
+    assert.equal((await app.inject({ url: '/v1/tips', headers: outsider })).json().uploadsLeft, 0);
   } finally { await app.close(); await rm(folder, { recursive: true, force: true, maxRetries: 5 }); }
 });
 

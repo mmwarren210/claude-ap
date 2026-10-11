@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { openExternal } from '../../port';
 import { useAuth } from '../../auth';
+import { pickImage } from '../../pick-image';
 import { StakePicker } from '../../components/EdgeSlipPanel';
 import { Notice, Screen } from '../../components/Screen';
 import { useEdgeStake } from '../../edge-stake';
@@ -35,42 +36,6 @@ const verdictColor: { [verdict in Verdict]: string } = { PLAY: palette.green, LE
 const statusColor: { [status in Status]: string } = { PENDING: palette.muted, WON: palette.green, LOST: palette.danger, PUSH: palette.muted, VOID: palette.muted };
 const books = [{ name: 'DraftKings', url: 'https://sportsbook.draftkings.com' }, { name: 'FanDuel', url: 'https://sportsbook.fanduel.com' },
   { name: 'Hard Rock', url: 'https://app.hardrock.bet' }];
-
-/**
- * Picks an image on the web and shrinks it to at most 1600px as JPEG, returning base64 without the data: prefix. Null when
- * nothing was chosen; an Error saying what went wrong when the picture can't be opened.
- */
-function pickImage(): Promise<{ data: string; mediaType: 'image/jpeg' } | null> {
-  return new Promise((resolve, reject) => {
-    if (typeof document === 'undefined') { reject(new Error('Adding a picture works in the web app (open CrownIQ in Safari).')); return; }
-    const input = document.createElement('input');
-    input.type = 'file'; input.accept = 'image/*';
-    input.onchange = () => {
-      const file = input.files?.[0];
-      if (!file) { resolve(null); return; }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const image = new window.Image();
-        image.onload = () => {
-          const scale = Math.min(1, 1600 / Math.max(image.width, image.height));
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.round(image.width * scale); canvas.height = Math.round(image.height * scale);
-          const context = canvas.getContext('2d');
-          if (!context) { reject(new Error('This browser couldn’t prepare the picture. Paste the text instead.')); return; }
-          context.drawImage(image, 0, 0, canvas.width, canvas.height);
-          const data = canvas.toDataURL('image/jpeg', .85).split(',')[1] ?? '';
-          if (data.length < 100) { reject(new Error('That picture came out empty. Try a screenshot instead.')); return; }
-          resolve({ data, mediaType: 'image/jpeg' });
-        };
-        image.onerror = () => reject(new Error('That picture’s format couldn’t be opened. Try a screenshot (PNG or JPEG).'));
-        image.src = String(reader.result);
-      };
-      reader.onerror = () => reject(new Error('Couldn’t read that file from your phone. Try again.'));
-      reader.readAsDataURL(file);
-    };
-    input.click();
-  });
-}
 
 const slipLeg = (tip: Tip): SlipLeg | null => tip.analysis ? { id: tip.id, label: tip.text, chance: tip.analysis.chance,
   price: tip.analysis.price, fairOdds: tip.analysis.fairOdds, event: tip.analysis.event } : null;

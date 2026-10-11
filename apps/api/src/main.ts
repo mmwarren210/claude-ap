@@ -457,7 +457,8 @@ const app = buildServer({ ufcHistory, soccerHistory, adminToken: process.env.ADM
   activity:activityLog,
   secrets:{password:process.env.CROWNIQ_SECRETS_PASSWORD?.trim()||null,unlocks:new SecretUnlocks(`${dataDir}/secret-unlocks.json`)},
   tips:(()=>{const store=new TipStore(`${dataDir}/tips.json`);
-    const reader=claudeKey?new ClaudeTipReader({apiKey:claudeKey,model:process.env.CROWNIQ_TIPS_MODEL??'claude-sonnet-5-5'}):null;
+    const reader=claudeKey?new ClaudeTipReader({apiKey:claudeKey,model:process.env.CROWNIQ_TIPS_MODEL??'claude-sonnet-5-5',
+      readModel:process.env.CROWNIQ_TIPS_READ_MODEL??'claude-haiku-4-5'}):null;
     return {store,reader,grader:reader?new TipGrader(store,reader):null};})(),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),

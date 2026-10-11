@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../auth';
+import { pickImage } from '../../pick-image';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { ModelBanner } from '../../components/ui/ModelBanner';
 import { colors, radius } from '../../theme';
@@ -11,11 +12,16 @@ import { colors, radius } from '../../theme';
 type VettedPick = { id: string; sport: string | null; league: string | null; selection: string; opponent: string | null; market: string;
   line: number | null; side: 'OVER' | 'UNDER' | null; stat: string | null; eventDate: string | null;
   status: 'PENDING' | 'WON' | 'LOST' | 'PUSH' | 'VOID'; createdAt: string; chance: number; price: number | null; ev: number | null;
-  event: string | null; start: string | null; reasons?: string[]; live?: boolean };
+  event: string | null; start: string | null; reasons?: string[]; live?: boolean; submittedBy?: string | null };
 type VettedRecord = { won: number; lost: number; push: number; units: number; roi: number | null };
 type Scoreboard = { allTime: VettedRecord; last7: VettedRecord; bySport: Record<string, VettedRecord>;
   streak: { kind: 'W' | 'L'; length: number } | null; pending: number; live: number; updatedAt: string };
 type Vetted = { picks: VettedPick[]; record: VettedRecord; scoreboard: Scoreboard | null };
+type MyTip = { id: string; createdAt: string; selection: string; market: string; line: number | null; side: string | null; stat?: string | null;
+  status: VettedPick['status']; analyzing?: boolean; reused?: boolean;
+  analysis?: { verdict: 'PLAY' | 'LEAN' | 'PASS' | 'FADE'; chance: number; price: number | null; ev: number | null; reasons: string[] } | null };
+type Mine = { tips: MyTip[]; uploadsLeft: number | null; dailyLimit: number | null; reading: boolean };
+const verdictColor = (verdict: string) => verdict === 'PLAY' ? colors.mint : verdict === 'LEAN' ? colors.gold : verdict === 'FADE' ? colors.red : colors.textMuted;
 
 const odds = (price: number) => price > 0 ? `+${price}` : `${price}`;
 const marketText = (pick: VettedPick) => {
@@ -46,10 +52,41 @@ export default function VettedTab() {
     catch { setError('Could not load Vetted picks. Pull down to try again.'); }
     finally { setLoading(false); }
   }, [request]);
-  // The scoreboard is live: reloaded every minute while the tab is open (results land as games are graded).
+  // Your own submissions: verdicts show the moment they land (checked every few seconds while one is being read).
+  const [mine, setMine] = useState<Mine | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const loadMine = useCallback(async () => {
+    const response = await request('/v1/tips').catch(() => null);
+    if (response?.ok) setMine(await response.json() as Mine);
+  }, [request]);
+  // The shared board (scoreboard and every vetted pick) reloads every 5 minutes while the tab is open, to keep the server light.
   const [focused, setFocused] = useState(false);
-  useFocusEffect(useCallback(() => { void load(); setFocused(true); return () => setFocused(false); }, [load]));
-  useEffect(() => { if (!focused) return; const timer = setInterval(() => { void load(); }, 60_000); return () => clearInterval(timer); }, [focused, load]);
+  useFocusEffect(useCallback(() => { void load(); void loadMine(); setFocused(true); return () => setFocused(false); }, [load, loadMine]));
+  useEffect(() => { if (!focused) return; const timer = setInterval(() => { void load(); }, 5 * 60_000); return () => clearInterval(timer); }, [focused, load]);
+  const reading = !!mine?.tips.some((tip) => tip.analyzing);
+  useEffect(() => {
+    if (!reading) return;
+    const timer = setInterval(() => { void loadMine(); }, 4000);
+    return () => { clearInterval(timer); void load(); };
+  }, [reading, loadMine, load]);
+  const submit = async () => {
+    setMessage('');
+    let image: { data: string; mediaType: string } | null = null;
+    try { image = await pickImage(); } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not open that picture.'); return; }
+    if (!image) return;
+    setBusy(true);
+    try {
+      const response = await request('/v1/tips/upload', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image }) });
+      if (response.ok) { const added = await response.json() as { tips: unknown[] };
+        setMessage(`Read ${added.tips.length} ${added.tips.length === 1 ? 'pick' : 'picks'}. CrownIQ is checking ${added.tips.length === 1 ? 'it' : 'them'} now…`); }
+      else setMessage(response.status === 429 ? `You’ve used today’s ${mine?.dailyLimit ?? 2} screenshots. More tomorrow.`
+        : response.status === 422 ? 'No picks found in that picture. Try a clearer screenshot.'
+        : response.status === 503 ? 'Screenshot checking is down right now. Try again later.' : 'Could not read that picture. Try again.');
+    } catch { setMessage('Could not upload. Check your connection.'); }
+    finally { setBusy(false); void loadMine(); }
+  };
+  const recentMine = mine?.tips.slice(0, 12) ?? [];
   const upcoming = data?.picks.filter((pick) => pick.status === 'PENDING') ?? [];
   const settled = data?.picks.filter((pick) => pick.status !== 'PENDING') ?? [];
   return <SafeAreaView style={styles.safe} edges={['top']}>
@@ -57,6 +94,25 @@ export default function VettedTab() {
       <AppHeader subtitle="Vetted" />
       <ModelBanner title="Crown Approved" text="Outside tips CrownIQ checked against the market and rated PLAY. Only the plays make this list." />
       {data?.scoreboard && <ScoreboardCard board={data.scoreboard} />}
+      <View style={styles.submit}>
+        <Text style={styles.boardTitle}>SUBMIT A PICK</Text>
+        <Text style={styles.muted}>Got a screenshot of picks? CrownIQ checks every pick and tells you right away: PLAY, LEAN, PASS or FADE. PLAYs join this list with your name on them.</Text>
+        <Pressable accessibilityRole="button" disabled={busy || mine?.uploadsLeft === 0} onPress={() => void submit()}
+          style={[styles.button, (busy || mine?.uploadsLeft === 0) && styles.buttonOff]}>
+          {busy ? <ActivityIndicator color={colors.mintInk} /> : <Text style={styles.buttonText}>Upload screenshot</Text>}
+        </Pressable>
+        {mine?.uploadsLeft !== null && mine?.uploadsLeft !== undefined && <Text style={styles.faint}>{mine.uploadsLeft} of {mine.dailyLimit} left today</Text>}
+        {!!message && <Text style={styles.muted}>{message}</Text>}
+        {recentMine.length > 0 && <Text style={[styles.section, { marginTop: 4 }]}>YOUR SUBMISSIONS</Text>}
+        {recentMine.map((tip) => <View key={tip.id} style={styles.mineRow}>
+          <View style={{ flex: 1 }}><Text style={styles.mineName}>{tip.selection}</Text>
+            <Text style={styles.faint}>{tip.market === 'PLAYER_PROP' ? `${tip.side === 'UNDER' ? 'Under' : 'Over'} ${tip.line ?? ''} ${tip.stat ?? ''}` : tip.market.replace(/_/g, ' ').toLowerCase()}
+              {tip.analysis ? ` · ${Math.round(tip.analysis.chance * 100)}%${tip.analysis.ev !== null ? ` · EV ${tip.analysis.ev >= 0 ? '+' : ''}${(tip.analysis.ev * 100).toFixed(1)}%` : ''}` : ''}</Text></View>
+          {tip.analyzing ? <ActivityIndicator color={colors.mint} />
+            : <Text style={[styles.badge, { color: tip.status !== 'PENDING' ? statusColor(tip.status) : verdictColor(tip.analysis?.verdict ?? '') }]}>
+              {tip.status !== 'PENDING' ? tip.status : tip.analysis?.verdict ?? '—'}</Text>}
+        </View>)}
+      </View>
       {!!error && <Text style={styles.muted}>{error}</Text>}
       {data && !upcoming.length && <Text style={styles.muted}>No vetted plays right now. New ones show up here as CrownIQ approves them.</Text>}
       {upcoming.map((pick) => <PickCard key={pick.id} pick={pick} />)}
@@ -105,6 +161,7 @@ function PickCard({ pick }: { pick: VettedPick }) {
     {(pick.event || time) && <Text style={styles.muted}>{[pick.event, time].filter(Boolean).join(' · ')}</Text>}
     <Text style={styles.numbers}>{Math.round(pick.chance * 100)}% to hit{pick.price !== null ? ` · ${odds(pick.price)}` : ''}
       {pick.ev !== null ? ` · EV ${pick.ev >= 0 ? '+' : ''}${(pick.ev * 100).toFixed(1)}%` : ''}</Text>
+    {pick.submittedBy && <Text style={styles.faint}>Submitted by {pick.submittedBy}</Text>}
     {pick.reasons?.slice(0, 2).map((reason) => <Text key={reason} style={styles.reason}>• {reason}</Text>)}
   </View>;
 }
@@ -120,6 +177,12 @@ const styles = StyleSheet.create({
   statValue: { color: colors.text, fontSize: 20, fontWeight: '900' },
   statLabel: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
   faint: { color: colors.textFaint, fontSize: 11 },
+  submit: { gap: 8, padding: 14, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  button: { minHeight: 46, borderRadius: 999, backgroundColor: colors.mint, alignItems: 'center', justifyContent: 'center' },
+  buttonOff: { opacity: .45 },
+  buttonText: { color: colors.mintInk, fontSize: 15, fontWeight: '900' },
+  mineRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6, borderTopWidth: 1, borderTopColor: colors.border },
+  mineName: { color: colors.text, fontSize: 14, fontWeight: '700' },
   section: { color: colors.textMuted, fontSize: 12, fontWeight: '800', letterSpacing: 1.5, marginTop: 8 },
   muted: { color: colors.textMuted, fontSize: 13, lineHeight: 18 },
   card: { gap: 4, padding: 14, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },

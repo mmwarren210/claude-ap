@@ -46,7 +46,20 @@ export interface Tip extends TipDraft {
   analysis?: TipAnalysis | null;
   /** The analysis is running (set at upload, cleared when it lands or fails). */
   analyzing?: boolean;
+  /** The CrownIQ username of the person who submitted it (shown on Vetted; the tipster never is). */
+  submittedBy?: string;
+  /** The verdict came from an identical pick already checked, so no AI call was made. */
+  reused?: boolean;
 }
+
+/** One pick across uploads: the same selection, market, line, side and stat on the same day is the same pick. */
+export function tipKey(tip: Pick<Tip, 'sport' | 'selection' | 'opponent' | 'market' | 'line' | 'side' | 'stat' | 'eventDate' | 'createdAt'>): string {
+  const norm = (value: string | null) => (value ?? '').toLowerCase().replace(/[^a-z0-9.]+/g, ' ').trim();
+  return [norm(tip.sport), norm(tip.selection), norm(tip.opponent), tip.market, tip.line ?? '', tip.side ?? '', norm(tip.stat),
+    tip.eventDate ?? tip.createdAt.slice(0, 10)].join('|');
+}
+/** Daily screenshot uploads for everyone except the owner (owner, 2026-10-11: 2 a day while in beta). */
+export const USER_DAILY_UPLOADS = 2;
 
 export const decimalFromAmerican = (odds: number) => odds > 0 ? 1 + odds / 100 : 1 + 100 / -odds;
 export const americanFromChance = (chance: number) => chance >= .5 ? -Math.round(chance / (1 - chance) * 100) : Math.round((1 - chance) / chance * 100);
@@ -170,11 +183,12 @@ export class TipStore {
   }
 
   /** Saves one upload's picks under a service name. */
-  add(accountId: string, source: string, drafts: readonly TipDraft[], reads: readonly (TipMarketRead | null)[]): Promise<Tip[]> {
+  add(accountId: string, source: string, drafts: readonly TipDraft[], reads: readonly (TipMarketRead | null)[], submittedBy?: string): Promise<Tip[]> {
     return this.exclusive(async () => {
       const data = await this.load(), now = this.clock().toISOString(), batchId = randomUUID();
       const tips = drafts.map((draft, index): Tip => ({ ...draft, id: randomUUID(), accountId, batchId, source, createdAt: now,
-        status: 'PENDING', gradedAt: null, gradedBy: null, result: null, market_read: reads[index] ?? null, analysis: null, analyzing: true }));
+        status: 'PENDING', gradedAt: null, gradedBy: null, result: null, market_read: reads[index] ?? null, analysis: null, analyzing: true,
+        ...(submittedBy ? { submittedBy } : {}) }));
       data.tips.push(...tips);
       await this.save();
       return tips;
@@ -197,13 +211,19 @@ export class TipStore {
     const now = this.clock().getTime(), since = now - 14 * DAY;
     const all = (await this.load()).tips.filter((tip) => tip.analysis?.verdict === 'PLAY')
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    // The same pick submitted by several people shows (and counts) once, credited to whoever submitted it first.
+    const firsts = new Map<string, Tip>();
+    for (const tip of [...all].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || all.indexOf(a) - all.indexOf(b)))
+      if (!firsts.has(tipKey(tip))) firsts.set(tipKey(tip), tip);
+    const unique = new Set(firsts.values());
+    all.splice(0, all.length, ...all.filter((tip) => unique.has(tip)));
     const plays = all.filter((tip) => tip.status === 'PENDING' || Date.parse(tip.gradedAt ?? tip.createdAt) >= since);
     const started = (tip: Tip) => { const time = Date.parse(tip.analysis?.start ?? ''); return Number.isFinite(time) && time <= now; };
     return {
       picks: plays.map((tip) => ({ id: tip.id, sport: tip.sport, league: tip.league, selection: tip.selection, opponent: tip.opponent,
         market: tip.market, line: tip.line, side: tip.side, stat: tip.stat, eventDate: tip.eventDate, status: tip.status,
         live: tip.status === 'PENDING' && started(tip), createdAt: tip.createdAt, gradedAt: tip.gradedAt, chance: tip.analysis!.chance,
-        price: tip.analysis!.price, ev: tip.analysis!.ev, event: tip.analysis!.event, start: tip.analysis!.start, reasons: tip.analysis!.reasons })),
+        price: tip.analysis!.price, ev: tip.analysis!.ev, event: tip.analysis!.event, start: tip.analysis!.start, reasons: tip.analysis!.reasons, submittedBy: tip.submittedBy ?? null })),
       record: vettedRecord(plays),
       scoreboard: { allTime: vettedRecord(all), last7: vettedRecord(all.filter((tip) => Date.parse(tip.gradedAt ?? tip.createdAt) >= now - 7 * DAY)),
         bySport: Object.fromEntries([...new Set(all.map((tip) => tip.league ?? tip.sport ?? 'Other'))]
@@ -236,11 +256,20 @@ export class TipStore {
     });
   }
 
+  /** A verdict already made for the same pick in the last 18 hours (any uploader), to reuse instead of asking the AI again. */
+  async knownAnalysis(tip: Tip): Promise<TipAnalysis | null> {
+    const key = tipKey(tip), since = this.clock().getTime() - 18 * 3600_000;
+    const match = (await this.load()).tips.find((item) => item.id !== tip.id && item.analysis && Date.parse(item.analysis.analyzedAt) >= since &&
+      tipKey(item) === key);
+    return match?.analysis ?? null;
+  }
+
   /** Saves the analyses for these tips and clears their analyzing flag (also when the analysis failed). */
-  setAnalyses(ids: readonly string[], analyses: ReadonlyMap<string, TipAnalysis>): Promise<void> {
+  setAnalyses(ids: readonly string[], analyses: ReadonlyMap<string, TipAnalysis>, reused: ReadonlySet<string> = new Set()): Promise<void> {
     return this.exclusive(async () => {
       const data = await this.load();
-      for (const tip of data.tips) if (ids.includes(tip.id)) Object.assign(tip, { analyzing: false, ...analyses.has(tip.id) ? { analysis: analyses.get(tip.id) } : {} });
+      for (const tip of data.tips) if (ids.includes(tip.id)) Object.assign(tip, { analyzing: false, ...analyses.has(tip.id) ? { analysis: analyses.get(tip.id) } : {},
+        ...reused.has(tip.id) ? { reused: true } : {} });
       await this.save();
     });
   }
@@ -265,7 +294,7 @@ export class TipStore {
       const known = tip.market_read?.start ?? tip.analysis?.start ?? null;
       const start = known && Number.isFinite(Date.parse(known)) ? Date.parse(known) : tip.eventDate ? Date.parse(tip.eventDate) + 20 * 3600_000 : Date.parse(tip.createdAt) + 20 * 3600_000;
       return start + 4 * 3600_000 < now;
-    }).slice(0, limit);
+    }).filter((tip, index, all) => all.findIndex((other) => tipKey(other) === tipKey(tip)) === index).slice(0, limit);
   }
 
   /** Saves graded results (only tips still pending). */
@@ -276,8 +305,12 @@ export class TipStore {
       for (const result of results) {
         const tip = data.tips.find((item) => item.id === result.id && item.status === 'PENDING');
         if (!tip) continue;
-        Object.assign(tip, { status: result.status, gradedAt: now, gradedBy: 'AI', result: result.result.slice(0, 200) });
-        count++;
+        // One grade covers every copy of the same pick (graded once, never per upload).
+        const key = tipKey(tip);
+        for (const copy of data.tips) if (copy.status === 'PENDING' && (copy === tip || tipKey(copy) === key)) {
+          Object.assign(copy, { status: result.status, gradedAt: now, gradedBy: 'AI', result: result.result.slice(0, 200) });
+          count++;
+        }
       }
       if (count) await this.save();
       return count;
@@ -287,16 +320,28 @@ export class TipStore {
 
 /** Runs CrownIQ's analysis for a set of tips and saves it; never throws (a failure just clears the analyzing flag). */
 export async function analyzeTips(store: TipStore, reader: TipReader, tips: readonly Tip[], clock: () => Date = () => new Date()): Promise<number> {
-  const analyses = new Map<string, TipAnalysis>();
+  const analyses = new Map<string, TipAnalysis>(), reused = new Set<string>();
+  // Duplicates are never re-checked (owner, 2026-10-11): a pick someone already got a verdict on today reuses it, and the
+  // same pick twice in one upload is checked once.
+  const fresh: Tip[] = [], twins = new Map<string, Tip[]>();
+  for (const tip of tips) {
+    const known = await store.knownAnalysis(tip).catch(() => null);
+    if (known) { analyses.set(tip.id, known); reused.add(tip.id); continue; }
+    const key = tipKey(tip), seen = twins.get(key);
+    if (seen) seen.push(tip); else { twins.set(key, [tip]); fresh.push(tip); }
+  }
   try {
-    for (let index = 0; index < tips.length; index += 15) {
-      const batch = tips.slice(index, index + 15);
+    for (let index = 0; index < fresh.length; index += 15) {
+      const batch = fresh.slice(index, index + 15);
       const opinions = await reader.analyze(batch, clock().toISOString().slice(0, 10));
       const at = clock().toISOString();
       for (const opinion of opinions) { const tip = batch.find((item) => item.id === opinion.id); if (tip) analyses.set(tip.id, analysisFor(tip, opinion, at)); }
     }
   } catch (error) { console.warn('[tips] analysis failed', error instanceof Error ? error.message : error); }
-  await store.setAnalyses(tips.map((tip) => tip.id), analyses);
+  for (const group of twins.values()) for (const twin of group.slice(1)) {
+    const first = analyses.get(group[0].id); if (first) { analyses.set(twin.id, first); reused.add(twin.id); }
+  }
+  await store.setAnalyses(tips.map((tip) => tip.id), analyses, reused);
   return analyses.size;
 }
 

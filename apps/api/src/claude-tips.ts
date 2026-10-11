@@ -74,13 +74,25 @@ const gradeInstructions = 'You settle sports betting tips after the games. For e
 
 export class ClaudeTipReader implements TipReader {
   private readonly client: Pick<Anthropic, 'messages' | 'beta'>;
-  constructor(options: { apiKey?: string; client?: Pick<Anthropic, 'messages' | 'beta'>; model?: string },
+  /** Reading picks off a screenshot is simple, so it uses the cheaper model (owner, 2026-10-11); checking them keeps `model`. */
+  private readonly readModel: string;
+  constructor(options: { apiKey?: string; client?: Pick<Anthropic, 'messages' | 'beta'>; model?: string; readModel?: string },
     private readonly model = options.model ?? 'claude-sonnet-5-5') {
+    this.readModel = options.readModel ?? 'claude-haiku-4-5';
     if (!options.client && !options.apiKey) throw new Error('CLAUDE_KEY_REQUIRED');
     this.client = options.client ?? new Anthropic({ apiKey: options.apiKey, timeout: 90_000, maxRetries: 2 });
   }
 
   async read(input: { image?: { data: string; mediaType: string }; text?: string; today: string }) {
+    // The cheaper model first; the main model if it fails or finds nothing.
+    if (this.readModel !== this.model) {
+      const quick = await this.readWith(this.readModel, input).catch(() => null);
+      if (quick && quick.tips.length) return quick;
+    }
+    return this.readWith(this.model, input);
+  }
+
+  private async readWith(model: string, input: { image?: { data: string; mediaType: string }; text?: string; today: string }) {
     const content: Anthropic.ContentBlockParam[] = [];
     if (input.image) content.push({ type: 'image', source: { type: 'base64',
       media_type: input.image.mediaType as 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif', data: input.image.data } });
@@ -90,7 +102,7 @@ export class ClaudeTipReader implements TipReader {
     const messages: Anthropic.MessageParam[] = [{ role: 'user', content }];
     let block: Anthropic.ContentBlock | undefined;
     for (let turn = 0; turn < 2 && !block; turn++) {
-      const response = await this.client.messages.create({ model: this.model, max_tokens: 16000,
+      const response = await this.client.messages.create({ model, max_tokens: 16000,
         system: [{ type: 'text', text: readInstructions, cache_control: { type: 'ephemeral' } }],
         tools: [readTool], tool_choice: { type: 'auto' }, messages });
       logClaudeUsage('tips', response.usage);
