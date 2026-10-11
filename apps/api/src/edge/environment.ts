@@ -11,8 +11,8 @@ import { teamsMatch } from './market-map.js';
 //   the rest (±10%).
 // - §5.5 rest: back-to-back games, with the effect learned from CrownIQ's own game rows per sport and stat, used only when
 //   its 90% interval excludes "no effect" (n ≥ 30).
-// Opponent defense (§5.2), usage when a teammate is out (§5.3) and minutes mixtures (§5.4) need team and opponent on each
-// game row, which CrownIQ's history doesn't carry yet.
+// Opponent defense (§5.2) comes from PropLine's games, which carry both teams (opponentFactor in service.ts). Usage when a
+// teammate is out (§5.3) and minutes mixtures (§5.4) aren't built yet.
 
 const volume = /points|pts|yds|yards|reception|rec_|hits|bases|runs|rbis|shots|goals|assists|fantasy|threes|rebounds|attempts|completions|targets|saves|sot/;
 const allowed = /hits_allowed|earned_runs|walks_allowed|pitcher_hits|pitcher_earned|pitcher_walks/;

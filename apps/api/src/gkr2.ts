@@ -21,24 +21,24 @@ import { gameScriptFor } from './shadow-record.js';
 // Nothing here touches a GKR score: GKR 2's picks go to their own shadow record.
 
 type Stats = Readonly<Record<string, number>>;
-type Pick = (stats: Stats) => number | null;
+type StatPick = (stats: Stats) => number | null;
 
 const n = (stats: Stats, key: string) => Number.isFinite(stats[key]) ? stats[key]! : null;
 const add = (...values: (number | null)[]) => values.some((value) => value === null) ? null : values.reduce<number>((a, b) => a + b!, 0);
 const div = (a: number | null, b: number | null) => a === null || b === null || b <= 0 ? null : a / b;
-const k = (key: string): Pick => (stats) => n(stats, key);
+const k = (key: string): StatPick => (stats) => n(stats, key);
 
 // Box-score building blocks by sport.
-const pa: Pick = (s) => add(n(s, 'at_bats'), n(s, 'walks'));
-const bf: Pick = (s) => add(n(s, 'outs'), n(s, 'hits_allowed'), n(s, 'walks_allowed'));
-const per = (key: string, base: Pick): Pick => (s) => div(n(s, key), base(s));
-const xbh: Pick = (s) => add(n(s, 'doubles'), n(s, 'triples'), n(s, 'home_runs'));
-const touches: Pick = (s) => add(n(s, 'rushing_attempts') ?? 0, n(s, 'receiving_targets') ?? 0);
-const scrimmage: Pick = (s) => add(n(s, 'rushing_yards') ?? 0, n(s, 'receiving_yards') ?? 0);
-const tds: Pick = (s) => add(n(s, 'rushing_tds') ?? 0, n(s, 'receiving_tds') ?? 0);
+const pa: StatPick = (s) => add(n(s, 'at_bats'), n(s, 'walks'));
+const bf: StatPick = (s) => add(n(s, 'outs'), n(s, 'hits_allowed'), n(s, 'walks_allowed'));
+const per = (key: string, base: StatPick): StatPick => (s) => div(n(s, key), base(s));
+const xbh: StatPick = (s) => add(n(s, 'doubles'), n(s, 'triples'), n(s, 'home_runs'));
+const touches: StatPick = (s) => add(n(s, 'rushing_attempts') ?? 0, n(s, 'receiving_targets') ?? 0);
+const scrimmage: StatPick = (s) => add(n(s, 'rushing_yards') ?? 0, n(s, 'receiving_yards') ?? 0);
+const tds: StatPick = (s) => add(n(s, 'rushing_tds') ?? 0, n(s, 'receiving_tds') ?? 0);
 
 /** Factor key → how to read it from one game, per sport. A factor not listed here stays unfilled. */
-const FACTORS: Readonly<Record<string, Readonly<Record<string, Pick>>>> = {
+const FACTORS: Readonly<Record<string, Readonly<Record<string, StatPick>>>> = {
   MLB: {
     expected_pa: pa, contact_ability: per('hits', k('at_bats')), hit_rate: per('hits', pa), power_rate: per('total_bases', pa),
     single_rate: per('singles', pa), double_rate: per('doubles', pa), triple_rate: per('triples', pa), rbi_rate: per('rbis', pa),
@@ -221,8 +221,7 @@ export function gkr2Evidence(line: PropLine, games: readonly Game[], context: Gk
 
   // Opponent: how this opponent has treated the stat. The player's team comes from the line, else from their games.
   const team = line.team ?? playerTeam(games);
-  const opponent = line.opponent ?? (team && line.homeTeam && line.awayTeam
-    ? sameTeam(team, line.homeTeam) ? line.awayTeam : sameTeam(team, line.awayTeam) ? line.homeTeam : null : null);
+  const opponent = opponentOf(line, team);
   const opponentRead = opponent ? context.opponents?.get(nickname(opponent)) ?? null : null;
   if (opponentRead !== null) for (const [factor] of definition.factors) if (isOpponentFactor(factor) || factor === 'opponent_allowed')
     push('metric:' + factor, `Players have produced ${Math.round(opponentRead * 100)}% of their usual ${line.market.replace(/_/g, ' ')} against ${opponent}.`, opponentRead, 1);
@@ -251,7 +250,7 @@ export function gkr2Evidence(line: PropLine, games: readonly Game[], context: Gk
   const table = FACTORS[familyOf(line.sport)] ?? {};
   const recent = valued.slice(0, 5).map((item) => item.game), baseline = valued.slice(0, 20).map((item) => item.game);
   for (const [factor] of definition.factors) {
-    const pick: Pick | undefined = isOwnStat(factor) ? (stats) => gameValue(stats, read) : table[factor];
+    const pick: StatPick | undefined = isOwnStat(factor) ? (stats) => gameValue(stats, read) : table[factor];
     if (!pick) continue;
     const recentValues = recent.flatMap((game) => { const v = pick(game.stats); return v === null || !Number.isFinite(v) ? [] : [v]; });
     const baseValues = baseline.flatMap((game) => { const v = pick(game.stats); return v === null || !Number.isFinite(v) ? [] : [v]; });
@@ -274,21 +273,47 @@ export function leagueTeamTotals(games: readonly GameLine[]): Map<string, number
   return new Map([...byLeague].filter(([, list]) => list.length >= 2).map(([league, list]) => [league, mean(list)]));
 }
 
+/** The line's opponent: the board's, else the other side of the game from the player's team. */
+export function opponentOf(line: Pick<PropLine, 'team' | 'opponent' | 'homeTeam' | 'awayTeam'>, team: string | null = line.team): string | null {
+  return line.opponent ?? (team && line.homeTeam && line.awayTeam
+    ? sameTeam(team, line.homeTeam) ? line.awayTeam : sameTeam(team, line.awayTeam) ? line.homeTeam : null : null);
+}
+
+/**
+ * How tonight's opponent has treated a line's stat (1.10 = players do 10% better than usual against them), from the
+ * PropLine games the nightly pull cached. Shared by GKR 2 and Edge; each index is rebuilt at most hourly. No requests.
+ */
+export class OpponentReads {
+  private cache = new Map<string, { at: number; index: Map<string, number> }>();
+  constructor(private readonly history: PropLineHistory, private readonly clock: () => Date = () => new Date()) {}
+
+  index(sportKey: string, read: NonNullable<ReturnType<typeof proplineStat>>): Map<string, number> {
+    const key = `${sportKey}|${JSON.stringify(read)}`, now = this.clock().getTime(), cached = this.cache.get(key);
+    if (cached && now - cached.at < 3600_000) return cached.index;
+    const index = opponentIndex(this.history.cachedGames(sportKey), read);
+    this.cache.set(key, { at: now, index });
+    return index;
+  }
+
+  /** The opponent's index for a line, or null without a known opponent, a box-score stat or enough games. */
+  read(line: PropLine, team: string | null = line.team): { opponent: string; index: number } | null {
+    const read = proplineStat(line.sport, line.market), sportKey = this.history.sportKey(line), opponent = opponentOf(line, team);
+    if (!read || !sportKey || !opponent) return null;
+    const index = this.index(sportKey, read).get(nickname(opponent));
+    return index === undefined ? null : { opponent, index };
+  }
+}
+
 /**
  * GKR 2 across a board: each line GKR has a model for, scored with GKR's evidence plus GKR 2's. Only players whose
  * PropLine games are already cached are read (no requests), so a pass costs nothing.
  */
 export class Gkr2 {
-  private opponentCache = new Map<string, { at: number; index: Map<string, number> }>();
+  private readonly opponents: OpponentReads;
   constructor(private readonly history: PropLineHistory, private readonly registry: () => ModelRegistry,
-    private readonly gameLines: (() => Promise<readonly GameLine[]>) | null, private readonly clock: () => Date = () => new Date()) {}
-
-  private opponents(sportKey: string, read: NonNullable<ReturnType<typeof proplineStat>>) {
-    const key = `${sportKey}|${JSON.stringify(read)}`, now = this.clock().getTime(), cached = this.opponentCache.get(key);
-    if (cached && now - cached.at < 3600_000) return cached.index;
-    const index = opponentIndex(this.history.cachedGames(sportKey), read);
-    this.opponentCache.set(key, { at: now, index });
-    return index;
+    private readonly gameLines: (() => Promise<readonly GameLine[]>) | null, private readonly clock: () => Date = () => new Date(),
+    opponents?: OpponentReads) {
+    this.opponents = opponents ?? new OpponentReads(history, clock);
   }
 
   async analyses(lines: readonly PropLine[], evidence: readonly Evidence[]): Promise<Analysis[]> {
@@ -314,7 +339,7 @@ export class Gkr2 {
       if (!definition || !read || !sportKey) continue;
       const playerGames = await this.history.cachedFor(line);
       if (!playerGames) continue;
-      const own = gkr2Evidence(line, playerGames, { opponents: this.opponents(sportKey, read), games,
+      const own = gkr2Evidence(line, playerGames, { opponents: this.opponents.index(sportKey, read), games,
         leagueTeamTotal: totals.get(line.league) ?? null }, now, gkr2Definition(definition));
       if (!own.length) continue;
       out.push(evaluateLine(line, [...byPlayer.get(`${line.eventId}|${line.playerId}`) ?? [], ...shared.get(line.eventId) ?? [], ...own], registry, now));

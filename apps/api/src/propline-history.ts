@@ -45,7 +45,8 @@ const football: Readonly<Record<string, Read>> = { passing_yards: 'passing_yards
   player_rush_attempts: 'rushing_attempts', player_rush_tds: 'rushing_tds', rush_tds: 'rushing_tds', player_rush_longest: 'longest_rush',
   longest_rush: 'longest_rush', player_reception_yds: 'receiving_yards', player_receptions: 'receptions',
   player_reception_tds: 'receiving_tds', rec_tds: 'receiving_tds', receiving_tds: 'receiving_tds',
-  player_reception_longest: 'longest_reception', longest_rec: 'longest_reception', player_pass_rush_yds: 'pass_rush_yds',
+  player_reception_longest: 'longest_reception', longest_rec: 'longest_reception', player_receiving_targets: 'receiving_targets',
+  receiving_targets: 'receiving_targets', targets: 'receiving_targets', player_pass_rush_yds: 'pass_rush_yds',
   player_rush_reception_yds: 'rush_reception_yds', anytime_tds: 'total_tds', player_solo_tackles: 'solo_tackles',
   player_tackles_assists: 'tackles_assists', player_sacks: 'sacks', player_field_goals: 'field_goals_made', fg_made: 'field_goals_made',
   player_pats: 'extra_points_made', player_kicking_points: 'kicking_points' };

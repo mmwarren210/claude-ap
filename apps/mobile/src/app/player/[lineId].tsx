@@ -15,7 +15,7 @@ import { BooksBadge } from '../../components/ui/BooksBadge';
 import { useBooks } from '../../use-books';
 import { BookLadder } from '../../components/BookLadder';
 import { useBeta } from '../../use-model';
-import { hitBand, useHitCurve } from '../../use-hit-curve';
+import { hitBand, useGkr2, useHitCurve } from '../../use-hit-curve';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { alpha } from '../../components/ui/color';
 import { GhostButton, PrimaryButton, Segmented } from '../../components/ui/Controls';
@@ -124,6 +124,8 @@ export default function PlayerResearch() {
   // How often graded GKR picks this far from the line have hit (the calibration fix, 2026-10-11). Display only.
   const curve = useHitCurve();
   const hitRate = analysis && analysis.direction !== 'PASS' ? hitBand(curve, analysis.thresholdCushion) : null;
+  // GKR 2 beside GKR (owner-only while it's tested): its side and score on this line, and both graded records.
+  const gkr2 = useGkr2(line?.id);
   const related = useMemo(() => line ? data?.board.lines.filter((item) => item.eventId === line.eventId &&
     item.playerId === line.playerId) ?? [] : [], [data, line]);
   const ladder = useMemo(() => line ? related.filter((item) => item.market === line.market &&
@@ -252,6 +254,14 @@ export default function PlayerResearch() {
         </View>
         {hitRate && !aiSide ? <Text style={styles.hitRate}>GKR picks this far from the line have hit {Math.round(hitRate.hitRate * 100)}%
           ({hitRate.graded} graded)</Text> : null}
+        {gkr2?.analysis && !aiSide ? <View style={styles.gkr2}>
+          <Text style={styles.gkr2Title}>GKR 2 · TESTING</Text>
+          <Text style={styles.gkr2Read}>{gkr2.analysis.direction === 'PASS' ? 'PASS'
+            : `${gkr2.analysis.direction} ${Math.round(gkr2.analysis.score ?? 0)}`}  ·  GKR {analysis?.direction === 'PASS' || !analysis
+            ? 'PASS' : `${analysis.direction} ${Math.round(analysis.score ?? 0)}`}</Text>
+          {gkr2.record ? <Text style={styles.hitRate}>Same lines, graded: GKR 2 {gkr2.record.gkr2.wins}-{gkr2.record.gkr2.graded - gkr2.record.gkr2.wins}
+            {'  ·  '}GKR {gkr2.record.gkr.wins}-{gkr2.record.gkr.graded - gkr2.record.gkr.wins}</Text> : null}
+        </View> : null}
         <View style={styles.styles}>
           {(['GOBLIN', 'KINGS', 'DEMON'] as const).map((style) => {
             const available = ladder.some((item) => lineStyleOf(item.lineType) === style);
@@ -425,6 +435,9 @@ export default function PlayerResearch() {
 
 const styles = StyleSheet.create({
   hitRate: { color: colors.textMuted, fontSize: 12, marginTop: 8, textAlign: 'center' },
+  gkr2: { borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, marginTop: 10, padding: 10, alignItems: 'center' },
+  gkr2Title: { color: colors.textMuted, fontSize: 11, fontWeight: '800', letterSpacing: 1 },
+  gkr2Read: { color: colors.text, fontSize: 15, fontWeight: '700', marginTop: 4 },
   scoutTag: { color: colors.blue, fontSize: 11, fontWeight: '800', letterSpacing: 1, marginTop: 2 },
   safe: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 28, gap: 14 },

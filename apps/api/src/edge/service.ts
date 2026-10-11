@@ -46,6 +46,8 @@ export interface EdgeServiceOptions {
   readonly history?: InternalHistoryStore | null;
   /** A player's recent values for a line's stat (the shared History values), newest first. */
   readonly values?: ((line: PropLine) => Promise<{ values: number[] } | null>) | null;
+  /** How tonight's opponent has treated the line's stat (1.10 = players do 10% better than usual), from PropLine games. */
+  readonly opponent?: ((line: PropLine) => { opponent: string; index: number } | null) | null;
   readonly ledger?: EdgeLedger | null;
   readonly payouts: Payouts;
   readonly alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>;
@@ -166,6 +168,17 @@ const ownBooks: Readonly<Record<EdgePlatform, readonly string[]>> = { prizepicks
 const parlayMax: Readonly<Partial<Record<EdgePlatform, number>>> = { draftkings: 8, hardrock: 21, pinnacle: 21, kalshi: 50 };
 
 export type EdgeView = 'edges' | 'alternates' | 'all';
+
+/**
+ * Opponent defense (spec §5.2, owner 2026-10-11): half of how much better or worse than usual players have done against
+ * tonight's opponent, within ±8% (the same read GKR 2 uses). Under 1% is left out.
+ */
+export function opponentFactor(read: { opponent: string; index: number } | null): { factor: number; reasons: string[] } | null {
+  if (!read || !Number.isFinite(read.index)) return null;
+  const factor = Math.min(1.08, Math.max(.92, 1 + (read.index - 1) / 2));
+  if (Math.abs(factor - 1) < .01) return null;
+  return { factor, reasons: [`Players have produced ${Math.round(read.index * 100)}% of their usual against ${read.opponent}, so the stats projection is ×${factor.toFixed(2)}.`] };
+}
 
 const historySports = new Set(['NFL', 'NBA', 'MLB']);
 
@@ -542,8 +555,10 @@ export class EdgeService {
         const env = environment.factor(line);
         const before = lastGame.get(playerKey(line.sport, line.playerName));
         const rest = restFactor(line, before && before < Date.parse(line.eventStartTime) ? before : null, this.rest.effects);
-        if (!env && !rest) return null;
-        return { factor: (env?.factor ?? 1) * (rest?.factor ?? 1), reasons: [...env?.reasons ?? [], ...rest?.reasons ?? []] };
+        const opponent = opponentFactor(this.options.opponent?.(line) ?? null);
+        if (!env && !rest && !opponent) return null;
+        return { factor: (env?.factor ?? 1) * (rest?.factor ?? 1) * (opponent?.factor ?? 1),
+          reasons: [...env?.reasons ?? [], ...rest?.reasons ?? [], ...opponent?.reasons ?? []] };
       };
       const fresh: EdgeAlert[] = [];
       // One platform at a time, yielding between them so requests keep being answered while the board reprices.

@@ -113,3 +113,8 @@ test('the nightly pull fetches each board player once and keeps it ~26 hours, so
   await history.values(line('NFL', 'passing_yards'));
   assert.equal(asked.length, 2, 'refreshed once the nightly answer is over 26 hours old');
 });
+
+test('receiving targets read from PropLine box scores', () => {
+  assert.equal(proplineStat('NFL', 'player_receiving_targets'), 'receiving_targets');
+  assert.equal(gameValue({ receptions: 3, receiving_targets: 5 }, 'receiving_targets'), 5);
+});

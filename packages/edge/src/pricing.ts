@@ -12,7 +12,8 @@ import type { EntryDefinition } from './payouts.js';
 import { projectFromRows, projectFromValues } from './projection.js';
 import type { StatProjection } from './projection.js';
 
-export const EDGE_MODEL_VERSION = 'EDGE-1.0';
+/** 1.1 (2026-10-11): the stats projection also moves with tonight's opponent (PropLine games). */
+export const EDGE_MODEL_VERSION = 'EDGE-1.1';
 
 export interface HistoryLookup {
   (player: { sport: string; playerId: string; playerName: string }): readonly StatRow[] | undefined;

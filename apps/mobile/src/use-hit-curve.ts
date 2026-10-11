@@ -34,3 +34,25 @@ export function hitBand(curve: HitCurve | null, cushion: number | null | undefin
   if (!curve || cushion === null || cushion === undefined) return null;
   return curve.bands.find((band) => cushion >= band.from && (band.to === null || cushion < band.to)) ?? null;
 }
+
+/** GKR 2's read on one line and both models' graded records (owner-only while it's tested; null when hidden). */
+export type Gkr2Read = {
+  analysis: { direction: 'MORE' | 'LESS' | 'PASS'; score: number | null; scoreBand: string; reasonCode: string | null } | null;
+  record: { gkr: Record_; gkr2: Record_ } | null;
+};
+type Record_ = { picks: number; graded: number; wins: number; hitRate: number | null };
+
+export function useGkr2(lineId: string | null | undefined): Gkr2Read | null {
+  const { request, demo, profile } = useAuth();
+  const [value, setValue] = useState<{ lineId: string; read: Gkr2Read } | null>(null);
+  useEffect(() => {
+    if (demo || !profile || !lineId) return;
+    let active = true;
+    void request(`/v1/gkr2/${encodeURIComponent(lineId)}`)
+      .then(async (response) => response.ok ? await response.json() as Gkr2Read : null)
+      .then((read) => { if (active && read) setValue({ lineId, read }); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [request, demo, profile, lineId]);
+  return value && value.lineId === lineId ? value.read : null;
+}

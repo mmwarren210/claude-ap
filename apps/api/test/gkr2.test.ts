@@ -82,3 +82,22 @@ test('GKR 2 scores a board from cached PropLine games only and adds GKR\'s evide
   const [blocked] = await gkr2.analyses([line], []);
   assert.equal(blocked?.reasonCode, 'STALE_OR_MISSING_EVIDENCE', 'GKR\'s availability gate still holds');
 });
+
+test('Edge moves its stats projection by half the opponent read, within 8%, and the read finds the opponent from the game', async () => {
+  const { opponentFactor } = await import('../src/edge/service.js');
+  const { OpponentReads } = await import('../src/gkr2.js');
+  assert.equal(opponentFactor(null), null);
+  assert.equal(opponentFactor({ opponent: 'Owls', index: 1.01 }), null, 'under 1% is left out');
+  assert.equal(opponentFactor({ opponent: 'Owls', index: 1.1 })!.factor.toFixed(2), '1.05');
+  assert.equal(opponentFactor({ opponent: 'Owls', index: 1.5 })!.factor, 1.08);
+  assert.equal(opponentFactor({ opponent: 'Owls', index: .5 })!.factor, .92);
+  const opponents = ['Soft Tigers', 'Hard Bears', 'Soft Tigers', 'Hard Bears', 'Soft Tigers', 'Hard Bears'];
+  const cached = Array.from({ length: 10 }, (_, p) => receiver(`Team ${p} Hawks${p}`, opponents, (i) => opponents[i] === 'Soft Tigers' ? 9 : 3));
+  const history = { sportKey: () => 'football_nfl', cachedGames: () => cached } as unknown as PropLineHistory;
+  const reads = new OpponentReads(history);
+  const line = fixtureLine({ market: 'player_receptions', team: 'Home Hawks', opponent: null, homeTeam: 'Home Hawks', awayTeam: 'Soft Tigers' });
+  const read = reads.read(line);
+  assert.equal(read?.opponent, 'Soft Tigers');
+  assert.ok(read!.index > 1.2);
+  assert.equal(reads.read({ ...line, homeTeam: null, awayTeam: null }), null, 'no opponent known');
+});

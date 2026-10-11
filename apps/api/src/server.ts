@@ -100,7 +100,7 @@ import type { TipModelRead, TipSuggestion } from './tip-models.js';
 import { gameCounts, marketCounts, registerEdgeRoutes, sportCounts } from './edge/routes.js';
 import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
-import type { Gkr2 } from './gkr2.js';
+import type { Gkr2, OpponentReads } from './gkr2.js';
 
 const gzipAsync = promisify(gzip);
 
@@ -176,6 +176,10 @@ export interface ServerOptions {
   shadowRecord?: ShadowRecord | null;
   /** GKR 2 (owner, 2026-10-11), scored in shadow beside GKR on the lines it can read. */
   gkr2?: Gkr2 | null;
+  /** How each opponent has treated each stat, from PropLine games (Edge and GKR 2). */
+  opponents?: OpponentReads | null;
+  /** Show GKR 2's read to everyone (CROWNIQ_GKR2_PUBLIC=true); otherwise only the owner sees it while it's tested. */
+  gkr2Public?: boolean;
   /** Every standard line graded after its game, for Trends (CrownIQ's own hit rates). */
   baseRates?: BaseRates | null;
   /** Beta feedback: testers' bug reports and suggestions, and the patch notes that answer them. */
@@ -866,6 +870,21 @@ export function buildServer(options: ServerOptions = {}) {
   app.get('/v1/secrets',async(request,reply)=>{
     if(!await currentUser(request))return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     return {gkrPlus:await hasGkrPlus(request)};
+  });
+  // GKR 2's read on one line, beside GKR's (owner, 2026-10-11), with both models' graded records on the lines GKR 2 reads.
+  // Owner-only while it's tested, unless CROWNIQ_GKR2_PUBLIC=true.
+  app.get('/v1/gkr2/:lineId',async(request,reply)=>{
+    if(!options.gkr2||(!options.gkr2Public&&!await isOwner(request)))return reply.code(404).send({code:'NOT_FOUND'});
+    const {lineId}=request.params as {lineId:string};
+    const board=service.getBoard(),line=board?.board.lines.find((item)=>item.id===lineId);
+    if(!line)return reply.code(404).send({code:'LINE_NOT_FOUND'});
+    const [analysis]=await options.gkr2.analyses([line],service.getEvidence());
+    const record=options.shadowRecord?await options.shadowRecord.compare(['gkr1','gkr2']):null;
+    return {analysis:analysis?{direction:analysis.direction,score:analysis.score,scoreBand:analysis.scoreBand,
+      reasonCode:analysis.reasonCode,thresholdCushion:analysis.thresholdCushion??null,
+      factors:(analysis.contextBreakdown??[]).filter((item)=>item.measured).map((item)=>({name:item.name,observed:item.observed??null,
+        reference:item.reference??null}))}:null,
+      record:record?{gkr:record.gkr1!.all,gkr2:record.gkr2!.all}:null};
   });
   app.post('/v1/secrets/unlock',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
@@ -1690,7 +1709,7 @@ export function buildServer(options: ServerOptions = {}) {
     sharp:options.sharpProps?{prices:async()=>(await options.sharpProps!.current()).prices,
       pickem:async()=>(await options.sharpProps!.pickemLines()).lines}:null,
     appBoards:options.scrapedLines??null,pick6PayoutsConfirmed:options.edge.pick6PayoutsConfirmed===true,
-    history:options.internalHistory??null,values:(line)=>historyReads.valuesFor(line),ledger:options.edge.ledger??null,
+    history:options.internalHistory??null,values:(line)=>historyReads.valuesFor(line),opponent:options.opponents?(line)=>options.opponents!.read(line):null,ledger:options.edge.ledger??null,
     payouts:options.payouts??DEFAULT_PAYOUTS,...(options.edge.alternateFactors?{alternateFactors:options.edge.alternateFactors}:{}),
     ...(options.edge.alternateCurve?{alternateCurve:options.edge.alternateCurve}:{}),
     valuesCacheFile:options.edge.valuesCacheFile??null,movement,snapshots:options.edge.snapshots??null,
