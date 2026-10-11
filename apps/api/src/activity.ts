@@ -58,6 +58,14 @@ export class ActivityLog {
     await rename(temporary, this.file);
   }
 
+  /** One account's minutes per Eastern day, its top tabs and when it was last seen (the owner's Trial users). */
+  async member(accountId: string) {
+    const member = (await this.load()).members[accountId];
+    return member ? { lastSeen: member.lastSeen, days: { ...member.days },
+      totalMinutes: Object.values(member.days).reduce((sum, minutes) => sum + minutes, 0),
+      topTabs: Object.entries(member.tabs).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([tab, minutes]) => ({ tab, minutes })) } : null;
+  }
+
   /** Every member's minutes today, over the last 7 days and in all, most recently seen first. */
   async report(): Promise<MemberActivity[]> {
     const data = await this.load(), now = this.clock();

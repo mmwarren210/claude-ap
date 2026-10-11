@@ -51,3 +51,17 @@ test('end-of-trial poll: opens in the last day, works after the pass ends, adds 
   assert.equal(results.answered, 1); assert.equal(results.recommend.YES, 1); assert.equal(results.liked.Vetted, 1);
   await assert.rejects(ledger.answerTrialPoll({ code: key, deviceId: 'someone-elses-device-x' }, { recommend: 'YES', liked: [], improve: null }), /TRIAL_NOT_FOUND/);
 });
+
+test('Trial users lists every trial account: on trial, ended and signed up, with key number and poll', async () => {
+  let now = new Date('2026-10-11T12:00:00Z');
+  const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'trials-')), 'ledger.json'), 'CROWN_STRONG', () => now);
+  const [first, second] = await ledger.issueTrialKeys(2);
+  await ledger.trialLogin(first, 'device-aaaaaaaaaaaaaaaa');
+  await ledger.trialLogin(second, 'device-bbbbbbbbbbbbbbbb');
+  now = new Date('2026-10-14T00:00:00Z');
+  await ledger.register('b@example.com', 'a-good-password-1', 'Bee', { code: second, deviceId: 'device-bbbbbbbbbbbbbbbb' });
+  const trials = await ledger.trialUsers();
+  assert.equal(trials.length, 2);
+  assert.deepEqual(trials.map((trial) => [trial.keyNumber, trial.status]).sort(), [[1, 'ENDED'], [2, 'SIGNED_UP']]);
+  assert.equal((await ledger.members()).length, 1, 'the member list still drops the ended trial');
+});

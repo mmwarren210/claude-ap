@@ -71,6 +71,53 @@ function MemberActivity() {
   </>;
 }
 
+/**
+ * Trial users (owner): every 2-day trial account, kept after its pass ends, with minutes on each day of the trial, top tabs,
+ * screenshots submitted, poll answer and whether it signed up.
+ */
+function TrialUsers() {
+  const { request } = useAuth();
+  type Trial = { accountId: string; username: string; keyNumber: number | null; startedAt: string; expiresAt: string | null;
+    status: 'ACTIVE' | 'ENDED' | 'SIGNED_UP' | 'REVOKED'; extended: boolean;
+    poll: { recommend: string; liked: string[]; improve: string | null } | null;
+    activity: { lastSeen: string; days: Record<string, number>; totalMinutes: number; topTabs: { tab: string; minutes: number }[] } | null;
+    submitted: { screenshots: number; picks: number; plays: number } | null };
+  const [data, setData] = useState<{ trials: Trial[]; keys: { issued: number; used: number; active: number } | null } | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void request('/v1/owner/trials').then(async (response) => response.ok ? await response.json() as { trials: Trial[]; keys: { issued: number; used: number; active: number } | null } : null)
+      .then((value) => { if (!active) return; if (value) setData(value); else setFailed(true); })
+      .catch(() => { if (active) setFailed(true); });
+    return () => { active = false; };
+  }, [request]);
+  if (failed) return <Text style={styles.sheetNote}>Could not load trial users. Try again.</Text>;
+  if (!data) return <Text style={styles.sheetNote}>Loading…</Text>;
+  const short = (iso: string) => new Date(iso).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const label = { ACTIVE: 'On trial', ENDED: 'Ended', SIGNED_UP: 'Signed up ✓', REVOKED: 'Revoked' } as const;
+  const signedUp = data.trials.filter((trial) => trial.status === 'SIGNED_UP').length;
+  const minutes = data.trials.reduce((sum, trial) => sum + (trial.activity?.totalMinutes ?? 0), 0);
+  return <>
+    <Text style={styles.sheetNote}>Keys: {data.keys ? `${data.keys.used} of ${data.keys.issued} used · ${data.keys.active} on trial now` : '—'} · {signedUp} signed up ·
+      {' '}{minutesLabel(minutes)} on the app in all. Minutes count while the app is open on screen (Eastern days).</Text>
+    {!data.trials.length && <Text style={styles.sheetNote}>No one has used a trial key yet.</Text>}
+    {data.trials.map((trial) => {
+      const days = Object.entries(trial.activity?.days ?? {}).filter(([day]) => day >= trial.startedAt.slice(0, 10)).sort((a, b) => a[0].localeCompare(b[0]));
+      return <View key={trial.accountId} style={styles.secretRow}>
+        <View style={styles.secretInfo}>
+          <Text style={styles.sheetLabel}>{trial.username}{trial.keyNumber ? `  ·  key #${trial.keyNumber}` : ''}  ·  {label[trial.status]}{trial.extended ? ' · +7 days (poll)' : ''}</Text>
+          <Text style={styles.sheetNote}>Started {short(trial.startedAt)}{trial.expiresAt ? ` · ${trial.status === 'ENDED' ? 'ended' : 'ends'} ${short(trial.expiresAt)}` : ''}</Text>
+          <Text style={styles.sheetNote}>On the app {minutesLabel(trial.activity?.totalMinutes ?? 0)}{days.length ? ` (${days.map(([day, value]) => `${new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: 'short' })} ${minutesLabel(value)}`).join(' · ')})` : ''}
+            {trial.activity ? ` · last seen ${short(trial.activity.lastSeen)}` : ' · not opened since signing in'}</Text>
+          {!!trial.activity?.topTabs.length && <Text style={styles.sheetNote}>Most on {trial.activity.topTabs.map((item) => `${item.tab} ${minutesLabel(item.minutes)}`).join(', ')}</Text>}
+          {trial.submitted && trial.submitted.screenshots > 0 && <Text style={styles.sheetNote}>Submitted {trial.submitted.screenshots} screenshot{trial.submitted.screenshots === 1 ? '' : 's'} · {trial.submitted.picks} picks · {trial.submitted.plays} PLAYs</Text>}
+          {trial.poll && <Text style={styles.sheetNote}>Poll: recommend {trial.poll.recommend.toLowerCase()}{trial.poll.liked.length ? ` · liked ${trial.poll.liked.join(', ')}` : ''}{trial.poll.improve ? ` · “${trial.poll.improve}”` : ''}</Text>}
+        </View>
+      </View>;
+    })}
+  </>;
+}
+
 /** Secrets, owner view: every account that unlocked GKR+, each with Remove (it loses GKR+ on its next load). */
 function SecretsOwner() {
   const { request } = useAuth();
@@ -161,7 +208,7 @@ export default function MoreScreen() {
   const gkrPlus = useGkrPlusAccess();
   const [stats, setStats] = useState<{ picks: number; crowns: number; rate: number | null } | null>(null);
   const { feedback: openFeedback } = useLocalSearchParams<{ feedback?: string }>();
-  const [sheet, setSheet] = useState<'account' | 'payouts' | 'feedback' | 'updates' | 'review' | 'scout' | 'secrets' | 'activity' | null>(null);
+  const [sheet, setSheet] = useState<'account' | 'payouts' | 'feedback' | 'updates' | 'review' | 'scout' | 'secrets' | 'activity' | 'trials' | null>(null);
   // A "report it" nudge elsewhere in the app opens Beta feedback here.
   const [lastOpen, setLastOpen] = useState<string | undefined>(undefined);
   if (openFeedback && openFeedback !== lastOpen && !demo) { setLastOpen(openFeedback); setSheet('feedback'); }
@@ -233,6 +280,7 @@ export default function MoreScreen() {
         <Row icon="bullhorn-outline" title="Updates" detail="Patches and fixes" onPress={demo ? undefined : () => setSheet('updates')} />
         {owner && <Row icon="clipboard-check-outline" title="Review feedback" detail="Owner" onPress={() => setSheet('review')} />}
         {owner && <Row icon="timer-outline" title="Member activity" detail="Owner · time on the app" onPress={() => setSheet('activity')} />}
+        {owner && <Row icon="ticket-confirmation-outline" title="Trial users" detail="Owner · 2-day passes: usage, poll, sign-ups" onPress={() => setSheet('trials')} />}
         <AppVersion />
       </View>
 
@@ -283,6 +331,7 @@ export default function MoreScreen() {
     </Sheet>
     <Sheet visible={sheet === 'feedback'} title="Beta feedback" onClose={() => { setSheet(null); router.setParams({ feedback: undefined }); }}><BetaFeedback /></Sheet>
     <Sheet visible={sheet === 'activity'} title="Member activity" onClose={() => setSheet(null)}>{sheet === 'activity' && <MemberActivity />}</Sheet>
+    <Sheet visible={sheet === 'trials'} title="Trial users" onClose={() => setSheet(null)}>{sheet === 'trials' && <TrialUsers />}</Sheet>
     <Sheet visible={sheet === 'secrets'} title="Secrets" onClose={() => setSheet(null)}>{sheet === 'secrets' && (owner ? <SecretsOwner /> : <SecretsUnlock unlocked={gkrPlus} />)}</Sheet>
     <Sheet visible={sheet === 'updates'} title="Updates" onClose={() => setSheet(null)}><PatchNotes /></Sheet>
     <Sheet visible={sheet === 'scout'} title="Scout queue" onClose={() => setSheet(null)}>{sheet === 'scout' && <ScoutQueue />}</Sheet>

@@ -814,6 +814,17 @@ export function buildServer(options: ServerOptions = {}) {
     const counted=options.activity?await options.activity.beat(user.accountId,user.username??null,input.data.tab??null):false;
     return {counted};
   });
+  // Trial users (owner, 2026-10-11): every trial-key account, kept after its pass ends, with its minutes per day over the
+  // trial, top tabs, screenshots submitted, poll answer and whether it signed up.
+  app.get('/v1/owner/trials',async(request,reply)=>{
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    if(!options.product)return {trials:[],keys:null};
+    const trials=await options.product.trialUsers();
+    const rows=await Promise.all(trials.map(async(trial)=>({...trial,
+      activity:options.activity?await options.activity.member(trial.accountId):null,
+      submitted:options.tips?await options.tips.store.submitted(trial.accountId):null})));
+    return {trials:rows,keys:(await options.product.membership()).trials};
+  });
   app.get('/v1/owner/activity',async(request,reply)=>{
     if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
     return {members:options.activity?await options.activity.report():[]};

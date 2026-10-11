@@ -50,6 +50,8 @@ interface Account {id:string;username:string;email:string|null;passwordSalt:stri
   lifetime?:true;
   /** Signed up with the shared family code as the password; must set their own before anything else. */
   mustChangePassword?:true;
+  /** Signed up from a trial key (owner, 2026-10-11): kept so Trial users still lists them after they became members. */
+  fromTrial?:{keyNumber:number|null;startedAt:string;convertedAt:string;poll?:TrialPollAnswer&{at:string}};
   /** A one-time password-reset code the owner issued (stored hashed), until it is used or expires. */
   reset?:{hash:string;expiresAt:string};
   /** A guest-pass account: no username or password, full access until `expiresAt`, kept afterwards for its picks. */
@@ -378,6 +380,27 @@ export class ProductLedger {
     account.guest.expiresAt=new Date(Math.max(now.getTime(),Date.parse(account.guest.expiresAt))+TRIAL_POLL_DAYS*24*60*60_000).toISOString();
     const result=this.session(data,account);await this.write(data);return result;
   });}
+  /**
+   * Every account that came from a trial key, newest first, whether still on its pass, ended or signed up: which key, when it
+   * started and ends, its poll answer. Expired trials stay listed here (the member list drops them).
+   */
+  async trialUsers(){
+    const data=await this.read(),keys=data.trialKeys??[],now=this.clock().getTime();
+    const profiles=new Map(data.profiles.map((item)=>[item.actorKey,item]));
+    return data.accounts.flatMap((account)=>{
+      const keyIndex=account.guest?keys.findIndex((key)=>key.hash===account.guest!.pass):-1;
+      if(keyIndex<0&&!account.fromTrial)return [];
+      const profile=profiles.get(account.id),poll=account.guest?.poll??account.fromTrial?.poll??null;
+      const expiresAt=account.guest?.expiresAt??null;
+      return [{accountId:account.id,publicId:profile?.publicId??null,username:profile?.displayName??account.username,
+        keyNumber:keyIndex>=0?keyIndex+1:account.fromTrial?.keyNumber??null,startedAt:account.fromTrial?.startedAt??account.createdAt,
+        expiresAt,status:account.fromTrial?'SIGNED_UP' as const:account.status==='SUSPENDED'?'REVOKED' as const
+          :expiresAt&&Date.parse(expiresAt)<=now?'ENDED' as const:'ACTIVE' as const,
+        extended:!!poll,poll:poll?{recommend:poll.recommend,liked:poll.liked,improve:poll.improve}:null,
+        convertedAt:account.fromTrial?.convertedAt??null}];
+    }).sort((a,b)=>b.startedAt.localeCompare(a.startedAt));
+  }
+
   /** Every trial's poll answers for the owner (no names): counts and the written suggestions. */
   async trialPollResults(){
     const data=await this.read(),answers=data.accounts.flatMap((item)=>item.guest?.poll?[item.guest.poll]:[]);
@@ -435,6 +458,9 @@ export class ProductLedger {
       if(data.profiles.some((item)=>item!==profile&&normalizedName(item.displayName)===normalizedName(name)))throw new Error('USERNAME_TAKEN');
       const salt=randomBytes(16).toString('hex');
       Object.assign(trial,{username:name,email:address,passwordSalt:salt,passwordHash:(await passwordKey(password,salt)).toString('hex')});
+      const keyIndex=(data.trialKeys??[]).findIndex((key)=>key.hash===trial.guest!.pass);
+      if(keyIndex>=0)trial.fromTrial={keyNumber:keyIndex+1,startedAt:trial.createdAt,convertedAt:this.clock().toISOString(),
+        ...(trial.guest!.poll?{poll:trial.guest!.poll}:{})};
       delete trial.guest;profile.displayName=name;
       const result=this.session(data,trial);await this.write(data);return result;
     }

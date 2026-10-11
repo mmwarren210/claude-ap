@@ -197,6 +197,13 @@ export class TipStore {
     const result = this.chain.then(task); this.chain = result.catch(() => undefined); return result;
   }
 
+  /** Screenshots (batches) and picks an account has submitted in all. */
+  async submitted(accountId: string): Promise<{ screenshots: number; picks: number; plays: number }> {
+    const mine = (await this.load()).tips.filter((tip) => tip.accountId === accountId);
+    return { screenshots: new Set(mine.map((tip) => tip.batchId)).size, picks: mine.length,
+      plays: mine.filter((tip) => approvalOf(tip).approved).length };
+  }
+
   /** Uploads (batches) this account made in the last 24 hours. */
   async uploadsToday(accountId: string): Promise<number> {
     const now = this.clock().getTime();
