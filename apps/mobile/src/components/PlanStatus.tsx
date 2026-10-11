@@ -8,10 +8,28 @@ import { colors } from '../theme';
 
 export type Paid = { plan: string; label: string; paidAt: string; until: string | null; daysLeft: number | null };
 
+export type Waiting = { plan: string; label: string; method: string; at: string };
+
+/** The signed-in account's paid plan and any payment waiting for the owner's approval (trial accounts too). */
+export function useSubscription(): { paid: Paid | null; waiting: Waiting | null } {
+  const { request, profile } = useAuth();
+  const [state, setState] = useState<{ paid: Paid | null; waiting: Waiting | null }>({ paid: null, waiting: null });
+  const member = !!profile && profile.plan !== 'DEMO';
+  useEffect(() => {
+    if (!member) return;
+    let active = true;
+    const load = () => request('/v1/subscription').then(async (response) => response.ok ? await response.json() as { paid: Paid | null; waiting: Waiting | null } : null)
+      .then((value) => { if (active && value) setState({ paid: value.paid, waiting: value.waiting ?? null }); }).catch(() => undefined);
+    const first = setTimeout(load, 0), timer = setInterval(load, 10 * 60_000);
+    return () => { active = false; clearTimeout(first); clearInterval(timer); };
+  }, [member, request]);
+  return member ? state : { paid: null, waiting: null };
+}
+
 export function usePaidPlan(): Paid | null {
   const { request, profile } = useAuth();
   const [paid, setPaid] = useState<Paid | null>(null);
-  const member = !!profile && profile.plan !== 'GUEST' && profile.plan !== 'DEMO';
+  const member = !!profile && profile.plan !== 'DEMO';
   useEffect(() => {
     if (!member) return;
     let active = true;

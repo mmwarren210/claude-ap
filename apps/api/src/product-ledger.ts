@@ -70,7 +70,8 @@ export const TRIAL_PLANS=['WEEK','MONTH','QUARTER','HALF_YEAR','YEAR','LIFETIME'
 export type TrialPlan=typeof TRIAL_PLANS[number];
 export type PaidPlan=Exclude<TrialPlan,'NONE'>;
 /** Days each paid plan lasts from activation (null: lifetime). */
-export const PLAN_DAYS:Readonly<Record<PaidPlan,number|null>>={WEEK:7,MONTH:30,QUARTER:91,HALF_YEAR:182,YEAR:365,LIFETIME:null};
+/** Months count as 31 days (owner, 2026-10-11: a few extra days is fine). */
+export const PLAN_DAYS:Readonly<Record<PaidPlan,number|null>>={WEEK:7,MONTH:31,QUARTER:93,HALF_YEAR:186,YEAR:365,LIFETIME:null};
 /** Free days added for answering the end-of-trial poll. */
 export const TRIAL_POLL_DAYS=7;
 /** The poll shows in a trial's last day, and after it ends. */
@@ -121,7 +122,8 @@ interface Data extends Omit<LegacyData,'version'> {version:2;accounts:Account[];
   /** Member keys (stored hashed): each activates one paid plan once, issued by the owner after a payment is confirmed. */
   memberKeys?:{hash:string;plan:PaidPlan;createdAt:string;usedBy?:string;usedAt?:string}[];
   /** "I've paid" requests from trial users, for the owner to match against payments. */
-  payRequests?:{id:string;accountId:string;username:string;plan:PaidPlan;method:string;at:string}[]}
+  payRequests?:{id:string;accountId:string;username:string;plan:PaidPlan;method:string;at:string;
+    status?:'PENDING'|'APPROVED'|'REJECTED';decidedAt?:string}[]}
 /** Trial keys (owner, 2026-10-11): 10 single-use keys, 2 days each from first use, never taking one of the 100 seats. */
 export const TRIAL_KEY_DAYS=2;
 const blank=():Data=>({version:2,decisions:[],profiles:[],crowns:[],follows:[],
@@ -379,14 +381,41 @@ export class ProductLedger {
   private applyMemberKey(data:Data,account:Account,key:string){
     const entry=(data.memberKeys??[]).find((item)=>item.hash===tokenHash(key.trim().toUpperCase())&&!item.usedBy);
     if(!entry)throw new Error('MEMBER_KEY_INVALID');
-    const now=this.clock(),days=PLAN_DAYS[entry.plan];
-    // A renewal adds its days to whatever is left of the current plan.
+    this.extendPlan(account,entry.plan);
+    entry.usedBy=account.id;entry.usedAt=this.clock().toISOString();
+  }
+  /** Adds a plan's days to whatever is left (a renewal stacks); lifetime never ends. A trial's pass follows the plan. */
+  private extendPlan(account:Account,plan:PaidPlan){
+    const now=this.clock(),days=PLAN_DAYS[plan];
     const from=Math.max(now.getTime(),account.paid?.until?Date.parse(account.paid.until):0);
     const lifetime=days===null||(!!account.paid&&account.paid.until===null);
-    account.paid={plan:lifetime&&days!==null?account.paid!.plan:entry.plan,paidAt:now.toISOString(),
+    account.paid={plan:lifetime&&days!==null?account.paid!.plan:plan,paidAt:now.toISOString(),
       until:lifetime?null:new Date(from+days*86_400_000).toISOString()};
-    entry.usedBy=account.id;entry.usedAt=now.toISOString();
+    if(account.guest)account.guest.expiresAt=account.paid.until??'2100-01-01T00:00:00.000Z';
   }
+  /**
+   * The owner approves a payment in the app (owner, 2026-10-11): the plan's days are added to the account right away, and
+   * its waiting requests are marked approved. Works for trial accounts too (their pass runs to the plan's end).
+   */
+  async grantPlan(publicId:string,plan:PaidPlan){return this.exclusive(async()=>{
+    const data=await this.read(),profile=data.profiles.find((item)=>item.publicId===publicId);
+    const account=profile?data.accounts.find((item)=>item.id===profile.actorKey):undefined;
+    if(!account)throw new Error('NOT_FOUND');
+    this.extendPlan(account,plan);
+    // The member's current sign-ins (a trial's was capped at its old end) now last as long as the plan, up to 30 days at a time.
+    const cap=Math.min(this.clock().getTime()+30*86_400_000,account.paid?.until?Date.parse(account.paid.until):Infinity);
+    for(const session of data.sessions)if(session.accountId===account.id&&Date.parse(session.expiresAt)<cap)session.expiresAt=new Date(cap).toISOString();
+    const now=this.clock().toISOString();
+    for(const item of data.payRequests??[])if(item.accountId===account.id&&(item.status??'PENDING')==='PENDING')Object.assign(item,{status:'APPROVED',decidedAt:now});
+    await this.write(data);
+    return {publicId,paid:account.paid};
+  });}
+  /** The owner turns down a payment request (no payment found). */
+  async rejectPayment(id:string){return this.exclusive(async()=>{
+    const data=await this.read(),item=(data.payRequests??[]).find((entry)=>entry.id===id);
+    if(!item)throw new Error('NOT_FOUND');
+    Object.assign(item,{status:'REJECTED',decidedAt:this.clock().toISOString()});await this.write(data);return {id};
+  });}
   /** A signed-in member redeems a key (a renewal or an upgrade). */
   async redeemMemberKey(accountId:string,key:string){return this.exclusive(async()=>{
     const data=await this.read(),account=data.accounts.find((item)=>item.id===accountId);
@@ -409,11 +438,17 @@ export class ProductLedger {
   });}
   /** A member's paid plan and its end date (null when they have none), for their profile and renewal alerts. */
   async subscription(accountId:string){
-    const account=(await this.read()).accounts.find((item)=>item.id===accountId);
+    const data=await this.read(),account=data.accounts.find((item)=>item.id===accountId);
     if(!account?.paid)return null;
     const until=account.paid.until;
     return {plan:account.paid.plan,paidAt:account.paid.paidAt,until,
       daysLeft:until===null?null:Math.ceil((Date.parse(until)-this.clock().getTime())/86_400_000)};
+  }
+  /** The account's latest payment request still waiting for the owner, if any. */
+  async pendingPayment(accountId:string){
+    const waiting=((await this.read()).payRequests??[]).filter((item)=>item.accountId===accountId&&(item.status??'PENDING')==='PENDING');
+    const last=waiting.at(-1);
+    return last?{plan:last.plan,method:last.method,at:last.at}:null;
   }
   /** Owner view: the latest "I've paid" requests and member keys (no key values). */
   async payments(){
@@ -647,12 +682,16 @@ export class ProductLedger {
     const data=await this.read(),lifetime=lifetimeIds(data.accounts);
     const profiles=new Map(data.profiles.map((item)=>[item.actorKey,item]));
     const now=this.clock();
-    // Expired guests and trials drop off the list; their accounts and profiles are kept (owner, 2026-10-11).
-    return data.accounts.filter((account)=>!guestExpired(account,now)).flatMap((account)=>{
+    // Expired guests and trials drop off the list (their accounts and profiles are kept, owner 2026-10-11), unless they're
+    // waiting for a payment approval. Each row carries the paid plan and any waiting request.
+    const waiting=new Map<string,{id:string;plan:PaidPlan;method:string;at:string}>();
+    for(const item of data.payRequests??[])if((item.status??'PENDING')==='PENDING')waiting.set(item.accountId,{id:item.id,plan:item.plan,method:item.method,at:item.at});
+    return data.accounts.filter((account)=>!guestExpired(account,now)||waiting.has(account.id)).flatMap((account)=>{
       const profile=profiles.get(account.id);
-      return profile?[{publicId:profile.publicId,username:account.guest?'Guest':account.username,email:account.email,
+      return profile?[{publicId:profile.publicId,username:account.guest?profile.displayName:account.username,email:account.email,
         plan:account.guest?'GUEST' as const:lifetime.has(account.id)?'LIFETIME' as const:'MEMBER' as const,
         revoked:account.status==='SUSPENDED',createdAt:account.createdAt,
+        paid:account.paid??null,waiting:waiting.get(account.id)??null,
         ...(account.guest?{guestExpiresAt:account.guest.expiresAt}:{})}]:[];
     }).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
   }

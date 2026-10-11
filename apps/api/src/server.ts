@@ -588,7 +588,9 @@ export function buildServer(options: ServerOptions = {}) {
   app.get('/v1/subscription',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     const paid=options.product?await options.product.subscription(user.accountId):null;
-    return {paid:paid?{...paid,label:PLAN_LABELS[paid.plan]??paid.plan}:null};
+    const waiting=options.product?await options.product.pendingPayment(user.accountId):null;
+    return {paid:paid?{...paid,label:PLAN_LABELS[paid.plan]??paid.plan}:null,
+      waiting:waiting?{...waiting,label:PLAN_LABELS[waiting.plan]??waiting.plan}:null};
   });
   app.post('/v1/subscribe/paid',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
@@ -661,6 +663,20 @@ export function buildServer(options: ServerOptions = {}) {
       :reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
   });
   // The owner's member list, and revoking or restoring any account's access.
+  // The owner approves a payment in the app: picks the time frame and the member gets that much time at once (stacks).
+  app.post('/v1/owner/members/grant',async(request,reply)=>{
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    const input=z.object({publicId:z.string().min(1).max(100),plan:paidPlan}).strict().safeParse(request.body);
+    if(!input.success||!options.product)return reply.code(400).send({code:'INVALID_GRANT'});
+    try{return await options.product.grantPlan(input.data.publicId,input.data.plan);}
+    catch{return reply.code(404).send({code:'NOT_FOUND'});}
+  });
+  app.post('/v1/owner/members/reject',async(request,reply)=>{
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    const input=z.object({requestId:z.string().uuid()}).strict().safeParse(request.body);
+    if(!input.success||!options.product)return reply.code(400).send({code:'INVALID_REQUEST'});
+    try{return await options.product.rejectPayment(input.data.requestId);}catch{return reply.code(404).send({code:'NOT_FOUND'});}
+  });
   app.get('/v1/owner/members',async(request,reply)=>{
     const user=await currentUser(request);
     if(!options.product||!options.ownerPublicId||user?.publicId!==options.ownerPublicId)return reply.code(404).send({code:'NOT_FOUND'});

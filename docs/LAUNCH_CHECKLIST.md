@@ -22,3 +22,22 @@ To decide before launch:
 
 - Trial accounts see a watermark and no explanations on screen. Before launch, decide whether the server should also strip
   the explanations from what it sends trial accounts (today they are hidden on screen only).
+
+## 4. Draft prices (owner, 2026-10-11): not public yet
+
+Base: **1 month = $25**. Longer plans cost less per month. Final numbers wait for the trial poll. When set, they go in the
+Railway variable `CROWNIQ_PLAN_PRICES` (e.g. `{"WEEK":9,"MONTH":25,"QUARTER":65,"HALF_YEAR":120,"YEAR":210,"LIFETIME":499}`);
+until then the Subscribe screen says prices are being finalized. Trial users get 10% off.
+
+| Plan | Days | Price | Per month | Saving vs monthly | With 10% sign-up discount |
+|---|---|---|---|---|---|
+| 1 week | 7 | $9 | ~$39 | — | $8.10 |
+| 1 month | 31 | $25 | $25 | — | $22.50 |
+| 3 months | 93 | $65 | ~$21.67 | 13% | $58.50 |
+| 6 months | 186 | $120 | $20 | 20% | $108 |
+| 1 year | 365 | $210 | $17.50 | 30% | $189 |
+| Lifetime | — | $499 | — | about 2.4 years of yearly | $449.10 |
+
+Lifetime: consider a limited number of spots; each one keeps costing server and AI money with no renewals.
+Payment approval: members tap "I've paid"; the owner approves in More › Account › Member access (Waiting for approval),
+picking the time frame; time stacks on any plan already running.

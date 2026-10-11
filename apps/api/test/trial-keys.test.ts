@@ -89,9 +89,30 @@ test('payments: "I have paid" gives a trial 24 hours once; a member key turns th
   const renewal = await ledger.issueMemberKey('MONTH');
   now = new Date('2026-10-20T12:00:00Z');
   const renewed = await ledger.redeemMemberKey(accountId, renewal);
-  assert.ok(renewed.paid?.until?.startsWith('2026-12-10'), 'a renewal adds 30 days to what was left');
-  now = new Date('2026-12-08T12:00:00Z');
+  assert.ok(renewed.paid?.until?.startsWith('2026-12-12'), 'a renewal adds 31 days to what was left');
+  now = new Date('2026-12-10T12:00:00Z');
   const plan = await ledger.subscription(accountId);
   assert.equal(plan?.plan, 'MONTH'); assert.equal(plan?.daysLeft, 2, 'the renewal alert shows from 3 days before');
   await assert.rejects(ledger.redeemMemberKey(accountId, renewal), /MEMBER_KEY_INVALID/);
+});
+
+test('owner approves in the app: waiting request, time added at once (31-day months), stacks on what is left', async () => {
+  let now = new Date('2026-10-11T12:00:00Z');
+  const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'grant-')), 'ledger.json'), 'CROWN_STRONG', () => now);
+  const [trialKey] = await ledger.issueTrialKeys(1);
+  const session = await ledger.trialLogin(trialKey, 'device-grantgrantgrant1');
+  const user = (await ledger.authenticate(session.token))!;
+  await ledger.requestPayment(user.accountId, 'MONTH', 'Zelle');
+  const row = (await ledger.members()).find((item) => item.publicId === user.publicId)!;
+  assert.equal(row.waiting?.plan, 'MONTH');
+  const granted = await ledger.grantPlan(user.publicId, 'MONTH');
+  assert.ok(granted.paid?.until?.startsWith('2026-11-11T12:00'), '31 days');
+  assert.equal((await ledger.members()).find((item) => item.publicId === user.publicId)!.waiting, null);
+  assert.equal(await ledger.pendingPayment(user.accountId), null);
+  now = new Date('2026-10-20T12:00:00Z');
+  assert.ok(await ledger.authenticate(session.token), 'still signed in after the trial would have ended');
+  now = new Date('2026-11-01T12:00:00Z');
+  const stacked = await ledger.grantPlan(user.publicId, 'QUARTER');
+  assert.ok(stacked.paid?.until?.startsWith('2027-02-12T12:00'), '93 more days on top of what was left');
+  assert.ok(stacked.paid);
 });

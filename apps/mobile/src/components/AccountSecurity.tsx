@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../auth';
 import { colors, radius } from '../theme';
 import { GhostButton, PrimaryButton } from './ui/Controls';
@@ -64,8 +64,17 @@ export function MemberResetCode() {
 }
 
 type Member = { publicId: string; username: string; email: string | null; plan: 'LIFETIME' | 'MEMBER' | 'GUEST';
-  revoked: boolean; createdAt: string };
+  revoked: boolean; createdAt: string 
+  /** The paid plan, and a payment request waiting for the owner's approval (owner, 2026-10-11). */
+  paid?: { plan: string; paidAt: string; until: string | null } | null;
+  waiting?: { id: string; plan: string; method: string; at: string } | null; guestExpiresAt?: string };
 const planWord: Readonly<Record<Member['plan'], string>> = { LIFETIME: 'Lifetime', MEMBER: 'Member', GUEST: 'Guest' };
+/** Time frames the owner can grant (months are 31 days). */
+const GRANTS: readonly { plan: string; label: string }[] = [{ plan: 'WEEK', label: '1 week' }, { plan: 'MONTH', label: '1 month' },
+  { plan: 'QUARTER', label: '3 months' }, { plan: 'HALF_YEAR', label: '6 months' }, { plan: 'YEAR', label: '1 year' }, { plan: 'LIFETIME', label: 'Lifetime' }];
+const grantLabel = (plan: string) => GRANTS.find((item) => item.plan === plan)?.label ?? plan;
+const shortDate = (iso: string) => new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+const paidText = (paid: NonNullable<Member['paid']>) => `${grantLabel(paid.plan)} · ${paid.until ? `ends ${shortDate(paid.until)}` : 'never ends'}`;
 
 /** Owner only: every account, with a button to revoke or restore its access. */
 export function MemberAccess() {
@@ -86,6 +95,24 @@ export function MemberAccess() {
     });
     return () => { active = false; };
   }, [fetchMembers]);
+  // Granting time: pick a member's time frame, then Approve. It stacks on any time they already have.
+  const [granting, setGranting] = useState<string | null>(null), [grantPlan, setGrantPlan] = useState<string>('MONTH');
+  const grant = async (member: Member, plan: string) => {
+    setBusy(true); setMessage('');
+    const response = await request('/v1/owner/members/grant', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ publicId: member.publicId, plan }) }).catch(() => null);
+    if (response?.ok) { const done = await response.json() as { paid: NonNullable<Member['paid']> };
+      setMessage(`✓ ${member.username}: ${paidText(done.paid)}.`); setGranting(null); }
+    else setMessage('That didn’t work. Try again.');
+    await load(); setBusy(false);
+  };
+  const reject = async (member: Member) => {
+    if (!member.waiting) return;
+    setBusy(true);
+    await request('/v1/owner/members/reject', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requestId: member.waiting.id }) }).catch(() => null);
+    setMessage(`Turned down ${member.username}'s request.`); await load(); setBusy(false);
+  };
   const change = async (member: Member) => {
     // Revoking takes a second tap; restoring doesn't.
     if (!member.revoked && armed !== member.publicId) { setArmed(member.publicId); return; }
@@ -103,7 +130,20 @@ export function MemberAccess() {
   const wanted = find.trim().toLowerCase();
   const shown = (members ?? []).filter((item) => !wanted || item.username.toLowerCase().includes(wanted) ||
     (item.email ?? '').toLowerCase().includes(wanted));
+  const waitingList = (members ?? []).filter((item) => item.waiting);
   return <View style={styles.box}>
+    {waitingList.length > 0 && <View style={styles.waitBox}>
+      <Text style={styles.waitTitle}>Waiting for approval · {waitingList.length}</Text>
+      <Text style={styles.note}>Check the payment arrived, then approve. The time is added right away.</Text>
+      {waitingList.map((member) => <View key={member.publicId} style={styles.member}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.memberName} numberOfLines={1}>{member.username}</Text>
+          <Text style={styles.note}>{grantLabel(member.waiting!.plan)} · {member.waiting!.method} · {shortDate(member.waiting!.at)}</Text>
+        </View>
+        <GhostButton disabled={busy} label={`Approve ${grantLabel(member.waiting!.plan)}`} icon="check-circle" onPress={() => void grant(member, member.waiting!.plan)} />
+        <GhostButton disabled={busy} label="Reject" icon="close-circle" onPress={() => void reject(member)} />
+      </View>)}
+    </View>}
     <Text style={styles.label}>Member access</Text>
     <Text style={styles.note}>Revoke signs someone out right away and stops them signing in. Their seat frees up. Restore
       lets them back in with the same account.</Text>
@@ -116,7 +156,17 @@ export function MemberAccess() {
           <Text style={styles.memberName} numberOfLines={1}>{member.username}</Text>
           <Text style={[styles.note, member.revoked && { color: colors.red }]} numberOfLines={1}>
             {planWord[member.plan]}{member.revoked ? ' · Revoked' : ''}{member.email ? ` · ${member.email}` : ''}</Text>
+          {member.paid && <Text style={[styles.note, { color: colors.mint }]}>{paidText(member.paid)}</Text>}
+          {member.waiting && <Text style={[styles.note, { color: colors.gold }]}>Waiting for approval · {grantLabel(member.waiting.plan)}</Text>}
+          {granting === member.publicId && <View style={styles.grants}>
+            {GRANTS.map((item) => <Pressable key={item.plan} accessibilityRole="button" onPress={() => setGrantPlan(item.plan)}
+              style={[styles.grant, grantPlan === item.plan && styles.grantOn]}>
+              <Text style={[styles.grantText, grantPlan === item.plan && styles.grantTextOn]}>{item.label}</Text></Pressable>)}
+            <GhostButton disabled={busy} label={`Approve ${grantLabel(grantPlan)}`} icon="check-circle" onPress={() => void grant(member, grantPlan)} />
+          </View>}
         </View>
+        <GhostButton disabled={busy} label={granting === member.publicId ? 'Close' : 'Add time'} icon="clock-plus-outline"
+          onPress={() => { setGranting(granting === member.publicId ? null : member.publicId); setGrantPlan(member.waiting?.plan ?? 'MONTH'); }} />
         {member.publicId !== profile?.publicId && <GhostButton disabled={busy}
           label={member.revoked ? 'Restore' : armed === member.publicId ? 'Tap again to revoke' : 'Revoke'}
           icon={member.revoked ? 'account-check' : 'account-cancel'} onPress={() => void change(member)} />}
@@ -135,6 +185,13 @@ const styles = StyleSheet.create({
   codeText: { color: colors.mint, fontSize: 28, fontWeight: '900', letterSpacing: 2 },
   member: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   memberName: { color: colors.text, fontSize: 15, fontWeight: '700' },
+  waitBox: { gap: 8, borderWidth: 1, borderColor: colors.gold, borderRadius: radius.md, padding: 12 },
+  waitTitle: { color: colors.gold, fontSize: 14, fontWeight: '900' },
+  grants: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6, alignItems: 'center' },
+  grant: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: colors.borderStrong },
+  grantOn: { backgroundColor: colors.mint, borderColor: colors.mint },
+  grantText: { color: colors.text, fontSize: 12, fontWeight: '700' },
+  grantTextOn: { color: colors.mintInk },
 });
 
 /** Delete account: confirm with the password (or DELETE for Google and Apple sign-ins), then a second tap. */
