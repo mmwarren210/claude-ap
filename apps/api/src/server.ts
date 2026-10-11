@@ -260,6 +260,8 @@ export function buildServer(options: ServerOptions = {}) {
       // PropLine's signed deliveries (checked against the subscription secret, not a member sign-in).
       !path.startsWith('/v1/hooks/') &&
       path!=='/v1/version' &&
+      // Plans and payment handles: shown on the sign-in screen once a trial has ended (no sign-in works then).
+      !(path==='/v1/subscribe'&&request.method==='GET') &&
       !await currentUser(request))return reply.code(401).send({code:'PROFILE_REQUIRED'});
   });
   app.addHook('onReady',async()=>{
