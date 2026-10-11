@@ -428,7 +428,7 @@ const edgeBookWeights=new BookWeightStore(`${dataDir}/edge/edge-book-weights-v1.
 if(bookAccuracy){
   // Runs in the nightly PropLine pull (2–4 AM Central, owner 2026-10-11), not during the day; new scores refit the weights.
   const refresh=bookAccuracy.refresh.bind(bookAccuracy);
-  bookAccuracy.refresh=async(limit?:number)=>{const games=await refresh(limit);if(games){edgeBookWeights.markDue();console.log(`[book-accuracy] ${games} games scored`);}return games;};
+  bookAccuracy.refresh=async(limit?:number,days?:number)=>{const games=await refresh(limit,days);if(games){edgeBookWeights.markDue();console.log(`[book-accuracy] ${games} games scored`);}return games;};
 }
 await edgeBookWeights.load();
 const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',dispersion:edgeDispersion,bookWeights:edgeBookWeights,

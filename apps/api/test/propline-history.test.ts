@@ -58,7 +58,7 @@ test('one request per player serves every stat, is cached, skips NFL preseason a
   assert.deepEqual(await valuesOf(history.values(line('NFL', 'passing_yards'))), [301, 250]);
   assert.deepEqual(await valuesOf(history.values(line('NFL', 'player_rush_yds'))), [12, 30]);
   assert.equal(asked.length, 1);
-  assert.match(asked[0]!, /^\/v1\/sports\/football_nfl\/players\/Test%20Player\/games\?limit=30$/);
+  assert.match(asked[0]!, /^\/v1\/sports\/football_nfl\/players\/Test%20Player\/games\?limit=100$/);
   now = 2000; await history.values(line('NFL', 'passing_yards')); assert.equal(asked.length, 2, 'refetched once the cache is stale');
   assert.equal(await history.values(line('NFL', 'passing_yards', 'Other Player')), null, 'over the daily cap: no request');
   assert.equal(asked.length, 2);

@@ -13,7 +13,9 @@ type Stats = Readonly<Record<string, number>>;
 interface Game { readonly at: string; readonly opponent: string | null; readonly stats: Stats }
 interface Entry { readonly at: number; readonly games: readonly Game[] | null;
   /** How long this entry stays fresh: the nightly pull keeps its answers ~26 hours (default: the 6-hour TTL). */
-  readonly keepMs?: number }
+  readonly keepMs?: number;
+  /** Fetched with the deep game log (up to 100 games, owner 2026-10-11); older entries hold 30 and get refetched at night. */
+  readonly deep?: boolean }
 /** The nightly pull's answers last until the next night's run (owner, 2026-10-11). */
 export const NIGHTLY_KEEP_MS = 26 * 3600_000;
 
@@ -164,7 +166,8 @@ export class PropLineHistory {
     await this.load();
     const key = `${sportKey}|${normalizedName(playerName)}`, now = this.clock();
     const cached = this.cache.get(key);
-    if (cached && now - cached.at < (refresh ? refresh.olderThanMs : cached.keepMs ?? this.options.ttlMs ?? 6 * 3600_000))
+    // The nightly pull also refetches anything from before the deep game log, however fresh.
+    if (cached && (!refresh || cached.deep) && now - cached.at < (refresh ? refresh.olderThanMs : cached.keepMs ?? this.options.ttlMs ?? 6 * 3600_000))
       return cached.games;
     const pending = this.loading.get(key);
     if (pending) return pending;
@@ -174,7 +177,7 @@ export class PropLineHistory {
     this.stats.requests++;
     const request = this.slot(async () => {
       const body = await this.client.get<{ games?: { commence_time?: string; status?: string; opponent?: string | null;
-        stats?: Record<string, unknown> }[] }>(`/v1/sports/${sportKey}/players/${encodeURIComponent(playerName)}/games?limit=30`);
+        stats?: Record<string, unknown> }[] }>(`/v1/sports/${sportKey}/players/${encodeURIComponent(playerName)}/games?limit=100`);
       return (body.games ?? []).flatMap((game): Game[] => {
         if (game.status !== 'final' || !game.commence_time || Number.isNaN(Date.parse(game.commence_time))) return [];
         // NFL preseason (July and August) is not the player's real workload.
@@ -186,7 +189,7 @@ export class PropLineHistory {
     }).then((games) => {
       const found = games.length ? games : null;
       if (found) this.stats.found++; else this.stats.empty++;
-      this.cache.set(key, { at: this.clock(), games: found, ...(refresh ? { keepMs: refresh.keepMs } : {}) });
+      this.cache.set(key, { at: this.clock(), games: found, deep: true, ...(refresh ? { keepMs: refresh.keepMs } : {}) });
       this.dirty = true;
       return found;
     }).finally(() => this.loading.delete(key));

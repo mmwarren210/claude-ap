@@ -182,7 +182,7 @@ export interface ServerOptions {
   /** Player game logs from PropLine's box scores, first in line for every history read. */
   proplineHistory?: PropLineHistory | null;
   /** Each book's accuracy against actual stats (PropLine finished games), for the owner. */
-  bookAccuracy?: { report(): Promise<unknown>; refresh?(limit?: number): Promise<number> } | null;
+  bookAccuracy?: { report(): Promise<unknown>; refresh?(limit?: number, days?: number): Promise<number> } | null;
   /** UFC fighters' fight history (UFCStats) for History Read and Edge on PrizePicks' UFC lines. */
   ufcHistory?: import('./ufc-history.js').UfcHistory | null;
   /** Soccer players' full match stats (Sofascore) for lines ESPN's logs can't read, fantasy score included. */
@@ -1637,7 +1637,7 @@ export function buildServer(options: ServerOptions = {}) {
     }
     const open=lines.filter((line)=>Date.parse(line.eventStartTime)>now().getTime());
     const warmed=options.proplineHistory?await options.proplineHistory.warm(open).catch(()=>null):null;
-    const accuracyGames=options.bookAccuracy?.refresh?await options.bookAccuracy.refresh(300).catch(()=>null):null;
+    const accuracyGames=options.bookAccuracy?.refresh?await options.bookAccuracy.refresh(600,14).catch(()=>null):null;
     if(contextScheduler)contextScheduler.paused=false;
     const refreshed=contextScheduler?!!(await contextScheduler.tick().catch(()=>null)):false;
     nightly.last={at:now().toISOString(),players:warmed?.players??0,found:warmed?.found??0,empty:warmed?.empty??0,skipped:warmed?.skipped??0,

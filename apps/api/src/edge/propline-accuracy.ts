@@ -57,7 +57,7 @@ export function scoreGame(sportKey: string, results: Body, closing: Body): BookS
 
 interface Saved { scored: Record<string, string>; scores: (BookScore & { at: string })[] }
 
-/** Collects book scores from finished games (the last 3 days each run), keeps 30 days of them, and summarizes accuracy. */
+/** Collects book scores from finished games (the last `days` days each run; the nightly pull looks back 14), keeps 30 days of them, and summarizes accuracy. */
 export class PropLineAccuracy {
   private data: Saved = { scored: {}, scores: [] };
   private loaded = false;
@@ -84,7 +84,7 @@ export class PropLineAccuracy {
   }
 
   /** Scores up to `limit` finished games not yet scored, across every sport PropLine lists props for. */
-  async refresh(limit = 60): Promise<number> {
+  async refresh(limit = 60, days = 3): Promise<number> {
     if (this.running) return 0;
     this.running = true;
     try {
@@ -94,7 +94,7 @@ export class PropLineAccuracy {
       for (const sportKey of sports) {
         if (done >= limit) break;
         const events = await this.client.get<{ id?: string | number; status?: string; completed?: boolean | null }[]>(
-          `/v1/sports/${sportKey}/scores?daysFrom=3`).catch(() => []);
+          `/v1/sports/${sportKey}/scores?daysFrom=${days}`).catch(() => []);
         this.stats.requests++;
         for (const event of Array.isArray(events) ? events : []) {
           if (done >= limit) break;
