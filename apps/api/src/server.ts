@@ -661,7 +661,10 @@ export function buildServer(options: ServerOptions = {}) {
     const checks=new Map([...reads].map(([id,read])=>[id,{edge:read.edge?.verdict??null,gkr:read.gkrPlus?.verdict??null,
       edgeChance:read.edge?.chance??null,gkrChance:read.gkrPlus?.chance??null,breakEven:read.edge?.breakEven??null}]));
     await options.tips.store.setModelChecks(checks);
+    vettedCache=null;
   };
+  // Also every 10 minutes on its own, so new picks get GKR's and Edge's read without waiting for someone to open Vetted.
+  const modelChecking=setInterval(()=>{void checkTipsWithModels().catch(()=>undefined);},10*60_000);modelChecking.unref();
   app.get('/v1/vetted',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     if(!options.tips)return {picks:[],record:{won:0,lost:0,push:0,units:0,roi:null},scoreboard:null};
@@ -2252,7 +2255,11 @@ export function buildServer(options: ServerOptions = {}) {
     });
     // Vetted as the owner sees it, hidden picks included (no tipster names), for checking the GKR/Edge filter.
     admin.get('/tips-summary', async (_request, reply) => options.tips ? options.tips.store.summary() : reply.code(503).send({ code: 'TIPS_UNAVAILABLE' }));
-    admin.get('/vetted', async (_request, reply) => options.tips ? options.tips.store.vetted() : reply.code(503).send({ code: 'TIPS_UNAVAILABLE' }));
+    admin.get('/vetted', async (_request, reply) => {
+      if (!options.tips) return reply.code(503).send({ code: 'TIPS_UNAVAILABLE' });
+      await checkTipsWithModels().catch(() => undefined);
+      return options.tips.store.vetted();
+    });
     admin.get('/members', async (_request, reply) => options.product ? options.product.membership()
       : reply.code(503).send({ code: 'PRODUCT_UNCONFIGURED' }));
     admin.get('/shadow', async (_request, reply) => options.shadowRecord ? options.shadowRecord.status()
