@@ -324,7 +324,10 @@ const identityCache=new JsonCache(fetch,()=>new Date());
 const identitySources=[new SleeperNflIdentitySource(identityCache),new EspnRosterIdentitySource(identityCache)];
 const playerIdentity=process.env.GKR_PLAYER_IDENTITY==='false'?null
   :new PlayerIdentityResearch(identitySources,{cache:identityCache});
-const primaryEvidenceAdapters=[manualEvidence,internalEvidence,publicNflEvidence,playerIdentity]
+// PropLine's box scores in GKR's main pass too (owner, 2026-10-11: every model uses the nightly PropLine pull), after
+// CrownIQ's own history; a short wait, so only players already pulled answer here (the rest join on the next refresh).
+const proplinePrimaryEvidence=proplineHistory?new PropLineGkrEvidence(proplineHistory,approvedModelKeys,undefined,250,'propline-history-primary-v1'):null;
+const primaryEvidenceAdapters=[manualEvidence,internalEvidence,proplinePrimaryEvidence,publicNflEvidence,playerIdentity]
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const gkrResearch=primaryEvidenceAdapters.length===0?null:primaryEvidenceAdapters.length===1
   ? primaryEvidenceAdapters[0]:new CompositeResearchAdapter(primaryEvidenceAdapters);
@@ -368,7 +371,7 @@ const statContext=statEvidence&&process.env.CROWNIQ_STAT_CONTEXT!=='false'?new S
   windowHours:nonNegative('CROWNIQ_STAT_CONTEXT_WINDOW_HOURS',36),
   cooldownHours:nonNegative('CROWNIQ_STAT_CONTEXT_COOLDOWN_HOURS',6),
   maxPlayers:Math.max(1,Math.floor(nonNegative('CROWNIQ_STAT_CONTEXT_MAX_PLAYERS',300)))}):null;
-const contextAdapters=[internalEvidence,playerIdentity,tickContext,statContext,espnEvidence,freeHistoryEvidence]
+const contextAdapters=[internalEvidence,playerIdentity,tickContext,statContext,espnEvidence,freeHistoryEvidence,proplinePrimaryEvidence]
   .filter((item):item is NonNullable<typeof item>=>!!item);
 const contextRefresh=contextIntervalMinutes>0?{adapter:new CompositeResearchAdapter(contextAdapters),
   intervalMinutes:contextIntervalMinutes,windowHours:contextWindowHours}:null;
