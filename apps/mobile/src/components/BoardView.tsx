@@ -28,6 +28,7 @@ import { ChipRow, FilterChip, PrimaryButton, Segmented } from './ui/Controls';
 import { Icon } from './ui/Icon';
 import { ReportNudge } from './ReportNudge';
 import { UpdateStatus } from './UpdateStatus';
+import { ModelBanner } from './ui/ModelBanner';
 
 export const windows: readonly { value: Window; label: string }[] = [
   { value: 'L5', label: 'L5' }, { value: 'L10', label: 'L10' }, { value: 'L15', label: 'L15' },
@@ -101,6 +102,7 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
     return ids.length > 1 ? `${ids.length} games` : names[ids[0]!]?.split(' · ')[0] ?? 'Game'; };
   const header = <View style={styles.header}>
     <AppHeader subtitle="Sports Intelligence · Powered by GKR" />
+    <ModelBanner title="GKR Model Picks" text="CrownIQ's rating for each line, built from player history, matchups and the books. Tap a pick to see why." />
     <BoardPicker value="prizepicks" onChange={onApp} />
     {data && <Text style={styles.builderNote}>Every line with where it scores. Open a player to add a pick to your Crown;
       build whole Crowns in the Crown tab.</Text>}

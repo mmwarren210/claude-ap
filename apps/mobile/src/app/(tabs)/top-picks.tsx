@@ -37,6 +37,7 @@ import { emptyFilter, FilterBar } from '../../components/FilterBar';
 import type { FilterValue } from '../../components/FilterBar';
 import { useLeagueStatFilter } from '../../components/LeagueStatFilter';
 import { UpdateStatus } from '../../components/UpdateStatus';
+import { ModelBanner } from '../../components/ui/ModelBanner';
 
 const cardStat = (card: { market: string }) => card.market;
 
@@ -193,6 +194,7 @@ export default function TopPicksScreen() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Top Picks" />
+      <ModelBanner title="Top Picks" text="Today's strongest plays from CrownIQ's models, ranked, for each app and book." />
       <UpdateStatus />
       <ChipRow>{topLists.map((item) => <FilterChip key={item.value} label={item.label} active={mode === item.value} chevron={false}
         onPress={() => setMode(item.value)} />)}</ChipRow>

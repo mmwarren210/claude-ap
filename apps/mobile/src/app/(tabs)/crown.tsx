@@ -34,6 +34,7 @@ import { inSports, SportPicker } from '../../components/ui/SportPicker';
 import { DayPicker } from '../../components/ui/DayPicker';
 import { chosenDay, gameDays, onDay } from '../../game-days';
 import type { CrownProvider } from '../../crown-legs';
+import { ModelBanner } from '../../components/ui/ModelBanner';
 
 const crownProviders: readonly { value: CrownProvider | 'prizepicks'; label: string }[] = [
   { value: 'prizepicks', label: 'PrizePicks' }, { value: 'underdog', label: 'Underdog' }, { value: 'pick6', label: 'Pick6' }, { value: 'dabble', label: 'Dabble' },
@@ -195,6 +196,7 @@ export default function CrownScreen() {
   if (provider !== 'prizepicks') return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <AppHeader subtitle="Your Crown" />
+      <ModelBanner title="Crown Builder" text="Slips built from CrownIQ's picks, sized to the app's payouts." />
       {appPicker}
       {provider === 'underdog' || provider === 'pick6' || provider === 'dabble' ? <>
         <Segmented label="Crown size" options={sizesFor(8)} value={size} onChange={setSize} />
@@ -207,6 +209,7 @@ export default function CrownScreen() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Your Crown" />
+      <ModelBanner title="Crown Builder" text="Slips built from CrownIQ's picks, sized to the app's payouts." />
       {appPicker}
       <Segmented label="Crown size" options={sizesFor(6)} value={size} onChange={setSize} />
       <DayPicker days={days} day={day} nowMs={nowMs} onChange={(next) => { setPicked(next); setBuilt(false); setOffset(0); }} />

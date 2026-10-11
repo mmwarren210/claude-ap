@@ -5,6 +5,7 @@ import { EdgeGenView } from '../../components/EdgeGenView';
 import { EdgePickCard } from '../../components/EdgePickCard';
 import { EdgeSlipPanel, SlipSummary, StakePicker } from '../../components/EdgeSlipPanel';
 import { Notice, Screen } from '../../components/Screen';
+import { ModelBanner } from '../../components/ui/ModelBanner';
 import { PlayerSearch } from '../../components/PlayerSearch';
 import { pct, sportsFrom, upcomingPicks } from '../../edge-format';
 import { picked } from '../../components/ui/MultiPick';
@@ -53,7 +54,7 @@ export default function EdgeScreen() {
   const inSlip = new Set(slip.map((leg) => leg.lineId));
   return <Screen eyebrow={`CROWNIQ  /  EDGE  /  ${platformLabel(platform).toUpperCase()}`} title="Edge">
     <UpdateStatus />
-    <Text style={styles.intro}>CrownIQ&apos;s own probability engine. It reads every line on each app and book, sets its own line, and picks the side that beats that platform&apos;s payout. Lines it can&apos;t read say exactly what&apos;s missing.</Text>
+    <ModelBanner title="Edge Model Picks" text="CrownIQ's own probability engine. It reads every line on each app and book, sets its own line, and picks the side that beats that platform's payout." />
     <View style={styles.chips}>{EDGE_PLATFORMS.map((item) => <Pressable key={item.value} accessibilityRole="button"
       accessibilityState={{ selected: platform === item.value }} onPress={() => edgePlatform.set(item.value)}
       style={[styles.chip, platform === item.value && styles.chipOn]}>
