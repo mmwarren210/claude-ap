@@ -55,3 +55,20 @@ test('duplicates are never re-checked or re-graded, Vetted shows them once with 
   const settled = await store.settle([{ id: first[0].id, status: 'WON', result: 'Lakers won' }]);
   assert.equal(settled, 3, 'one grade settles every copy');
 });
+
+test('a PLAY that GKR and Edge both call PASS or FADE stays out of Vetted; agreement shows on the pick', async () => {
+  const now = new Date('2026-10-11T12:00:00Z'), store = new TipStore(null, () => now);
+  const prop = { text: 'x', sport: 'NBA', league: 'NBA', selection: 'LeBron James', opponent: null, market: 'PLAYER_PROP' as const,
+    line: 25.5, side: 'OVER' as const, stat: 'points', odds: null, eventDate: '2026-10-12' };
+  const tips = await store.add('o', 's', [prop, { ...prop, selection: 'Anthony Davis' }], [null, null]);
+  const analysis = { verdict: 'PLAY' as const, chance: .6, chanceSource: 'Claude' as const, price: null, priceSource: null, ev: null,
+    fairOdds: -150, reasons: [], event: null, start: null, analyzedAt: now.toISOString() };
+  await store.setAnalyses(tips.map((tip) => tip.id), new Map(tips.map((tip) => [tip.id, analysis])));
+  assert.equal((await store.uncheckedPlays()).length, 2);
+  await store.setModelChecks(new Map([[tips[0].id, { edge: 'PLAY' as const, gkr: 'LEAN' as const }],
+    [tips[1].id, { edge: 'PASS' as const, gkr: 'FADE' as const }]]));
+  const vetted = await store.vetted();
+  assert.deepEqual(vetted.picks.map((pick) => pick.selection), ['LeBron James']);
+  assert.deepEqual(vetted.picks[0].checks, { edge: 'PLAY', gkr: 'LEAN' });
+  assert.equal((await store.uncheckedPlays()).length, 0);
+});

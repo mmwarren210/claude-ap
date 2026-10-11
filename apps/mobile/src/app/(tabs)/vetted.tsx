@@ -12,7 +12,8 @@ import { colors, radius } from '../../theme';
 type VettedPick = { id: string; sport: string | null; league: string | null; selection: string; opponent: string | null; market: string;
   line: number | null; side: 'OVER' | 'UNDER' | null; stat: string | null; eventDate: string | null;
   status: 'PENDING' | 'WON' | 'LOST' | 'PUSH' | 'VOID'; createdAt: string; chance: number; price: number | null; ev: number | null;
-  event: string | null; start: string | null; reasons?: string[]; live?: boolean; submittedBy?: string | null };
+  event: string | null; start: string | null; reasons?: string[]; live?: boolean; submittedBy?: string | null;
+  checks?: { edge: string | null; gkr: string | null } | null };
 type VettedRecord = { won: number; lost: number; push: number; units: number; roi: number | null };
 type Scoreboard = { allTime: VettedRecord; last7: VettedRecord; bySport: Record<string, VettedRecord>;
   streak: { kind: 'W' | 'L'; length: number } | null; pending: number; live: number; updatedAt: string };
@@ -92,7 +93,7 @@ export default function VettedTab() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void load()} tintColor={colors.mint} />}>
       <AppHeader subtitle="Vetted" />
-      <ModelBanner title="Crown Approved" text="Outside tips CrownIQ checked against the market and rated PLAY. Only the plays make this list." />
+      <ModelBanner title="Crown Approved" text="Outside tips checked against the market, and by GKR and Edge when the prop is on a CrownIQ board. Only the plays make this list." />
       {data?.scoreboard && <ScoreboardCard board={data.scoreboard} />}
       <View style={styles.submit}>
         <Text style={styles.boardTitle}>SUBMIT A PICK</Text>
@@ -148,6 +149,12 @@ function Stat({ label, value, good }: { label: string; value: string; good?: boo
     <Text style={styles.statLabel}>{label}</Text></View>;
 }
 
+// GKR's and Edge's own read on the pick (player props on a CrownIQ board).
+const agrees = (verdict: string | null) => verdict === 'PLAY' || verdict === 'LEAN';
+const checkLine = (checks: { edge: string | null; gkr: string | null }) =>
+  [checks.gkr ? `GKR ${agrees(checks.gkr) ? '✓' : '✗'}` : null, checks.edge ? `Edge ${agrees(checks.edge) ? '✓' : '✗'}` : null]
+    .filter(Boolean).join('  ·  ') + (agrees(checks.gkr) && agrees(checks.edge) ? '  ·  Confirmed by both' : '');
+
 function PickCard({ pick }: { pick: VettedPick }) {
   const time = when(pick);
   return <View style={styles.card}>
@@ -161,6 +168,7 @@ function PickCard({ pick }: { pick: VettedPick }) {
     {(pick.event || time) && <Text style={styles.muted}>{[pick.event, time].filter(Boolean).join(' · ')}</Text>}
     <Text style={styles.numbers}>{Math.round(pick.chance * 100)}% to hit{pick.price !== null ? ` · ${odds(pick.price)}` : ''}
       {pick.ev !== null ? ` · EV ${pick.ev >= 0 ? '+' : ''}${(pick.ev * 100).toFixed(1)}%` : ''}</Text>
+    {pick.checks && <Text style={styles.checks}>{checkLine(pick.checks)}</Text>}
     {pick.submittedBy && <Text style={styles.faint}>Submitted by {pick.submittedBy}</Text>}
     {pick.reasons?.slice(0, 2).map((reason) => <Text key={reason} style={styles.reason}>• {reason}</Text>)}
   </View>;
@@ -177,6 +185,7 @@ const styles = StyleSheet.create({
   statValue: { color: colors.text, fontSize: 20, fontWeight: '900' },
   statLabel: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
   faint: { color: colors.textFaint, fontSize: 11 },
+  checks: { color: colors.mint, fontSize: 12, fontWeight: '800' },
   submit: { gap: 8, padding: 14, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   button: { minHeight: 46, borderRadius: 999, backgroundColor: colors.mint, alignItems: 'center', justifyContent: 'center' },
   buttonOff: { opacity: .45 },

@@ -651,11 +651,22 @@ export function buildServer(options: ServerOptions = {}) {
   // Vetted: every outside tip CrownIQ rated PLAY, for every signed-in user; never who posted it. Trial accounts don't get the
   // reasons (owner, 2026-10-11: they see picks, not how CrownIQ makes them).
   let vettedCache:{at:number;value:ReturnType<TipStore['vetted']>}|null=null;
+  // GKR's and Edge's check on PLAY player props (once Edge is running): a pick both call PASS or FADE leaves Vetted.
+  const checkTipsWithModels=async()=>{
+    if(!options.tips||!tipModelReads)return;
+    const open=await options.tips.store.uncheckedPlays();
+    if(!open.length)return;
+    const reads=await tipModelReads(open).catch(()=>null);
+    if(!reads)return;
+    const checks=new Map([...reads].map(([id,read])=>[id,{edge:read.edge?.verdict??null,gkr:read.gkrPlus?.verdict??null}]));
+    await options.tips.store.setModelChecks(checks);
+  };
   app.get('/v1/vetted',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     if(!options.tips)return {picks:[],record:{won:0,lost:0,push:0,units:0,roi:null},scoreboard:null};
     // Built at most once a minute for everyone (apps poll every 5 minutes), so a busy evening doesn't load the server.
-    if(!vettedCache||Date.now()-vettedCache.at>60_000)vettedCache={at:Date.now(),value:options.tips.store.vetted()};
+    if(!vettedCache||Date.now()-vettedCache.at>60_000){const store=options.tips.store;
+      vettedCache={at:Date.now(),value:checkTipsWithModels().catch(()=>undefined).then(()=>store.vetted())};}
     const vetted=await vettedCache.value;
     return user.plan==='GUEST'?{...vetted,picks:vetted.picks.map(({reasons:_reasons,...pick})=>pick)}:vetted;
   });
@@ -686,7 +697,7 @@ export function buildServer(options: ServerOptions = {}) {
       const tips=await options.tips.store.add(user.accountId,input.data.source??read.source??'Unnamed service',read.tips,
         read.tips.map((tip)=>marketRead(tip,lines,tip.eventDate?Date.parse(tip.eventDate):from)),user.username);
       // CrownIQ's opinion runs in the background (a web search per batch); the app refreshes until it lands.
-      void analyzeTips(options.tips.store,options.tips.reader,tips,now);
+      void analyzeTips(options.tips.store,options.tips.reader,tips,now).then(()=>{vettedCache=null;return checkTipsWithModels();}).catch(()=>undefined);
       return reply.code(201).send({source:tips[0]!.source,tips:tips.map(({accountId:_account,...tip})=>tip)});
     }catch(error){const message=error instanceof Error?error.message:String(error);console.warn('[tips] read failed',message);
       // The Claude account behind CrownIQ is out of credits: say so instead of "could not read".

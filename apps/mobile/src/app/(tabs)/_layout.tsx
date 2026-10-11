@@ -4,7 +4,6 @@ import type { IconName } from '../../components/ui/Icon';
 import { Icon } from '../../components/ui/Icon';
 import { colors } from '../../theme';
 import { useDraft } from '../../use-draft';
-import { useIsOwner } from '../../use-owner';
 import { useGkrPlusAccess } from '../../use-gkr-plus';
 import { View } from 'react-native';
 import { NoticeBanner } from '../../components/NoticeBanner';
@@ -18,7 +17,7 @@ const icon = (name: IconName, active: IconName) => function tabIcon({ color, foc
 
 export default function TabLayout() {
   const { legs } = useDraft();
-  const owner = useIsOwner(), gkrPlus = useGkrPlusAccess();
+  const gkrPlus = useGkrPlusAccess();
   return <View style={{ flex: 1 }}><NoticeBanner /><Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: colors.mint,
     tabBarInactiveTintColor: colors.textMuted,
     tabBarStyle: { backgroundColor: colors.background, borderTopColor: colors.border },
@@ -33,9 +32,8 @@ export default function TabLayout() {
     <Tabs.Screen name="results" options={{ title: 'Results', tabBarIcon: icon('chart-bar', 'chart-bar') }} />
     {/* GKR+ (Edge + history + GKR): the owner's test model, also for accounts unlocked in More › Secrets. */}
     <Tabs.Screen name="gkr-plus" options={{ href: gkrPlus ? undefined : null, title: 'GKR+', tabBarIcon: icon('flask-outline', 'flask') }} />
-    {/* Tips is owner-only for now; everyone else keeps the Social tab. */}
-    <Tabs.Screen name="tips" options={{ href: owner ? undefined : null, title: 'Tips', tabBarIcon: icon('lightbulb-outline', 'lightbulb') }} />
-    <Tabs.Screen name="social" options={{ href: owner ? null : undefined, title: 'Social', tabBarIcon: icon('account-group-outline', 'account-group') }} />
+    {/* The Tips tab was folded into Vetted (owner, 2026-10-11): screenshots are submitted there by everyone. */}
+    <Tabs.Screen name="social" options={{ title: 'Social', tabBarIcon: icon('account-group-outline', 'account-group') }} />
     <Tabs.Screen name="more" options={{ title: 'More', tabBarIcon: icon('menu', 'menu') }} />
   </Tabs></View>;
 }
