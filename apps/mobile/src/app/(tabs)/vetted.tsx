@@ -17,7 +17,11 @@ type VettedPick = { id: string; sport: string | null; league: string | null; sel
 type VettedRecord = { won: number; lost: number; push: number; units: number; roi: number | null };
 type Scoreboard = { allTime: VettedRecord; last7: VettedRecord; bySport: Record<string, VettedRecord>;
   streak: { kind: 'W' | 'L'; length: number } | null; pending: number; live: number; updatedAt: string };
-type Vetted = { picks: VettedPick[]; record: VettedRecord; scoreboard: Scoreboard | null };
+type HiddenPick = { id: string; league: string | null; sport: string | null; selection: string; market: string; line: number | null;
+  side: string | null; stat: string | null; status: VettedPick['status']; chance: number; price: number | null; ev: number | null;
+  submittedBy: string | null; checks: { edge: string | null; gkr: string | null } };
+/** `hidden` comes only for the owner: PLAYs that Edge called FADE at the tip's price, kept off the list. */
+type Vetted = { picks: VettedPick[]; record: VettedRecord; scoreboard: Scoreboard | null; hidden?: HiddenPick[] };
 type MyTip = { id: string; createdAt: string; selection: string; market: string; line: number | null; side: string | null; stat?: string | null;
   status: VettedPick['status']; analyzing?: boolean; reused?: boolean;
   analysis?: { verdict: 'PLAY' | 'LEAN' | 'PASS' | 'FADE'; chance: number; price: number | null; ev: number | null; reasons: string[] } | null };
@@ -119,6 +123,17 @@ export default function VettedTab() {
       {upcoming.map((pick) => <PickCard key={pick.id} pick={pick} />)}
       {settled.length > 0 && <Text style={styles.section}>RECENT RESULTS</Text>}
       {settled.map((pick) => <PickCard key={pick.id} pick={pick} />)}
+      {!!data?.hidden && <Text style={styles.section}>HIDDEN BY GKR & EDGE · ONLY YOU SEE THIS</Text>}
+      {!!data?.hidden && !data.hidden.length && <Text style={styles.muted}>Nothing hidden right now.</Text>}
+      {data?.hidden?.map((pick) => <View key={pick.id} style={[styles.card, styles.hiddenCard]}>
+        <View style={styles.row}><Text style={styles.league}>{pick.league ?? pick.sport ?? ''}</Text>
+          <Text style={[styles.badge, { color: pick.status === 'PENDING' ? colors.textMuted : statusColor(pick.status) }]}>
+            {pick.status === 'PENDING' ? 'HIDDEN' : pick.status}</Text></View>
+        <Text style={styles.selection}>{pick.selection}</Text>
+        <Text style={styles.market}>{pick.side === 'UNDER' ? 'Under' : 'Over'} {pick.line ?? ''} {pick.stat ?? ''}</Text>
+        <Text style={styles.muted}>AI: {Math.round(pick.chance * 100)}%{pick.price !== null ? ` at ${odds(pick.price)}` : ''}  ·  Edge {pick.checks.edge ?? '—'}  ·  GKR {pick.checks.gkr ?? '—'}</Text>
+        {pick.submittedBy && <Text style={styles.faint}>Submitted by {pick.submittedBy}</Text>}
+      </View>)}
     </ScrollView>
   </SafeAreaView>;
 }
@@ -186,6 +201,7 @@ const styles = StyleSheet.create({
   statLabel: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
   faint: { color: colors.textFaint, fontSize: 11 },
   checks: { color: colors.mint, fontSize: 12, fontWeight: '800' },
+  hiddenCard: { opacity: .7, borderStyle: 'dashed' },
   submit: { gap: 8, padding: 14, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   button: { minHeight: 46, borderRadius: 999, backgroundColor: colors.mint, alignItems: 'center', justifyContent: 'center' },
   buttonOff: { opacity: .45 },

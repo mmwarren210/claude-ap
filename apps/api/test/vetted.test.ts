@@ -56,7 +56,7 @@ test('duplicates are never re-checked or re-graded, Vetted shows them once with 
   assert.equal(settled, 3, 'one grade settles every copy');
 });
 
-test('a PLAY that GKR and Edge both call PASS or FADE stays out of Vetted; agreement shows on the pick', async () => {
+test('a PLAY that Edge calls FADE at the tip price stays out of Vetted (owner sees it as hidden); a PASS stays with its check', async () => {
   const now = new Date('2026-10-11T12:00:00Z'), store = new TipStore(null, () => now);
   const prop = { text: 'x', sport: 'NBA', league: 'NBA', selection: 'LeBron James', opponent: null, market: 'PLAYER_PROP' as const,
     line: 25.5, side: 'OVER' as const, stat: 'points', odds: null, eventDate: '2026-10-12' };
@@ -65,10 +65,22 @@ test('a PLAY that GKR and Edge both call PASS or FADE stays out of Vetted; agree
     fairOdds: -150, reasons: [], event: null, start: null, analyzedAt: now.toISOString() };
   await store.setAnalyses(tips.map((tip) => tip.id), new Map(tips.map((tip) => [tip.id, analysis])));
   assert.equal((await store.uncheckedPlays()).length, 2);
+  // (the third tip is added below)
+  const third = await store.add('o', 's', [{ ...prop, selection: 'Austin Reaves' }], [null]);
+  await store.setAnalyses([third[0].id], new Map([[third[0].id, analysis]]));
   await store.setModelChecks(new Map([[tips[0].id, { edge: 'PLAY' as const, gkr: 'LEAN' as const }],
-    [tips[1].id, { edge: 'PASS' as const, gkr: 'FADE' as const }]]));
+    [tips[1].id, { edge: 'FADE' as const, gkr: 'FADE' as const }], [third[0].id, { edge: 'PASS' as const, gkr: 'PASS' as const }]]));
   const vetted = await store.vetted();
-  assert.deepEqual(vetted.picks.map((pick) => pick.selection), ['LeBron James']);
-  assert.deepEqual(vetted.picks[0].checks, { edge: 'PLAY', gkr: 'LEAN' });
+  assert.deepEqual(vetted.picks.map((pick) => pick.selection).sort(), ['Austin Reaves', 'LeBron James']);
+  assert.deepEqual(vetted.picks.find((pick) => pick.selection === 'LeBron James')?.checks, { edge: 'PLAY', gkr: 'LEAN' });
+  assert.deepEqual(vetted.hidden.map((pick) => pick.selection), ['Anthony Davis']);
   assert.equal((await store.uncheckedPlays()).length, 0);
+});
+
+test('model reads are judged at the tip own price, not the PrizePicks bar', async () => {
+  const { modelRead } = await import('../src/tip-models.js');
+  const pick = { side: 'MORE', probability: .55, oppositeProbability: .45, breakEven: .577, market: 'points', threshold: 25.5 } as never;
+  assert.equal(modelRead({ side: 'OVER' }, pick, 'prizepicks').verdict, 'PASS');
+  assert.equal(modelRead({ side: 'OVER' }, pick, 'prizepicks', -110).verdict, 'LEAN');
+  assert.equal(modelRead({ side: 'OVER' }, pick, 'prizepicks', +120).verdict, 'PLAY');
 });

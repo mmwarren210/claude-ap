@@ -1,3 +1,4 @@
+import { decimalFromAmerican } from './tips.js';
 import type { EdgePick } from '@crowniq/contracts';
 import { normalizedName } from './context/match.js';
 import type { TipDraft, TipVerdict } from './tips.js';
@@ -47,12 +48,14 @@ export function matchTip(tip: Pick<TipDraft, 'market' | 'selection' | 'line' | '
 }
 
 /** A model's read from its pick on the matched line. */
-export function modelRead(tip: Pick<TipDraft, 'side'>, pick: EdgePick, platform: string): TipModelRead {
+export function modelRead(tip: Pick<TipDraft, 'side'>, pick: EdgePick, platform: string, price: number | null = null): TipModelRead {
   const tipSide = tip.side === 'OVER' ? 'MORE' : tip.side === 'UNDER' ? 'LESS' : null;
   const chance = !tipSide || tipSide === pick.side ? pick.probability : pick.oppositeProbability;
-  const margin = chance - pick.breakEven;
+  // Judged at the tip's own price when it has one (owner, 2026-10-11): -110 needs 52.4%, not a PrizePicks leg's ~55%.
+  const breakEven = price !== null && Number.isFinite(price) && price !== 0 ? 1 / decimalFromAmerican(price) : pick.breakEven;
+  const margin = chance - breakEven;
   const verdict: TipVerdict = !tipSide ? (margin >= .03 ? 'PLAY' : margin >= 0 ? 'LEAN' : 'PASS')
     : margin >= .03 ? 'PLAY' : margin >= 0 ? 'LEAN' : margin > -.05 ? 'PASS' : 'FADE';
   return { platform, market: pick.market, line: pick.threshold, modelSide: pick.side,
-    chance: Math.round(chance * 1000) / 1000, breakEven: pick.breakEven, verdict };
+    chance: Math.round(chance * 1000) / 1000, breakEven: Math.round(breakEven * 1000) / 1000, verdict };
 }

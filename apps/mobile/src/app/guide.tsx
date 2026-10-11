@@ -26,7 +26,7 @@ const topics: readonly Topic[] = [
       'Each app has its own list, plus +EV: lines that beat the break-even at sportsbook prices.', 'Tap a pick to open the player, or Add to put it in your Crown.'] },
   { key: 'vetted', icon: 'check-decagram-outline', title: 'Vetted', when: 'Outside tips CrownIQ approved', open: '/(tabs)/vetted', openLabel: 'Open Vetted',
     points: ['Tips from outside services that CrownIQ checked against the market and rated PLAY. Only the plays are listed.',
-      'Player props on a CrownIQ board are also checked by GKR and Edge (✓ agrees, ✗ doesn’t). If both say PASS, the pick stays off the list.',
+      'Player props on a CrownIQ board are also checked by GKR and Edge at the pick’s own price (✓ agrees, ✗ doesn’t). If Edge clearly disagrees, the pick stays off the list.',
       'Each shows the pick, the game and start time, its chance to hit, the price and the EV.',
       'The live scoreboard on top shows every vetted play’s result: record, hit rate, units won or lost (one unit a play), streak and record by sport. It updates every minute; picks in progress show LIVE.',
       'Results stay in the list for 14 days.',

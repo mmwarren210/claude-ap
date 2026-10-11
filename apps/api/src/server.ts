@@ -667,7 +667,9 @@ export function buildServer(options: ServerOptions = {}) {
     // Built at most once a minute for everyone (apps poll every 5 minutes), so a busy evening doesn't load the server.
     if(!vettedCache||Date.now()-vettedCache.at>60_000){const store=options.tips.store;
       vettedCache={at:Date.now(),value:checkTipsWithModels().catch(()=>undefined).then(()=>store.vetted())};}
-    const vetted=await vettedCache.value;
+    const {hidden,...vetted}=await vettedCache.value;
+    // The owner also sees the picks GKR and Edge kept off the list, with their reads, to check the filter is fair.
+    if(await isOwner(request))return {...vetted,hidden};
     return user.plan==='GUEST'?{...vetted,picks:vetted.picks.map(({reasons:_reasons,...pick})=>pick)}:vetted;
   });
   app.post('/v1/tips/upload',{bodyLimit:8_000_000},async(request,reply)=>{
@@ -1615,7 +1617,8 @@ export function buildServer(options: ServerOptions = {}) {
           const pick=matchTip(tip,snapshot.byLine.values());
           if(!pick)continue;
           sides??=await gkrSides(platform).catch(()=>()=>null);
-          out.set(tip.id,{edge:modelRead(tip,pick,platform),gkrPlus:modelRead(tip,blendPick(pick,sides(pick)),platform)});
+          const price=(tip as {analysis?:{price:number|null}|null}).analysis?.price??tip.odds??null;
+          out.set(tip.id,{edge:modelRead(tip,pick,platform,price),gkrPlus:modelRead(tip,blendPick(pick,sides(pick)),platform,price)});
         }
       }
       return out;
@@ -2246,6 +2249,8 @@ export function buildServer(options: ServerOptions = {}) {
       if (!input.success) return reply.code(400).send({ code: 'INVALID_REQUEST' });
       return { keys: await options.product.issueTrialKeys(input.data.count, input.data.days) };
     });
+    // Vetted as the owner sees it, hidden picks included (no tipster names), for checking the GKR/Edge filter.
+    admin.get('/vetted', async (_request, reply) => options.tips ? options.tips.store.vetted() : reply.code(503).send({ code: 'TIPS_UNAVAILABLE' }));
     admin.get('/members', async (_request, reply) => options.product ? options.product.membership()
       : reply.code(503).send({ code: 'PRODUCT_UNCONFIGURED' }));
     admin.get('/shadow', async (_request, reply) => options.shadowRecord ? options.shadowRecord.status()
