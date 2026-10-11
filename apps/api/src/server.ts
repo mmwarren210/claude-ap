@@ -571,8 +571,8 @@ export function buildServer(options: ServerOptions = {}) {
   // Subscriptions (owner, 2026-10-11): manual payments. Prices (CROWNIQ_PLAN_PRICES, JSON of plan → USD) and the payment
   // handles (CROWNIQ_PAYMENT_INFO, JSON) live in Railway Variables, not the code. Trial users get 10% off. A member pays,
   // texts the screenshot to the owner, taps "I've paid" (24 more hours once), and enters the member key the owner sends.
-  const PLAN_LABELS:Record<string,string>={WEEK:'1 week',MONTH:'1 month',QUARTER:'3 months',HALF_YEAR:'6 months',YEAR:'1 year',LIFETIME:'Lifetime'};
-  const paidPlan=z.enum(['WEEK','MONTH','QUARTER','HALF_YEAR','YEAR','LIFETIME']);
+  const PLAN_LABELS:Record<string,string>={WEEK:'1 week',MONTH:'1 month',QUARTER:'3 months',HALF_YEAR:'6 months',YEAR:'1 year'};
+  const paidPlan=z.enum(['WEEK','MONTH','QUARTER','HALF_YEAR','YEAR']);
   const jsonEnv=(name:string)=>{try{return JSON.parse(process.env[name]??'null') as unknown;}catch{return null;}};
   app.get('/v1/subscribe',async(request)=>{
     const user=await currentUser(request);
@@ -2370,7 +2370,7 @@ export function buildServer(options: ServerOptions = {}) {
     // Vetted as the owner sees it, hidden picks included (no tipster names), for checking the GKR/Edge filter.
     // Member keys: the owner confirms a payment, asks for a key, and sends it to the member. Shown once.
     admin.post('/member-keys', async (request, reply) => {
-      const input = z.object({ plan: z.enum(['WEEK','MONTH','QUARTER','HALF_YEAR','YEAR','LIFETIME']) }).safeParse(request.body ?? {});
+      const input = z.object({ plan: z.enum(['WEEK','MONTH','QUARTER','HALF_YEAR','YEAR']) }).safeParse(request.body ?? {});
       if (!input.success || !options.product) return reply.code(400).send({ code: 'INVALID_REQUEST' });
       return { key: await options.product.issueMemberKey(input.data.plan), plan: input.data.plan };
     });

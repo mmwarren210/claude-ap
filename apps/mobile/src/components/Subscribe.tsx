@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 import { useAuth } from '../auth';
 import { colors, radius } from '../theme';
 import { endsText, useSubscription } from './PlanStatus';
+import { CreateLoginForm } from './CreateLogin';
 
 // Subscribe (owner, 2026-10-11): manual payments. Pick a plan, pay with a listed app, text the payment screenshot and your
 // CrownIQ username to the owner, tap "I've paid" (trials get 24 more hours once), then enter the member key the owner sends.
@@ -62,6 +63,11 @@ export function SubscribePanel({ onDone }: { onDone?: () => void }) {
   if (!info) return <ActivityIndicator color={colors.mint} />;
   return <View style={styles.panel}>
     {current && <Text style={styles.current}>Your plan: {endsText(current)}</Text>}
+    {guest && <View style={styles.loginBox}>
+      <Text style={styles.step}>First: create your login</Text>
+      <Text style={styles.muted}>Do this before you pay, so what you pay for is tied to a login you can use on any phone. Your picks come with you.</Text>
+      <CreateLoginForm />
+    </View>}
     {waiting && <Text style={styles.waiting}>⏳ Waiting for approval · {waiting.label} ({waiting.method}). You’ll have access as soon as the payment is confirmed.</Text>}
     <Text style={styles.step}>1. Pick a plan{info.discount ? ` · ${Math.round(info.discount * 100)}% off when you sign up now` : ''}</Text>
     {!info.priced && <Text style={styles.muted}>Prices are being finalized. Check back soon.</Text>}
@@ -81,7 +87,8 @@ export function SubscribePanel({ onDone }: { onDone?: () => void }) {
     </Pressable>)}
 
     <Text style={styles.step}>3. Text your payment screenshot and your CrownIQ username{info.textTo ? ` to ${info.textTo}` : ' to the owner'}</Text>
-    <Text style={styles.warn}>Payments are checked by hand, so your key isn’t instant. Allow up to 24 hours, and pay at least 24 hours before your free days end.</Text>
+    <Text style={styles.final}>All sales are final. No refunds.</Text>
+    <Text style={styles.warn}>Payments are checked by hand, so approval isn’t instant. Allow up to 24 hours, and pay at least 24 hours before your free days end.</Text>
     {!signedOut && <Pressable accessibilityRole="button" disabled={busy} onPress={() => void paid()} style={[styles.button, busy && styles.off]}>
       <Text style={styles.buttonText}>I’ve paid</Text></Pressable>}
     {guest && <Text style={styles.muted}>Tapping “I’ve paid” adds 24 hours to your pass once, so you don’t lose access while it’s checked.</Text>}
@@ -126,4 +133,6 @@ const styles = StyleSheet.create({
   message: { color: colors.text, fontSize: 13, lineHeight: 18 },
   current: { color: colors.mint, fontSize: 15, fontWeight: '900' },
   waiting: { color: colors.gold, fontSize: 14, fontWeight: '800', lineHeight: 19 },
+  final: { color: colors.text, fontSize: 13, fontWeight: '900' },
+  loginBox: { gap: 8, padding: 12, borderRadius: radius.md, borderWidth: 1, borderColor: colors.mint },
 });

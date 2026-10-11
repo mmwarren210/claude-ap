@@ -47,7 +47,7 @@ type AuthContext={profile:Profile|null;register:(username:string,email:string,pa
   /** Answers the end-of-trial poll (7 more free days): signed in, or with the trial link after the pass ended. */
   answerTrialPoll:(answers:TrialPollAnswers)=>Promise<void>};
 export type Session={token:string;profile:Profile};
-export type TrialPlan='WEEK'|'MONTH'|'QUARTER'|'HALF_YEAR'|'YEAR'|'LIFETIME'|'NONE';
+export type TrialPlan='WEEK'|'MONTH'|'QUARTER'|'HALF_YEAR'|'YEAR'|'NONE';
 export type TrialPollAnswers={recommend:'YES'|'MAYBE'|'NO';liked:string[];improve:string|null;plan:TrialPlan|null;price:string|null};
 const Context=createContext<AuthContext|null>(null);
 const base=apiBaseUrl();

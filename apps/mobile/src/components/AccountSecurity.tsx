@@ -71,7 +71,7 @@ type Member = { publicId: string; username: string; email: string | null; plan: 
 const planWord: Readonly<Record<Member['plan'], string>> = { LIFETIME: 'Lifetime', MEMBER: 'Member', GUEST: 'Guest' };
 /** Time frames the owner can grant (months are 31 days). */
 const GRANTS: readonly { plan: string; label: string }[] = [{ plan: 'WEEK', label: '1 week' }, { plan: 'MONTH', label: '1 month' },
-  { plan: 'QUARTER', label: '3 months' }, { plan: 'HALF_YEAR', label: '6 months' }, { plan: 'YEAR', label: '1 year' }, { plan: 'LIFETIME', label: 'Lifetime' }];
+  { plan: 'QUARTER', label: '3 months' }, { plan: 'HALF_YEAR', label: '6 months' }, { plan: 'YEAR', label: '1 year' }];
 const grantLabel = (plan: string) => GRANTS.find((item) => item.plan === plan)?.label ?? plan;
 const shortDate = (iso: string) => new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
 const paidText = (paid: NonNullable<Member['paid']>) => `${grantLabel(paid.plan)} · ${paid.until ? `ends ${shortDate(paid.until)}` : 'never ends'}`;

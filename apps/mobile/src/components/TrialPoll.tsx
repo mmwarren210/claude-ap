@@ -15,7 +15,6 @@ const PLANS: readonly { value: TrialPlan; label: string; prices: string[] }[] = 
   { value: 'QUARTER', label: '3 months', prices: ['$40–55', '$56–75', '$76–100'] },
   { value: 'HALF_YEAR', label: '6 months', prices: ['$75–100', '$101–135', '$136–175'] },
   { value: 'YEAR', label: '1 year', prices: ['$120–160', '$161–220', '$221–300'] },
-  { value: 'LIFETIME', label: 'Lifetime', prices: ['$250–350', '$351–500', '$501–750'] },
   { value: 'NONE', label: 'I wouldn’t subscribe', prices: [] },
 ];
 /** Shown with the poll and after it: the bonus week is the last free time. */

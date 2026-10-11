@@ -66,12 +66,13 @@ interface Account {id:string;username:string;email:string|null;passwordSalt:stri
 export interface TrialPollAnswer {recommend:'YES'|'MAYBE'|'NO';liked:string[];improve:string|null;
   /** The subscription length they'd pick, and the price range that feels fair for it (owner, 2026-10-11). */
   plan?:TrialPlan|null;price?:string|null}
-export const TRIAL_PLANS=['WEEK','MONTH','QUARTER','HALF_YEAR','YEAR','LIFETIME','NONE'] as const;
+/** No lifetime plan (owner, 2026-10-11). */
+export const TRIAL_PLANS=['WEEK','MONTH','QUARTER','HALF_YEAR','YEAR','NONE'] as const;
 export type TrialPlan=typeof TRIAL_PLANS[number];
 export type PaidPlan=Exclude<TrialPlan,'NONE'>;
 /** Days each paid plan lasts from activation (null: lifetime). */
 /** Months count as 31 days (owner, 2026-10-11: a few extra days is fine). */
-export const PLAN_DAYS:Readonly<Record<PaidPlan,number|null>>={WEEK:7,MONTH:31,QUARTER:93,HALF_YEAR:186,YEAR:365,LIFETIME:null};
+export const PLAN_DAYS:Readonly<Record<PaidPlan,number|null>>={WEEK:7,MONTH:31,QUARTER:93,HALF_YEAR:186,YEAR:365};
 /** Free days added for answering the end-of-trial poll. */
 export const TRIAL_POLL_DAYS=7;
 /** The poll shows in a trial's last day, and after it ends. */
