@@ -94,7 +94,11 @@ interface PersonalLeg {lineId:string;playerName:string;market:string;threshold:n
 interface LegacyData {version:1;decisions:TrackedDecision[];profiles:PublicProfile[];
   crowns:PublicCrown[];follows:Follow[];publicCredits:{publicId:string;trackedPickId:string}[]}
 interface Data extends Omit<LegacyData,'version'> {version:2;accounts:Account[];sessions:Session[];
-  savedPicks:SavedPick[];privateCrowns:PrivateCrown[]}
+  savedPicks:SavedPick[];privateCrowns:PrivateCrown[];
+  /** Owner-issued trial keys (stored hashed): each opens one guest account for `days` days from its first use. */
+  trialKeys?:{hash:string;days:number;createdAt:string}[]}
+/** Trial keys (owner, 2026-10-11): 10 single-use keys, 2 days each from first use, never taking one of the 100 seats. */
+export const TRIAL_KEY_DAYS=2;
 const blank=():Data=>({version:2,decisions:[],profiles:[],crowns:[],follows:[],
   publicCredits:[],accounts:[],sessions:[],savedPicks:[],privateCrowns:[]});
 const passwordKey=(password:string,salt:string)=>new Promise<Buffer>((resolve,reject)=>
@@ -325,15 +329,48 @@ export class ProductLedger {
   private assertSeat(accounts:readonly Account[]){
     if(membersUsed(accounts)>=this.maxMembers)throw new Error('MEMBERS_FULL');
   }
+  /** Issues `count` new trial keys (shown once; only their hashes are kept). */
+  async issueTrialKeys(count:number,days=TRIAL_KEY_DAYS){return this.exclusive(async()=>{
+    const data=await this.read(),now=this.clock().toISOString(),keys:string[]=[];
+    for(let index=0;index<count;index++){
+      const raw=randomBytes(6).toString('hex').toUpperCase(),key=`CIQ-${raw.slice(0,4)}-${raw.slice(4,8)}-${raw.slice(8)}`;
+      keys.push(key);(data.trialKeys??=[]).push({hash:tokenHash(key),days,createdAt:now});
+    }
+    await this.write(data);return keys;
+  });}
+  /** The guest pass a trial key opens (one device, its days), or null when it isn't a trial key. */
+  async trialPass(code:string):Promise<GuestPass|null>{
+    const data=await this.read(),key=(data.trialKeys??[]).find((item)=>item.hash===tokenHash(code.trim()));
+    return key?{code:code.trim(),maxGuests:1,days:key.days}:null;
+  }
   /** Seat counts for the owner (no names or emails). */
   async membership(){
-    const data=await this.read(),lifetime=lifetimeIds(data.accounts);
+    const data=await this.read(),lifetime=lifetimeIds(data.accounts),now=this.clock();
+    const keys=data.trialKeys??[],used=new Set(data.accounts.flatMap((item)=>item.guest?[item.guest.pass]:[]));
+    const trialAccounts=data.accounts.filter((item)=>item.guest&&keys.some((key)=>key.hash===item.guest!.pass));
     return {lifetime:{used:lifetime.size,limit:LIFETIME_MEMBERS},members:{used:membersUsed(data.accounts),limit:this.maxMembers},
+      trials:{issued:keys.length,used:keys.filter((key)=>used.has(key.hash)).length,
+        active:trialAccounts.filter((item)=>!guestExpired(item,now)).length},
       guests:data.accounts.filter((item)=>item.guest).length,
       suspended:data.accounts.filter((item)=>!item.guest&&item.status==='SUSPENDED').length};
   }
-  async register(email:string,password:string,username:string){return this.exclusive(async()=>{
+  async register(email:string,password:string,username:string,guest?:{code:string;deviceId:string}){return this.exclusive(async()=>{
     const data=await this.read(),name=username.trim(),address=normalizedEmail(email);
+    // A trial (guest) account signing up keeps its profile and picks and becomes a member: it takes one of the seats
+    // (owner, 2026-10-11). Its key works as the invite, so closed sign-up doesn't block it.
+    const trial=guest?data.accounts.find((item)=>item.guest?.pass===tokenHash(guest.code.trim())&&
+      item.guest.deviceHash===tokenHash(`${guest.code.trim()}:${guest.deviceId}`)):undefined;
+    if(trial){
+      this.assertSeat(data.accounts);
+      if(trial.status==='SUSPENDED')throw new Error('ACCOUNT_SUSPENDED');
+      if(data.accounts.some((item)=>item.email===address))throw new Error('EMAIL_TAKEN');
+      const profile=data.profiles.find((item)=>item.actorKey===trial.id)!;
+      if(data.profiles.some((item)=>item!==profile&&normalizedName(item.displayName)===normalizedName(name)))throw new Error('USERNAME_TAKEN');
+      const salt=randomBytes(16).toString('hex');
+      Object.assign(trial,{username:name,email:address,passwordSalt:salt,passwordHash:(await passwordKey(password,salt)).toString('hex')});
+      delete trial.guest;profile.displayName=name;
+      const result=this.session(data,trial);await this.write(data);return result;
+    }
     // The family code as the first password makes a lifetime family account (while the 20 seats last).
     const family=!!this.familyCode&&sameSecret(password,this.familyCode);
     if(family&&lifetimeIds(data.accounts).size>=LIFETIME_MEMBERS)throw new Error('LIFETIME_FULL');
@@ -442,7 +479,9 @@ export class ProductLedger {
   async members(){
     const data=await this.read(),lifetime=lifetimeIds(data.accounts);
     const profiles=new Map(data.profiles.map((item)=>[item.actorKey,item]));
-    return data.accounts.flatMap((account)=>{
+    const now=this.clock();
+    // Expired guests and trials drop off the list; their accounts and profiles are kept (owner, 2026-10-11).
+    return data.accounts.filter((account)=>!guestExpired(account,now)).flatMap((account)=>{
       const profile=profiles.get(account.id);
       return profile?[{publicId:profile.publicId,username:account.guest?'Guest':account.username,email:account.email,
         plan:account.guest?'GUEST' as const:lifetime.has(account.id)?'LIFETIME' as const:'MEMBER' as const,

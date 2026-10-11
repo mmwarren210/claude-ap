@@ -220,7 +220,7 @@ test('the member cap applies to sign-ups without the family code',async()=>{
     await assert.rejects(ledger.register('late@example.org','long-private-passphrase','Late_one'),/MEMBERS_FULL/);
     await assert.rejects(ledger.loginWithProvider('GOOGLE','sub-1','g@example.org','Google_one'),/MEMBERS_FULL/);
     await ledger.register('family@example.org','Family-Code-For-Tests!','Family_one');
-    assert.deepEqual(await ledger.membership(),{lifetime:{used:1,limit:20},members:{used:3,limit:3},guests:0,suspended:0},
+    assert.deepEqual(await ledger.membership(),{lifetime:{used:1,limit:20},members:{used:3,limit:3},trials:{issued:0,used:0,active:0},guests:0,suspended:0},
       'a family sign-up still works when member seats are full');
   }finally{await rm(folder,{recursive:true,force:true});}
 });

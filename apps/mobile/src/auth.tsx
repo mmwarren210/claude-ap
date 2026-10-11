@@ -21,8 +21,8 @@ function guestDeviceId():string{
   return id;
 }
 const noSubscription=()=>()=>undefined;
-const guestMessages:Record<string,string>={GUEST_PASS_FULL:'This guest link has already been used by its four testers.',
-  GUEST_PASS_EXPIRED:'Your three-day guest pass has ended. Thanks for testing CrownIQ!',
+const guestMessages:Record<string,string>={GUEST_PASS_FULL:'This guest link or trial key has already been used.',
+  GUEST_PASS_EXPIRED:'Your free trial has ended. Thanks for testing CrownIQ! Sign up below to keep your picks and profile.',
   GUEST_PASS_INVALID:'This guest link is not valid.',TOO_MANY_ATTEMPTS:'Too many attempts. Please wait a minute.'};
 
 type Profile={publicId:string;username:string;email:string|null;plan:'FREE'|'LIFETIME'|'GUEST'|'SUSPENDED'|'DEMO';
@@ -119,7 +119,9 @@ export function AuthProvider({children}:{children:ReactNode}){
     register:async(username,email,password)=>{
       if(!base)throw new Error('Set EXPO_PUBLIC_API_URL to your CrownIQ server first.');
       const response=await fetch(`${base}/v1/auth/register`,{method:'POST',
-        headers:{'content-type':'application/json'},body:JSON.stringify({username,email,password})});
+        // Opened from a guest link or trial key: signing up turns that trial account into a member (picks kept).
+        headers:{'content-type':'application/json'},body:JSON.stringify({username,email,password,
+          ...(guestCode()?{guestCode:guestCode(),deviceId:guestDeviceId()}:{})})});
       const created=await parseSession(response);
       setFamilyPassword(created.profile.mustChangePassword?password:'');
       signIn(created);

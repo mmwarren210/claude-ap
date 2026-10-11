@@ -516,11 +516,14 @@ export function buildServer(options: ServerOptions = {}) {
   app.post('/v1/auth/register',async(request,reply)=>{
     if(!options.product)return reply.code(503).send({code:'PROFILES_UNCONFIGURED'});
     if(limited(`register:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
-    const input=z.object({username,email,password}).strict().safeParse(request.body);
+    const input=z.object({username,email,password,guestCode:z.string().trim().min(1).max(100).optional(),
+      deviceId:z.string().min(16).max(100).optional()}).strict().safeParse(request.body);
     if(!input.success)return reply.code(400).send({code:'INVALID_REGISTRATION'});
     try{return reply.code(201).send(await options.product.register(input.data.email,
-      input.data.password,input.data.username));}
+      input.data.password,input.data.username,input.data.guestCode&&input.data.deviceId?
+        {code:input.data.guestCode,deviceId:input.data.deviceId}:undefined));}
     catch(error){const code=(error as Error).message;
+      if(code==='ACCOUNT_SUSPENDED')return reply.code(403).send({code});
       if(code==='USERNAME_TAKEN'||code==='EMAIL_TAKEN')return reply.code(409).send({code});
       if(code==='MEMBERS_FULL'||code==='LIFETIME_FULL'||code==='SIGNUP_CLOSED')return reply.code(403).send({code});
       return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
@@ -548,12 +551,15 @@ export function buildServer(options: ServerOptions = {}) {
     catch{return reply.code(401).send({code:'INVALID_CREDENTIALS'});}
   });
   app.post('/v1/auth/guest',async(request,reply)=>{
-    if(!options.product||!options.guestPass)return reply.code(404).send({code:'GUEST_PASS_INVALID'});
+    if(!options.product)return reply.code(404).send({code:'GUEST_PASS_INVALID'});
     if(limited(`guest:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
     const input=z.object({code:z.string().trim().min(1).max(100),deviceId:z.string().min(16).max(100)})
       .strict().safeParse(request.body);
     if(!input.success)return reply.code(400).send({code:'GUEST_PASS_INVALID'});
-    try{return await options.product.guestLogin(options.guestPass,input.data.code,input.data.deviceId);}
+    // The shared guest link, or one of the owner's single-use trial keys.
+    const pass=await options.product.trialPass(input.data.code).catch(()=>null)??options.guestPass;
+    if(!pass)return reply.code(404).send({code:'GUEST_PASS_INVALID'});
+    try{return await options.product.guestLogin(pass,input.data.code,input.data.deviceId);}
     catch(error){const code=(error as Error).message;
       if(code==='GUEST_PASS_FULL'||code==='GUEST_PASS_EXPIRED')return reply.code(403).send({code});
       if(code==='GUEST_PASS_INVALID'||code==='ACCOUNT_SUSPENDED')return reply.code(404).send({code:'GUEST_PASS_INVALID'});
@@ -2193,6 +2199,13 @@ export function buildServer(options: ServerOptions = {}) {
         activeAppLines:lines.length,booksHistoryRows,
         shadow:await options.shadowRecord?.status()??null,
         archive:await options.historyArchive?.status()??null};
+    });
+    // Trial keys (owner, 2026-10-11): single-use, 2 days from first use, outside the 100 seats. Shown once.
+    admin.post('/trial-keys', async (request, reply) => {
+      if (!options.product) return reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' });
+      const input = z.object({ count: z.number().int().min(1).max(50), days: z.number().int().min(1).max(30).optional() }).safeParse(request.body ?? {});
+      if (!input.success) return reply.code(400).send({ code: 'INVALID_REQUEST' });
+      return { keys: await options.product.issueTrialKeys(input.data.count, input.data.days) };
     });
     admin.get('/members', async (_request, reply) => options.product ? options.product.membership()
       : reply.code(503).send({ code: 'PRODUCT_UNCONFIGURED' }));
