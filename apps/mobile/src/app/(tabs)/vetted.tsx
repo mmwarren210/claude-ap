@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,8 +11,11 @@ import { colors, radius } from '../../theme';
 type VettedPick = { id: string; sport: string | null; league: string | null; selection: string; opponent: string | null; market: string;
   line: number | null; side: 'OVER' | 'UNDER' | null; stat: string | null; eventDate: string | null;
   status: 'PENDING' | 'WON' | 'LOST' | 'PUSH' | 'VOID'; createdAt: string; chance: number; price: number | null; ev: number | null;
-  event: string | null; start: string | null; reasons?: string[] };
-type Vetted = { picks: VettedPick[]; record: { won: number; lost: number } };
+  event: string | null; start: string | null; reasons?: string[]; live?: boolean };
+type VettedRecord = { won: number; lost: number; push: number; units: number; roi: number | null };
+type Scoreboard = { allTime: VettedRecord; last7: VettedRecord; bySport: Record<string, VettedRecord>;
+  streak: { kind: 'W' | 'L'; length: number } | null; pending: number; live: number; updatedAt: string };
+type Vetted = { picks: VettedPick[]; record: VettedRecord; scoreboard: Scoreboard | null };
 
 const odds = (price: number) => price > 0 ? `+${price}` : `${price}`;
 const marketText = (pick: VettedPick) => {
@@ -43,15 +46,17 @@ export default function VettedTab() {
     catch { setError('Could not load Vetted picks. Pull down to try again.'); }
     finally { setLoading(false); }
   }, [request]);
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  // The scoreboard is live: reloaded every minute while the tab is open (results land as games are graded).
+  const [focused, setFocused] = useState(false);
+  useFocusEffect(useCallback(() => { void load(); setFocused(true); return () => setFocused(false); }, [load]));
+  useEffect(() => { if (!focused) return; const timer = setInterval(() => { void load(); }, 60_000); return () => clearInterval(timer); }, [focused, load]);
   const upcoming = data?.picks.filter((pick) => pick.status === 'PENDING') ?? [];
   const settled = data?.picks.filter((pick) => pick.status !== 'PENDING') ?? [];
-  const total = data ? data.record.won + data.record.lost : 0;
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void load()} tintColor={colors.mint} />}>
       <AppHeader subtitle="Vetted" />
       <ModelBanner title="Crown Approved" text="Outside tips CrownIQ checked against the market and rated PLAY. Only the plays make this list." />
-      {total > 0 && <Text style={styles.record}>Last 14 days: {data!.record.won}–{data!.record.lost} · {Math.round(data!.record.won / total * 100)}% hit</Text>}
+      {data?.scoreboard && <ScoreboardCard board={data.scoreboard} />}
       {!!error && <Text style={styles.muted}>{error}</Text>}
       {data && !upcoming.length && <Text style={styles.muted}>No vetted plays right now. New ones show up here as CrownIQ approves them.</Text>}
       {upcoming.map((pick) => <PickCard key={pick.id} pick={pick} />)}
@@ -61,12 +66,39 @@ export default function VettedTab() {
   </SafeAreaView>;
 }
 
+const hit = (record: VettedRecord) => record.won + record.lost ? `${Math.round(record.won / (record.won + record.lost) * 100)}%` : '–';
+const units = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(2)}u`;
+
+function ScoreboardCard({ board }: { board: Scoreboard }) {
+  const sports = Object.entries(board.bySport).sort((a, b) => (b[1].won + b[1].lost) - (a[1].won + a[1].lost)).slice(0, 6);
+  return <View style={styles.board}>
+    <View style={styles.row}><Text style={styles.boardTitle}>LIVE SCOREBOARD</Text>
+      {board.live > 0 && <Text style={styles.liveBadge}>● {board.live} LIVE</Text>}</View>
+    <View style={styles.statsRow}>
+      <Stat label="Record" value={`${board.allTime.won}–${board.allTime.lost}${board.allTime.push ? `–${board.allTime.push}` : ''}`} />
+      <Stat label="Hit rate" value={hit(board.allTime)} />
+      <Stat label="Units" value={units(board.allTime.units)} good={board.allTime.units >= 0} />
+      <Stat label="Streak" value={board.streak ? `${board.streak.kind}${board.streak.length}` : '–'} good={board.streak?.kind !== 'L'} />
+    </View>
+    <Text style={styles.muted}>Last 7 days: {board.last7.won}–{board.last7.lost} · {hit(board.last7)} · {units(board.last7.units)}
+      {board.pending ? `  ·  ${board.pending} upcoming` : ''}</Text>
+    {sports.length > 1 && <Text style={styles.muted}>{sports.map(([sport, record]) => `${sport} ${record.won}–${record.lost}`).join('  ·  ')}</Text>}
+    <Text style={styles.faint}>One unit per play at the listed price. Updated {new Date(board.updatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}.</Text>
+  </View>;
+}
+
+function Stat({ label, value, good }: { label: string; value: string; good?: boolean }) {
+  return <View style={styles.stat}><Text style={[styles.statValue, good === false && { color: colors.red }]}>{value}</Text>
+    <Text style={styles.statLabel}>{label}</Text></View>;
+}
+
 function PickCard({ pick }: { pick: VettedPick }) {
   const time = when(pick);
   return <View style={styles.card}>
     <View style={styles.row}>
       <Text style={styles.league}>{pick.league ?? pick.sport ?? ''}</Text>
-      <Text style={[styles.badge, { color: statusColor(pick.status) }]}>{pick.status === 'PENDING' ? 'PLAY' : pick.status}</Text>
+      <Text style={[styles.badge, { color: pick.live ? colors.gold : statusColor(pick.status) }]}>
+        {pick.live ? '● LIVE' : pick.status === 'PENDING' ? 'PLAY' : pick.status}</Text>
     </View>
     <Text style={styles.selection}>{pick.selection}</Text>
     <Text style={styles.market}>{marketText(pick)}{pick.opponent ? ` · vs ${pick.opponent}` : ''}</Text>
@@ -80,7 +112,14 @@ function PickCard({ pick }: { pick: VettedPick }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 24, gap: 12 },
-  record: { color: colors.mint, fontSize: 14, fontWeight: '800' },
+  board: { gap: 8, padding: 14, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.mint, backgroundColor: colors.surface },
+  boardTitle: { color: colors.mint, fontSize: 12, fontWeight: '900', letterSpacing: 1.5 },
+  liveBadge: { color: colors.gold, fontSize: 12, fontWeight: '900', letterSpacing: 1 },
+  statsRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  stat: { alignItems: 'center', flex: 1 },
+  statValue: { color: colors.text, fontSize: 20, fontWeight: '900' },
+  statLabel: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
+  faint: { color: colors.textFaint, fontSize: 11 },
   section: { color: colors.textMuted, fontSize: 12, fontWeight: '800', letterSpacing: 1.5, marginTop: 8 },
   muted: { color: colors.textMuted, fontSize: 13, lineHeight: 18 },
   card: { gap: 4, padding: 14, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },

@@ -645,7 +645,7 @@ export function buildServer(options: ServerOptions = {}) {
   // reasons (owner, 2026-10-11: they see picks, not how CrownIQ makes them).
   app.get('/v1/vetted',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
-    if(!options.tips)return {picks:[],record:{won:0,lost:0}};
+    if(!options.tips)return {picks:[],record:{won:0,lost:0,push:0,units:0,roi:null},scoreboard:null};
     const vetted=await options.tips.store.vetted();
     return user.plan==='GUEST'?{...vetted,picks:vetted.picks.map(({reasons:_reasons,...pick})=>pick)}:vetted;
   });

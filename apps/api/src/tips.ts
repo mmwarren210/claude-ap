@@ -117,6 +117,28 @@ export function sourceRecord(tips: readonly Tip[]) {
       withMarket.reduce((sum, tip) => sum + tip.market_read!.chance, 0)) * 100) / 100 : null, marketPicks: withMarket.length };
 }
 
+/** A record of vetted plays: wins, losses, pushes, and units at one unit a play (the price used; -110 when none was known). */
+export interface VettedRecord { won: number; lost: number; push: number; units: number; roi: number | null }
+export function vettedRecord(tips: readonly Tip[]): VettedRecord {
+  let won = 0, lost = 0, push = 0, units = 0;
+  for (const tip of tips) {
+    if (tip.status === 'WON') { won++; units += decimalFromAmerican(tip.analysis?.price ?? -110) - 1; }
+    else if (tip.status === 'LOST') { lost++; units -= 1; }
+    else if (tip.status === 'PUSH') push++;
+  }
+  return { won, lost, push, units: Math.round(units * 100) / 100, roi: won + lost ? Math.round(units / (won + lost) * 1000) / 1000 : null };
+}
+/** The current run of wins or losses, newest result first (pushes and voids skipped), e.g. { kind: 'W', length: 3 }. */
+export function vettedStreak(tips: readonly Tip[]): { kind: 'W' | 'L'; length: number } | null {
+  const results = tips.filter((tip) => tip.status === 'WON' || tip.status === 'LOST')
+    .sort((a, b) => (b.gradedAt ?? b.createdAt).localeCompare(a.gradedAt ?? a.createdAt));
+  if (!results.length) return null;
+  const kind = results[0].status === 'WON' ? 'W' : 'L';
+  let length = 0;
+  for (const tip of results) { if ((tip.status === 'WON') !== (kind === 'W')) break; length++; }
+  return { kind, length };
+}
+
 export class TipStore {
   private data: Saved | null = null;
   private chain: Promise<unknown> = Promise.resolve();
@@ -172,17 +194,23 @@ export class TipStore {
    * the uploader are never included. Upcoming picks plus the last 14 days of results, newest first, and their record.
    */
   async vetted() {
-    const since = this.clock().getTime() - 14 * DAY;
-    const plays = (await this.load()).tips.filter((tip) => tip.analysis?.verdict === 'PLAY' &&
-      (tip.status === 'PENDING' || Date.parse(tip.gradedAt ?? tip.createdAt) >= since))
+    const now = this.clock().getTime(), since = now - 14 * DAY;
+    const all = (await this.load()).tips.filter((tip) => tip.analysis?.verdict === 'PLAY')
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const graded = plays.filter((tip) => tip.status === 'WON' || tip.status === 'LOST');
+    const plays = all.filter((tip) => tip.status === 'PENDING' || Date.parse(tip.gradedAt ?? tip.createdAt) >= since);
+    const started = (tip: Tip) => { const time = Date.parse(tip.analysis?.start ?? ''); return Number.isFinite(time) && time <= now; };
     return {
       picks: plays.map((tip) => ({ id: tip.id, sport: tip.sport, league: tip.league, selection: tip.selection, opponent: tip.opponent,
         market: tip.market, line: tip.line, side: tip.side, stat: tip.stat, eventDate: tip.eventDate, status: tip.status,
-        createdAt: tip.createdAt, chance: tip.analysis!.chance, price: tip.analysis!.price, ev: tip.analysis!.ev,
-        event: tip.analysis!.event, start: tip.analysis!.start, reasons: tip.analysis!.reasons })),
-      record: { won: graded.filter((tip) => tip.status === 'WON').length, lost: graded.filter((tip) => tip.status === 'LOST').length },
+        live: tip.status === 'PENDING' && started(tip), createdAt: tip.createdAt, gradedAt: tip.gradedAt, chance: tip.analysis!.chance,
+        price: tip.analysis!.price, ev: tip.analysis!.ev, event: tip.analysis!.event, start: tip.analysis!.start, reasons: tip.analysis!.reasons })),
+      record: vettedRecord(plays),
+      scoreboard: { allTime: vettedRecord(all), last7: vettedRecord(all.filter((tip) => Date.parse(tip.gradedAt ?? tip.createdAt) >= now - 7 * DAY)),
+        bySport: Object.fromEntries([...new Set(all.map((tip) => tip.league ?? tip.sport ?? 'Other'))]
+          .map((sport) => [sport, vettedRecord(all.filter((tip) => (tip.league ?? tip.sport ?? 'Other') === sport))])
+          .filter(([, record]) => (record as VettedRecord).won + (record as VettedRecord).lost > 0)),
+        streak: vettedStreak(all), pending: all.filter((tip) => tip.status === 'PENDING' && !started(tip)).length,
+        live: all.filter((tip) => tip.status === 'PENDING' && started(tip)).length, updatedAt: this.clock().toISOString() },
     };
   }
 
