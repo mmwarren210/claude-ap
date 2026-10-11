@@ -26,9 +26,11 @@ type HiddenPick = { id: string; league: string | null; sport: string | null; sel
 type Vetted = { picks: VettedPick[]; record: VettedRecord; scoreboard: Scoreboard | null; hidden?: HiddenPick[] };
 type MyTip = { id: string; createdAt: string; selection: string; market: string; line: number | null; side: string | null; stat?: string | null;
   status: VettedPick['status']; analyzing?: boolean; reused?: boolean;
-  analysis?: { verdict: 'PLAY' | 'LEAN' | 'PASS' | 'FADE'; chance: number; price: number | null; ev: number | null; reasons: string[] } | null };
+  analysis?: { verdict: 'PLAY' | 'LEAN' | 'PASS' | 'FADE'; chance: number; price: number | null; ev: number | null; reasons: string[] } | null;
+  approval?: { approved: boolean; approvedBy: string[] };
+  /** A better play on the same player and stat (another line, side or app) when nobody approved the pick as posted. */
+  suggestion?: { platform: string; line: number; side: 'MORE' | 'LESS'; lineType: string; chance: number; breakEven: number; edge: number } | null };
 type Mine = { tips: MyTip[]; uploadsLeft: number | null; dailyLimit: number | null; reading: boolean };
-const verdictColor = (verdict: string) => verdict === 'PLAY' ? colors.mint : verdict === 'LEAN' ? colors.gold : verdict === 'FADE' ? colors.red : colors.textMuted;
 
 const odds = (price: number) => price > 0 ? `+${price}` : `${price}`;
 const marketText = (pick: VettedPick) => {
@@ -93,7 +95,10 @@ export default function VettedTab() {
     } catch { setMessage('Could not upload. Check your connection.'); }
     finally { setBusy(false); void loadMine(); }
   };
-  const recentMine = mine?.tips.slice(0, 12) ?? [];
+  // Only picks worth acting on: approved PLAYs, suggested better plays, and ones still being read. True passes stay off.
+  const worthShowing = (tip: MyTip) => tip.analyzing || tip.approval?.approved || !!tip.suggestion;
+  const recentMine = mine?.tips.filter(worthShowing).slice(0, 12) ?? [];
+  const passed = mine ? mine.tips.slice(0, 40).filter((tip) => !worthShowing(tip) && tip.status === 'PENDING').length : 0;
   const upcoming = data?.picks.filter((pick) => pick.status === 'PENDING') ?? [];
   const settled = data?.picks.filter((pick) => pick.status !== 'PENDING') ?? [];
   return <SafeAreaView style={styles.safe} edges={['top']}>
@@ -103,7 +108,7 @@ export default function VettedTab() {
       {data?.scoreboard && <ScoreboardCard board={data.scoreboard} />}
       <View style={styles.submit}>
         <Text style={styles.boardTitle}>SUBMIT A PICK</Text>
-        <Text style={styles.muted}>Got a screenshot of picks? CrownIQ checks every pick and tells you right away: PLAY, LEAN, PASS or FADE. PLAYs join this list with your name on them.</Text>
+        <Text style={styles.muted}>Got a screenshot of picks? CrownIQ checks every pick with the market, GKR and Edge. You’ll see the PLAYs, plus a better line on another app when the posted one isn’t worth it. PLAYs join this list with your name on them.</Text>
         <Pressable accessibilityRole="button" disabled={busy || mine?.uploadsLeft === 0} onPress={() => void submit()}
           style={[styles.button, (busy || mine?.uploadsLeft === 0) && styles.buttonOff]}>
           {busy ? <ActivityIndicator color={colors.mintInk} /> : <Text style={styles.buttonText}>Upload screenshot</Text>}
@@ -111,14 +116,8 @@ export default function VettedTab() {
         {mine?.uploadsLeft !== null && mine?.uploadsLeft !== undefined && <Text style={styles.faint}>{mine.uploadsLeft} of {mine.dailyLimit} left today</Text>}
         {!!message && <Text style={styles.muted}>{message}</Text>}
         {recentMine.length > 0 && <Text style={[styles.section, { marginTop: 4 }]}>YOUR SUBMISSIONS</Text>}
-        {recentMine.map((tip) => <View key={tip.id} style={styles.mineRow}>
-          <View style={{ flex: 1 }}><Text style={styles.mineName}>{tip.selection}</Text>
-            <Text style={styles.faint}>{tip.market === 'PLAYER_PROP' ? `${tip.side === 'UNDER' ? 'Under' : 'Over'} ${tip.line ?? ''} ${tip.stat ?? ''}` : tip.market.replace(/_/g, ' ').toLowerCase()}
-              {tip.analysis ? ` · ${Math.round(tip.analysis.chance * 100)}%${tip.analysis.ev !== null ? ` · EV ${tip.analysis.ev >= 0 ? '+' : ''}${(tip.analysis.ev * 100).toFixed(1)}%` : ''}` : ''}</Text></View>
-          {tip.analyzing ? <ActivityIndicator color={colors.mint} />
-            : <Text style={[styles.badge, { color: tip.status !== 'PENDING' ? statusColor(tip.status) : verdictColor(tip.analysis?.verdict ?? '') }]}>
-              {tip.status !== 'PENDING' ? tip.status : tip.analysis?.verdict ?? '—'}</Text>}
-        </View>)}
+        {recentMine.map((tip) => <MineRow key={tip.id} tip={tip} />)}
+        {passed > 0 && <Text style={styles.faint}>{passed} more {passed === 1 ? 'pick was' : 'picks were'} checked with no play on any line or app, so {passed === 1 ? 'it’s' : 'they’re'} not listed.</Text>}
       </View>
       {!!error && <Text style={styles.muted}>{error}</Text>}
       {data && !upcoming.length && <Text style={styles.muted}>No vetted plays right now. New ones show up here as CrownIQ approves them.</Text>}
@@ -138,6 +137,27 @@ export default function VettedTab() {
       </View>)}
     </ScrollView>
   </SafeAreaView>;
+}
+
+const app = (platform: string) => ({ prizepicks: 'PrizePicks', underdog: 'Underdog', pick6: 'Pick6', dabble: 'Dabble', draftkings: 'DraftKings',
+  hardrock: 'Hard Rock', pinnacle: 'Pinnacle', kalshi: 'Kalshi' } as Record<string, string>)[platform] ?? platform;
+const propText = (tip: MyTip) => tip.market === 'PLAYER_PROP' ? `${tip.side === 'UNDER' ? 'Under' : 'Over'} ${tip.line ?? ''} ${tip.stat ?? ''}`.trim()
+  : tip.market.replace(/_/g, ' ').toLowerCase();
+
+function MineRow({ tip }: { tip: MyTip }) {
+  const suggestion = tip.approval?.approved ? null : tip.suggestion;
+  const badge = tip.status !== 'PENDING' ? tip.status : tip.approval?.approved ? 'PLAY' : suggestion ? 'BETTER LINE' : '';
+  const color = tip.status !== 'PENDING' ? statusColor(tip.status) : tip.approval?.approved ? colors.mint : colors.gold;
+  return <View style={styles.mineRow}>
+    <View style={{ flex: 1, gap: 2 }}>
+      <Text style={styles.mineName}>{tip.selection}</Text>
+      <Text style={styles.faint}>{propText(tip)}</Text>
+      {tip.approval?.approved && <Text style={styles.approved}>Approved by {tip.approval.approvedBy.join(' + ')}</Text>}
+      {suggestion && <Text style={styles.suggest}>Try instead: {suggestion.side === 'MORE' ? 'Over' : 'Under'} {suggestion.line}
+        {suggestion.lineType !== 'REGULAR' ? ` (${suggestion.lineType.toLowerCase()})` : ''} on {app(suggestion.platform)} · {Math.round(suggestion.chance * 100)}% (needs {Math.round(suggestion.breakEven * 100)}%)</Text>}
+    </View>
+    {tip.analyzing ? <ActivityIndicator color={colors.mint} /> : <Text style={[styles.badge, { color }]}>{badge}</Text>}
+  </View>;
 }
 
 const hit = (record: VettedRecord) => record.won + record.lost ? `${Math.round(record.won / (record.won + record.lost) * 100)}%` : '–';
@@ -212,6 +232,7 @@ const styles = StyleSheet.create({
   faint: { color: colors.textFaint, fontSize: 11 },
   checks: { color: colors.mint, fontSize: 12, fontWeight: '800' },
   approved: { color: colors.gold, fontSize: 12, fontWeight: '900', letterSpacing: .5 },
+  suggest: { color: colors.mint, fontSize: 12, fontWeight: '700', lineHeight: 17 },
   hiddenCard: { opacity: .7, borderStyle: 'dashed' },
   submit: { gap: 8, padding: 14, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   button: { minHeight: 46, borderRadius: 999, backgroundColor: colors.mint, alignItems: 'center', justifyContent: 'center' },

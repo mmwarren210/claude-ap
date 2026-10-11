@@ -59,3 +59,23 @@ export function modelRead(tip: Pick<TipDraft, 'side'>, pick: EdgePick, platform:
   return { platform, market: pick.market, line: pick.threshold, modelSide: pick.side,
     chance: Math.round(chance * 1000) / 1000, breakEven: Math.round(breakEven * 1000) / 1000, verdict };
 }
+
+/** A better play on the same player and stat: any line, side or app where Edge clears break-even by 3+ points. */
+export interface TipSuggestion {
+  readonly platform: string; readonly line: number; readonly side: 'MORE' | 'LESS'; readonly lineType: string;
+  readonly chance: number; readonly breakEven: number; readonly edge: number;
+}
+export function suggestFor(tip: Pick<TipDraft, 'market' | 'selection' | 'stat'>, picks: Iterable<EdgePick>, platform: string): TipSuggestion | null {
+  if (tip.market !== 'PLAYER_PROP') return null;
+  const name = normalizedName(tip.selection), wanted = statWords(tip.stat ?? '');
+  if (!wanted.size) return null;
+  let best: TipSuggestion | null = null;
+  for (const pick of picks) {
+    if (normalizedName(pick.playerName) !== name || pick.edge === null || pick.edge < .03) continue;
+    const have = statWords(pick.market);
+    if ([...wanted].some((word) => !have.has(word)) || have.size > wanted.size + 1) continue;
+    if (!best || pick.edge > best.edge) best = { platform, line: pick.threshold, side: pick.side, lineType: pick.lineType,
+      chance: Math.round(pick.probability * 1000) / 1000, breakEven: Math.round(pick.breakEven * 1000) / 1000, edge: Math.round(pick.edge * 1000) / 1000 };
+  }
+  return best;
+}

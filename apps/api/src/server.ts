@@ -93,10 +93,10 @@ import type { EdgeLedger } from './edge/ledger.js';
 import type { SnapshotStore } from './edge/snapshots.js';
 import type { BookWeightStore } from './edge/book-weights.js';
 import type { DispersionStore } from './edge/dispersion-store.js';
-import { analyzeTips, DAILY_TIP_UPLOADS, marketRead, USER_DAILY_UPLOADS } from './tips.js';
+import { analyzeTips, approvalOf, DAILY_TIP_UPLOADS, marketRead, USER_DAILY_UPLOADS } from './tips.js';
 import type { TipDraft, TipGrader, TipReader, TipStore } from './tips.js';
-import { matchTip, modelRead } from './tip-models.js';
-import type { TipModelRead } from './tip-models.js';
+import { matchTip, modelRead, suggestFor } from './tip-models.js';
+import type { TipModelRead, TipSuggestion } from './tip-models.js';
 import { gameCounts, marketCounts, registerEdgeRoutes, sportCounts } from './edge/routes.js';
 import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
@@ -631,13 +631,21 @@ export function buildServer(options: ServerOptions = {}) {
   // Set once Edge is running: per sport, rated upcoming picks and how many make the top 300, for Edge and GKR+ (admin).
   let sportMix:((platform:EdgePlatform)=>Promise<unknown>)|null=null;
   // Set once Edge is running: each tip's Edge and GKR+ read from the boards.
+  // Set once Edge is running: the best play on the same player and stat across every app and book, for tips that aren't PLAYs.
+  let tipSuggestions:((tips:readonly (TipDraft&{id:string})[])=>Promise<Map<string,TipSuggestion>>)|null=null;
   let tipModelReads:((tips:readonly (TipDraft&{id:string})[])=>Promise<Map<string,{edge:TipModelRead|null;gkrPlus:TipModelRead|null}>>)|null=null;
   // Everyone can submit screenshots and see their own picks (owner, 2026-10-11); Edge/GKR+ reads stay the owner's.
   app.get('/v1/tips',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     if(!options.tips)return reply.code(503).send({code:'TIPS_UNAVAILABLE'});
-    const mine=await options.tips.store.mine(user.accountId);
+    const raw=await options.tips.store.mine(user.accountId);
     const owner=await isOwner(request);
+    // Each pick's combined verdict (AI, GKR, Edge), and for pending props nobody approved, the best play on another line or
+    // app. The app lists PLAYs and suggested plays only; true passes stay off (owner, 2026-10-11).
+    const open=raw.tips.filter((tip)=>tip.status==='PENDING'&&!approvalOf(tip).approved&&tip.analysis?.verdict!=='FADE');
+    const suggestions=tipSuggestions&&open.length?await tipSuggestions(open).catch(()=>new Map<string,TipSuggestion>()):new Map<string,TipSuggestion>();
+    const mine={...raw,tips:raw.tips.map((tip)=>{const approval=approvalOf(tip);
+      return {...tip,approval:{approved:approval.approved,approvedBy:approval.approvedBy},suggestion:suggestions.get(tip.id)??null};})};
     const uploadsLeft=owner?null:Math.max(0,USER_DAILY_UPLOADS-await options.tips.store.uploadsToday(user.accountId));
     if(!owner){
       // Trial accounts get verdicts and numbers, not the reasons behind them.
@@ -1605,6 +1613,20 @@ export function buildServer(options: ServerOptions = {}) {
         return all.map((row)=>({sport:row.sport,rated:row.picks,top300:top.get(row.sport)??0,
           best:Math.round(Math.max(...picks.filter((pick)=>pick.sport===row.sport).map((pick)=>pick.edge??0))*1000)/10}));};
       return {platform,edge:mix(rated),gkrPlus:mix(plus)};
+    };
+    tipSuggestions=async(tips)=>{
+      const out=new Map<string,TipSuggestion>();
+      const props=tips.filter((tip)=>tip.market==='PLAYER_PROP');
+      if(!props.length)return out;
+      for(const platform of EDGE_PLATFORMS){
+        const snapshot=await edge.snapshot(platform).catch(()=>null);
+        if(!snapshot)continue;
+        for(const tip of props){
+          const found=suggestFor(tip,snapshot.byLine.values(),platform);
+          if(found&&(!out.has(tip.id)||found.edge>out.get(tip.id)!.edge))out.set(tip.id,found);
+        }
+      }
+      return out;
     };
     tipModelReads=async(tips)=>{
       const out=new Map<string,{edge:TipModelRead|null;gkrPlus:TipModelRead|null}>();

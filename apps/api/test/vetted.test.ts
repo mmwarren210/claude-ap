@@ -99,3 +99,13 @@ test('GKR or Edge can approve a pick the AI passed on; an AI FADE still keeps it
   assert.deepEqual(vetted.picks.map((pick) => pick.selection), ['Bo Nix']);
   assert.deepEqual(vetted.picks[0].approvedBy, ['GKR', 'Edge']);
 });
+
+test('a better line is suggested from the boards when the posted prop is not worth it', async () => {
+  const { suggestFor } = await import('../src/tip-models.js');
+  const tip = { market: 'PLAYER_PROP' as const, selection: 'Jacob Misiorowski', stat: 'Pitcher Strikeouts' };
+  const pick = (threshold: number, edge: number | null, extra = {}) => ({ playerName: 'Jacob Misiorowski', market: 'pitcher_strikeouts',
+    threshold, side: 'LESS', lineType: 'REGULAR', probability: .6, breakEven: .542, edge, ...extra }) as never;
+  const best = suggestFor(tip, [pick(7.5, .01), pick(8.5, .07), pick(6.5, null), pick(9.5, .05, { playerName: 'Someone Else' })], 'underdog');
+  assert.equal(best?.line, 8.5); assert.equal(best?.platform, 'underdog');
+  assert.equal(suggestFor(tip, [pick(7.5, .01)], 'underdog'), null, 'no line clears the bar: a true pass, nothing suggested');
+});

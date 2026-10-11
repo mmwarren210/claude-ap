@@ -60,6 +60,20 @@ export interface Tip extends TipDraft {
     edgeChance?: number | null; gkrChance?: number | null; breakEven?: number | null };
 }
 
+/**
+ * Who rates a tip PLAY (owner, 2026-10-11): the AI (market check), GKR, Edge. A pick is approved when any of them says PLAY
+ * and none calls it a FADE (the AI's FADE, or Edge's FADE at the tip's own price).
+ */
+export function approvalOf(tip: Pick<Tip, 'analysis' | 'modelCheck'>): { approved: boolean; approvedBy: string[]; hiddenByModels: boolean } {
+  const current = (tip.modelCheck?.v ?? 1) >= 2 ? tip.modelCheck : undefined;
+  const approvedBy = [tip.analysis?.verdict === 'PLAY' ? 'AI' : null, current?.gkr === 'PLAY' ? 'GKR' : null,
+    current?.edge === 'PLAY' ? 'Edge' : null].filter((name): name is string => !!name);
+  const aiFade = tip.analysis?.verdict === 'FADE', edgeFade = current?.edge === 'FADE';
+  const byModels = !!current && (current.gkr === 'PLAY' || current.edge === 'PLAY') && !aiFade;
+  const byAi = tip.analysis?.verdict === 'PLAY' && !edgeFade;
+  return { approved: byAi || byModels, approvedBy, hiddenByModels: tip.analysis?.verdict === 'PLAY' && edgeFade && !byModels };
+}
+
 /** One pick across uploads: the same selection, market, line, side and stat on the same day is the same pick. */
 export function tipKey(tip: Pick<Tip, 'sport' | 'selection' | 'opponent' | 'market' | 'line' | 'side' | 'stat' | 'eventDate' | 'createdAt'>): string {
   const norm = (value: string | null) => (value ?? '').toLowerCase().replace(/[^a-z0-9.]+/g, ' ').trim();
@@ -217,13 +231,9 @@ export class TipStore {
    */
   async vetted() {
     const now = this.clock().getTime(), since = now - 14 * DAY;
-    const rejected = (tip: Tip) => !!tip.modelCheck?.rejected && (tip.modelCheck.v ?? 1) >= 2;
     const loaded = (await this.load()).tips;
-    // On the list: the AI says PLAY (and Edge doesn't call it a FADE), or GKR or Edge says PLAY (and the AI doesn't call it a FADE).
-    const byModels = (tip: Tip) => (tip.modelCheck?.v ?? 1) >= 2 && (tip.modelCheck!.gkr === 'PLAY' || tip.modelCheck!.edge === 'PLAY') &&
-      tip.analysis?.verdict !== 'FADE';
-    const approved = (tip: Tip) => (tip.analysis?.verdict === 'PLAY' && !rejected(tip)) || byModels(tip);
-    const hidden = loaded.filter((tip) => tip.analysis?.verdict === 'PLAY' && rejected(tip) && !byModels(tip) &&
+    const approved = (tip: Tip) => approvalOf(tip).approved;
+    const hidden = loaded.filter((tip) => approvalOf(tip).hiddenByModels &&
       (tip.status === 'PENDING' || Date.parse(tip.gradedAt ?? tip.createdAt) >= since))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .filter((tip, index, list) => list.findIndex((other) => tipKey(other) === tipKey(tip)) === index)
@@ -247,8 +257,7 @@ export class TipStore {
         price: tip.analysis!.price, ev: tip.analysis!.ev, event: tip.analysis!.event, start: tip.analysis!.start, reasons: tip.analysis!.reasons, submittedBy: tip.submittedBy ?? null,
         checks: tip.modelCheck ? { edge: tip.modelCheck.edge, gkr: tip.modelCheck.gkr, edgeChance: tip.modelCheck.edgeChance ?? null,
           gkrChance: tip.modelCheck.gkrChance ?? null, breakEven: tip.modelCheck.breakEven ?? null } : null,
-        approvedBy: [tip.analysis!.verdict === 'PLAY' ? 'AI' : null, tip.modelCheck?.gkr === 'PLAY' ? 'GKR' : null,
-          tip.modelCheck?.edge === 'PLAY' ? 'Edge' : null].filter((name): name is string => !!name) })),
+        approvedBy: approvalOf(tip).approvedBy })),
       record: vettedRecord(plays),
       hidden,
       scoreboard: { allTime: vettedRecord(all), last7: vettedRecord(all.filter((tip) => Date.parse(tip.gradedAt ?? tip.createdAt) >= now - 7 * DAY)),
