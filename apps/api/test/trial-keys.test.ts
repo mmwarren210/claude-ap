@@ -43,12 +43,14 @@ test('end-of-trial poll: opens in the last day, works after the pass ends, adds 
   await assert.rejects(ledger.answerTrialPoll({ accountId }, { recommend: 'YES', liked: [], improve: null }), /POLL_NOT_OPEN/);
   now = new Date('2026-10-13T20:00:00Z'); // the pass ended at 12:00
   await assert.rejects(ledger.trialLogin(key, device), /GUEST_PASS_EXPIRED/);
-  const renewed = await ledger.answerTrialPoll({ code: key, deviceId: device }, { recommend: 'YES', liked: ['Vetted'], improve: 'More sports' });
+  const renewed = await ledger.answerTrialPoll({ code: key, deviceId: device }, { recommend: 'YES', liked: ['Vetted'], improve: 'More sports',
+    plan: 'MONTH', price: '$21–30' });
   assert.ok(renewed.guestExpiresAt?.startsWith('2026-10-20T20:00'));
   assert.ok(await ledger.authenticate(renewed.token));
   await assert.rejects(ledger.answerTrialPoll({ code: key, deviceId: device }, { recommend: 'NO', liked: [], improve: null }), /POLL_ALREADY_ANSWERED/);
   const results = await ledger.trialPollResults();
   assert.equal(results.answered, 1); assert.equal(results.recommend.YES, 1); assert.equal(results.liked.Vetted, 1);
+  assert.equal(results.plans.MONTH, 1); assert.equal(results.prices['MONTH $21–30'], 1);
   await assert.rejects(ledger.answerTrialPoll({ code: key, deviceId: 'someone-elses-device-x' }, { recommend: 'YES', liked: [], improve: null }), /TRIAL_NOT_FOUND/);
 });
 

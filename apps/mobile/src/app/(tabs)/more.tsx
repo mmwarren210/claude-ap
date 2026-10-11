@@ -79,7 +79,7 @@ function TrialUsers() {
   const { request } = useAuth();
   type Trial = { accountId: string; username: string; keyNumber: number | null; startedAt: string; expiresAt: string | null;
     status: 'ACTIVE' | 'ENDED' | 'SIGNED_UP' | 'REVOKED'; extended: boolean;
-    poll: { recommend: string; liked: string[]; improve: string | null } | null;
+    poll: { recommend: string; liked: string[]; improve: string | null; plan: string | null; price: string | null } | null;
     activity: { lastSeen: string; days: Record<string, number>; totalMinutes: number; topTabs: { tab: string; minutes: number }[] } | null;
     submitted: { screenshots: number; picks: number; plays: number } | null };
   const [data, setData] = useState<{ trials: Trial[]; keys: { issued: number; used: number; active: number } | null } | null>(null);
@@ -111,7 +111,7 @@ function TrialUsers() {
             {trial.activity ? ` · last seen ${short(trial.activity.lastSeen)}` : ' · not opened since signing in'}</Text>
           {!!trial.activity?.topTabs.length && <Text style={styles.sheetNote}>Most on {trial.activity.topTabs.map((item) => `${item.tab} ${minutesLabel(item.minutes)}`).join(', ')}</Text>}
           {trial.submitted && trial.submitted.screenshots > 0 && <Text style={styles.sheetNote}>Submitted {trial.submitted.screenshots} screenshot{trial.submitted.screenshots === 1 ? '' : 's'} · {trial.submitted.picks} picks · {trial.submitted.plays} PLAYs</Text>}
-          {trial.poll && <Text style={styles.sheetNote}>Poll: recommend {trial.poll.recommend.toLowerCase()}{trial.poll.liked.length ? ` · liked ${trial.poll.liked.join(', ')}` : ''}{trial.poll.improve ? ` · “${trial.poll.improve}”` : ''}</Text>}
+          {trial.poll && <Text style={styles.sheetNote}>Poll: recommend {trial.poll.recommend.toLowerCase()}{trial.poll.plan ? ` · plan ${trial.poll.plan.toLowerCase().replace('_', ' ')}${trial.poll.price ? ` at ${trial.poll.price}` : ''}` : ''}{trial.poll.liked.length ? ` · liked ${trial.poll.liked.join(', ')}` : ''}{trial.poll.improve ? ` · “${trial.poll.improve}”` : ''}</Text>}
         </View>
       </View>;
     })}

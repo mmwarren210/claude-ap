@@ -59,7 +59,11 @@ interface Account {id:string;username:string;email:string|null;passwordSalt:stri
     /** The end-of-trial poll (owner, 2026-10-11): answering it once adds 7 free days. */
     poll?:TrialPollAnswer&{at:string}}}
 /** End-of-trial poll answers. */
-export interface TrialPollAnswer {recommend:'YES'|'MAYBE'|'NO';liked:string[];improve:string|null}
+export interface TrialPollAnswer {recommend:'YES'|'MAYBE'|'NO';liked:string[];improve:string|null;
+  /** The subscription length they'd pick, and the price range that feels fair for it (owner, 2026-10-11). */
+  plan?:TrialPlan|null;price?:string|null}
+export const TRIAL_PLANS=['WEEK','MONTH','QUARTER','HALF_YEAR','YEAR','LIFETIME','NONE'] as const;
+export type TrialPlan=typeof TRIAL_PLANS[number];
 /** Free days added for answering the end-of-trial poll. */
 export const TRIAL_POLL_DAYS=7;
 /** The poll shows in a trial's last day, and after it ends. */
@@ -376,7 +380,8 @@ export class ProductLedger {
     if(account.status==='SUSPENDED')throw new Error('ACCOUNT_SUSPENDED');
     if(account.guest.poll)throw new Error('POLL_ALREADY_ANSWERED');
     if(Date.parse(account.guest.expiresAt)-now.getTime()>POLL_WINDOW_MS)throw new Error('POLL_NOT_OPEN');
-    account.guest.poll={...answers,liked:answers.liked.slice(0,6),improve:answers.improve?.slice(0,500)??null,at:now.toISOString()};
+    account.guest.poll={...answers,liked:answers.liked.slice(0,6),improve:answers.improve?.slice(0,500)??null,
+      plan:answers.plan??null,price:answers.price?.slice(0,40)??null,at:now.toISOString()};
     account.guest.expiresAt=new Date(Math.max(now.getTime(),Date.parse(account.guest.expiresAt))+TRIAL_POLL_DAYS*24*60*60_000).toISOString();
     const result=this.session(data,account);await this.write(data);return result;
   });}
@@ -396,7 +401,7 @@ export class ProductLedger {
         keyNumber:keyIndex>=0?keyIndex+1:account.fromTrial?.keyNumber??null,startedAt:account.fromTrial?.startedAt??account.createdAt,
         expiresAt,status:account.fromTrial?'SIGNED_UP' as const:account.status==='SUSPENDED'?'REVOKED' as const
           :expiresAt&&Date.parse(expiresAt)<=now?'ENDED' as const:'ACTIVE' as const,
-        extended:!!poll,poll:poll?{recommend:poll.recommend,liked:poll.liked,improve:poll.improve}:null,
+        extended:!!poll,poll:poll?{recommend:poll.recommend,liked:poll.liked,improve:poll.improve,plan:poll.plan??null,price:poll.price??null}:null,
         convertedAt:account.fromTrial?.convertedAt??null}];
     }).sort((a,b)=>b.startedAt.localeCompare(a.startedAt));
   }
@@ -406,6 +411,8 @@ export class ProductLedger {
     const data=await this.read(),answers=data.accounts.flatMap((item)=>item.guest?.poll?[item.guest.poll]:[]);
     const count=(values:string[])=>values.reduce<Record<string,number>>((out,value)=>{out[value]=(out[value]??0)+1;return out;},{});
     return {answered:answers.length,recommend:count(answers.map((item)=>item.recommend)),liked:count(answers.flatMap((item)=>item.liked)),
+      plans:count(answers.map((item)=>item.plan??'NO_ANSWER')),
+      prices:count(answers.filter((item)=>item.plan&&item.price).map((item)=>`${item.plan} ${item.price}`)),
       improve:answers.filter((item)=>item.improve).map((item)=>({text:item.improve,at:item.at}))};
   }
   async trialLogin(code:string,deviceId:string){return this.exclusive(async()=>{

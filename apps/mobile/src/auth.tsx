@@ -23,7 +23,7 @@ function guestDeviceId():string{
 const noSubscription=()=>()=>undefined;
 const guestMessages:Record<string,string>={TRIALS_ALL_USED:'All free trial keys have been claimed. Thanks for your interest in CrownIQ! Watch for the next round.',
   GUEST_PASS_FULL:'This guest link or trial key has already been used.',
-  GUEST_PASS_EXPIRED:'Your free trial has ended. Thanks for testing CrownIQ! Answer 3 quick questions for 7 more free days, or sign up below to keep your picks and profile.',
+  GUEST_PASS_EXPIRED:'Your free trial has ended. Thanks for testing CrownIQ! Answer a few quick questions for 7 more free days, or sign up below to keep your picks and profile.',
   GUEST_PASS_INVALID:'This guest link is not valid.',TOO_MANY_ATTEMPTS:'Too many attempts. Please wait a minute.'};
 
 type Profile={publicId:string;username:string;email:string|null;plan:'FREE'|'LIFETIME'|'GUEST'|'SUSPENDED'|'DEMO';
@@ -45,7 +45,8 @@ type AuthContext={profile:Profile|null;register:(username:string,email:string,pa
   guest:{signingIn:boolean;message:string;expired:boolean};
   /** Answers the end-of-trial poll (7 more free days): signed in, or with the trial link after the pass ended. */
   answerTrialPoll:(answers:TrialPollAnswers)=>Promise<void>};
-export type TrialPollAnswers={recommend:'YES'|'MAYBE'|'NO';liked:string[];improve:string|null};
+export type TrialPlan='WEEK'|'MONTH'|'QUARTER'|'HALF_YEAR'|'YEAR'|'LIFETIME'|'NONE';
+export type TrialPollAnswers={recommend:'YES'|'MAYBE'|'NO';liked:string[];improve:string|null;plan:TrialPlan|null;price:string|null};
 const Context=createContext<AuthContext|null>(null);
 const base=apiBaseUrl();
 

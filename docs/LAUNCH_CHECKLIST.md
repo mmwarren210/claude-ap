@@ -10,6 +10,7 @@ The limit lives in `USER_DAILY_UPLOADS` (`apps/api/src/tips.ts`).
 To decide before launch:
 - Screenshots a day for each paid tier (e.g. a basic tier vs a premium tier).
 - Whether 2-day trial users keep any screenshots.
+- Prices per plan: the end-of-trial poll asks trial users which length (1 week to lifetime) and what price range feels fair (admin `/v1/admin/trial-poll`).
 - A daily spending cap for the AI that checks screenshots (cost is about $0.25–0.45 per screenshot; duplicates are free).
 
 ## 2. Seats and trials

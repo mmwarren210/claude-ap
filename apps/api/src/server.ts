@@ -37,7 +37,7 @@ import { nflverseTrackedMarkets, NflverseResultsFeed, readNflverseMappings,
   resultFromNflverse } from './nflverse-results.js';
 import type { WebResearchService } from './web-research.js';
 import { ResearchBuild } from './research-build.js';
-import { ProductLedger, resultFactSchema } from './product-ledger.js';
+import { ProductLedger, resultFactSchema, TRIAL_PLANS } from './product-ledger.js';
 import type { GuestPass } from './product-ledger.js';
 import type { BoardCache } from './board-cache.js';
 import { boardFunnel, outcomeCounts } from './board-funnel.js';
@@ -569,7 +569,8 @@ export function buildServer(options: ServerOptions = {}) {
   });
   // End-of-trial poll (owner, 2026-10-11): a trial in its last day (or already ended) answers 3 questions for 7 more free days.
   const pollAnswer=z.object({recommend:z.enum(['YES','MAYBE','NO']),liked:z.array(z.string().trim().min(1).max(40)).max(6),
-    improve:z.string().trim().max(500).nullable().optional()}).strict();
+    improve:z.string().trim().max(500).nullable().optional(),plan:z.enum(TRIAL_PLANS).nullable().optional(),
+    price:z.string().trim().min(1).max(40).nullable().optional()}).strict();
   const pollError=(reply:FastifyReply,error:unknown)=>{const code=(error as Error).message;
     if(code==='POLL_ALREADY_ANSWERED'||code==='POLL_NOT_OPEN')return reply.code(409).send({code});
     if(code==='TRIAL_NOT_FOUND'||code==='ACCOUNT_SUSPENDED')return reply.code(404).send({code:'TRIAL_NOT_FOUND'});
@@ -581,7 +582,8 @@ export function buildServer(options: ServerOptions = {}) {
   app.post('/v1/trial/poll',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     const input=pollAnswer.safeParse(request.body);if(!input.success||!options.product)return reply.code(400).send({code:'INVALID_POLL'});
-    try{return await options.product.answerTrialPoll({accountId:user.accountId},{...input.data,improve:input.data.improve??null});}
+    try{return await options.product.answerTrialPoll({accountId:user.accountId},{...input.data,improve:input.data.improve??null,
+      plan:input.data.plan??null,price:input.data.price??null});}
     catch(error){return pollError(reply,error);}
   });
   // After the pass has ended (sign-in no longer works): the trial key and the device that used it.
@@ -590,7 +592,7 @@ export function buildServer(options: ServerOptions = {}) {
     const input=z.object({code:z.string().trim().min(1).max(100),deviceId:z.string().min(16).max(100),answers:pollAnswer}).strict().safeParse(request.body);
     if(!input.success||!options.product)return reply.code(400).send({code:'INVALID_POLL'});
     try{return await options.product.answerTrialPoll({code:input.data.code,deviceId:input.data.deviceId},
-      {...input.data.answers,improve:input.data.answers.improve??null});}
+      {...input.data.answers,improve:input.data.answers.improve??null,plan:input.data.answers.plan??null,price:input.data.answers.price??null});}
     catch(error){return pollError(reply,error);}
   });
   app.get('/v1/auth/me',async(request,reply)=>{
