@@ -182,7 +182,7 @@ export interface ServerOptions {
   /** Player game logs from PropLine's box scores, first in line for every history read. */
   proplineHistory?: PropLineHistory | null;
   /** Each book's accuracy against actual stats (PropLine finished games), for the owner. */
-  bookAccuracy?: { report(): Promise<unknown> } | null;
+  bookAccuracy?: { report(): Promise<unknown>; refresh?(limit?: number): Promise<number> } | null;
   /** UFC fighters' fight history (UFCStats) for History Read and Edge on PrizePicks' UFC lines. */
   ufcHistory?: import('./ufc-history.js').UfcHistory | null;
   /** Soccer players' full match stats (Sofascore) for lines ESPN's logs can't read, fantasy score included. */
@@ -1615,6 +1615,33 @@ export function buildServer(options: ServerOptions = {}) {
     void refit().catch(()=>undefined);
     const refitting=setInterval(()=>{void refit().catch(()=>undefined);},60*60_000);refitting.unref();
   }
+  // The nightly PropLine pull (owner, 2026-10-11): once a day between 2 and 4 AM Central, while almost nobody uses the app,
+  // every player on every board gets PropLine's box scores fetched fresh and kept ~26 hours, and the books' accuracy job runs
+  // its big batch. No AI runs on any of it. The day's reads then come from the cache instead of live PropLine requests.
+  let nightlyDay='';
+  const nightly={last:null as null|{at:string;players:number;found:number;empty:number;skipped:number;accuracyGames:number|null;ms:number}};
+  const runNightly=async()=>{
+    const started=Date.now();
+    const lines:PropLine[]=[...(service.getBoard()?.board.lines??[])];
+    if(options.scrapedLines)for(const app of otherApps){
+      const board=await appBoard(options.scrapedLines,app,service.getBoard()).catch(()=>null);
+      if(board)lines.push(...asBoard(board.lines,board.fetchedAt??now().toISOString()).board.lines);
+    }
+    const open=lines.filter((line)=>Date.parse(line.eventStartTime)>now().getTime());
+    const warmed=options.proplineHistory?await options.proplineHistory.warm(open).catch(()=>null):null;
+    const accuracyGames=options.bookAccuracy?.refresh?await options.bookAccuracy.refresh(300).catch(()=>null):null;
+    nightly.last={at:now().toISOString(),players:warmed?.players??0,found:warmed?.found??0,empty:warmed?.empty??0,skipped:warmed?.skipped??0,
+      accuracyGames,ms:Date.now()-started};
+    console.log(`[nightly] PropLine pull: ${nightly.last.players} players (${nightly.last.found} with games), accuracy ${accuracyGames??'-'} games, ${Math.round(nightly.last.ms/1000)}s`);
+  };
+  if(!options.clock&&(options.proplineHistory||options.bookAccuracy)){
+    const central=(at:Date)=>Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',hourCycle:'h23',
+      year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).formatToParts(at).map((part)=>[part.type,part.value]));
+    const check=()=>{const parts=central(new Date()),day=`${parts.year}-${parts.month}-${parts.day}`;
+      const minutes=Number(parts.hour)*60+Number(parts.minute);
+      if(day!==nightlyDay&&minutes>=150&&minutes<240){nightlyDay=day;void runNightly().catch((error)=>console.warn('[nightly] failed',error instanceof Error?error.message:error));}};
+    const nightlyTimer=setInterval(check,5*60_000);nightlyTimer.unref();
+  }
   // CrownIQ Edge (Edge 2.0): its own reads of every platform, warmed in the background like the app boards.
   const movement=new MovementTracker();
   // PropLine steam (pushed): a player prop several books moved the same way feeds Edge's steam badge and stale-line check.
@@ -2356,7 +2383,7 @@ export function buildServer(options: ServerOptions = {}) {
       let booksHistoryRows=0;
       try{if(options.booksHistoryFile)booksHistoryRows=(await readFile(options.booksHistoryFile,'utf8')).split('\n').filter(Boolean).length;}catch{/* none yet */}
       return {playerHistory:await options.internalHistory?.status()??null,freeHistory:options.playerHistory?.lastRefresh??null,
-        proplineHistory:options.proplineHistory?.status()??null,
+        proplineHistory:options.proplineHistory?.status()??null,nightlyPull:nightly.last,
         trackedDecisions:(await options.product?.listDecisions(0,1))?.total??null,
         activeAppLines:lines.length,booksHistoryRows,
         shadow:await options.shadowRecord?.status()??null,

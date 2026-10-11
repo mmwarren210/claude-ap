@@ -418,13 +418,14 @@ const edgeSnapshots=process.env.EDGE_ENGINE==='false'?null:(()=>{
 })();
 const edgeDispersion=new DispersionStore(`${dataDir}/edge/edge-dispersion-v1.json`);
 await edgeDispersion.load();
-// Each book's closing line against the actual stat, from PropLine's finished games (every 6 hours, the last 3 days each
+// Each book's closing line against the actual stat, from PropLine's finished games (nightly, the last 3 days each
 // time): these scores join the book-versus-book ones Edge learns its book weights from.
 const bookAccuracy=propLine?new PropLineAccuracy(new PropLineClient(process.env.PROPLINE_API_KEY!.trim(),undefined,3),`${dataDir}/edge/book-accuracy.json`):null;
 const edgeBookWeights=new BookWeightStore(`${dataDir}/edge/edge-book-weights-v1.json`,undefined,bookAccuracy?()=>bookAccuracy.scores():null);
 if(bookAccuracy){
-  const runAccuracy=()=>{void bookAccuracy.refresh().then((games)=>{if(games){edgeBookWeights.markDue();console.log(`[book-accuracy] ${games} games scored`);}}).catch(()=>undefined);};
-  setTimeout(runAccuracy,10*60_000).unref();setInterval(runAccuracy,6*3600_000).unref();
+  // Runs in the nightly PropLine pull (2–4 AM Central, owner 2026-10-11), not during the day; new scores refit the weights.
+  const refresh=bookAccuracy.refresh.bind(bookAccuracy);
+  bookAccuracy.refresh=async(limit?:number)=>{const games=await refresh(limit);if(games){edgeBookWeights.markDue();console.log(`[book-accuracy] ${games} games scored`);}return games;};
 }
 await edgeBookWeights.load();
 const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',dispersion:edgeDispersion,bookWeights:edgeBookWeights,

@@ -11,7 +11,11 @@ import type { PropLineClient } from './scrapers/propline.js';
 
 type Stats = Readonly<Record<string, number>>;
 interface Game { readonly at: string; readonly opponent: string | null; readonly stats: Stats }
-interface Entry { readonly at: number; readonly games: readonly Game[] | null }
+interface Entry { readonly at: number; readonly games: readonly Game[] | null;
+  /** How long this entry stays fresh: the nightly pull keeps its answers ~26 hours (default: the 6-hour TTL). */
+  readonly keepMs?: number }
+/** The nightly pull's answers last until the next night's run (owner, 2026-10-11). */
+export const NIGHTLY_KEEP_MS = 26 * 3600_000;
 
 /** CrownIQ's sport → PropLine's sport key, for sports with one key (soccer needs the league, from the game itself). */
 const SPORT_KEYS: Readonly<Record<string, string>> = { NFL: 'football_nfl', NCAAFB: 'football_ncaaf', NBA: 'basketball_nba',
@@ -133,16 +137,16 @@ export class PropLineHistory {
     if (!this.file) return;
     try {
       const saved = JSON.parse(await readFile(this.file, 'utf8')) as [string, Entry][];
-      const cutoff = this.clock() - (this.options.ttlMs ?? 6 * 3600_000);
-      for (const [key, entry] of saved) if (entry.at > cutoff) this.cache.set(key, entry);
+      const now = this.clock();
+      for (const [key, entry] of saved) if (now - entry.at < (entry.keepMs ?? this.options.ttlMs ?? 6 * 3600_000)) this.cache.set(key, entry);
     } catch { /* first run */ }
   }
 
   async save(): Promise<void> {
     if (!this.dirty || !this.file) return;
     this.dirty = false;
-    const cutoff = this.clock() - 2 * (this.options.ttlMs ?? 6 * 3600_000);
-    for (const [key, entry] of this.cache) if (entry.at < cutoff) this.cache.delete(key);
+    const now = this.clock();
+    for (const [key, entry] of this.cache) if (now - entry.at > 2 * (entry.keepMs ?? this.options.ttlMs ?? 6 * 3600_000)) this.cache.delete(key);
     await mkdir(dirname(this.file), { recursive: true });
     const temporary = `${this.file}.tmp`;
     await writeFile(temporary, JSON.stringify([...this.cache]));
@@ -156,11 +160,12 @@ export class PropLineHistory {
   }
 
   /** A player's recent games (cached 6 hours, a player PropLine doesn't know too); undefined when it couldn't be asked. */
-  private async games(sportKey: string, playerName: string): Promise<readonly Game[] | null | undefined> {
+  private async games(sportKey: string, playerName: string, refresh?: { keepMs: number; olderThanMs: number }): Promise<readonly Game[] | null | undefined> {
     await this.load();
     const key = `${sportKey}|${normalizedName(playerName)}`, now = this.clock();
     const cached = this.cache.get(key);
-    if (cached && now - cached.at < (this.options.ttlMs ?? 6 * 3600_000)) return cached.games;
+    if (cached && now - cached.at < (refresh ? refresh.olderThanMs : cached.keepMs ?? this.options.ttlMs ?? 6 * 3600_000))
+      return cached.games;
     const pending = this.loading.get(key);
     if (pending) return pending;
     const today = new Date(now).toISOString().slice(0, 10);
@@ -181,7 +186,7 @@ export class PropLineHistory {
     }).then((games) => {
       const found = games.length ? games : null;
       if (found) this.stats.found++; else this.stats.empty++;
-      this.cache.set(key, { at: this.clock(), games: found });
+      this.cache.set(key, { at: this.clock(), games: found, ...(refresh ? { keepMs: refresh.keepMs } : {}) });
       this.dirty = true;
       return found;
     }).finally(() => this.loading.delete(key));
@@ -210,6 +215,27 @@ export class PropLineHistory {
     if (!games) return null;
     const values = valuesFrom(games, read, Date.parse(line.eventStartTime));
     return values.length ? { values, source: 'PropLine box scores' } : null;
+  }
+
+  /**
+   * The nightly pull (owner, 2026-10-11: 2–4 AM Central, no AI): every player on the boards, fetched fresh (unless already
+   * fetched in the last 12 hours) and kept ~26 hours, so the day's reads come from the cache instead of live requests.
+   */
+  async warm(lines: readonly (Pick<PropLine, 'sport' | 'eventId' | 'playerName' | 'market'> & { league?: string | null })[]) {
+    const players = new Map<string, { sportKey: string; playerName: string }>();
+    for (const line of lines) {
+      const sportKey = this.sportKey(line);
+      if (!sportKey || !proplineStat(sportOf(line), line.market)) continue;
+      players.set(`${sportKey}|${normalizedName(line.playerName)}`, { sportKey, playerName: line.playerName });
+    }
+    let found = 0, empty = 0, skipped = 0;
+    await Promise.all([...players.values()].map(async ({ sportKey, playerName }) => {
+      const games = await this.games(sportKey, playerName, { keepMs: NIGHTLY_KEEP_MS, olderThanMs: 12 * 3600_000 });
+      if (games === undefined) skipped++; else if (games) found++; else empty++;
+    }));
+    this.dirty = true;
+    await this.save().catch(() => undefined);
+    return { players: players.size, found, empty, skipped };
   }
 
   status() { return { ...this.stats, players: this.cache.size }; }

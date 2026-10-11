@@ -97,3 +97,19 @@ test('UFC lines read PropLine fight stats; a soccer line with no league tries th
   assert.ok(asked.at(-1)!.includes('/soccer_epl/'), 'a labeled league asks that league');
 });
 
+
+test('the nightly pull fetches each board player once and keeps it ~26 hours, so daytime reads ask PropLine nothing', async () => {
+  const asked: string[] = [];
+  let now = 0;
+  const client = { get: async (path: string) => { asked.push(path);
+    return { games: [{ commence_time: '2030-09-21T00:00:00Z', status: 'final', opponent: 'Y', stats: { passing_yards: 301 } }] }; } } as unknown as PropLineClient;
+  const history = new PropLineHistory(client, null, () => null, { ttlMs: 6 * 3600_000 }, () => now);
+  const warmed = await history.warm([line('NFL', 'passing_yards'), line('NFL', 'player_rush_yds')]);
+  assert.deepEqual([warmed.players, warmed.found, asked.length], [1, 1, 1], 'one player, one request');
+  now = 20 * 3600_000; // the next afternoon, past the normal 6-hour cache
+  await history.values(line('NFL', 'passing_yards'));
+  assert.equal(asked.length, 1, 'served from the nightly pull');
+  now = 30 * 3600_000;
+  await history.values(line('NFL', 'passing_yards'));
+  assert.equal(asked.length, 2, 'refreshed once the nightly answer is over 26 hours old');
+});
