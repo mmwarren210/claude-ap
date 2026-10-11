@@ -2421,6 +2421,7 @@ export function buildServer(options: ServerOptions = {}) {
       void runNightly().catch((error) => console.warn('[nightly] failed', error instanceof Error ? error.message : error));
       return { started: true }; });
     admin.get('/nightly-pull', async () => nightly);
+    admin.get('/gkr-calibration', async (_request, reply) => options.product ? options.product.gkrCalibration() : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
     admin.get('/trial-poll', async (_request, reply) => options.product ? options.product.trialPollResults() : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
     admin.get('/tips-summary', async (_request, reply) => options.tips ? options.tips.store.summary() : reply.code(503).send({ code: 'TIPS_UNAVAILABLE' }));
     admin.get('/vetted', async (_request, reply) => {

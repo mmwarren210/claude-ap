@@ -373,6 +373,26 @@ export class ProductLedger {
    * back, whichever key it clicks. A key someone else used hands over the next free key in issue order (then wraps), and
    * says which; when all are used, TRIALS_ALL_USED. Each account lasts its key's days from first use.
    */
+  /**
+   * GKR's calibration (owner, 2026-10-11): graded GKR picks bucketed by score, with how often each bucket hit, overall
+   * and per sport, plus per model version. A well-calibrated GKR has its 90s hitting more than its 80s, and so on.
+   */
+  async gkrCalibration(){
+    const decided=(await this.read()).decisions.filter((item)=>item.grade==='WIN'||item.grade==='LOSS');
+    const edges=[0,68,75,80,85,90,95,101];
+    const bucket=(score:number)=>{for(let index=edges.length-2;index>=0;index--)if(score>=edges[index])return `${edges[index]}-${edges[index+1]-1}`;return '0-67';};
+    const table=(rows:typeof decided)=>{
+      const out=new Map<string,{n:number;won:number}>();
+      for(const row of rows){const key=bucket(row.lineScore),cell=out.get(key)??{n:0,won:0};cell.n++;if(row.grade==='WIN')cell.won++;out.set(key,cell);}
+      return [...out].sort((a,b)=>Number(a[0].split('-')[0])-Number(b[0].split('-')[0]))
+        .map(([range,cell])=>({range,graded:cell.n,won:cell.won,hitRate:Math.round(cell.won/cell.n*1000)/1000}));
+    };
+    const group=(key:(row:(typeof decided)[number])=>string)=>Object.fromEntries([...new Set(decided.map(key))].sort()
+      .map((name)=>{const rows=decided.filter((row)=>key(row)===name);return [name,{graded:rows.length,
+        hitRate:Math.round(rows.filter((row)=>row.grade==='WIN').length/rows.length*1000)/1000,buckets:table(rows)}];}));
+    return {graded:decided.length,overall:table(decided),bySport:group((row)=>row.sport),bySide:group((row)=>row.direction),
+      byVersionFamily:group((row)=>row.modelVersion.includes('-SH2-')?'SH2':row.modelVersion.includes('LESS')?'LESS-AWARE':'v1')};
+  }
   /** Issues one member key for a paid plan (shown once; only its hash is kept). */
   async issueMemberKey(plan:PaidPlan){return this.exclusive(async()=>{
     const data=await this.read(),raw=randomBytes(6).toString('hex').toUpperCase(),key=`CIQM-${raw.slice(0,4)}-${raw.slice(4,8)}-${raw.slice(8)}`;
