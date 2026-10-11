@@ -1,6 +1,7 @@
 import { entryBreakEvens } from '@crowniq/contracts';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import type { Href } from 'expo-router';
+import { endsText, usePaidPlan } from '../../components/PlanStatus';
 import { useCallback, useEffect, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { openExternal } from '../../port';
@@ -251,6 +252,7 @@ export default function MoreScreen() {
     } catch { setMessage('That username is unavailable. Try a different one.'); }
   };
   const go = (path: Href) => router.push(path);
+  const paid = usePaidPlan();
   const plan = profile?.plan === 'DEMO' ? 'Demo' : profile?.plan === 'LIFETIME' ? 'Lifetime Member' : profile?.plan === 'GUEST' ? 'Guest pass · 3 days'
     : profile?.plan === 'FREE' ? 'Free Plan' : profile?.plan ?? 'Free Plan';
   return <SafeAreaView style={styles.safe} edges={['top']}>
@@ -279,7 +281,8 @@ export default function MoreScreen() {
         <Row icon="bug-outline" title="Beta feedback" detail="Report a bug or idea" onPress={demo ? undefined : () => setSheet('feedback')} />
         <Row icon="bullhorn-outline" title="Updates" detail="Patches and fixes" onPress={demo ? undefined : () => setSheet('updates')} />
         {owner && <Row icon="clipboard-check-outline" title="Review feedback" detail="Owner" onPress={() => setSheet('review')} />}
-        <Row icon="crown-circle-outline" title="Subscribe" detail="Plans, payment and member keys" onPress={() => router.push('/subscribe')} />
+        <Row icon="crown-circle-outline" title={paid ? 'Your plan' : 'Subscribe'} detail={paid ? `${endsText(paid)} · tap to renew` : 'Plans, payment and member keys'}
+          onPress={() => router.push('/subscribe')} />
         {owner && <Row icon="timer-outline" title="Member activity" detail="Owner · time on the app" onPress={() => setSheet('activity')} />}
         {owner && <Row icon="ticket-confirmation-outline" title="Trial users" detail="Owner · 2-day passes: usage, poll, sign-ups" onPress={() => setSheet('trials')} />}
         <AppVersion />

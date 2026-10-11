@@ -584,6 +584,12 @@ export function buildServer(options: ServerOptions = {}) {
     return {plans,discount,priced:plans.some((item)=>item.price!==null),methods:Array.isArray(info.methods)?info.methods.slice(0,8):[],
       textTo:typeof info.textTo==='string'?info.textTo:null,paid:null};
   });
+  // The member's own plan and end date (profile, and the renewal alert from 3 days before).
+  app.get('/v1/subscription',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    const paid=options.product?await options.product.subscription(user.accountId):null;
+    return {paid:paid?{...paid,label:PLAN_LABELS[paid.plan]??paid.plan}:null};
+  });
   app.post('/v1/subscribe/paid',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     const input=z.object({plan:paidPlan,method:z.string().trim().min(1).max(20)}).strict().safeParse(request.body);

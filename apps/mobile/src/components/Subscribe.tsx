@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAuth } from '../auth';
 import { colors, radius } from '../theme';
+import { endsText, usePaidPlan } from './PlanStatus';
 
 // Subscribe (owner, 2026-10-11): manual payments. Pick a plan, pay with a listed app, text the payment screenshot and your
 // CrownIQ username to the owner, tap "I've paid" (trials get 24 more hours once), then enter the member key the owner sends.
@@ -20,6 +21,7 @@ export function SubscribePanel({ onDone }: { onDone?: () => void }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const guest = profile?.plan === 'GUEST', signedOut = !profile, member = !!profile && !guest;
+  const current = usePaidPlan();
   useEffect(() => {
     let active = true;
     void request('/v1/subscribe').then(async (response) => response.ok ? await response.json() as Info : null)
@@ -59,6 +61,7 @@ export function SubscribePanel({ onDone }: { onDone?: () => void }) {
   };
   if (!info) return <ActivityIndicator color={colors.mint} />;
   return <View style={styles.panel}>
+    {current && <Text style={styles.current}>Your plan: {endsText(current)}</Text>}
     <Text style={styles.step}>1. Pick a plan{info.discount ? ` · ${Math.round(info.discount * 100)}% off when you sign up now` : ''}</Text>
     {!info.priced && <Text style={styles.muted}>Prices are being finalized. Check back soon.</Text>}
     <View style={styles.plans}>{info.plans.filter((item) => item.price !== null).map((item) => <Pressable key={item.plan} accessibilityRole="button"
@@ -78,7 +81,7 @@ export function SubscribePanel({ onDone }: { onDone?: () => void }) {
 
     <Text style={styles.step}>3. Text your payment screenshot and your CrownIQ username{info.textTo ? ` to ${info.textTo}` : ' to the owner'}</Text>
     <Text style={styles.warn}>Payments are checked by hand, so your key isn’t instant. Allow up to 24 hours, and pay at least 24 hours before your free days end.</Text>
-    {!member && !signedOut && <Pressable accessibilityRole="button" disabled={busy} onPress={() => void paid()} style={[styles.button, busy && styles.off]}>
+    {!signedOut && <Pressable accessibilityRole="button" disabled={busy} onPress={() => void paid()} style={[styles.button, busy && styles.off]}>
       <Text style={styles.buttonText}>I’ve paid</Text></Pressable>}
     {guest && <Text style={styles.muted}>Tapping “I’ve paid” adds 24 hours to your pass once, so you don’t lose access while it’s checked.</Text>}
 
@@ -120,4 +123,5 @@ const styles = StyleSheet.create({
   off: { opacity: .5 },
   buttonText: { color: colors.mintInk, fontSize: 15, fontWeight: '900' },
   message: { color: colors.text, fontSize: 13, lineHeight: 18 },
+  current: { color: colors.mint, fontSize: 15, fontWeight: '900' },
 });

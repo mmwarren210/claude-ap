@@ -90,5 +90,8 @@ test('payments: "I have paid" gives a trial 24 hours once; a member key turns th
   now = new Date('2026-10-20T12:00:00Z');
   const renewed = await ledger.redeemMemberKey(accountId, renewal);
   assert.ok(renewed.paid?.until?.startsWith('2026-12-10'), 'a renewal adds 30 days to what was left');
+  now = new Date('2026-12-08T12:00:00Z');
+  const plan = await ledger.subscription(accountId);
+  assert.equal(plan?.plan, 'MONTH'); assert.equal(plan?.daysLeft, 2, 'the renewal alert shows from 3 days before');
   await assert.rejects(ledger.redeemMemberKey(accountId, renewal), /MEMBER_KEY_INVALID/);
 });

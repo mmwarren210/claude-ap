@@ -407,6 +407,14 @@ export class ProductLedger {
     }
     const result=this.session(data,account);await this.write(data);return {...result,graced};
   });}
+  /** A member's paid plan and its end date (null when they have none), for their profile and renewal alerts. */
+  async subscription(accountId:string){
+    const account=(await this.read()).accounts.find((item)=>item.id===accountId);
+    if(!account?.paid)return null;
+    const until=account.paid.until;
+    return {plan:account.paid.plan,paidAt:account.paid.paidAt,until,
+      daysLeft:until===null?null:Math.ceil((Date.parse(until)-this.clock().getTime())/86_400_000)};
+  }
   /** Owner view: the latest "I've paid" requests and member keys (no key values). */
   async payments(){
     const data=await this.read();
