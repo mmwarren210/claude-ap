@@ -557,10 +557,12 @@ export function buildServer(options: ServerOptions = {}) {
       .strict().safeParse(request.body);
     if(!input.success)return reply.code(400).send({code:'GUEST_PASS_INVALID'});
     // The shared guest link, or one of the owner's single-use trial keys.
-    const pass=await options.product.trialPass(input.data.code).catch(()=>null)??options.guestPass;
-    if(!pass)return reply.code(404).send({code:'GUEST_PASS_INVALID'});
-    try{return await options.product.guestLogin(pass,input.data.code,input.data.deviceId);}
+    const trial=await options.product.isTrialKey(input.data.code).catch(()=>false);
+    if(!trial&&!options.guestPass)return reply.code(404).send({code:'GUEST_PASS_INVALID'});
+    try{return trial?await options.product.trialLogin(input.data.code,input.data.deviceId)
+      :await options.product.guestLogin(options.guestPass!,input.data.code,input.data.deviceId);}
     catch(error){const code=(error as Error).message;
+      if(code==='TRIALS_ALL_USED')return reply.code(403).send({code});
       if(code==='GUEST_PASS_FULL'||code==='GUEST_PASS_EXPIRED')return reply.code(403).send({code});
       if(code==='GUEST_PASS_INVALID'||code==='ACCOUNT_SUSPENDED')return reply.code(404).send({code:'GUEST_PASS_INVALID'});
       return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}

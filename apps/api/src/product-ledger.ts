@@ -338,11 +338,37 @@ export class ProductLedger {
     }
     await this.write(data);return keys;
   });}
-  /** The guest pass a trial key opens (one device, its days), or null when it isn't a trial key. */
-  async trialPass(code:string):Promise<GuestPass|null>{
-    const data=await this.read(),key=(data.trialKeys??[]).find((item)=>item.hash===tokenHash(code.trim()));
-    return key?{code:code.trim(),maxGuests:1,days:key.days}:null;
-  }
+  /** Whether a code is one of the owner's trial keys. */
+  async isTrialKey(code:string){return (await this.read()).trialKeys?.some((item)=>item.hash===tokenHash(code.trim()))??false;}
+  /**
+   * Sign in with a trial key (owner, 2026-10-11: all 10 are posted together). A device that already has a trial gets it
+   * back, whichever key it clicks. A key someone else used hands over the next free key in issue order (then wraps), and
+   * says which; when all are used, TRIALS_ALL_USED. Each account lasts its key's days from first use.
+   */
+  async trialLogin(code:string,deviceId:string){return this.exclusive(async()=>{
+    const data=await this.read(),keys=data.trialKeys??[],now=this.clock(),clicked=keys.findIndex((item)=>item.hash===tokenHash(code.trim()));
+    if(clicked<0)throw new Error('GUEST_PASS_INVALID');
+    const deviceOf=(hash:string)=>tokenHash(`${hash}:${deviceId}`);
+    const owners=new Map(data.accounts.flatMap((item)=>item.guest?[[item.guest.pass,item] as const]:[]));
+    let account=data.accounts.find((item)=>item.guest&&keys.some((key)=>key.hash===item.guest!.pass)&&item.guest.deviceHash===deviceOf(item.guest.pass));
+    let assigned:number|null=null;
+    if(!account){
+      const order=[...keys.keys()].map((offset)=>(clicked+offset)%keys.length),free=order.find((index)=>!owners.has(keys[index].hash));
+      if(free===undefined)throw new Error('TRIALS_ALL_USED');
+      const key=keys[free];let number=data.accounts.filter((item)=>item.guest).length+1,name=`Guest_${number}`;
+      while(data.profiles.some((item)=>normalizedName(item.displayName)===normalizedName(name)))name=`Guest_${++number}`;
+      account={id:randomUUID(),username:name,email:null,passwordSalt:null,passwordHash:null,identities:[],
+        createdAt:now.toISOString(),status:'FREE',guest:{pass:key.hash,deviceHash:deviceOf(key.hash),
+          expiresAt:new Date(now.getTime()+key.days*24*60*60_000).toISOString()}};
+      data.accounts.push(account);data.profiles.push({publicId:randomUUID(),actorKey:account.id,displayName:name,avatarUrl:null,
+        socialEnabled:true,profileVisible:true,isSuspended:false,createdAt:account.createdAt});
+      if(free!==clicked)assigned=free+1;
+    }
+    if(account.status==='SUSPENDED')throw new Error('ACCOUNT_SUSPENDED');
+    if(guestExpired(account,now))throw new Error('GUEST_PASS_EXPIRED');
+    const result=this.session(data,account);await this.write(data);
+    return {...result,...(assigned?{trialNote:`Key #${clicked+1} was already used, so you got key #${assigned}. Enjoy your 2 days!`}:{})};
+  });}
   /** Seat counts for the owner (no names or emails). */
   async membership(){
     const data=await this.read(),lifetime=lifetimeIds(data.accounts),now=this.clock();
@@ -358,8 +384,9 @@ export class ProductLedger {
     const data=await this.read(),name=username.trim(),address=normalizedEmail(email);
     // A trial (guest) account signing up keeps its profile and picks and becomes a member: it takes one of the seats
     // (owner, 2026-10-11). Its key works as the invite, so closed sign-up doesn't block it.
-    const trial=guest?data.accounts.find((item)=>item.guest?.pass===tokenHash(guest.code.trim())&&
-      item.guest.deviceHash===tokenHash(`${guest.code.trim()}:${guest.deviceId}`)):undefined;
+    // The device's own trial (by any key) or its guest-link account.
+    const trial=guest?data.accounts.find((item)=>!!item.guest&&(item.guest.deviceHash===tokenHash(`${item.guest.pass}:${guest.deviceId}`)||
+      (item.guest.pass===tokenHash(guest.code.trim())&&item.guest.deviceHash===tokenHash(`${guest.code.trim()}:${guest.deviceId}`)))):undefined;
     if(trial){
       this.assertSeat(data.accounts);
       if(trial.status==='SUSPENDED')throw new Error('ACCOUNT_SUSPENDED');
