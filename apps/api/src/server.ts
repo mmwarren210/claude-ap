@@ -1790,7 +1790,13 @@ export function buildServer(options: ServerOptions = {}) {
   }
   // Which build is running, so the app can show its version (Railway sets the commit at deploy).
   // A short notice for every member (CROWNIQ_NOTICE), e.g. while lines are being updated; null when unset.
-  app.get('/v1/notice',async()=>({message:process.env.CROWNIQ_NOTICE?.trim().slice(0,300)||null}));
+  // CROWNIQ_NOTICE_UNTIL (an ISO time) ends it on its own; CROWNIQ_NOTICE_LINK opens a tab when tapped (e.g. /(tabs)/vetted).
+  app.get('/v1/notice',async()=>{
+    const until=Date.parse(process.env.CROWNIQ_NOTICE_UNTIL??'');
+    if(Number.isFinite(until)&&now().getTime()>=until)return {message:null,link:null};
+    const link=process.env.CROWNIQ_NOTICE_LINK?.trim();
+    return {message:process.env.CROWNIQ_NOTICE?.trim().slice(0,300)||null,link:link&&/^\/[\w()/-]{1,60}$/.test(link)?link:null};
+  });
   app.get('/v1/version',async()=>({commit:(process.env.RAILWAY_GIT_COMMIT_SHA??process.env.CROWNIQ_COMMIT??'').slice(0,7)||null,
     startedAt:serverStartedAt}));
   // CrownIQ's own track record: each source's graded hit rate by sport and stat, and the base rates behind Trends.
