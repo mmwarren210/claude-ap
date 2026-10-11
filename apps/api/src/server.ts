@@ -641,6 +641,14 @@ export function buildServer(options: ServerOptions = {}) {
     const reads=tipModelReads?await tipModelReads(mine.tips).catch(()=>null):null;
     return {...mine,tips:mine.tips.map((tip)=>({...tip,models:reads?.get(tip.id)??null})),reading:!!options.tips.reader};
   });
+  // Vetted: every outside tip CrownIQ rated PLAY, for every signed-in user; never who posted it. Trial accounts don't get the
+  // reasons (owner, 2026-10-11: they see picks, not how CrownIQ makes them).
+  app.get('/v1/vetted',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!options.tips)return {picks:[],record:{won:0,lost:0}};
+    const vetted=await options.tips.store.vetted();
+    return user.plan==='GUEST'?{...vetted,picks:vetted.picks.map(({reasons:_reasons,...pick})=>pick)}:vetted;
+  });
   app.post('/v1/tips/upload',{bodyLimit:8_000_000},async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});

@@ -167,6 +167,25 @@ export class TipStore {
       sources: Object.fromEntries(sources.map((source) => [source, sourceRecord(tips.filter((tip) => tip.source === source))])) };
   }
 
+  /**
+   * Vetted (owner, 2026-10-11): every tip CrownIQ rated PLAY, for all users. The tipster's name, the post's own wording and
+   * the uploader are never included. Upcoming picks plus the last 14 days of results, newest first, and their record.
+   */
+  async vetted() {
+    const since = this.clock().getTime() - 14 * DAY;
+    const plays = (await this.load()).tips.filter((tip) => tip.analysis?.verdict === 'PLAY' &&
+      (tip.status === 'PENDING' || Date.parse(tip.gradedAt ?? tip.createdAt) >= since))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const graded = plays.filter((tip) => tip.status === 'WON' || tip.status === 'LOST');
+    return {
+      picks: plays.map((tip) => ({ id: tip.id, sport: tip.sport, league: tip.league, selection: tip.selection, opponent: tip.opponent,
+        market: tip.market, line: tip.line, side: tip.side, stat: tip.stat, eventDate: tip.eventDate, status: tip.status,
+        createdAt: tip.createdAt, chance: tip.analysis!.chance, price: tip.analysis!.price, ev: tip.analysis!.ev,
+        event: tip.analysis!.event, start: tip.analysis!.start, reasons: tip.analysis!.reasons })),
+      record: { won: graded.filter((tip) => tip.status === 'WON').length, lost: graded.filter((tip) => tip.status === 'LOST').length },
+    };
+  }
+
   /** The account marks a result itself, renames a service, or removes a tip. */
   update(accountId: string, id: string, change: { status?: TipStatus; source?: string }): Promise<boolean> {
     return this.exclusive(async () => {

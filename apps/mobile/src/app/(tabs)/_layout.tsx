@@ -26,6 +26,7 @@ export default function TabLayout() {
     tabBarBadgeStyle: { backgroundColor: colors.mint, color: colors.mintInk, fontWeight: '900', fontSize: 11 } }}>
     <Tabs.Screen name="index" options={{ title: 'Board', tabBarIcon: icon('view-grid-outline', 'view-grid') }} />
     <Tabs.Screen name="top-picks" options={{ title: 'Top Picks', tabBarIcon: icon('star-outline', 'star') }} />
+    <Tabs.Screen name="vetted" options={{ title: 'Vetted', tabBarIcon: icon('check-decagram-outline', 'check-decagram') }} />
     <Tabs.Screen name="crown" options={{ title: 'Crown', tabBarIcon: icon('crown-outline', 'crown'),
       tabBarBadge: legs.length ? legs.length : undefined }} />
     <Tabs.Screen name="edge" options={{ title: 'Edge', tabBarIcon: icon('diamond-outline', 'diamond') }} />
