@@ -21,7 +21,7 @@ function guestDeviceId():string{
   return id;
 }
 const noSubscription=()=>()=>undefined;
-const guestMessages:Record<string,string>={TRIALS_ALL_USED:'All 10 free trial keys have been claimed. Thanks for your interest in CrownIQ! Watch for the next round.',
+const guestMessages:Record<string,string>={TRIALS_ALL_USED:'All free trial keys have been claimed. Thanks for your interest in CrownIQ! Watch for the next round.',
   GUEST_PASS_FULL:'This guest link or trial key has already been used.',
   GUEST_PASS_EXPIRED:'Your free trial has ended. Thanks for testing CrownIQ! Sign up below to keep your picks and profile.',
   GUEST_PASS_INVALID:'This guest link is not valid.',TOO_MANY_ATTEMPTS:'Too many attempts. Please wait a minute.'};
