@@ -658,7 +658,8 @@ export function buildServer(options: ServerOptions = {}) {
     if(!open.length)return;
     const reads=await tipModelReads(open).catch(()=>null);
     if(!reads)return;
-    const checks=new Map([...reads].map(([id,read])=>[id,{edge:read.edge?.verdict??null,gkr:read.gkrPlus?.verdict??null}]));
+    const checks=new Map([...reads].map(([id,read])=>[id,{edge:read.edge?.verdict??null,gkr:read.gkrPlus?.verdict??null,
+      edgeChance:read.edge?.chance??null,gkrChance:read.gkrPlus?.chance??null,breakEven:read.edge?.breakEven??null}]));
     await options.tips.store.setModelChecks(checks);
   };
   app.get('/v1/vetted',async(request,reply)=>{

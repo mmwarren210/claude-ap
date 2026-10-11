@@ -72,7 +72,7 @@ test('a PLAY that Edge calls FADE at the tip price stays out of Vetted (owner se
     [tips[1].id, { edge: 'FADE' as const, gkr: 'FADE' as const }], [third[0].id, { edge: 'PASS' as const, gkr: 'PASS' as const }]]));
   const vetted = await store.vetted();
   assert.deepEqual(vetted.picks.map((pick) => pick.selection).sort(), ['Austin Reaves', 'LeBron James']);
-  assert.deepEqual(vetted.picks.find((pick) => pick.selection === 'LeBron James')?.checks, { edge: 'PLAY', gkr: 'LEAN' });
+  assert.deepEqual(vetted.picks.find((pick) => pick.selection === 'LeBron James')?.checks, { edge: 'PLAY', gkr: 'LEAN', edgeChance: null, gkrChance: null, breakEven: null });
   assert.deepEqual(vetted.hidden.map((pick) => pick.selection), ['Anthony Davis']);
   assert.equal((await store.uncheckedPlays()).length, 0);
 });
@@ -83,4 +83,19 @@ test('model reads are judged at the tip own price, not the PrizePicks bar', asyn
   assert.equal(modelRead({ side: 'OVER' }, pick, 'prizepicks').verdict, 'PASS');
   assert.equal(modelRead({ side: 'OVER' }, pick, 'prizepicks', -110).verdict, 'LEAN');
   assert.equal(modelRead({ side: 'OVER' }, pick, 'prizepicks', +120).verdict, 'PLAY');
+});
+
+test('GKR or Edge can approve a pick the AI passed on; an AI FADE still keeps it off', async () => {
+  const now = new Date('2026-10-11T12:00:00Z'), store = new TipStore(null, () => now);
+  const prop = { text: 'x', sport: 'NFL', league: 'NFL', selection: 'Bo Nix', opponent: null, market: 'PLAYER_PROP' as const,
+    line: 43.5, side: 'OVER' as const, stat: 'rushing yards', odds: null, eventDate: '2026-10-12' };
+  const tips = await store.add('o', 's', [prop, { ...prop, selection: 'Mark Andrews' }], [null, null]);
+  const analysis = (verdict: 'PASS' | 'FADE') => ({ verdict, chance: .48, chanceSource: 'Claude' as const, price: null, priceSource: null,
+    ev: null, fairOdds: 108, reasons: [], event: null, start: null, analyzedAt: now.toISOString() });
+  await store.setAnalyses(tips.map((tip) => tip.id), new Map([[tips[0].id, analysis('PASS')], [tips[1].id, analysis('FADE')]]));
+  assert.equal((await store.uncheckedPlays()).length, 2, 'every analyzed prop gets the GKR/Edge check');
+  await store.setModelChecks(new Map(tips.map((tip) => [tip.id, { edge: 'PLAY' as const, gkr: 'PLAY' as const, edgeChance: .61, gkrChance: .63, breakEven: .577 }])));
+  const vetted = await store.vetted();
+  assert.deepEqual(vetted.picks.map((pick) => pick.selection), ['Bo Nix']);
+  assert.deepEqual(vetted.picks[0].approvedBy, ['GKR', 'Edge']);
 });

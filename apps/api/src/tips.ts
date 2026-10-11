@@ -55,7 +55,9 @@ export interface Tip extends TipDraft {
    * too). `rejected` when Edge says FADE at the tip's own price (its chance 5+ points under break-even): the pick stays out of
    * Vetted. A plain PASS keeps the pick, shown with a ✗. Checks from before v2 (judged at PrizePicks' bar) are redone.
    */
-  modelCheck?: { edge: TipVerdict | null; gkr: TipVerdict | null; checkedAt: string; rejected: boolean; v?: number };
+  modelCheck?: { edge: TipVerdict | null; gkr: TipVerdict | null; checkedAt: string; rejected: boolean; v?: number;
+    /** The models' chance on the tip's side, and the break-even they judged it against. */
+    edgeChance?: number | null; gkrChance?: number | null; breakEven?: number | null };
 }
 
 /** One pick across uploads: the same selection, market, line, side and stat on the same day is the same pick. */
@@ -217,14 +219,18 @@ export class TipStore {
     const now = this.clock().getTime(), since = now - 14 * DAY;
     const rejected = (tip: Tip) => !!tip.modelCheck?.rejected && (tip.modelCheck.v ?? 1) >= 2;
     const loaded = (await this.load()).tips;
-    const hidden = loaded.filter((tip) => tip.analysis?.verdict === 'PLAY' && rejected(tip) &&
+    // On the list: the AI says PLAY (and Edge doesn't call it a FADE), or GKR or Edge says PLAY (and the AI doesn't call it a FADE).
+    const byModels = (tip: Tip) => (tip.modelCheck?.v ?? 1) >= 2 && (tip.modelCheck!.gkr === 'PLAY' || tip.modelCheck!.edge === 'PLAY') &&
+      tip.analysis?.verdict !== 'FADE';
+    const approved = (tip: Tip) => (tip.analysis?.verdict === 'PLAY' && !rejected(tip)) || byModels(tip);
+    const hidden = loaded.filter((tip) => tip.analysis?.verdict === 'PLAY' && rejected(tip) && !byModels(tip) &&
       (tip.status === 'PENDING' || Date.parse(tip.gradedAt ?? tip.createdAt) >= since))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .filter((tip, index, list) => list.findIndex((other) => tipKey(other) === tipKey(tip)) === index)
       .map((tip) => ({ id: tip.id, sport: tip.sport, league: tip.league, selection: tip.selection, market: tip.market, line: tip.line,
         side: tip.side, stat: tip.stat, status: tip.status, chance: tip.analysis!.chance, price: tip.analysis!.price, ev: tip.analysis!.ev,
         submittedBy: tip.submittedBy ?? null, checks: { edge: tip.modelCheck!.edge, gkr: tip.modelCheck!.gkr } }));
-    const all = loaded.filter((tip) => tip.analysis?.verdict === 'PLAY' && !rejected(tip))
+    const all = loaded.filter(approved)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     // The same pick submitted by several people shows (and counts) once, credited to whoever submitted it first.
     const firsts = new Map<string, Tip>();
@@ -239,7 +245,10 @@ export class TipStore {
         market: tip.market, line: tip.line, side: tip.side, stat: tip.stat, eventDate: tip.eventDate, status: tip.status,
         live: tip.status === 'PENDING' && started(tip), createdAt: tip.createdAt, gradedAt: tip.gradedAt, chance: tip.analysis!.chance,
         price: tip.analysis!.price, ev: tip.analysis!.ev, event: tip.analysis!.event, start: tip.analysis!.start, reasons: tip.analysis!.reasons, submittedBy: tip.submittedBy ?? null,
-        checks: tip.modelCheck ? { edge: tip.modelCheck.edge, gkr: tip.modelCheck.gkr } : null })),
+        checks: tip.modelCheck ? { edge: tip.modelCheck.edge, gkr: tip.modelCheck.gkr, edgeChance: tip.modelCheck.edgeChance ?? null,
+          gkrChance: tip.modelCheck.gkrChance ?? null, breakEven: tip.modelCheck.breakEven ?? null } : null,
+        approvedBy: [tip.analysis!.verdict === 'PLAY' ? 'AI' : null, tip.modelCheck?.gkr === 'PLAY' ? 'GKR' : null,
+          tip.modelCheck?.edge === 'PLAY' ? 'Edge' : null].filter((name): name is string => !!name) })),
       record: vettedRecord(plays),
       hidden,
       scoreboard: { allTime: vettedRecord(all), last7: vettedRecord(all.filter((tip) => Date.parse(tip.gradedAt ?? tip.createdAt) >= now - 7 * DAY)),
@@ -284,17 +293,21 @@ export class TipStore {
         chance: tip.analysis?.chance ?? null, price: tip.analysis?.price ?? null, ev: tip.analysis?.ev ?? null, check: tip.modelCheck ?? null })) };
   }
 
-  /** PLAY player props still waiting for GKR's and Edge's check (pending games only). */
-  async uncheckedPlays(limit = 40): Promise<Tip[]> {
-    return (await this.load()).tips.filter((tip) => tip.analysis?.verdict === 'PLAY' && tip.status === 'PENDING' &&
+  /**
+   * Pending player props waiting for GKR's and Edge's check. Every analyzed prop is checked, not only the AI's PLAYs
+   * (owner, 2026-10-11): GKR or Edge can approve a pick for Vetted on their own.
+   */
+  async uncheckedPlays(limit = 60): Promise<Tip[]> {
+    return (await this.load()).tips.filter((tip) => !!tip.analysis && tip.status === 'PENDING' &&
       tip.market === 'PLAYER_PROP' && tip.line !== null && (tip.modelCheck?.v ?? 1) < 2).slice(0, limit).map((tip) => ({ ...tip }));
   }
   /** Saves GKR's and Edge's reads; every copy of the same pick gets the same check. */
-  setModelChecks(checks: ReadonlyMap<string, { edge: TipVerdict | null; gkr: TipVerdict | null }>): Promise<void> {
+  setModelChecks(checks: ReadonlyMap<string, { edge: TipVerdict | null; gkr: TipVerdict | null; edgeChance?: number | null;
+    gkrChance?: number | null; breakEven?: number | null }>): Promise<void> {
     return this.exclusive(async () => {
       if (!checks.size) return;
       const data = await this.load(), now = this.clock().toISOString();
-      const byKey = new Map<string, { edge: TipVerdict | null; gkr: TipVerdict | null }>();
+      const byKey = new Map<string, Parameters<TipStore['setModelChecks']>[0] extends ReadonlyMap<string, infer V> ? V : never>();
       for (const tip of data.tips) { const check = checks.get(tip.id); if (check) byKey.set(tipKey(tip), check); }
       for (const tip of data.tips) {
         const check = byKey.get(tipKey(tip));

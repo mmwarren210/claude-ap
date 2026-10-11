@@ -13,7 +13,9 @@ type VettedPick = { id: string; sport: string | null; league: string | null; sel
   line: number | null; side: 'OVER' | 'UNDER' | null; stat: string | null; eventDate: string | null;
   status: 'PENDING' | 'WON' | 'LOST' | 'PUSH' | 'VOID'; createdAt: string; chance: number; price: number | null; ev: number | null;
   event: string | null; start: string | null; reasons?: string[]; live?: boolean; submittedBy?: string | null;
-  checks?: { edge: string | null; gkr: string | null } | null };
+  checks?: { edge: string | null; gkr: string | null; edgeChance?: number | null; gkrChance?: number | null; breakEven?: number | null } | null;
+  /** Who rated it PLAY: the AI (market check), GKR, Edge. */
+  approvedBy?: string[] };
 type VettedRecord = { won: number; lost: number; push: number; units: number; roi: number | null };
 type Scoreboard = { allTime: VettedRecord; last7: VettedRecord; bySport: Record<string, VettedRecord>;
   streak: { kind: 'W' | 'L'; length: number } | null; pending: number; live: number; updatedAt: string };
@@ -97,7 +99,7 @@ export default function VettedTab() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void load()} tintColor={colors.mint} />}>
       <AppHeader subtitle="Vetted" />
-      <ModelBanner title="Crown Approved" text="Outside tips checked against the market, and by GKR and Edge when the prop is on a CrownIQ board. Only the plays make this list." />
+      <ModelBanner title="Crown Approved" text="Outside tips checked by the market, GKR and Edge. A pick makes this list when one of them rates it PLAY and none calls it a FADE." />
       {data?.scoreboard && <ScoreboardCard board={data.scoreboard} />}
       <View style={styles.submit}>
         <Text style={styles.boardTitle}>SUBMIT A PICK</Text>
@@ -164,6 +166,13 @@ function Stat({ label, value, good }: { label: string; value: string; good?: boo
     <Text style={styles.statLabel}>{label}</Text></View>;
 }
 
+// The chance from whoever approved it: the AI's when it said PLAY, else GKR's or Edge's (with the break-even they used).
+const chanceText = (pick: VettedPick) => {
+  const model = pick.approvedBy?.includes('AI') ? null : pick.checks?.gkrChance ?? pick.checks?.edgeChance ?? null;
+  const chance = model ?? pick.chance;
+  return `${Math.round(chance * 100)}% to hit${model !== null && pick.checks?.breakEven ? ` (needs ${Math.round(pick.checks.breakEven * 100)}%)` : ''}`;
+};
+
 // GKR's and Edge's own read on the pick (player props on a CrownIQ board).
 const agrees = (verdict: string | null) => verdict === 'PLAY' || verdict === 'LEAN';
 const checkLine = (checks: { edge: string | null; gkr: string | null }) =>
@@ -181,8 +190,9 @@ function PickCard({ pick }: { pick: VettedPick }) {
     <Text style={styles.selection}>{pick.selection}</Text>
     <Text style={styles.market}>{marketText(pick)}{pick.opponent ? ` · vs ${pick.opponent}` : ''}</Text>
     {(pick.event || time) && <Text style={styles.muted}>{[pick.event, time].filter(Boolean).join(' · ')}</Text>}
-    <Text style={styles.numbers}>{Math.round(pick.chance * 100)}% to hit{pick.price !== null ? ` · ${odds(pick.price)}` : ''}
-      {pick.ev !== null ? ` · EV ${pick.ev >= 0 ? '+' : ''}${(pick.ev * 100).toFixed(1)}%` : ''}</Text>
+    {pick.approvedBy?.length ? <Text style={styles.approved}>Approved by {pick.approvedBy.join(' + ')}</Text> : null}
+    <Text style={styles.numbers}>{chanceText(pick)}{pick.price !== null ? ` · ${odds(pick.price)}` : ''}
+      {pick.ev !== null && pick.approvedBy?.includes('AI') ? ` · EV ${pick.ev >= 0 ? '+' : ''}${(pick.ev * 100).toFixed(1)}%` : ''}</Text>
     {pick.checks && <Text style={styles.checks}>{checkLine(pick.checks)}</Text>}
     {pick.submittedBy && <Text style={styles.faint}>Submitted by {pick.submittedBy}</Text>}
     {pick.reasons?.slice(0, 2).map((reason) => <Text key={reason} style={styles.reason}>• {reason}</Text>)}
@@ -201,6 +211,7 @@ const styles = StyleSheet.create({
   statLabel: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
   faint: { color: colors.textFaint, fontSize: 11 },
   checks: { color: colors.mint, fontSize: 12, fontWeight: '800' },
+  approved: { color: colors.gold, fontSize: 12, fontWeight: '900', letterSpacing: .5 },
   hiddenCard: { opacity: .7, borderStyle: 'dashed' },
   submit: { gap: 8, padding: 14, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   button: { minHeight: 46, borderRadius: 999, backgroundColor: colors.mint, alignItems: 'center', justifyContent: 'center' },
