@@ -382,3 +382,13 @@ test('with sign-up closed, only the family code makes an account; the code check
     assert.equal((await ledger.authenticate(family.token))?.plan,'LIFETIME');
   }finally{await rm(folder,{recursive:true,force:true});}
 });
+
+test('the owner sign-in check names the step a token fails',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-auth-check-'));
+  try{const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>start);
+    const pass={code:'testers-2030',maxGuests:4,days:3};
+    const guest=await ledger.guestLogin(pass,'testers-2030','device-1-0123456789abcdef');
+    assert.deepEqual(await ledger.authDiagnose(guest.token),{step:'OK',inFile:true,inCache:true,cacheBuilt:true,guest:true});
+    assert.equal((await ledger.authDiagnose('x'.repeat(43))).step,'NO_SESSION');
+  }finally{await rm(folder,{recursive:true,force:true});}
+});

@@ -748,6 +748,16 @@ export class ProductLedger {
     return profile?{accountId:account.id,publicId:profile.publicId,username:account.username,
       email:account.email,plan:planOf(account,this.authCache!.lifetime),mustChangePassword:!!account.mustChangePassword}:null;
   });}
+  /** Owner diagnostics: which sign-in step a token fails, checked against the cache and the file (no names). */
+  async authDiagnose(token:string){return this.exclusive(async()=>{
+    const hash=tokenHash(token),now=this.clock().getTime(),data=await this.read();
+    const inFile=data.sessions.find((item)=>item.hash===hash),inCache=this.authCache?.sessions.get(hash);
+    const session=inCache??inFile,account=session?data.accounts.find((item)=>item.id===session.accountId):undefined;
+    const step=!session?'NO_SESSION':Date.parse(session.expiresAt)<=now?'SESSION_EXPIRED':!account?'NO_ACCOUNT'
+      :account.status==='SUSPENDED'?'SUSPENDED':guestExpired(account,this.clock())?'GUEST_EXPIRED'
+      :!data.profiles.some((item)=>item.actorKey===account.id)?'NO_PROFILE':'OK';
+    return {step,inFile:!!inFile,inCache:!!inCache,cacheBuilt:!!this.authCache,guest:!!account?.guest};
+  });}
   private accountByLogin(data:Data,login:string){
     const entered=login.trim();
     if(entered.includes('@'))return data.accounts.find((item)=>item.email===normalizedEmail(entered)&&!item.guest);

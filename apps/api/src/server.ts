@@ -2609,6 +2609,16 @@ export function buildServer(options: ServerOptions = {}) {
       const released = dryRun ? [] : await options.product.releaseGuests(idle.map((item) => item.accountId));
       return { idle, released, keys: (await options.product.membership()).trials };
     });
+    // Sign-in check (owner, 2026-10-12): the token comes in the body, so a proxy that drops the Authorization header can't skew
+    // it; and how many accounts have any recorded activity (counts only).
+    admin.post('/auth-check', async (request, reply) => {
+      const input = z.object({ token: z.string().min(32).max(100) }).strict().safeParse(request.body);
+      if (!input.success || !options.product) return reply.code(400).send({ code: 'INVALID_TOKEN' });
+      const activity = options.activity ? await options.activity.report() : [];
+      return { ...await options.product.authDiagnose(input.data.token), authenticated: !!await options.product.authenticate(input.data.token),
+        activity: { accounts: activity.length, withMinutes: activity.filter((item) => item.totalMinutes > 0).length,
+          lastSeen: activity[0]?.lastSeen ?? null } };
+    });
     admin.post('/player-profiles/refresh', async (_request, reply) => options.playerProfiles ? options.playerProfiles.refresh()
       : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
     admin.get('/player-store', async (_request, reply) => options.playerStore ? { store: options.playerStore.counts(), history: options.proplineHistory?.status() ?? null }
