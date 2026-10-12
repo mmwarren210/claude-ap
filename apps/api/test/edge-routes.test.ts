@@ -87,6 +87,7 @@ test('Edge routes: every line read or No read, leave-one-out, Gen, slips and own
     // The Goblin stays out until Goblins & Demons is turned on.
     assert.ok(gen.slips.every((slip) => slip.legs.every((leg) => !leg.lineId.includes('goblin'))));
     assert.ok(gen.slips.length >= 1);
+    if (gen.slips.length > 1) assert.ok(gen.notes.some((note) => note.startsWith('Mix and match')));
     assert.ok(gen.slips.every((slip) => new Set(slip.legs.map((leg) => leg.eventId)).size >= 2));
     const growth = edgeGenResponseSchema.parse((await app.inject({ method: 'POST', url: '/v1/edge/gen',
       payload: { type: 'POWER', size: 2, count: 2, objective: 'growth' } })).json());

@@ -194,6 +194,8 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     const usable = pool.filter((pick) => body.data.alternates || !isAlternate(pick)), perGame = new Map<string, Set<string>>();
     for (const pick of usable) perGame.set(pick.eventId, (perGame.get(pick.eventId) ?? new Set()).add(pick.playerId));
     const capacity = [...perGame.values()].reduce((sum, players) => sum + Math.min(players.size, maxPerGame), 0);
+    // Owner, 2026-10-12: entries never share players, so their legs can be combined into a bigger ticket.
+    if (slips.length > 1) notes.splice(1, 0, 'Mix and match: these entries use different players, so you can combine legs from them into a bigger ticket.');
     if (slips.length < body.data.count) notes.push(slips.length
       ? `Only ${slips.length} of ${body.data.count} entries had enough distinct +EV legs; Edge does not pad entries with weak legs.`
       : capacity < body.data.size
