@@ -562,6 +562,22 @@ export class ProductLedger {
     }).sort((a,b)=>b.startedAt.localeCompare(a.startedAt));
   }
 
+  /**
+   * Frees trial keys held by guest accounts nobody used (owner, 2026-10-12: link previews claimed all 11 posted keys the
+   * minute they were posted). Only guest accounts still on a trial key, with no poll answer, are removed (with their
+   * profile and sign-ins); the caller decides which accounts never opened the app. Returns the usernames removed.
+   */
+  async releaseGuests(accountIds:readonly string[]){return this.exclusive(async()=>{
+    const data=await this.read(),keys=new Set((data.trialKeys??[]).map((key)=>key.hash)),wanted=new Set(accountIds);
+    const gone=data.accounts.filter((item)=>wanted.has(item.id)&&item.guest&&keys.has(item.guest.pass)&&!item.guest.poll&&!item.fromTrial);
+    if(!gone.length)return [];
+    const ids=new Set(gone.map((item)=>item.id));
+    data.accounts=data.accounts.filter((item)=>!ids.has(item.id));
+    data.profiles=data.profiles.filter((item)=>!ids.has(item.actorKey));
+    data.sessions=data.sessions.filter((item)=>!ids.has(item.accountId));
+    await this.write(data);
+    return gone.map((item)=>item.username);
+  });}
   /** Every trial's poll answers for the owner (no names): counts and the written suggestions. */
   async trialPollResults(){
     const data=await this.read(),answers=data.accounts.flatMap((item)=>item.guest?.poll?[item.guest.poll]:[]);

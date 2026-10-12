@@ -88,13 +88,26 @@ function TrialUsers() {
     submitted: { screenshots: number; picks: number; plays: number } | null };
   const [data, setData] = useState<{ trials: Trial[]; keys: { issued: number; used: number; active: number } | null } | null>(null);
   const [failed, setFailed] = useState(false);
+  // Keys a link preview claimed (an account that never opened the app) can be given back for real people (owner, 2026-10-12).
+  const [release, setRelease] = useState<{ step: 'idle' | 'confirm' | 'busy'; idle: number; note: string | null }>({ step: 'idle', idle: 0, note: null });
+  const [reload, setReload] = useState(0);
+  const freeKeys = (dryRun: boolean) => {
+    setRelease((current) => ({ ...current, step: 'busy' }));
+    void request(`/v1/owner/trials/release-idle${dryRun ? '?dryRun=1' : ''}`, { method: 'POST' })
+      .then(async (response) => response.ok ? await response.json() as { idle: unknown[]; released: string[] } : null)
+      .then((body) => {
+        if (!body) { setRelease({ step: 'idle', idle: 0, note: 'Couldn’t check the keys. Try again.' }); return; }
+        if (dryRun) setRelease({ step: body.idle.length ? 'confirm' : 'idle', idle: body.idle.length, note: body.idle.length ? null : 'No unused keys to free.' });
+        else { setRelease({ step: 'idle', idle: 0, note: `Freed ${body.released.length} key${body.released.length === 1 ? '' : 's'}.` }); setReload((value) => value + 1); }
+      }).catch(() => setRelease({ step: 'idle', idle: 0, note: 'Couldn’t check the keys. Try again.' }));
+  };
   useEffect(() => {
     let active = true;
     void request('/v1/owner/trials').then(async (response) => response.ok ? await response.json() as { trials: Trial[]; keys: { issued: number; used: number; active: number } | null } : null)
       .then((value) => { if (!active) return; if (value) setData(value); else setFailed(true); })
       .catch(() => { if (active) setFailed(true); });
     return () => { active = false; };
-  }, [request]);
+  }, [request, reload]);
   if (failed) return <Text style={styles.sheetNote}>Could not load trial users. Try again.</Text>;
   if (!data) return <Text style={styles.sheetNote}>Loading…</Text>;
   const short = (iso: string) => new Date(iso).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -104,6 +117,11 @@ function TrialUsers() {
   return <>
     <Text style={styles.sheetNote}>Keys: {data.keys ? `${data.keys.used} of ${data.keys.issued} used · ${data.keys.active} on trial now` : '—'} · {signedUp} signed up ·
       {' '}{minutesLabel(minutes)} on the app in all. Minutes count while the app is open on screen (Eastern days).</Text>
+    <Pressable accessibilityRole="button" disabled={release.step === 'busy'} style={styles.freeKeys}
+      onPress={() => release.step === 'confirm' ? freeKeys(false) : freeKeys(true)}>
+      <Text style={styles.freeKeysText}>{release.step === 'busy' ? 'Checking…' : release.step === 'confirm'
+        ? `Tap again to free ${release.idle} unused key${release.idle === 1 ? '' : 's'}` : 'Free unused keys'}</Text></Pressable>
+    <Text style={styles.sheetNote}>{release.note ?? 'Gives back keys from accounts that never opened the app (2+ hours, no picks, no poll), like ones a link preview claimed.'}</Text>
     {!data.trials.length && <Text style={styles.sheetNote}>No one has used a trial key yet.</Text>}
     {data.trials.map((trial) => {
       const days = Object.entries(trial.activity?.days ?? {}).filter(([day]) => day >= trial.startedAt.slice(0, 10)).sort((a, b) => a[0].localeCompare(b[0]));
@@ -363,6 +381,8 @@ export default function MoreScreen() {
 }
 
 const styles = StyleSheet.create({
+  freeKeys: { alignSelf: 'flex-start', borderColor: colors.mint, borderRadius: 999, borderWidth: 1, marginTop: 8, paddingHorizontal: 14, paddingVertical: 7 },
+  freeKeysText: { color: colors.mint, fontSize: 13, fontWeight: '700' },
   safe: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 32, gap: 12 },
   profile: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: colors.surface, borderWidth: 1.5,

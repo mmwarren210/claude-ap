@@ -113,3 +113,17 @@ test('an account keeps its chosen language', async () => {
   assert.equal(await ledger.language(id), 'es');
   await assert.rejects(ledger.setLanguage('nobody', 'en'));
 });
+
+test('ghost trial accounts give their keys back; a poll answer or a signed-up account is never removed', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'ghost-'));
+  const ledger = new ProductLedger(join(folder, 'ledger.json'));
+  const [key] = await ledger.issueTrialKeys(2, 2);
+  await ledger.trialLogin(key!, 'preview-bot');
+  const trials = await ledger.trialUsers();
+  assert.equal(trials.length, 1);
+  assert.deepEqual(await ledger.releaseGuests([trials[0]!.accountId]), [trials[0]!.username]);
+  assert.equal((await ledger.trialUsers()).length, 0, 'the key is free again');
+  await ledger.trialLogin(key!, 'real-person');
+  assert.equal((await ledger.membership()).trials.used, 1);
+  assert.deepEqual(await ledger.releaseGuests(['not-a-guest']), []);
+});

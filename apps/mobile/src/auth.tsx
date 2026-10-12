@@ -43,7 +43,7 @@ type AuthContext={profile:Profile|null;register:(username:string,email:string,pa
   /** True in demo mode: sample data, no account, no server calls. */
   demo:boolean;enterDemo:()=>void;
   /** A guest link is signing in, or why it could not. `expired`: a trial pass that ended (it can still take the poll). */
-  guest:{signingIn:boolean;message:string;expired:boolean};
+  guest:{signingIn:boolean;waiting:boolean;start:()=>void;message:string;expired:boolean};
   /** Answers the end-of-trial poll (7 more free days): signed in, or with the trial link after the pass ended. */
   answerTrialPoll:(answers:TrialPollAnswers)=>Promise<void>};
 export type Session={token:string;profile:Profile};
@@ -102,10 +102,14 @@ export function AuthProvider({children}:{children:ReactNode}){
   const [demoChoice,setDemo]=useState<boolean|null>(null);
   const demo=demoChoice??demoLink;
   const [guestResult,setGuestResult]=useState<{done:boolean;message:string;expired?:boolean}>({done:false,message:''});
-  const guest=useMemo(()=>({signingIn:guestLink&&!guestResult.done,message:guestResult.message,expired:!!guestResult.expired}),[guestLink,guestResult]);
+  // A guest link claims its key only when the person taps Start (owner, 2026-10-12: link previews opened every posted link
+  // and used up the keys the minute they were posted).
+  const [guestStarted,setGuestStarted]=useState(false);
+  const guest=useMemo(()=>({signingIn:guestLink&&guestStarted&&!guestResult.done,waiting:guestLink&&!guestStarted&&!guestResult.done,
+    start:()=>setGuestStarted(true),message:guestResult.message,expired:!!guestResult.expired}),[guestLink,guestStarted,guestResult]);
   useEffect(()=>{
     const code=guestCode();
-    if(!code||!base)return;
+    if(!code||!base||!guestStarted)return;
     let active=true;
     void (async()=>{
       try{
@@ -124,7 +128,7 @@ export function AuthProvider({children}:{children:ReactNode}){
       }
     })();
     return ()=>{active=false;};
-  },[]);
+  },[guestStarted]);
   const value=useMemo<AuthContext>(()=>({
     profile:session?.profile??(demo?demoProfile:null),demo,guest,
     enterDemo:()=>setDemo(true),

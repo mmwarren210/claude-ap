@@ -59,9 +59,11 @@ export default function SignIn() {
           <View style={styles.betaPill}><Text style={styles.betaPillText}>BETA · NOW TESTING</Text></View>
         </View>
 
-        {(guest.signingIn || !!guest.message) && <View style={styles.panel}>
+        {(guest.waiting || guest.signingIn || !!guest.message) && <View style={styles.panel}>
           <Text style={styles.title}>Guest pass</Text>
-          {guest.signingIn ? <><Text style={styles.detail}>Opening CrownIQ with your guest pass…</Text>
+          {guest.waiting ? <><Text style={styles.detail}>You’ve got a free 2-day pass to CrownIQ. Tap below to start it on this device.</Text>
+            <PrimaryButton label="Start my 2-day pass" onPress={guest.start} /></>
+            : guest.signingIn ? <><Text style={styles.detail}>Opening CrownIQ with your guest pass…</Text>
             <ActivityIndicator color={colors.mint} style={styles.busy} /></>
             : <Text accessibilityRole="alert" style={styles.error}>{guest.message}</Text>}
           {guest.expired && <TrialPollForm />}

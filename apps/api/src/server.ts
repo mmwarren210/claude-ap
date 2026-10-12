@@ -946,6 +946,28 @@ export function buildServer(options: ServerOptions = {}) {
       submitted:options.tips?await options.tips.store.submitted(trial.accountId):null})));
     return {trials:rows,keys:(await options.product.membership()).trials};
   });
+  // Ghost trials: keys claimed by a link preview, not a person. A trial account at least 2 hours old that never opened the
+  // app, submitted nothing and answered no poll gives its key back. ?dryRun=1 lists them without removing.
+  const idleTrials=async()=>{
+    if(!options.product)return [];
+    const cutoff=now().getTime()-2*3600_000;
+    const rows=await options.product.trialUsers();
+    const idle=[];
+    for(const row of rows){
+      if(row.status==='SIGNED_UP'||row.poll||Date.parse(row.startedAt)>cutoff)continue;
+      const activity=options.activity?await options.activity.member(row.accountId):null;
+      const submitted=options.tips?await options.tips.store.submitted(row.accountId):null;
+      if((activity?.totalMinutes??0)>0||(submitted?.screenshots??0)>0)continue;
+      idle.push({accountId:row.accountId,username:row.username,keyNumber:row.keyNumber,startedAt:row.startedAt});
+    }
+    return idle;
+  };
+  app.post('/v1/owner/trials/release-idle',async(request,reply)=>{
+    if(!await isOwner(request)||!options.product)return reply.code(404).send({code:'NOT_FOUND'});
+    const idle=await idleTrials(),dryRun=(request.query as {dryRun?:string}).dryRun==='1';
+    const released=dryRun?[]:await options.product.releaseGuests(idle.map((item)=>item.accountId));
+    return {idle,released,keys:(await options.product.membership()).trials};
+  });
   app.get('/v1/owner/activity',async(request,reply)=>{
     if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
     return {members:options.activity?await options.activity.report():[]};
@@ -2581,6 +2603,12 @@ export function buildServer(options: ServerOptions = {}) {
     });
     admin.get('/members', async (_request, reply) => options.product ? options.product.membership()
       : reply.code(503).send({ code: 'PRODUCT_UNCONFIGURED' }));
+    admin.post('/trials/release-idle', async (request, reply) => {
+      if (!options.product) return reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' });
+      const idle = await idleTrials(), dryRun = (request.query as { dryRun?: string }).dryRun === '1';
+      const released = dryRun ? [] : await options.product.releaseGuests(idle.map((item) => item.accountId));
+      return { idle, released, keys: (await options.product.membership()).trials };
+    });
     admin.post('/player-profiles/refresh', async (_request, reply) => options.playerProfiles ? options.playerProfiles.refresh()
       : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
     admin.get('/player-store', async (_request, reply) => options.playerStore ? { store: options.playerStore.counts(), history: options.proplineHistory?.status() ?? null }

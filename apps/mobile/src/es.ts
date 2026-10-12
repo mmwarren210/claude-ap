@@ -2,6 +2,8 @@
 // values in a line (a number, a name). Player, team and stat names, scores, and the apps' own words (MORE/LESS, Goblin,
 // Demon, PrizePicks) stay as they are. Text with no entry here shows in English.
 export const es: Readonly<Record<string, string>> = {
+  "You’ve got a free 2-day pass to CrownIQ. Tap below to start it on this device.": "Tienes un pase gratis de 2 días para CrownIQ. Toca abajo para empezarlo en este dispositivo.",
+  "Start my 2-day pass": "Empezar mi pase de 2 días",
   "% (needs": "% (necesita",
   "% with their cut removed; this is the books’ number, not a GKR score.": "% sin su margen; es el número de las casas, no un puntaje GKR.",
   "&apos;s lines ›": " ›",
