@@ -237,7 +237,7 @@ export class TipStore {
    * the uploader are never included. Upcoming picks plus the last 14 days of results, newest first, and their record.
    */
   async vetted() {
-    const now = this.clock().getTime(), since = now - 14 * DAY;
+    const now = this.clock().getTime();
     const loaded = (await this.load()).tips;
     const approved = (tip: Tip) => approvalOf(tip).approved;
     const hidden = loaded.filter((tip) => approvalOf(tip).hiddenByModels && tip.status === 'PENDING')
