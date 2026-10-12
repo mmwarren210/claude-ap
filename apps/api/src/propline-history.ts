@@ -65,7 +65,11 @@ const READS: Readonly<Record<string, Readonly<Record<string, Read>>>> = {
     power_play_points: 'power_play_points', player_power_play_points: 'power_play_points', saves: 'saves' },
   SOCCER: { goals: 'goals', assists: 'assists', shots: 'shots', shots_on_target: 'shots_on_target', sot: 'shots_on_target',
     fouls: 'fouls_committed', goals_plus_assists: ['goals', 'assists'], goal_plus_assist: ['goals', 'assists'], saves: 'saves' },
-  TENNIS: { total_games: 'total_games', first_set_total_games: 'set_1_games', aces: 'aces', double_faults: 'dblfaults' },
+  // PropLine's tennis "total_games" and "set_1_games" are the player's own games (owner report, 2026-10-12: a 13-15 match
+  // read as 13). A match's total comes from both sides' games (match_total_games, added when the game is read); games won
+  // is the player's own count. The first set's total has no opponent count, so it isn't read.
+  TENNIS: { total_games: 'match_total_games', games_won: 'total_games', total_games_won: 'total_games', aces: 'aces',
+    double_faults: 'dblfaults' },
 };
 
 // A stat missing from a game the player played in means zero only when the box score carries others of the same kind
@@ -206,7 +210,9 @@ export class PropLineHistory {
     const key = `${sportKey}|${normalizedName(playerName)}`, now = this.clock();
     const cached = this.cache.get(key);
     // The nightly pull also refetches anything from before the deep game log, however fresh.
-    if (cached && (!refresh || (cached.deep && cached.teams)) && now - cached.at < (refresh ? refresh.olderThanMs : cached.keepMs ?? this.options.ttlMs ?? 6 * 3600_000))
+    // A tennis log read before the match total was added is re-asked (its totals would read as one player's games).
+    const stale = sportKey === 'tennis' && !!cached?.games?.length && !cached.games.some((game) => 'match_total_games' in game.stats);
+    if (cached && !stale && (!refresh || (cached.deep && cached.teams)) && now - cached.at < (refresh ? refresh.olderThanMs : cached.keepMs ?? this.options.ttlMs ?? 6 * 3600_000))
       return cached.games;
     const pending = this.loading.get(key);
     if (pending) return pending;
@@ -215,18 +221,22 @@ export class PropLineHistory {
     if (this.stats.requests >= (this.options.dailyRequests ?? 40_000)) { this.stats.skippedBudget++; return undefined; }
     this.stats.requests++;
     // A player whose full log was fetched in the last week only needs his newest games (merged below), not all 100.
-    const recent = !!this.options.store && !!cached?.games?.length && !!cached.deep && !!cached.teams && now - cached.at < 7 * 86_400_000;
+    const recent = !stale && !!this.options.store && !!cached?.games?.length && !!cached.deep && !!cached.teams && now - cached.at < 7 * 86_400_000;
     const request = this.slot(async () => {
       const body = await this.client.get<{ games?: { commence_time?: string; status?: string; opponent?: string | null;
-        home_team?: string | null; away_team?: string | null; stats?: Record<string, unknown> }[] }>(`/v1/sports/${sportKey}/players/${encodeURIComponent(playerName)}/games?limit=${recent ? 15 : 100}`)
+        home_team?: string | null; away_team?: string | null; home_score?: number | null; away_score?: number | null;
+        stats?: Record<string, unknown> }[] }>(`/v1/sports/${sportKey}/players/${encodeURIComponent(playerName)}/games?limit=${recent ? 15 : 100}`)
         // A name PropLine doesn't know (a tennis doubles pair) answers 404: no games, kept like any empty answer.
         .catch((error: unknown) => { if (String(error instanceof Error ? error.message : error).includes('404')) return { games: [] }; throw error; });
       return (body.games ?? []).flatMap((game): Game[] => {
         if (game.status !== 'final' || !game.commence_time || Number.isNaN(Date.parse(game.commence_time))) return [];
         // NFL preseason (July and August) is not the player's real workload.
         if (sportKey === 'football_nfl' && /^\d{4}-0[78]-/.test(game.commence_time)) return [];
-        const stats = Object.fromEntries(Object.entries(game.stats ?? {}).filter((entry): entry is [string, number] =>
+        const stats: Record<string, number> = Object.fromEntries(Object.entries(game.stats ?? {}).filter((entry): entry is [string, number] =>
           typeof entry[1] === 'number' && Number.isFinite(entry[1])));
+        // Tennis scores are games won by each side, so the match's total games is their sum.
+        if (sportKey === 'tennis' && Number.isFinite(game.home_score) && Number.isFinite(game.away_score))
+          stats.match_total_games = game.home_score! + game.away_score!;
         return [{ at: new Date(game.commence_time).toISOString(), opponent: game.opponent ?? null, stats,
           home: game.home_team ?? null, away: game.away_team ?? null }];
       });

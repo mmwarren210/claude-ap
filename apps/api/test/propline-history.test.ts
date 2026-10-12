@@ -129,3 +129,17 @@ test('a name PropLine answers 404 for is kept as no games, not re-asked as a fai
   assert.equal(asked, 1, 'asked once');
   assert.equal(history.status().failed, 0);
 });
+
+test('tennis total games is the whole match (both players), games won is the player’s own; old logs are re-asked', async () => {
+  let asked = 0;
+  const client = { get: async () => { asked++; return { games: [
+    { commence_time: '2030-10-06T00:00:00Z', status: 'final', home_team: 'Antonia Ruzic', away_team: 'Alicia Dudeney', home_score: 13, away_score: 15,
+      stats: { set_1_games: 6, set_2_games: 3, set_3_games: 4, total_games: 13, sets_won: 1 } }] }; } } as unknown as PropLineClient;
+  const history = new PropLineHistory(client, null, () => 'tennis', {}, () => 0);
+  const line = (market: string) => ({ sport: 'TENNIS' as const, market, playerName: 'Antonia Ruzic', eventId: 'e', eventStartTime: '2030-10-12T00:00:00Z' });
+  const total = await history.values(line('total_games')), won = await history.values(line('total_games_won'));
+  assert.deepEqual(total !== 'PENDING' && total?.values, [28], 'a 13-15 match is 28 games');
+  assert.deepEqual(won !== 'PENDING' && won?.values, [13]);
+  assert.equal(proplineStat('TENNIS', 'first_set_total_games'), null, 'no opponent count for the first set, so no read');
+  assert.equal(asked, 1);
+});
