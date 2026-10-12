@@ -1412,4 +1412,9 @@ export const es: Readonly<Record<string, string>> = {
   "⏳ Your free week ends {0}. Subscribe now so you don’t lose access (allow up to 24 hours for your key) →": "⏳ Tu semana gratis termina {0}. Suscríbete ahora para no perder el acceso (la clave puede tardar hasta 24 horas) →",
   "Free week": "Semana gratis",
   "Free week (survey)": "Semana gratis (encuesta)",
+  "These +EV legs come from {0} {1}, and an entry takes at most {2} picks from one game, so the biggest entry right now is {3} {4}. Pick a smaller entry, or choose All days for more games.": "Estos picks +EV vienen de {0} {1}, y una jugada lleva como máximo {2} picks de un partido, así que la jugada más grande ahora es de {3} {4}. Elige una jugada más pequeña o Todos los días para más partidos.",
+  "games": "partidos",
+  "game": "partido",
+  "picks": "picks",
+  "pick": "pick",
 };

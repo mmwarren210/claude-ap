@@ -92,6 +92,9 @@ test('Edge routes: every line read or No read, leave-one-out, Gen, slips and own
       payload: { type: 'POWER', size: 2, count: 2, objective: 'growth' } })).json());
     assert.ok(growth.slips.every((slip) => (slip.kellyFraction ?? 0) > 0 && (slip.growth ?? 0) > 0));
     assert.ok(growth.notes.some((note) => note.includes('Kelly')));
+    // An entry bigger than the day's games allow says so (at most 2 picks from one game), not "not enough legs".
+    const big = (await app.inject({ method: 'POST', url: '/v1/edge/gen', payload: { type: 'POWER', size: 6, count: 1 } })).json();
+    assert.ok(big.notes.some((note: string) => /biggest entry right now is \d+ picks?/.test(note)), JSON.stringify(big.notes));
 
     // Hard Rock is held out of ranked picks and Gen until the side-bias check clears it (9b).
     const held = await app.inject({ method: 'POST', url: '/v1/edge/gen', payload: { platform: 'hardrock', type: 'PARLAY', size: 2 } });

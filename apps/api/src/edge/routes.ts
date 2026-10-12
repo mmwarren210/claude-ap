@@ -187,9 +187,16 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
       : `${pool.length - alternates} positive-EV standard lines were eligible.${alternates ? ` Turn on Goblins & Demons to add ${alternates} more.` : ''}`];
     if (body.data.alternates && body.data.type === 'FLEX' && slips.some((slip) => slip.legs.some((leg) => leg.payoutMultiplier && leg.payoutMultiplier !== 1)))
       notes.push('PrizePicks changes Flex payouts for Goblins and Demons; Edge estimates them. Load an entry into My Slip and type your app’s payouts for the exact number.');
+    // The most legs one entry can hold: per game, up to the per-game limit of different players (owner, 2026-10-12: a 12-pick
+    // ask on a 5-game day said "not enough legs" when the limit of 2 per game was what stopped it).
+    const usable = pool.filter((pick) => body.data.alternates || !isAlternate(pick)), perGame = new Map<string, Set<string>>();
+    for (const pick of usable) perGame.set(pick.eventId, (perGame.get(pick.eventId) ?? new Set()).add(pick.playerId));
+    const capacity = [...perGame.values()].reduce((sum, players) => sum + Math.min(players.size, body.data.maxPerGame), 0);
     if (slips.length < body.data.count) notes.push(slips.length
       ? `Only ${slips.length} of ${body.data.count} entries had enough distinct +EV legs; Edge does not pad entries with weak legs.`
-      : 'Not enough +EV legs across two or more games for this entry right now.');
+      : capacity < body.data.size
+        ? `These +EV legs come from ${perGame.size} ${perGame.size === 1 ? 'game' : 'games'}, and an entry takes at most ${body.data.maxPerGame} picks from one game, so the biggest entry right now is ${capacity} ${capacity === 1 ? 'pick' : 'picks'}. Pick a smaller entry, or choose All days for more games.`
+        : 'Not enough +EV legs across two or more games for this entry right now.');
     notes.push(isBookPlatform(body.data.platform)
       ? 'A parlay pays the legs’ odds multiplied together and only if every leg wins; each leg also works as a single bet. Same-game legs are correlated.'
       : 'Payouts are the app’s published chart as CrownIQ keeps it, times each pick’s own multiplier; confirm in the app.');
