@@ -31,7 +31,7 @@ export const marketLabel = (key: string) => key.replace(/^(player|batter|pitcher
   .split('_').map((word) => word ? word[0]!.toUpperCase() + word.slice(1) : word).join(' ');
 
 interface Outcome { name?: string; description?: string | null; point?: number | null; dfs_odds_type?: string | null;
-  payout_multiplier?: number | string | null; player_id?: string | null }
+  payout_multiplier?: number | string | null; player_id?: string | null; price?: number | null }
 interface Event { id: string | number; sport_key?: string; home_team?: string | null; away_team?: string | null; commence_time?: string;
   bookmakers?: { key: string; markets?: { key: string; outcomes?: Outcome[] }[] }[] }
 
@@ -192,6 +192,8 @@ export function proplineMarketKey(sport: Sport, key: string): string {
   return bySport[sport]?.[key] ?? normalizePrizePicksMarketKey(sport, key);
 }
 
+/** Dabble markets offered as More only (owner, 2026-10-12). */
+export const DABBLE_MORE_ONLY: ReadonlySet<string> = new Set(['batter_home_runs', 'player_goals']);
 const tiers: Readonly<Record<string, ScrapedTier>> = { standard: 'REGULAR', goblin: 'GOBLIN', demon: 'DEMON' };
 /** Pick6's alternate numbers are ordinary picks at their own number (no Goblin/Demon on Pick6). */
 const pick6Tiers: Readonly<Record<string, ScrapedTier>> = { standard: 'REGULAR', alternate: 'REGULAR' };
@@ -216,6 +218,11 @@ export function eventLines(event: Event, league: string, sport: Sport, options: 
       if (!tier) { drop(`TIER_${flavor.toUpperCase()}`); continue; }
       // Goblins and Demons are MORE-only on PrizePicks: an "Under" on one is not a pick that exists.
       if (tier !== 'REGULAR' && side === 'LESS') { drop('ALTERNATE_UNDER'); continue; }
+      // Dabble (owner, 2026-10-12): PropLine's feed adds an Under to Dabble's More-only props ("did it happen" lines like home
+      // runs and goals), priced as a heavy favourite (−909). Dabble's real two-sided lines sit near even, so a Less priced at
+      // −250 or shorter, and any Less on the More-only markets the owner confirmed, is not a pick Dabble offers.
+      if (options.app === 'dabble' && side === 'LESS' && (DABBLE_MORE_ONLY.has(market.key) ||
+        (typeof outcome.price === 'number' && outcome.price <= -250))) { drop('DABBLE_MORE_ONLY'); continue; }
       const key = JSON.stringify([player.toLowerCase(), market.key, tier, outcome.point]);
       const multiplier = Number(outcome.payout_multiplier);
       const entry = grouped.get(key) ?? { player, market: market.key, tier, point: outcome.point, sides: new Set(),

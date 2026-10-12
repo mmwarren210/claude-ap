@@ -87,3 +87,13 @@ test('Dabble: an Edge platform with its own all-hit payout chart, its PropLine l
   assert.deepEqual(eventLines(dabble, 'NFL', 'NFL', { app: 'dabble', bookmaker: 'dabble' }).map((line) => [line.app, line.tier, line.line]),
     [['dabble', 'REGULAR', 244.5]]);
 });
+
+test('Dabble: a Less the app does not offer (home runs, goals, or a heavily favoured Under) is dropped', () => {
+  const event = { id: 1, commence_time: '2030-10-12T23:00:00Z', home_team: 'Brewers', away_team: 'Dodgers', bookmakers: [{ key: 'dabble', markets: [
+    { key: 'batter_home_runs', outcomes: [{ name: 'Over', description: 'Andy Pages', point: 0.5, price: 924 }, { name: 'Under', description: 'Andy Pages', point: 0.5, price: -909 }] },
+    { key: 'batter_rbis', outcomes: [{ name: 'Over', description: 'Andy Pages', point: 0.5, price: 313 }, { name: 'Under', description: 'Andy Pages', point: 0.5, price: -312 }] },
+    { key: 'batter_hits', outcomes: [{ name: 'Over', description: 'Andy Pages', point: 0.5, price: -130 }, { name: 'Under', description: 'Andy Pages', point: 0.5, price: 131 }] }] }] };
+  const lines = eventLines(event, 'MLB', 'MLB' as never, { app: 'dabble', bookmaker: 'dabble' });
+  assert.deepEqual(lines.map((line) => [line.stat, line.directions]), [['home runs', ['MORE']], ['rbis', ['MORE']], ['hits', ['MORE', 'LESS']]]
+    .map(([stat, sides]) => [lines.find((line) => line.stat.toLowerCase().includes(String(stat).split(' ')[0]!))!.stat, sides]));
+});
