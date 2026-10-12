@@ -589,7 +589,12 @@ export class ProductLedger {
       prices:count(answers.filter((item)=>item.plan&&item.price).map((item)=>`${item.plan} ${item.price}`)),
       improve:answers.filter((item)=>item.improve).map((item)=>({text:item.improve,at:item.at}))};
   }
-  async trialLogin(code:string,deviceId:string){return this.exclusive(async()=>{
+  /**
+   * Starts (or reopens) a trial from a trial key. A new trial needs a login (owner, 2026-10-12: "make them create a profile"):
+   * username, email and password, so the same person signs in on another device instead of using a second pass, and the
+   * account is ready when they subscribe. The same device reopens its trial without one.
+   */
+  async trialLogin(code:string,deviceId:string,login?:{username:string;email:string;password:string}){return this.exclusive(async()=>{
     const data=await this.read(),keys=data.trialKeys??[],now=this.clock(),clicked=keys.findIndex((item)=>item.hash===tokenHash(code.trim()));
     if(clicked<0)throw new Error('GUEST_PASS_INVALID');
     const deviceOf=(hash:string)=>tokenHash(`${hash}:${deviceId}`);
@@ -599,9 +604,12 @@ export class ProductLedger {
     if(!account){
       const order=[...keys.keys()].map((offset)=>(clicked+offset)%keys.length),free=order.find((index)=>!owners.has(keys[index].hash));
       if(free===undefined)throw new Error('TRIALS_ALL_USED');
-      const key=keys[free];let number=data.accounts.filter((item)=>item.guest).length+1,name=`Guest_${number}`;
-      while(data.profiles.some((item)=>normalizedName(item.displayName)===normalizedName(name)))name=`Guest_${++number}`;
-      account={id:randomUUID(),username:name,email:null,passwordSalt:null,passwordHash:null,identities:[],
+      if(!login)throw new Error('LOGIN_REQUIRED');
+      const name=login.username.trim(),address=normalizedEmail(login.email);
+      if(data.accounts.some((item)=>item.email===address))throw new Error('EMAIL_TAKEN');
+      if(data.profiles.some((item)=>normalizedName(item.displayName)===normalizedName(name)))throw new Error('USERNAME_TAKEN');
+      const key=keys[free],salt=randomBytes(16).toString('hex');
+      account={id:randomUUID(),username:name,email:address,passwordSalt:salt,passwordHash:(await passwordKey(login.password,salt)).toString('hex'),identities:[],
         createdAt:now.toISOString(),status:'FREE',guest:{pass:key.hash,deviceHash:deviceOf(key.hash),
           expiresAt:new Date(now.getTime()+key.days*24*60*60_000).toISOString()}};
       data.accounts.push(account);data.profiles.push({publicId:randomUUID(),actorKey:account.id,displayName:name,avatarUrl:null,
@@ -703,7 +711,9 @@ export class ProductLedger {
     const stored=Buffer.from(account?.passwordHash??'0'.repeat(128),'hex');
     if(!account?.passwordHash || !timingSafeEqual(actual,stored) || account.status==='SUSPENDED')
       throw new Error('INVALID_CREDENTIALS');
-    const result=this.session(data,account);await this.write(data);return result;
+    // A trial with a login signs in on any device until its pass ends.
+    if(guestExpired(account,this.clock()))throw new Error('GUEST_PASS_EXPIRED');
+    const result=this.session(data,account);await this.write(data);return {...result,...(account.guest?{guestExpiresAt:account.guest.expiresAt}:{})};
   });}
   async loginWithProvider(provider:IdentityProvider,subject:string,email:string|null,username?:string){
     return this.exclusive(async()=>{
@@ -760,9 +770,9 @@ export class ProductLedger {
   });}
   private accountByLogin(data:Data,login:string){
     const entered=login.trim();
-    if(entered.includes('@'))return data.accounts.find((item)=>item.email===normalizedEmail(entered)&&!item.guest);
+    if(entered.includes('@'))return data.accounts.find((item)=>item.email===normalizedEmail(entered)&&(!item.guest||!!item.passwordHash));
     const profile=data.profiles.find((item)=>normalizedName(item.displayName)===normalizedName(entered));
-    return profile?data.accounts.find((item)=>item.id===profile.actorKey&&!item.guest):undefined;
+    return profile?data.accounts.find((item)=>item.id===profile.actorKey&&(!item.guest||!!item.passwordHash)):undefined;
   }
   /** Every account for the owner's member list, newest first: name, plan and whether access is revoked. */
   async members(){

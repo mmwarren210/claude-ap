@@ -588,21 +588,26 @@ export function buildServer(options: ServerOptions = {}) {
       .strict().refine((value)=>!!(value.login??value.email)).safeParse(request.body);
     if(!input.success)return reply.code(400).send({code:'INVALID_LOGIN'});
     try{return await options.product.login((input.data.login??input.data.email)!,input.data.password);}
-    catch{return reply.code(401).send({code:'INVALID_CREDENTIALS'});}
+    catch(error){return (error as Error).message==='GUEST_PASS_EXPIRED'?reply.code(403).send({code:'GUEST_PASS_EXPIRED'})
+      :reply.code(401).send({code:'INVALID_CREDENTIALS'});}
   });
   app.post('/v1/auth/guest',async(request,reply)=>{
     if(!options.product)return reply.code(404).send({code:'GUEST_PASS_INVALID'});
     if(limited(`guest:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
-    const input=z.object({code:z.string().trim().min(1).max(100),deviceId:z.string().min(16).max(100)})
-      .strict().safeParse(request.body);
-    if(!input.success)return reply.code(400).send({code:'GUEST_PASS_INVALID'});
+    // A new trial comes with a login (owner, 2026-10-12): username, email and password.
+    const input=z.object({code:z.string().trim().min(1).max(100),deviceId:z.string().min(16).max(100),
+      login:z.object({username,email,password}).strict().optional()}).strict().safeParse(request.body);
+    if(!input.success){const login=(request.body as {login?:unknown}|null)?.login;
+      return reply.code(400).send({code:login?'INVALID_REGISTRATION':'GUEST_PASS_INVALID'});}
     // The shared guest link, or one of the owner's single-use trial keys.
     const trial=await options.product.isTrialKey(input.data.code).catch(()=>false);
     if(!trial&&!options.guestPass)return reply.code(404).send({code:'GUEST_PASS_INVALID'});
-    try{return trial?await options.product.trialLogin(input.data.code,input.data.deviceId)
+    try{return trial?await options.product.trialLogin(input.data.code,input.data.deviceId,input.data.login)
       :await options.product.guestLogin(options.guestPass!,input.data.code,input.data.deviceId);}
     catch(error){const code=(error as Error).message;
       if(code==='TRIALS_ALL_USED')return reply.code(403).send({code});
+      if(code==='LOGIN_REQUIRED')return reply.code(428).send({code});
+      if(code==='USERNAME_TAKEN'||code==='EMAIL_TAKEN')return reply.code(409).send({code});
       if(code==='GUEST_PASS_FULL'||code==='GUEST_PASS_EXPIRED')return reply.code(403).send({code});
       if(code==='GUEST_PASS_INVALID'||code==='ACCOUNT_SUSPENDED')return reply.code(404).send({code:'GUEST_PASS_INVALID'});
       return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}

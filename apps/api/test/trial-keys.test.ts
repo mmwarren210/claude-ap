@@ -5,24 +5,28 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { ProductLedger } from '../src/product-ledger.js';
 
+/** A trial's login (owner, 2026-10-12: a new trial needs one), unique per device. */
+const signup = (device: string) => ({ username: `T_${device.replace(/[^A-Za-z0-9]/g, '').slice(-12)}`, email: `${device}@example.com`, password: 'trial-password-1' });
+
+
 test('trial keys: single use, 2 days from first use, off the member list after, upgrade takes a seat', async () => {
   let now = new Date('2026-10-11T12:00:00Z');
   const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'trial-')), 'ledger.json'), 'CROWN_STRONG', () => now);
   const [key, other] = await ledger.issueTrialKeys(2);
   assert.match(key, /^CIQ-/);
   const device = 'device-aaaaaaaaaaaaaaaa';
-  const session = await ledger.trialLogin(key, device);
+  const session = await ledger.trialLogin(key, device, signup(device));
   assert.ok(session.guestExpiresAt?.startsWith('2026-10-13T12:00'));
   // Same device, other key: its own trial back, no second one.
-  assert.equal((await ledger.trialLogin(other, device)).trialNote, undefined);
+  assert.equal((await ledger.trialLogin(other, device, signup(device))).trialNote, undefined);
   assert.equal((await ledger.membership()).trials.used, 1);
   // Someone else clicks the used key: they get the next one.
-  assert.equal((await ledger.trialLogin(key, 'device-bbbbbbbbbbbbbbbb')).trialNote, 'Enjoy your 2 days!');
-  await assert.rejects(ledger.trialLogin(key, 'device-cccccccccccccccc'), /TRIALS_ALL_USED/);
+  assert.equal((await ledger.trialLogin(key, 'device-bbbbbbbbbbbbbbbb', signup('device-bbbbbbbbbbbbbbbb'))).trialNote, 'Enjoy your 2 days!');
+  await assert.rejects(ledger.trialLogin(key, 'device-cccccccccccccccc', signup('device-cccccccccccccccc')), /TRIALS_ALL_USED/);
   assert.equal((await ledger.membership()).trials.used, 2);
   assert.equal((await ledger.membership()).members.used, 0);
   now = new Date('2026-10-14T00:00:00Z');
-  await assert.rejects(ledger.trialLogin(key, device), /GUEST_PASS_EXPIRED/);
+  await assert.rejects(ledger.trialLogin(key, device, signup(device)), /GUEST_PASS_EXPIRED/);
   assert.equal((await ledger.members()).length, 0);
   const member = await ledger.register('t@example.com', 'a-good-password-1', 'Tester', { code: key, deviceId: device });
   assert.equal(member.profile.plan, 'FREE');
@@ -37,12 +41,12 @@ test('end-of-trial poll: opens in the last day, works after the pass ends, adds 
   const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'poll-')), 'ledger.json'), 'CROWN_STRONG', () => now);
   const [key] = await ledger.issueTrialKeys(1);
   const device = 'device-pollpollpollpoll';
-  const session = await ledger.trialLogin(key, device);
+  const session = await ledger.trialLogin(key, device, signup(device));
   const accountId = (await ledger.authenticate(session.token))!.accountId;
   assert.equal((await ledger.trialPollStatus(accountId)).eligible, false, 'not in the first day');
   await assert.rejects(ledger.answerTrialPoll({ accountId }, { recommend: 'YES', liked: [], improve: null }), /POLL_NOT_OPEN/);
   now = new Date('2026-10-13T20:00:00Z'); // the pass ended at 12:00
-  await assert.rejects(ledger.trialLogin(key, device), /GUEST_PASS_EXPIRED/);
+  await assert.rejects(ledger.trialLogin(key, device, signup(device)), /GUEST_PASS_EXPIRED/);
   const renewed = await ledger.answerTrialPoll({ code: key, deviceId: device }, { recommend: 'YES', liked: ['Vetted'], improve: 'More sports',
     plan: 'MONTH', price: '$21–30' });
   assert.ok(renewed.guestExpiresAt?.startsWith('2026-10-20T20:00'));
@@ -58,8 +62,8 @@ test('Trial users lists every trial account: on trial, ended and signed up, with
   let now = new Date('2026-10-11T12:00:00Z');
   const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'trials-')), 'ledger.json'), 'CROWN_STRONG', () => now);
   const [first, second] = await ledger.issueTrialKeys(2);
-  await ledger.trialLogin(first, 'device-aaaaaaaaaaaaaaaa');
-  await ledger.trialLogin(second, 'device-bbbbbbbbbbbbbbbb');
+  await ledger.trialLogin(first, 'device-aaaaaaaaaaaaaaaa', signup('device-aaaaaaaaaaaaaaaa'));
+  await ledger.trialLogin(second, 'device-bbbbbbbbbbbbbbbb', signup('device-bbbbbbbbbbbbbbbb'));
   now = new Date('2026-10-14T00:00:00Z');
   await ledger.register('b@example.com', 'a-good-password-1', 'Bee', { code: second, deviceId: 'device-bbbbbbbbbbbbbbbb' });
   const trials = await ledger.trialUsers();
@@ -73,7 +77,7 @@ test('payments: "I have paid" gives a trial 24 hours once; a member key turns th
   const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'pay-')), 'ledger.json'), 'CROWN_STRONG', () => now);
   const [trialKey] = await ledger.issueTrialKeys(1);
   const device = 'device-paypaypaypaypay';
-  const session = await ledger.trialLogin(trialKey, device);
+  const session = await ledger.trialLogin(trialKey, device, signup(device));
   const accountId = (await ledger.authenticate(session.token))!.accountId;
   const first = await ledger.requestPayment(accountId, 'MONTH', 'Cash App');
   assert.equal(first.graced, true);
@@ -100,7 +104,7 @@ test('owner approves in the app: waiting request, time added at once (31-day mon
   let now = new Date('2026-10-11T12:00:00Z');
   const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'grant-')), 'ledger.json'), 'CROWN_STRONG', () => now);
   const [trialKey] = await ledger.issueTrialKeys(1);
-  const session = await ledger.trialLogin(trialKey, 'device-grantgrantgrant1');
+  const session = await ledger.trialLogin(trialKey, 'device-grantgrantgrant1', signup('device-grantgrantgrant1'));
   const user = (await ledger.authenticate(session.token))!;
   await ledger.requestPayment(user.accountId, 'MONTH', 'Zelle');
   const row = (await ledger.members()).find((item) => item.publicId === user.publicId)!;
@@ -115,4 +119,32 @@ test('owner approves in the app: waiting request, time added at once (31-day mon
   const stacked = await ledger.grantPlan(user.publicId, 'QUARTER');
   assert.ok(stacked.paid?.until?.startsWith('2027-02-12T12:00'), '93 more days on top of what was left');
   assert.ok(stacked.paid);
+});
+
+test('a new trial needs a login; the same person signs in on another device without using a second pass', async () => {
+  let now = new Date('2026-10-12T12:00:00Z');
+  const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'trial-login-')), 'ledger.json'), 'CROWN_STRONG', () => now);
+  const [key] = await ledger.issueTrialKeys(3);
+  await assert.rejects(ledger.trialLogin(key, 'phone-aaaaaaaaaaaaaaaa'), /LOGIN_REQUIRED/);
+  assert.equal((await ledger.membership()).trials.used, 0, 'no pass is used without a login');
+  const login = { username: 'Jordan_23', email: 'Jordan@Example.com', password: 'trial-password-1' };
+  const phone = await ledger.trialLogin(key, 'phone-aaaaaaaaaaaaaaaa', login);
+  assert.equal(phone.profile.username, 'Jordan_23');
+  assert.equal(phone.profile.plan, 'GUEST');
+  // The same phone reopens its trial with no login needed.
+  assert.equal((await ledger.trialLogin(key, 'phone-aaaaaaaaaaaaaaaa')).profile.publicId, phone.profile.publicId);
+  // A laptop: signing in with the trial's login reaches the same account, same end time, and no second pass.
+  const laptop = await ledger.login('jordan@example.com', 'trial-password-1');
+  assert.equal(laptop.profile.publicId, phone.profile.publicId);
+  assert.equal(laptop.guestExpiresAt, phone.guestExpiresAt);
+  assert.equal((await ledger.login('Jordan_23', 'trial-password-1')).profile.publicId, phone.profile.publicId);
+  assert.equal((await ledger.authenticate(laptop.token))?.plan, 'GUEST');
+  assert.equal((await ledger.membership()).trials.used, 1);
+  // Names and emails stay unique.
+  await assert.rejects(ledger.trialLogin(key, 'phone-bbbbbbbbbbbbbbbb', { ...login, username: 'Other_1' }), /EMAIL_TAKEN/);
+  await assert.rejects(ledger.trialLogin(key, 'phone-bbbbbbbbbbbbbbbb', { ...login, email: 'other@example.com' }), /USERNAME_TAKEN/);
+  assert.equal((await ledger.membership()).trials.used, 1);
+  // When the pass ends, its login says so instead of signing in.
+  now = new Date('2026-10-14T12:00:01Z');
+  await assert.rejects(ledger.login('jordan@example.com', 'trial-password-1'), /GUEST_PASS_EXPIRED/);
 });

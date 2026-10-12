@@ -1379,4 +1379,16 @@ export const es: Readonly<Record<string, string>> = {
   "Added ✓": "Agregado ✓",
   "Found {0} {1} on the board. Tap the side on each one below to add it.": "Encontramos {0} {1} en el tablero. Toca el lado en cada uno abajo para agregarlo.",
   "No board picks found in that picture. Try a clearer screenshot, or add them by hand below.": "No encontramos picks del tablero en esa imagen. Prueba con una captura más clara o agrégalos a mano abajo.",
+  // Trial starts with a login (2026-10-12).
+  "You’ve got a free 2-day pass to CrownIQ. Create your login to start it. Use the same login to sign in on any other device; your pass goes with you.": "Tienes un pase gratis de 2 días para CrownIQ. Crea tu acceso para empezarlo. Usa el mismo acceso para entrar en cualquier otro dispositivo; tu pase va contigo.",
+  "Already started on another device? Sign in below": "¿Ya empezaste en otro dispositivo? Entra abajo",
+  "Password (12+ characters)": "Contraseña (12+ caracteres)",
+  "Username: 3–24 letters, numbers or _.": "Usuario: 3–24 letras, números o _.",
+  "Enter your email.": "Escribe tu email.",
+  "Password: at least 12 characters.": "Contraseña: al menos 12 caracteres.",
+  "That email already has an account or trial. Sign in with it below instead.": "Ese email ya tiene una cuenta o prueba. Entra con él abajo.",
+  "That username is taken. Pick another.": "Ese usuario ya existe. Elige otro.",
+  "Create your login to start your pass.": "Crea tu acceso para empezar tu pase.",
+  "Use a 3–24 character username (letters, numbers or _), your email, and a password of at least 12 characters.": "Usa un usuario de 3–24 caracteres (letras, números o _), tu email y una contraseña de al menos 12 caracteres.",
+  "Your 2-day pass has ended. Subscribe to keep using CrownIQ.": "Tu pase de 2 días terminó. Suscríbete para seguir usando CrownIQ.",
 };

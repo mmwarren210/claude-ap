@@ -64,7 +64,7 @@ export function SubscribePanel({ onDone }: { onDone?: () => void }) {
   if (!info) return <ActivityIndicator color={colors.mint} />;
   return <View style={styles.panel}>
     {current && <Text style={styles.current}>Your plan: {endsText(current)}</Text>}
-    {guest && <View style={styles.loginBox}>
+    {guest && !profile?.email && <View style={styles.loginBox}>
       <Text style={styles.step}>First: create your login</Text>
       <Text style={styles.muted}>Do this before you pay, so what you pay for is tied to a login you can use on any phone. Your picks come with you.</Text>
       <CreateLoginForm />

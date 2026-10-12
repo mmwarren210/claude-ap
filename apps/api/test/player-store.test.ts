@@ -9,6 +9,10 @@ import type { PropLineClient } from '../src/scrapers/propline.js';
 import { profileOf, rosterAthletes, seasonSummaries } from '../src/player-profiles.js';
 import { ProductLedger } from '../src/product-ledger.js';
 
+/** A trial's login (owner, 2026-10-12: a new trial needs one), unique per device. */
+const signup = (device: string) => ({ username: `T_${device.replace(/[^A-Za-z0-9]/g, '').slice(-12)}`, email: `${device}@example.com`, password: 'trial-password-1' });
+
+
 const now = Date.parse('2030-10-12T00:00:00Z');
 const game = (daysAgo: number, hits: number) => ({ at: new Date(now - daysAgo * 86_400_000).toISOString(), opponent: null, home: 'Brewers', away: 'Cubs', stats: { hits } });
 
@@ -118,12 +122,12 @@ test('ghost trial accounts give their keys back; a poll answer or a signed-up ac
   const folder = await mkdtemp(join(tmpdir(), 'ghost-'));
   const ledger = new ProductLedger(join(folder, 'ledger.json'));
   const [key] = await ledger.issueTrialKeys(2, 2);
-  await ledger.trialLogin(key!, 'preview-bot');
+  await ledger.trialLogin(key!, 'preview-bot', signup('preview-bot'));
   const trials = await ledger.trialUsers();
   assert.equal(trials.length, 1);
   assert.deepEqual(await ledger.releaseGuests([trials[0]!.accountId]), [trials[0]!.username]);
   assert.equal((await ledger.trialUsers()).length, 0, 'the key is free again');
-  await ledger.trialLogin(key!, 'real-person');
+  await ledger.trialLogin(key!, 'real-person', signup('real-person'));
   assert.equal((await ledger.membership()).trials.used, 1);
   assert.deepEqual(await ledger.releaseGuests(['not-a-guest']), []);
 });

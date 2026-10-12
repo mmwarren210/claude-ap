@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiBaseUrl } from '../api-base';
 import { useAuth } from '../auth';
 import { TrialPollForm } from '../components/TrialPoll';
+import { TrialStart } from '../components/TrialStart';
 import { SubscribePanel } from '../components/Subscribe';
 import { AppIcon } from '../components/ui/AppHeader';
 import { GhostButton, PrimaryButton } from '../components/ui/Controls';
@@ -61,8 +62,7 @@ export default function SignIn() {
 
         {(guest.waiting || guest.signingIn || !!guest.message) && <View style={styles.panel}>
           <Text style={styles.title}>Guest pass</Text>
-          {guest.waiting ? <><Text style={styles.detail}>You’ve got a free 2-day pass to CrownIQ. Tap below to start it on this device.</Text>
-            <PrimaryButton label="Start my 2-day pass" onPress={guest.start} /></>
+          {guest.waiting ? <TrialStart onSignIn={() => { setCreating(false); setResetting(false); }} />
             : guest.signingIn ? <><Text style={styles.detail}>Opening CrownIQ with your guest pass…</Text>
             <ActivityIndicator color={colors.mint} style={styles.busy} /></>
             : <Text accessibilityRole="alert" style={styles.error}>{guest.message}</Text>}

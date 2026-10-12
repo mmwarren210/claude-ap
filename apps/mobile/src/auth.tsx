@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { demoRequest } from './demo/request';
 import { apiBaseUrl } from './api-base';
@@ -22,6 +22,10 @@ function guestDeviceId():string{
   return id;
 }
 const noSubscription=()=>()=>undefined;
+/** What to fix when a new trial's login can't be used (the form stays open). */
+const trialLoginMessages:Record<string,string>={EMAIL_TAKEN:'That email already has an account or trial. Sign in with it below instead.',
+  USERNAME_TAKEN:'That username is taken. Pick another.',LOGIN_REQUIRED:'Create your login to start your pass.',
+  INVALID_REGISTRATION:'Use a 3–24 character username (letters, numbers or _), your email, and a password of at least 12 characters.'};
 const guestMessages:Record<string,string>={TRIALS_ALL_USED:'All free trial keys have been claimed. Thanks for your interest in CrownIQ! Watch for the next round.',
   GUEST_PASS_FULL:'This guest link or trial key has already been used.',
   GUEST_PASS_EXPIRED:'Your free trial has ended. Thanks for testing CrownIQ! Answer a few quick questions for 7 more free days, or sign up below to keep your picks and profile.',
@@ -44,10 +48,12 @@ type AuthContext={profile:Profile|null;register:(username:string,email:string,pa
   /** True in demo mode: sample data, no account, no server calls. */
   demo:boolean;enterDemo:()=>void;
   /** A guest link is signing in, or why it could not. `expired`: a trial pass that ended (it can still take the poll). */
-  guest:{signingIn:boolean;waiting:boolean;start:()=>void;message:string;expired:boolean};
+  /** A new trial starts with a login (owner, 2026-10-12): `start` sends it; `formError` asks for a fix and keeps the form. */
+  guest:{signingIn:boolean;waiting:boolean;start:(login:TrialLogin)=>void;message:string;expired:boolean;formError:string};
   /** Answers the end-of-trial poll (7 more free days): signed in, or with the trial link after the pass ended. */
   answerTrialPoll:(answers:TrialPollAnswers)=>Promise<void>};
 export type Session={token:string;profile:Profile};
+export type TrialLogin={username:string;email:string;password:string};
 export type TrialPlan='WEEK'|'MONTH'|'QUARTER'|'HALF_YEAR'|'YEAR'|'NONE';
 export type TrialPollAnswers={recommend:'YES'|'MAYBE'|'NO';liked:string[];improve:string|null;plan:TrialPlan|null;price:string|null};
 const Context=createContext<AuthContext|null>(null);
@@ -65,6 +71,7 @@ async function parseSession(response:Response):Promise<Session>{
       PASSWORD_NOT_NEW:'Choose a password different from the family code.',
       INVALID_RESET:'Enter your email or username, the 8-character code and a password of at least 12 characters.',INVALID_CREDENTIALS:'Email, username or password is incorrect.',
       TOO_MANY_ATTEMPTS:'Too many attempts. Please wait a minute.',
+      GUEST_PASS_EXPIRED:'Your 2-day pass has ended. Subscribe to keep using CrownIQ.',
       INVALID_REGISTRATION:'Use a 3–24 character username with letters, numbers or underscores, and a password of at least 12 characters.'};
     throw new Error(messages[payload.code??'']??'Sign-in failed. Try again.');}
   const value=await response.json() as Session;
@@ -106,8 +113,11 @@ export function AuthProvider({children}:{children:ReactNode}){
   // A guest link claims its key only when the person taps Start (owner, 2026-10-12: link previews opened every posted link
   // and used up the keys the minute they were posted).
   const [guestStarted,setGuestStarted]=useState(false);
+  const guestLogin=useRef<TrialLogin|null>(null);
+  const [guestFormError,setGuestFormError]=useState('');
   const guest=useMemo(()=>({signingIn:guestLink&&guestStarted&&!guestResult.done,waiting:guestLink&&!guestStarted&&!guestResult.done,
-    start:()=>setGuestStarted(true),message:guestResult.message,expired:!!guestResult.expired}),[guestLink,guestStarted,guestResult]);
+    start:(login:TrialLogin)=>{guestLogin.current=login;setGuestFormError('');setGuestStarted(true);},message:guestResult.message,
+    expired:!!guestResult.expired,formError:guestFormError}),[guestLink,guestStarted,guestResult,guestFormError]);
   useEffect(()=>{
     const code=guestCode();
     if(!code||!base||!guestStarted)return;
@@ -115,9 +125,12 @@ export function AuthProvider({children}:{children:ReactNode}){
     void (async()=>{
       try{
         const response=await fetch(`${base}/v1/auth/guest`,{method:'POST',headers:{'content-type':'application/json'},
-          body:JSON.stringify({code,deviceId:guestDeviceId()})});
+          body:JSON.stringify({code,deviceId:guestDeviceId(),...guestLogin.current?{login:guestLogin.current}:{}})});
         if(!response.ok){const payload=await response.json().catch(()=>({})) as {code?:string};
           if(payload.code==='GUEST_PASS_EXPIRED'){if(active)setGuestResult({done:true,message:guestMessages.GUEST_PASS_EXPIRED,expired:true});return;}
+          // A login problem keeps the form open with what to fix.
+          const fix=trialLoginMessages[payload.code??''];
+          if(fix){if(active){setGuestFormError(fix);setGuestStarted(false);}return;}
           throw new Error(guestMessages[payload.code??'']??'Could not open the guest link. Try again.');}
         const value=await parseSession(response);
         if(active){signIn(value);setGuestResult({done:true,message:''});

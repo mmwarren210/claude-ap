@@ -16,7 +16,7 @@ export function CreateLoginForm({ onDone }: { onDone?: () => void }) {
   const save = async () => {
     if (!/^[A-Za-z0-9_]{3,24}$/.test(form.username.trim())) { setMessage('Username: 3–24 letters, numbers or _.'); return; }
     if (!form.email.includes('@')) { setMessage('Enter your email.'); return; }
-    if (form.password.length < 8) { setMessage('Password: at least 8 characters.'); return; }
+    if (form.password.length < 12) { setMessage('Password: at least 12 characters.'); return; }
     setBusy(true); setMessage('');
     try { await register(form.username.trim(), form.email.trim(), form.password); setMessage('✓ Login created. Sign in with it on any phone.'); onDone?.(); }
     catch (error) { setMessage(error instanceof Error ? error.message : 'Could not create your login.'); }
@@ -27,7 +27,7 @@ export function CreateLoginForm({ onDone }: { onDone?: () => void }) {
       autoCorrect={false} placeholderTextColor={colors.textFaint} style={styles.input} />
     <TextInput value={form.email} onChangeText={(email) => setForm({ ...form, email })} placeholder="Email" autoCapitalize="none" keyboardType="email-address"
       placeholderTextColor={colors.textFaint} style={styles.input} />
-    <TextInput value={form.password} onChangeText={(password) => setForm({ ...form, password })} placeholder="Password (8+ characters)" secureTextEntry
+    <TextInput value={form.password} onChangeText={(password) => setForm({ ...form, password })} placeholder="Password (12+ characters)" secureTextEntry
       placeholderTextColor={colors.textFaint} style={styles.input} />
     <Pressable accessibilityRole="button" disabled={busy} onPress={() => void save()} style={[styles.button, busy && { opacity: .5 }]}>
       {busy ? <ActivityIndicator color={colors.mintInk} /> : <Text style={styles.buttonText}>Create my login</Text>}
@@ -41,7 +41,8 @@ export function CreateLoginAlert() {
   const { profile } = useAuth();
   const { paid, waiting } = useSubscription();
   const [open, setOpen] = useState(false);
-  if (profile?.plan !== 'GUEST' || (!paid && !waiting)) return null;
+  // A trial that started with a login (2026-10-12) already has one.
+  if (profile?.plan !== 'GUEST' || !!profile.email || (!paid && !waiting)) return null;
   return <View style={styles.bar}>
     <Pressable accessibilityRole="button" onPress={() => setOpen(!open)}>
       <Text style={styles.barText}>🔐 Create your login so you never lose access to what you paid for{open ? '' : '  →'}</Text>
