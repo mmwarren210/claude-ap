@@ -8,6 +8,7 @@ import { pickImage } from '../../pick-image';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { ModelBanner } from '../../components/ui/ModelBanner';
 import { ManualPick } from '../../components/ManualPick';
+import type { ReadLine } from '../../components/ManualPick';
 import { colors, radius } from '../../theme';
 
 // Vetted (owner, 2026-10-11): outside tips CrownIQ checked and rated PLAY, for everyone. Who posted a tip is never shown.
@@ -67,6 +68,8 @@ export default function VettedTab() {
   const [mine, setMine] = useState<Mine | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  // The free reader's matches when the AI couldn't read a screenshot (confirmed one by one below).
+  const [freeRead, setFreeRead] = useState<{ id: number; lines: ReadLine[] } | null>(null);
   const loadMine = useCallback(async () => {
     const response = await request('/v1/tips').catch(() => null);
     if (response?.ok) setMine(await response.json() as Mine);
@@ -89,10 +92,13 @@ export default function VettedTab() {
     setBusy(true);
     try {
       const response = await request('/v1/tips/upload', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image }) });
-      if (response.ok) { const added = await response.json() as { tips: unknown[] };
-        setMessage(`Read ${added.tips.length} ${added.tips.length === 1 ? 'pick' : 'picks'}. CrownIQ is checking ${added.tips.length === 1 ? 'it' : 'them'} now…`); }
+      if (response.ok) { const added = await response.json() as { tips?: unknown[]; free?: boolean; lines?: ReadLine[] };
+        if (added.free && added.lines) { setFreeRead({ id: Date.now(), lines: added.lines });
+          setMessage(`Found ${added.lines.length} ${added.lines.length === 1 ? 'pick' : 'picks'} on the board. Tap the side on each one below to add it.`); }
+        else { const count = added.tips?.length ?? 0;
+          setMessage(`Read ${count} ${count === 1 ? 'pick' : 'picks'}. CrownIQ is checking ${count === 1 ? 'it' : 'them'} now…`); } }
       else setMessage(response.status === 429 ? `You’ve used today’s ${mine?.dailyLimit ?? 2} screenshots. More tomorrow.`
-        : response.status === 422 ? 'No picks found in that picture. Try a clearer screenshot.'
+        : response.status === 422 ? 'No board picks found in that picture. Try a clearer screenshot, or add them by hand below.'
         : response.status === 503 ? 'Screenshot checking is down right now. Try again later.' : 'Could not read that picture. Try again.');
     } catch { setMessage('Could not upload. Check your connection.'); }
     finally { setBusy(false); void loadMine(); }
@@ -118,7 +124,7 @@ export default function VettedTab() {
         </Pressable>
         {mine?.uploadsLeft !== null && mine?.uploadsLeft !== undefined && <Text style={styles.faint}>{mine.uploadsLeft} of {mine.dailyLimit} left today</Text>}
         {!!message && <Text style={styles.muted}>{message}</Text>}
-        <ManualPick onAdded={() => { void loadMine(); void load(); }} />
+        <ManualPick read={freeRead} onAdded={() => { void loadMine(); void load(); }} />
         {recentMine.length > 0 && <Text style={[styles.section, { marginTop: 4 }]}>YOUR SUBMISSIONS</Text>}
         {recentMine.map((tip) => <MineRow key={tip.id} tip={tip} />)}
         {passed > 0 && <Text style={styles.faint}>{passed} more {passed === 1 ? 'pick was' : 'picks were'} checked with no play on any line or app, so {passed === 1 ? 'it’s' : 'they’re'} not listed.</Text>}

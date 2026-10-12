@@ -8,8 +8,10 @@
     "@crowniq/contracts": "0.1.0",
     "@crowniq/edge": "0.1.0",
     "@crowniq/engine": "0.1.0",
+    "@tesseract.js-data/eng": "1.0.0",
     "dotenv": "^17.2.0",
     "fastify": "^5.12.5",
+    "tesseract.js": "7.0.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {

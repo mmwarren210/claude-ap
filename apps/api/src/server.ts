@@ -97,6 +97,7 @@ import type { DispersionStore } from './edge/dispersion-store.js';
 import { analyzeTips, approvalOf, DAILY_TIP_UPLOADS, manualAnalysis, manualDraft, marketRead, USER_DAILY_MANUAL, USER_DAILY_UPLOADS } from './tips.js';
 import type { ManualLine, TipDraft, TipGrader, TipReader, TipStore } from './tips.js';
 import { matchTip, modelRead, suggestFor } from './tip-models.js';
+import { closeScreenshotReader, picksInText, screenshotText } from './tip-ocr.js';
 import type { TipModelRead, TipSuggestion } from './tip-models.js';
 import { gameCounts, marketCounts, registerEdgeRoutes, sportCounts } from './edge/routes.js';
 import { MovementTracker } from './edge/movement.js';
@@ -487,7 +488,7 @@ export function buildServer(options: ServerOptions = {}) {
     const everyExtra=setInterval(()=>{void refreshExtraSeconds().catch(()=>undefined);},15*60_000);everyExtra.unref();
     shadowTimers.push(firstExtra,everyExtra);
   }
-  app.addHook('onClose', async () => {for(const timer of shadowTimers)clearTimeout(timer);options.playerHistory?.stop();appShadow?.stop();options.aiPicks?.stop(); webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
+  app.addHook('onClose', async () => {void closeScreenshotReader();for(const timer of shadowTimers)clearTimeout(timer);options.playerHistory?.stop();appShadow?.stop();options.aiPicks?.stop(); webBuild?.cancel();options.ownerNotebook?.stop();contextScheduler?.stop();
     options.scraperPuller?.stop();options.tips?.grader?.stop();options.contextFeeds?.stop();options.sharpProps?.stop(); });
 
   // Every paid provider pull runs through this one job, so two pulls can never overlap or
@@ -763,6 +764,7 @@ export function buildServer(options: ServerOptions = {}) {
   type BoardLine={platform:string;lineId:string;playerName:string;sport:string;league:string|null;team:string|null;market:string;
     line:number;lineType:string;start:string;eventName:string};
   let tipLineSearch:((query:string)=>Promise<BoardLine[]>)|null=null;
+  let tipBoardLines:(()=>Promise<BoardLine[]>)|null=null;
   let tipManualRead:((platform:string,lineId:string,side:'MORE'|'LESS')=>Promise<{line:ManualLine;edge:TipModelRead;gkrPlus:TipModelRead}|null>)|null=null;
   // Everyone can submit screenshots and see their own picks (owner, 2026-10-11); Edge/GKR+ reads stay the owner's.
   app.get('/v1/tips',async(request,reply)=>{
@@ -845,7 +847,7 @@ export function buildServer(options: ServerOptions = {}) {
   app.post('/v1/tips/upload',{bodyLimit:8_000_000},async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     const owner=await isOwner(request);
-    if(!options.tips?.reader)return reply.code(503).send({code:'TIPS_READER_UNAVAILABLE'});
+    if(!options.tips)return reply.code(503).send({code:'TIPS_READER_UNAVAILABLE'});
     const input=z.object({image:z.object({data:z.string().min(100).max(7_500_000).regex(/^[A-Za-z0-9+/=]+$/),
       mediaType:z.enum(['image/png','image/jpeg','image/webp','image/gif'])}).optional(),
       text:z.string().trim().min(2).max(4000).optional(),source:z.string().trim().min(1).max(60).optional()})
@@ -856,11 +858,27 @@ export function buildServer(options: ServerOptions = {}) {
     if(!input.success){console.warn(`[tips] upload rejected (${attempt}): ${input.error.issues.map((issue)=>`${issue.path.join('.')} ${issue.message}`).join('; ').slice(0,300)}`);
       return reply.code(400).send({code:'INVALID_TIPS_UPLOAD'});}
     console.log(`[tips] upload (${attempt})`);
+    // The free reader (owner, 2026-10-12): when the AI is missing or fails, the screenshot's text is read on the server and
+    // matched to board lines; nothing is saved until the person taps More or Less on each one (a hand-added pick).
+    const freeRead=async()=>{
+      if(!input.data.image||!tipBoardLines)return null;
+      const text=await screenshotText(input.data.image.data);
+      const found=picksInText(text,await tipBoardLines());
+      console.log(`[tips] free read: ${found.length} picks matched`);
+      return found.map((item)=>({...item.line,side:item.side}));
+    };
+    const fallback=async(code:string,status:number)=>{
+      const lines=await freeRead().catch((error:unknown)=>{console.warn('[tips] free read failed',error instanceof Error?error.message:error);return null;});
+      if(lines===null)return reply.code(status).send({code});
+      return lines.length?reply.code(200).send({free:true,lines}):reply.code(422).send({code:'NO_TIPS_FOUND',free:true});
+    };
+    const aiReader=options.tips.reader;
+    if(!aiReader)return fallback('TIPS_READER_UNAVAILABLE',503);
     // Everyone but the owner: 2 screenshots a day while in beta (paid tiers decide their own allotment before launch).
     if(await options.tips.store.uploadsToday(user.accountId)>=(owner?DAILY_TIP_UPLOADS*100:USER_DAILY_UPLOADS))
       return reply.code(429).send({code:'DAILY_LIMIT',limit:owner?null:USER_DAILY_UPLOADS});
     try{
-      const read=await options.tips.reader.read({...input.data.image?{image:input.data.image}:{},...input.data.text?{text:input.data.text}:{},
+      const read=await aiReader.read({...input.data.image?{image:input.data.image}:{},...input.data.text?{text:input.data.text}:{},
         today:now().toISOString().slice(0,10)});
       console.log(`[tips] read ${read.tips.length} picks`);
       if(!read.tips.length)return reply.code(422).send({code:'NO_TIPS_FOUND'});
@@ -869,12 +887,13 @@ export function buildServer(options: ServerOptions = {}) {
       const tips=await options.tips.store.add(user.accountId,input.data.source??read.source??'Unnamed service',read.tips,
         read.tips.map((tip)=>marketRead(tip,lines,tip.eventDate?Date.parse(tip.eventDate):from)),user.username);
       // CrownIQ's opinion runs in the background (a web search per batch); the app refreshes until it lands.
-      void analyzeTips(options.tips.store,options.tips.reader,tips,now).then(()=>{vettedCache=null;return checkTipsWithModels();}).catch(()=>undefined);
+      void analyzeTips(options.tips.store,aiReader,tips,now).then(()=>{vettedCache=null;return checkTipsWithModels();}).catch(()=>undefined);
       return reply.code(201).send({source:tips[0]!.source,tips:tips.map(({accountId:_account,...tip})=>tip)});
     }catch(error){const message=error instanceof Error?error.message:String(error);console.warn('[tips] read failed',message);
       // The Claude account behind CrownIQ is out of credits: say so instead of "could not read".
-      if(/credit balance is too low/i.test(message))return reply.code(503).send({code:'AI_CREDITS_EXHAUSTED'});
-      return reply.code(502).send({code:'TIPS_READ_FAILED'});}
+      // The free reader takes over when it can.
+      if(/credit balance is too low/i.test(message))return fallback('AI_CREDITS_EXHAUSTED',503);
+      return fallback('TIPS_READ_FAILED',502);}
   });
   // Grade finished tips now (Refresh all): runs in the background; one run at a time.
   app.post('/v1/tips/grade',async(request,reply)=>{
@@ -1910,17 +1929,22 @@ export function buildServer(options: ServerOptions = {}) {
       }
       return out;
     };
-    tipLineSearch=async(query)=>{
-      const wanted=normalizedName(query),soon=now().getTime(),out:BoardLine[]=[];
+    tipBoardLines=async()=>{
+      const soon=now().getTime(),out:BoardLine[]=[];
       for(const platform of EDGE_PLATFORMS){
         const snapshot=await edge.snapshot(platform).catch(()=>null);
         if(!snapshot)continue;
         for(const pick of snapshot.byLine.values()){
-          if(Date.parse(pick.eventStartTime)<=soon||!normalizedName(pick.playerName).includes(wanted))continue;
+          if(Date.parse(pick.eventStartTime)<=soon)continue;
           out.push({platform,lineId:pick.lineId,playerName:pick.playerName,sport:pick.sport,league:pick.league??null,team:pick.team??null,
             market:pick.market,line:pick.threshold,lineType:pick.lineType,start:pick.eventStartTime,eventName:pick.eventName});
         }
       }
+      return out;
+    };
+    tipLineSearch=async(query)=>{
+      const wanted=normalizedName(query);
+      const out=(await tipBoardLines!()).filter((line)=>normalizedName(line.playerName).includes(wanted));
       // PrizePicks first, then by player, stat and number; the regular line before its alternates.
       const order=(platform:string)=>EDGE_PLATFORMS.indexOf(platform as EdgePlatform);
       return out.sort((a,b)=>order(a.platform)-order(b.platform)||a.playerName.localeCompare(b.playerName)||a.market.localeCompare(b.market)||

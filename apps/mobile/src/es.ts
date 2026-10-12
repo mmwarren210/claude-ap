@@ -1375,4 +1375,8 @@ export const es: Readonly<Record<string, string>> = {
   "You’ve added {0} picks today. More tomorrow.": "Ya agregaste {0} picks hoy. Más mañana.",
   "✓ {0}: approved by {1}. It’s on Vetted with your name.": "✓ {0}: aprobado por {1}. Está en Verificados con tu nombre.",
   "{0}: GKR and Edge didn’t back this one, so it’s not listed.": "{0}: GKR y Edge no lo respaldaron, así que no aparece.",
+  "From your screenshot: check each one, then tap the side to add it.": "De tu captura: revisa cada uno y toca el lado para agregarlo.",
+  "Added ✓": "Agregado ✓",
+  "Found {0} {1} on the board. Tap the side on each one below to add it.": "Encontramos {0} {1} en el tablero. Toca el lado en cada uno abajo para agregarlo.",
+  "No board picks found in that picture. Try a clearer screenshot, or add them by hand below.": "No encontramos picks del tablero en esa imagen. Prueba con una captura más clara o agrégalos a mano abajo.",
 };

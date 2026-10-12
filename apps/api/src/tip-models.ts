@@ -22,7 +22,7 @@ const ABBREVIATIONS: Record<string, string> = { yds: 'yards', yd: 'yards', rec: 
   att: 'attempts', comp: 'completions', int: 'interceptions', ints: 'interceptions', sacks: 'sacks', blk: 'blocks', stl: 'steals' };
 
 /** Stat words, abbreviations spelled out and cut to a 4-letter stem ("Receiving Yards" and "player_reception_yds" share two). */
-function statWords(text: string): Set<string> {
+export function statWords(text: string): Set<string> {
   const words = text.toLowerCase().replace(/[+&/_-]/g, ' ').split(/\s+/).filter(Boolean)
     .flatMap((word) => (ABBREVIATIONS[word] ?? word).split(' '))
     .filter((word) => !['player', 'batter', 'pitcher', 'total', 'the', 'of', 'over', 'under', 'more', 'less'].includes(word));
