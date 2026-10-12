@@ -392,3 +392,15 @@ test('the owner sign-in check names the step a token fails',async()=>{
     assert.equal((await ledger.authDiagnose('x'.repeat(43))).step,'NO_SESSION');
   }finally{await rm(folder,{recursive:true,force:true});}
 });
+
+test('the sign-in header check says whether the header arrived and signs in',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-auth-header-'));
+  const product=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>start);
+  const app=buildServer({product,requireProfiles:true,clock:()=>start,guestPass:{code:'testers-2030',maxGuests:4,days:3}});
+  try{
+    const token=(await app.inject({method:'POST',url:'/v1/auth/guest',payload:{code:'testers-2030',deviceId:'device-1-0123456789abcdef'}})).json().token;
+    assert.deepEqual((await app.inject({url:'/v1/auth/check',headers:{authorization:`Bearer ${token}`}})).json(),
+      {header:true,bearer:true,length:token.length,authenticated:true});
+    assert.deepEqual((await app.inject({url:'/v1/auth/check'})).json(),{header:false,bearer:false,length:0,authenticated:false});
+  }finally{await app.close();await rm(folder,{recursive:true,force:true});}
+});

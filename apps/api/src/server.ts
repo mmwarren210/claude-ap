@@ -672,6 +672,11 @@ export function buildServer(options: ServerOptions = {}) {
       {...input.data.answers,improve:input.data.answers.improve??null,plan:input.data.answers.plan??null,price:input.data.answers.price??null});}
     catch(error){return pollError(reply,error);}
   });
+  // Sign-in header check (owner, 2026-10-12): whether the Authorization header arrived and signs in. Never echoes the token.
+  app.get('/v1/auth/check',async(request)=>{
+    const header=request.headers.authorization,token=bearer(request);
+    return {header:typeof header==='string',bearer:!!token,length:token.length,authenticated:!!await currentUser(request)};
+  });
   app.get('/v1/auth/me',async(request,reply)=>{
     const user=await currentUser(request);
     return user?{profile:{publicId:user.publicId,username:user.username,email:user.email,
