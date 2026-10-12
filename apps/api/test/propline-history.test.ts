@@ -118,3 +118,14 @@ test('receiving targets read from PropLine box scores', () => {
   assert.equal(proplineStat('NFL', 'player_receiving_targets'), 'receiving_targets');
   assert.equal(gameValue({ receptions: 3, receiving_targets: 5 }, 'receiving_targets'), 5);
 });
+
+test('a name PropLine answers 404 for is kept as no games, not re-asked as a failure', async () => {
+  let asked = 0;
+  const client = { get: async () => { asked++; throw new Error('PROPLINE_HTTP_404'); } } as unknown as PropLineClient;
+  const history = new PropLineHistory(client, null, () => 'tennis', {}, () => 0);
+  const doubles = { sport: 'TENNIS' as const, market: 'total_games', playerName: 'Pavlasek A / Rikl P', eventId: 'e', eventStartTime: '2030-10-12T00:00:00Z' };
+  assert.equal(await history.values(doubles), null);
+  assert.equal(await history.values(doubles), null);
+  assert.equal(asked, 1, 'asked once');
+  assert.equal(history.status().failed, 0);
+});

@@ -218,7 +218,9 @@ export class PropLineHistory {
     const recent = !!this.options.store && !!cached?.games?.length && !!cached.deep && !!cached.teams && now - cached.at < 7 * 86_400_000;
     const request = this.slot(async () => {
       const body = await this.client.get<{ games?: { commence_time?: string; status?: string; opponent?: string | null;
-        home_team?: string | null; away_team?: string | null; stats?: Record<string, unknown> }[] }>(`/v1/sports/${sportKey}/players/${encodeURIComponent(playerName)}/games?limit=${recent ? 15 : 100}`);
+        home_team?: string | null; away_team?: string | null; stats?: Record<string, unknown> }[] }>(`/v1/sports/${sportKey}/players/${encodeURIComponent(playerName)}/games?limit=${recent ? 15 : 100}`)
+        // A name PropLine doesn't know (a tennis doubles pair) answers 404: no games, kept like any empty answer.
+        .catch((error: unknown) => { if (String(error instanceof Error ? error.message : error).includes('404')) return { games: [] }; throw error; });
       return (body.games ?? []).flatMap((game): Game[] => {
         if (game.status !== 'final' || !game.commence_time || Number.isNaN(Date.parse(game.commence_time))) return [];
         // NFL preseason (July and August) is not the player's real workload.
