@@ -32,6 +32,7 @@ export interface TrackedDecision {
   /** When the pick came from a person's action: the odds snapshot time and its age then. */
   boardFetchedAt?:string;snapshotAgeMinutes?:number;
 }
+export interface PickAudit {trackedPickId:string;verdict:'ACCURATE'|'WRONG';note:string|null;at:string}
 export interface DecisionRevision {recordedAt:string;lineScore:number;contextScore:number|null;
   scoreBand:string;boardRank:number|null;researchSnapshotId:string}
 export interface DecisionHistorySink {recordGradedDecision(decision:TrackedDecision):Promise<void>}
@@ -118,6 +119,8 @@ interface LegacyData {version:1;decisions:TrackedDecision[];profiles:PublicProfi
   crowns:PublicCrown[];follows:Follow[];publicCredits:{publicId:string;trackedPickId:string}[]}
 interface Data extends Omit<LegacyData,'version'> {version:2;accounts:Account[];sessions:Session[];
   savedPicks:SavedPick[];privateCrowns:PrivateCrown[];
+  /** The owner's spot checks of GKR picks (owner, 2026-10-12): was the evidence behind the pick accurate? */
+  audits?:PickAudit[];
   /** Owner-issued trial keys (stored hashed): each opens one guest account for `days` days from its first use. */
   trialKeys?:{hash:string;days:number;createdAt:string}[];
   /** Member keys (stored hashed): each activates one paid plan once, issued by the owner after a payment is confirmed. */
@@ -984,6 +987,36 @@ export class ProductLedger {
     const data=await this.read();return {total:data.decisions.length,
       decisions:data.decisions.slice().reverse().slice(offset,offset+limit)};
   });}
+  /** One tracked decision, for its evidence page. */
+  async decision(trackedPickId:string){return (await this.read()).decisions.find((item)=>item.trackedPickId===trackedPickId)??null;}
+  /**
+   * Random GKR picks for the owner to spot-check (owner, 2026-10-12): from the last `days` days, ones not yet checked, half
+   * graded and half still pending where both exist. `random` is injectable for tests.
+   */
+  async auditSample(count:number,days=14,random:()=>number=Math.random){
+    const data=await this.read(),since=this.clock().getTime()-days*86_400_000,done=new Set((data.audits??[]).map((item)=>item.trackedPickId));
+    const open=data.decisions.filter((item)=>Date.parse(item.createdAt)>=since&&!done.has(item.trackedPickId));
+    const shuffle=<T,>(rows:T[])=>{const out=[...rows];for(let i=out.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[out[i],out[j]]=[out[j]!,out[i]!];}return out;};
+    const graded=shuffle(open.filter((item)=>item.grade==='WIN'||item.grade==='LOSS')),pending=shuffle(open.filter((item)=>item.grade==='PENDING'));
+    const half=Math.ceil(count/2),picked=[...graded.slice(0,half),...pending.slice(0,count-Math.min(half,graded.length))].slice(0,count);
+    return picked.map((item)=>({trackedPickId:item.trackedPickId,playerName:item.playerName,sport:item.sport,market:item.market,
+      exactLine:item.exactLine,direction:item.direction,lineType:item.lineType,lineScore:item.lineScore,modelVersion:item.modelVersion,
+      eventStartTime:item.eventStartTime,grade:item.grade,actualResult:item.actualResult}));
+  }
+  /** Records the owner's verdict on one pick's evidence (a second verdict replaces the first). */
+  async audit(trackedPickId:string,verdict:PickAudit['verdict'],note:string|null){return this.exclusive(async()=>{
+    const data=await this.read();
+    if(!data.decisions.some((item)=>item.trackedPickId===trackedPickId))throw new Error('NOT_FOUND');
+    data.audits=[...(data.audits??[]).filter((item)=>item.trackedPickId!==trackedPickId),{trackedPickId,verdict,note,at:this.clock().toISOString()}];
+    await this.write(data);
+    return this.auditSummaryOf(data);
+  });}
+  async auditSummary(){return this.auditSummaryOf(await this.read());}
+  private auditSummaryOf(data:Data){
+    const audits=data.audits??[],wrong=audits.filter((item)=>item.verdict==='WRONG');
+    return {checked:audits.length,accurate:audits.length-wrong.length,wrong:wrong.length,
+      recentWrong:wrong.slice(-10).reverse().map((item)=>({...item,playerName:data.decisions.find((d)=>d.trackedPickId===item.trackedPickId)?.playerName??null}))};
+  }
   /** Your-call legs still waiting for a result, with the line each was saved on. */
   async pendingPersonalLegs(){return this.exclusive(async()=>{
     const data=await this.read();

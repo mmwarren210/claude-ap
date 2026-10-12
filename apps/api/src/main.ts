@@ -27,6 +27,8 @@ import { ContextFeeds, injuryReports } from './context/feeds.js';
 import { proplineGameLines } from './context/propline-game-lines.js';
 import { createGkr2Registry, Gkr2, OpponentReads } from './gkr2.js';
 import { MlbGames } from './mlb-context.js';
+import { PlayerStore } from './player-store.js';
+import { PlayerProfiles } from './player-profiles.js';
 import { espnInjuries } from './context/espn-injuries.js';
 import { ClaudeWebResearchAdapter } from './claude-web-research.js';
 import { ProductLedger } from './product-ledger.js';
@@ -158,10 +160,14 @@ const noteGame=proplineResults?(gameId:string,sportKey:string)=>proplineResults.
 // Player game logs from PropLine's box scores (one request per player, kept 6 hours, at most 40,000 a day), read first
 // for every history read. CROWNIQ_PROPLINE_HISTORY=off turns it off.
 // Its own client (4 requests at a time), so history lookups never hold up the line pulls' requests.
+// The player store (owner, 2026-10-12): every player's games, season summaries and profile in one SQLite file, written
+// per player instead of one big file. CROWNIQ_PLAYER_STORE=off keeps the history in its JSON file as before.
+const playerStore=process.env.CROWNIQ_PLAYER_STORE==='off'?null:new PlayerStore(`${dataDir}/players.sqlite`);
+const playerProfiles=playerStore&&process.env.CROWNIQ_PLAYER_PROFILES!=='off'?new PlayerProfiles(playerStore):null;
 const proplineHistory=propLine&&process.env.CROWNIQ_PROPLINE_HISTORY!=='off'?new PropLineHistory(
   new PropLineClient(process.env.PROPLINE_API_KEY!.trim(),undefined,4),`${dataDir}/propline-history.json`,
   (eventId)=>proplineResults?.sportKeyFor(eventId)??null,
-  {dailyRequests:Number(process.env.CROWNIQ_PROPLINE_HISTORY_DAILY??40_000)||40_000,concurrency:4}):null;
+  {dailyRequests:Number(process.env.CROWNIQ_PROPLINE_HISTORY_DAILY??40_000)||40_000,concurrency:4,store:playerStore}):null;
 if(proplineHistory)setInterval(()=>{void proplineHistory.save().catch(()=>undefined);},10*60_000).unref();
 // The saved games load at startup, so synchronous reads (Edge's opponent read) see them from the first pass.
 if(proplineHistory)void proplineHistory.ready().catch(()=>undefined);
@@ -481,7 +487,7 @@ const app = buildServer({ ufcHistory, soccerHistory, adminToken: process.env.ADM
     return {store,reader,grader:reader?new TipGrader(store,reader):null};})(),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
-  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,proplineHistory,bookAccuracy,contextFeeds,gameLines,gkr2,opponents,mlbGames,gkr2Public:process.env.CROWNIQ_GKR2_PUBLIC==='true',injuries:process.env.CROWNIQ_ESPN_INJURIES==='off'?null:espnInjuries(),sharpProps,evBreakEven,payouts,
+  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,proplineHistory,bookAccuracy,contextFeeds,gameLines,gkr2,opponents,mlbGames,playerStore,playerProfiles,gkr2Public:process.env.CROWNIQ_GKR2_PUBLIC==='true',injuries:process.env.CROWNIQ_ESPN_INJURIES==='off'?null:espnInjuries(),sharpProps,evBreakEven,payouts,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,

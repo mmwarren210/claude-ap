@@ -16,6 +16,8 @@ import { useBooks } from '../../use-books';
 import { BookLadder } from '../../components/BookLadder';
 import { useBeta } from '../../use-model';
 import { hitBand, useGkr2, useHitCurve } from '../../use-hit-curve';
+import { usePlayerProfile } from '../../use-profile';
+import { useIsOwner } from '../../use-owner';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { alpha } from '../../components/ui/color';
 import { GhostButton, PrimaryButton, Segmented } from '../../components/ui/Controls';
@@ -126,6 +128,9 @@ export default function PlayerResearch() {
   const hitRate = analysis && analysis.direction !== 'PASS' ? hitBand(curve, analysis.thresholdCushion) : null;
   // GKR 2 beside GKR (owner-only while it's tested): its side and score on this line, and both graded records.
   const gkr2 = useGkr2(line?.id);
+  // The player's permanent profile and this stat by season (display only); the owner can open the line's evidence.
+  const playerProfile = usePlayerProfile(line?.sport, line?.playerName, line?.eventId, line?.market);
+  const owner = useIsOwner();
   const related = useMemo(() => line ? data?.board.lines.filter((item) => item.eventId === line.eventId &&
     item.playerId === line.playerId) ?? [] : [], [data, line]);
   const ladder = useMemo(() => line ? related.filter((item) => item.market === line.market &&
@@ -254,6 +259,16 @@ export default function PlayerResearch() {
         </View>
         {hitRate && !aiSide ? <Text style={styles.hitRate}>GKR picks this far from the line have hit {Math.round(hitRate.hitRate * 100)}%
           ({hitRate.graded} graded)</Text> : null}
+        {playerProfile && (playerProfile.profile || playerProfile.seasons.some((season) => season.stat)) ? <View style={styles.gkr2}>
+          {playerProfile.profile ? <Text style={styles.gkr2Read}>{[playerProfile.profile.position, playerProfile.profile.jersey ? `#${playerProfile.profile.jersey}` : null,
+            playerProfile.profile.bats ? `Bats ${playerProfile.profile.bats}` : null, playerProfile.profile.throws ? `Throws ${playerProfile.profile.throws}` : null,
+            playerProfile.profile.status && playerProfile.profile.status !== 'Active' ? playerProfile.profile.status : null].filter(Boolean).join(' · ')}</Text> : null}
+          {playerProfile.seasons.filter((season) => season.stat).slice(0, 3).map((season) => <Text key={season.season} style={styles.hitRate}>
+            {season.season}: {season.stat!.average} {marketAbbrev(line.market)} a game ({season.stat!.games} games)
+            {season.statHome && season.statAway ? ` · home ${season.statHome.average} · away ${season.statAway.average}` : ''}</Text>)}
+        </View> : null}
+        {owner ? <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: '/owner/evidence', params: { line: line.id } })}>
+          <Text style={[styles.hitRate, { color: colors.mint }]}>Evidence for this line →</Text></Pressable> : null}
         {gkr2?.analysis && !aiSide ? <View style={styles.gkr2}>
           <Text style={styles.gkr2Title}>GKR 2 · TESTING</Text>
           <Text style={styles.gkr2Read}>{gkr2.analysis.direction === 'PASS' ? 'PASS'

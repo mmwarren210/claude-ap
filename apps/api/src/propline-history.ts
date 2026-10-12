@@ -3,6 +3,8 @@ import { dirname } from 'node:path';
 import type { PropLine } from '@crowniq/contracts';
 import { normalizedName } from './context/match.js';
 import { canonicalMarket } from './edge/market-map.js';
+import { KEEP_ROWS_MS } from './player-store.js';
+import type { PlayerStore } from './player-store.js';
 import type { PropLineClient } from './scrapers/propline.js';
 
 // Player history from PropLine's box-score archive (owner, 2026-10-09: PropLine is the source of truth). One request per
@@ -123,6 +125,8 @@ export class PropLineHistory {
   private readonly loading = new Map<string, Promise<readonly Game[] | null>>();
   private loaded = false;
   private dirty = false;
+  /** Players changed since the last save (the player store writes only these). */
+  private readonly changed = new Set<string>();
   private active = 0;
   private readonly waiting: (() => void)[] = [];
   private day = '';
@@ -131,7 +135,9 @@ export class PropLineHistory {
   constructor(private readonly client: PropLineClient, private readonly file: string | null,
     /** PropLine's own sport key for a game it listed (soccer needs it: one key per league). */
     private readonly sportKeyForEvent: (eventId: string) => string | null = () => null,
-    private readonly options: { dailyRequests?: number; concurrency?: number; ttlMs?: number } = {},
+    private readonly options: { dailyRequests?: number; concurrency?: number; ttlMs?: number;
+      /** The player store (SQLite); without it the history is kept in the JSON file as before. */
+      store?: PlayerStore | null } = {},
     private readonly clock: () => number = Date.now) {}
 
   sportKey(line: Pick<PropLine, 'sport' | 'eventId'> & { league?: string | null }): string | null {
@@ -141,18 +147,44 @@ export class PropLineHistory {
   private async load() {
     if (this.loaded) return;
     this.loaded = true;
-    if (!this.file) return;
-    try {
-      const saved = JSON.parse(await readFile(this.file, 'utf8')) as [string, Entry][];
-      const now = this.clock();
-      for (const [key, entry] of saved) if (now - entry.at < (entry.keepMs ?? this.options.ttlMs ?? 6 * 3600_000)) this.cache.set(key, entry);
-    } catch { /* first run */ }
+    const store = this.options.store;
+    let saved: [string, Entry][] = [];
+    if (this.file && (!store || store.isEmpty())) {
+      try { saved = JSON.parse(await readFile(this.file, 'utf8')) as [string, Entry][]; } catch { /* first run */ }
+    }
+    if (store) {
+      // First start with the store: the JSON file's players move into it once.
+      for (const [key, entry] of saved) store.put(key, key.split('|')[0]!, { at: entry.at, ...(entry.keepMs ? { keepMs: entry.keepMs } : {}),
+        deep: entry.deep, teams: entry.teams, empty: !entry.games }, entry.games ?? [], this.clock());
+      // Every stored player is kept in memory (stale ones are re-asked when read, and still count for opponent reads).
+      for (const [key, { fetch, games }] of store.all())
+        this.cache.set(key, { at: fetch.at, games: fetch.empty || !games.length ? null : games, deep: fetch.deep, teams: fetch.teams,
+          ...(fetch.keepMs ? { keepMs: fetch.keepMs } : {}) });
+      return;
+    }
+    const now = this.clock();
+    for (const [key, entry] of saved) if (now - entry.at < (entry.keepMs ?? this.options.ttlMs ?? 6 * 3600_000)) this.cache.set(key, entry);
   }
 
   async save(): Promise<void> {
-    if (!this.dirty || !this.file) return;
+    if (!this.dirty) return;
     this.dirty = false;
-    const now = this.clock();
+    const now = this.clock(), store = this.options.store;
+    if (store) {
+      // Only the players that changed are written, one small transaction each.
+      for (const key of [...this.changed]) {
+        this.changed.delete(key);
+        const entry = this.cache.get(key);
+        if (entry) store.put(key, key.split('|')[0]!, { at: entry.at, ...(entry.keepMs ? { keepMs: entry.keepMs } : {}), deep: entry.deep,
+          teams: entry.teams, empty: !entry.games }, entry.games ?? [], now);
+      }
+      // Players nobody asked about in 30 days leave memory and the store (their season summaries stay).
+      const cutoff = now - 30 * 86_400_000;
+      for (const [key, entry] of this.cache) if (entry.at < cutoff) this.cache.delete(key);
+      store.prune(cutoff);
+      return;
+    }
+    if (!this.file) return;
     for (const [key, entry] of this.cache) if (now - entry.at > 2 * (entry.keepMs ?? this.options.ttlMs ?? 6 * 3600_000)) this.cache.delete(key);
     await mkdir(dirname(this.file), { recursive: true });
     const temporary = `${this.file}.tmp`;
@@ -180,9 +212,11 @@ export class PropLineHistory {
     if (today !== this.day) { this.day = today; this.stats.requests = 0; }
     if (this.stats.requests >= (this.options.dailyRequests ?? 40_000)) { this.stats.skippedBudget++; return undefined; }
     this.stats.requests++;
+    // A player whose full log was fetched in the last week only needs his newest games (merged below), not all 100.
+    const recent = !!this.options.store && !!cached?.games?.length && !!cached.deep && !!cached.teams && now - cached.at < 7 * 86_400_000;
     const request = this.slot(async () => {
       const body = await this.client.get<{ games?: { commence_time?: string; status?: string; opponent?: string | null;
-        home_team?: string | null; away_team?: string | null; stats?: Record<string, unknown> }[] }>(`/v1/sports/${sportKey}/players/${encodeURIComponent(playerName)}/games?limit=100`);
+        home_team?: string | null; away_team?: string | null; stats?: Record<string, unknown> }[] }>(`/v1/sports/${sportKey}/players/${encodeURIComponent(playerName)}/games?limit=${recent ? 15 : 100}`);
       return (body.games ?? []).flatMap((game): Game[] => {
         if (game.status !== 'final' || !game.commence_time || Number.isNaN(Date.parse(game.commence_time))) return [];
         // NFL preseason (July and August) is not the player's real workload.
@@ -192,11 +226,14 @@ export class PropLineHistory {
         return [{ at: new Date(game.commence_time).toISOString(), opponent: game.opponent ?? null, stats,
           home: game.home_team ?? null, away: game.away_team ?? null }];
       });
-    }).then((games) => {
+    }).then((fetched) => {
+      // Merge the newest games into the stored log (a game already held is replaced), newest first, two seasons at most.
+      const games = recent ? [...new Map([...cached!.games!, ...fetched].map((game) => [game.at, game])).values()]
+        .filter((game) => Date.parse(game.at) > this.clock() - KEEP_ROWS_MS).sort((a, b) => b.at.localeCompare(a.at)) : fetched;
       const found = games.length ? games : null;
       if (found) this.stats.found++; else this.stats.empty++;
       this.cache.set(key, { at: this.clock(), games: found, deep: true, teams: true, ...(refresh ? { keepMs: refresh.keepMs } : {}) });
-      this.dirty = true;
+      this.dirty = true; this.changed.add(key);
       return found;
     }).finally(() => this.loading.delete(key));
     this.loading.set(key, request);
@@ -274,5 +311,5 @@ export class PropLineHistory {
     return { players: players.size, found, empty, skipped };
   }
 
-  status() { return { ...this.stats, players: this.cache.size }; }
+  status() { return { ...this.stats, players: this.cache.size, store: this.options.store?.counts() ?? null }; }
 }

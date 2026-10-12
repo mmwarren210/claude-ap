@@ -1,0 +1,103 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import { PlayerStore, seasonOf } from '../src/player-store.js';
+import { PropLineHistory } from '../src/propline-history.js';
+import type { PropLineClient } from '../src/scrapers/propline.js';
+import { profileOf, rosterAthletes, seasonSummaries } from '../src/player-profiles.js';
+import { ProductLedger } from '../src/product-ledger.js';
+
+const now = Date.parse('2030-10-12T00:00:00Z');
+const game = (daysAgo: number, hits: number) => ({ at: new Date(now - daysAgo * 86_400_000).toISOString(), opponent: null, home: 'Brewers', away: 'Cubs', stats: { hits } });
+
+test('the store merges games per player, newest first, and folds games older than two seasons into season summaries', () => {
+  const store = new PlayerStore(null);
+  store.put('baseball_mlb|a', 'baseball_mlb', { at: now, deep: true, teams: true }, [game(1, 2), game(3, 1)], now);
+  store.put('baseball_mlb|a', 'baseball_mlb', { at: now, deep: true, teams: true }, [game(1, 3), game(800, 1), game(801, 3)], now);
+  const games = store.games('baseball_mlb|a');
+  assert.deepEqual(games.map((item) => item.stats.hits), [3, 1], 'the newer copy of a game replaces the old; old games left the rows');
+  const seasons = store.seasons('baseball_mlb|a');
+  assert.equal(seasons.length, 1);
+  assert.equal(seasons[0]!.games, 2);
+  assert.equal(seasons[0]!.averages.hits, 2);
+  assert.equal(seasonOf('football_nfl', '2030-01-05T00:00:00Z'), '2029-30', 'football seasons span New Year');
+  assert.equal(seasonOf('baseball_mlb', '2030-01-05T00:00:00Z'), '2030');
+  assert.equal(store.prune(now + 1), 1);
+  assert.equal(store.games('baseball_mlb|a').length, 0);
+  assert.equal(store.seasons('baseball_mlb|a').length, 1, 'season summaries stay');
+});
+
+test('a profile is written only when something changed', () => {
+  const store = new PlayerStore(null);
+  const profile = { sport: 'MLB', name: 'Aaron Ashby', team: 'Milwaukee Brewers', position: 'RP', bats: 'R', throws: 'L', status: 'Active',
+    jersey: '26', espnId: '41325', updatedAt: '2030-10-12T00:00:00.000Z' };
+  assert.equal(store.putProfile('aaron ashby', profile), true);
+  assert.equal(store.putProfile('aaron ashby', { ...profile, updatedAt: '2030-10-13T00:00:00.000Z' }), false, 'same facts, no write');
+  assert.equal(store.putProfile('aaron ashby', { ...profile, status: 'Injured' }), true);
+  assert.equal(store.profile('MLB', 'aaron ashby')?.status, 'Injured');
+});
+
+test('ESPN roster entries become profiles, grouped or flat', () => {
+  const athlete = { id: '41325', fullName: 'Aaron Ashby', jersey: '26', position: { abbreviation: 'RP' }, bats: { abbreviation: 'R' },
+    throws: { abbreviation: 'L' }, status: { name: 'Active' } };
+  assert.equal(rosterAthletes({ athletes: [{ position: 'pitchers', items: [athlete] }] }).length, 1);
+  assert.equal(rosterAthletes({ athletes: [athlete] }).length, 1);
+  const profile = profileOf('MLB', 'Milwaukee Brewers', athlete, new Date(now))!;
+  assert.deepEqual([profile.position, profile.bats, profile.throws, profile.status], ['RP', 'R', 'L', 'Active']);
+  const summary = seasonSummaries('baseball_mlb', [game(1, 2), game(2, 0)], [{ season: '2027', games: 100, averages: { hits: 1.1 } }], 'Brewers');
+  assert.deepEqual(summary.map((item) => item.season), ['2030', '2027']);
+  assert.equal(summary[0]!.averages.hits, 1);
+  assert.equal(summary[0]!.home?.hits, 1, 'all these games were at home');
+});
+
+test('the history moves its JSON file into the store once, writes only changed players, and fetches only new games for a fresh log', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'store-'));
+  const file = join(folder, 'propline-history.json');
+  await writeFile(file, JSON.stringify([['baseball_mlb|old player', { at: now - 3600_000, games: [game(2, 1)], deep: true, teams: true }]]));
+  const asked: string[] = [];
+  const client = { get: async (path: string) => { asked.push(path);
+    return { games: [{ commence_time: new Date(now - 86_400_000).toISOString(), status: 'final', home_team: 'Brewers', away_team: 'Cubs', stats: { hits: 4 } }] }; } } as unknown as PropLineClient;
+  const store = new PlayerStore(join(folder, 'players.sqlite'));
+  let clock = now;
+  const history = new PropLineHistory(client, file, () => 'baseball_mlb', { store, ttlMs: 1000 }, () => clock);
+  await history.ready();
+  assert.equal(store.counts().players, 1, 'the JSON file moved in');
+  // The old player's log is stale (TTL 1s) but deep and under a week old: only his newest games are asked for, then merged.
+  const line = { sport: 'MLB' as const, eventId: 'e', playerName: 'Old Player', eventStartTime: new Date(now + 86_400_000).toISOString(), market: 'batter_hits' };
+  const values = await history.values(line);
+  assert.ok(asked[0]!.endsWith('limit=15'), asked[0]);
+  assert.deepEqual(values !== 'PENDING' && values?.values, [4, 1], 'new game merged with the stored one');
+  await history.save();
+  assert.equal(store.games('baseball_mlb|old player').length, 2);
+  // A new player gets the full log.
+  clock += 1;
+  await history.values({ ...line, playerName: 'New Player' });
+  assert.ok(asked[1]!.endsWith('limit=100'));
+  // A fresh start reads the store, not the file.
+  const again = new PropLineHistory(client, file, () => 'baseball_mlb', { store, ttlMs: 86_400_000 }, () => clock);
+  await history.save();
+  assert.equal((await again.cachedFor(line))?.length, 2);
+});
+
+test('spot checks: a random sample of unchecked picks, verdicts recorded and tallied', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'audit-'));
+  const decision = (i: number, grade: string) => ({ trackedPickId: `t${i}`, decisionKey: `k${i}`, playerName: `P${i}`, sport: 'NFL', market: 'm',
+    exactLine: 1, direction: 'MORE', lineType: 'REGULAR', lineScore: 85, modelVersion: 'GKR-X', eventStartTime: '2030-10-11T00:00:00.000Z',
+    createdAt: '2030-10-10T00:00:00.000Z', grade, actualResult: null, eventId: `e${i}`, playerId: `p${i}`, thresholdCushion: 1 });
+  const file = join(folder, 'ledger.json');
+  await writeFile(file, JSON.stringify({ version: 2, decisions: [...Array.from({ length: 6 }, (_, i) => decision(i, i % 2 ? 'WIN' : 'PENDING')),
+    { ...decision(9, 'WIN'), createdAt: '2030-01-01T00:00:00.000Z' }], profiles: [], crowns: [], follows: [], publicCredits: [], accounts: [], sessions: [],
+    savedPicks: [], privateCrowns: [] }));
+  const ledger = new ProductLedger(file, 'PLAYABLE', () => new Date(now));
+  const sample = await ledger.auditSample(4, 14, () => .3);
+  assert.equal(sample.length, 4);
+  assert.ok(!sample.some((item) => item.trackedPickId === 't9'), 'only the last two weeks');
+  assert.equal(sample.filter((item) => item.grade === 'WIN').length, 2, 'half graded');
+  const summary = await ledger.audit(sample[0]!.trackedPickId, 'WRONG', 'box score says 3');
+  assert.deepEqual([summary.checked, summary.wrong], [1, 1]);
+  assert.equal((await ledger.audit(sample[0]!.trackedPickId, 'ACCURATE', null)).wrong, 0, 'a second verdict replaces the first');
+  assert.ok(!(await ledger.auditSample(10, 14)).some((item) => item.trackedPickId === sample[0]!.trackedPickId), 'checked picks leave the pool');
+  await assert.rejects(ledger.audit('nope', 'WRONG', null));
+});

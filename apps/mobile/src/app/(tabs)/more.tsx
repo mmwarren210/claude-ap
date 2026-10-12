@@ -311,7 +311,8 @@ export default function MoreScreen() {
         <Row icon="refresh" title="Refresh boards" detail="Pull or reanalyze" locked={!owner} onPress={() => go('/owner/board')} />
         <Row icon="magnify" title="Research desk" detail="Private stat research" locked={!owner} onPress={() => go('/owner/research')} />
         <Row icon="binoculars" title="Scout queue" detail="Lines waiting · Ask all" locked={!owner} onPress={() => setSheet('scout')} />
-        <Row icon="pulse" title="Learning" detail="Tracked outcomes" locked={!owner} last onPress={() => go('/owner/learning')} />
+        <Row icon="pulse" title="Learning" detail="Tracked outcomes" locked={!owner} onPress={() => go('/owner/learning')} />
+        <Row icon="clipboard-check-outline" title="Spot-check picks" detail="Random picks and their evidence" locked={!owner} last onPress={() => go('/owner/audit')} />
       </View>
 
       <Pressable accessibilityRole="button" onPress={() => void logout()} style={styles.logout}>

@@ -17,6 +17,7 @@ import type { HistoryRead } from './history-read.js';
 import { twoMaps } from './player-history.js';
 import type { PlayerHistory } from './player-history.js';
 import type { PropLineHistory } from './propline-history.js';
+import { gameValue, proplineStat } from './propline-history.js';
 import { FeedbackStore } from './feedback.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { appendFile, mkdir, readdir, readFile, stat } from 'node:fs/promises';
@@ -27,7 +28,7 @@ import { z } from 'zod';
 import { bestBreakEven, boardResponseSchema, DEFAULT_PAYOUTS, entryBreakEvens, nflPassingResultSchema, pickAppSchema } from '@crowniq/contracts';
 import { ModelRegistry, routeResearch, snapshotSelection } from '@crowniq/engine';
 import type { OddsProvider, ResearchAdapter } from '@crowniq/engine';
-import type { BoardResponse, Payouts, PropLine } from '@crowniq/contracts';
+import type { Analysis, BoardResponse, Evidence, Payouts, PropLine } from '@crowniq/contracts';
 import { idlePullJob } from './owner-pull-job.js';
 import type { OwnerPullJob, OwnerPullJobStore } from './owner-pull-job.js';
 import { BoardService } from './board-service.js';
@@ -102,6 +103,11 @@ import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
 import type { Gkr2, OpponentReads } from './gkr2.js';
 import type { MlbGames } from './mlb-context.js';
+import type { PlayerStore } from './player-store.js';
+import type { PlayerProfiles } from './player-profiles.js';
+import { seasonSummaries } from './player-profiles.js';
+import { seasonOf } from './player-store.js';
+import { playerTeam } from './gkr2.js';
 
 const gzipAsync = promisify(gzip);
 
@@ -183,6 +189,9 @@ export interface ServerOptions {
   gkr2Public?: boolean;
   /** MLB game context from PropLine (probable starters, park, weather), refreshed every 20 minutes for the board's games. */
   mlbGames?: MlbGames | null;
+  /** The player store (games, season summaries, profiles) and the ESPN profile reader. */
+  playerStore?: PlayerStore | null;
+  playerProfiles?: PlayerProfiles | null;
   /** Every standard line graded after its game, for Trends (CrownIQ's own hit rates). */
   baseRates?: BaseRates | null;
   /** Beta feedback: testers' bug reports and suggestions, and the patch notes that answer them. */
@@ -1680,6 +1689,9 @@ export function buildServer(options: ServerOptions = {}) {
     const open=lines.filter((line)=>Date.parse(line.eventStartTime)>now().getTime());
     const warmed=options.proplineHistory?await options.proplineHistory.warm(open).catch(()=>null):null;
     const accuracyGames=options.bookAccuracy?.refresh?await options.bookAccuracy.refresh(600,14).catch(()=>null):null;
+    // Player profiles from ESPN's rosters (written only where something changed).
+    const profiles=options.playerProfiles?await options.playerProfiles.refresh().catch(()=>null):null;
+    if(profiles)console.log(`[nightly] profiles: ${profiles.teams} rosters, ${profiles.changed} changed, ${profiles.failed} failed`);
     if(contextScheduler)contextScheduler.paused=false;
     const refreshed=contextScheduler?!!(await contextScheduler.tick().catch(()=>null)):false;
     nightly.last={at:now().toISOString(),players:warmed?.players??0,found:warmed?.found??0,empty:warmed?.empty??0,skipped:warmed?.skipped??0,
@@ -1688,7 +1700,7 @@ export function buildServer(options: ServerOptions = {}) {
     console.log(`[nightly] PropLine pull: ${nightly.last.players} players (${nightly.last.found} with games), ${nightly.last.requests} history requests, accuracy ${accuracyGames??'-'} games (${nightly.last.accuracyRequests} requests), ${Math.round(nightly.last.ms/1000)}s`);
     }finally{nightly.running=false;if(contextScheduler)contextScheduler.paused=false;}
   };
-  if(!options.clock&&(options.proplineHistory||options.bookAccuracy)){
+  if(!options.clock&&(options.proplineHistory||options.bookAccuracy||options.playerProfiles)){
     const central=(at:Date)=>Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',hourCycle:'h23',
       year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).formatToParts(at).map((part)=>[part.type,part.value]));
     const check=()=>{const parts=central(new Date()),day=`${parts.year}-${parts.month}-${parts.day}`;
@@ -1995,6 +2007,83 @@ export function buildServer(options: ServerOptions = {}) {
   // Which build is running, so the app can show its version (Railway sets the commit at deploy).
   // A short notice for every member (CROWNIQ_NOTICE), e.g. while lines are being updated; null when unset.
   // CROWNIQ_NOTICE_UNTIL (an ISO time) ends it on its own; CROWNIQ_NOTICE_LINK opens a tab when tapped (e.g. /(tabs)/vetted).
+  // Evidence pages and spot checks (owner, 2026-10-12): everything a GKR pick stood on, each input with its source, and the
+  // player's games behind it so any box score can confirm them. Owner-only: the inputs show how the models work.
+  const evidenceRows=(items:readonly Evidence[])=>items.filter((item)=>!item.kind.startsWith('identity:')).map((item)=>({kind:item.kind,
+    finding:item.finding,value:item.numeric?.value??null,reference:item.numeric?.baseline??null,unit:item.numeric?.unit??null,
+    source:item.sourceName,sourceUrl:item.sourceUrl,retrievedAt:item.retrievedAt,quality:item.quality}));
+  const gamesBehind=async(line:PropLine,limit=20)=>{
+    const read=proplineStat(line.sport,line.market),games=await options.proplineHistory?.cachedFor(line).catch(()=>null);
+    if(!read||!games)return [];
+    return games.filter((game)=>Date.parse(game.at)<Date.parse(line.eventStartTime)).sort((a,b)=>b.at.localeCompare(a.at)).slice(0,limit)
+      .map((game)=>({date:game.at.slice(0,10),matchup:game.away&&game.home?`${game.away} @ ${game.home}`:null,value:gameValue(game.stats,read)}));
+  };
+  const analysisView=(analysis:Analysis|undefined|null)=>analysis?{direction:analysis.direction,score:analysis.score,scoreBand:analysis.scoreBand,
+    modelVersion:analysis.modelVersion,reasonCode:analysis.reasonCode,thresholdCushion:analysis.thresholdCushion??null,
+    factors:(analysis.contextBreakdown??[]).map((item)=>({name:item.name,contribution:item.contribution,weight:item.weight??null,
+      observed:item.observed??null,reference:item.reference??null,measured:item.measured??null})),
+    adjustments:(analysis.lineAdjustments??[]).filter((item)=>item.contribution!==0).map((item)=>({name:item.name,contribution:item.contribution,explanation:item.explanation}))}:null;
+  app.get('/v1/owner/evidence/line/:lineId',async(request,reply)=>{
+    if(!await isOwner(request))return reply.code(404).send({code:'NOT_FOUND'});
+    const {lineId}=request.params as {lineId:string};
+    const board=service.getBoard(),line=board?.board.lines.find((item)=>item.id===lineId);
+    if(!board||!line)return reply.code(404).send({code:'LINE_NOT_FOUND'});
+    const analysis=board.analyses.find((item)=>item.lineId===lineId),ids=new Set(analysis?.evidenceIds??[]);
+    const edgePick=edge?(await edge.snapshot('prizepicks').catch(()=>null))?.byLine.get(lineId)??null:null;
+    const mlb=options.mlbGames&&line.sport==='MLB'?{game:options.mlbGames.context(line.eventId),starter:options.mlbGames.matchup(line),
+      weather:options.mlbGames.weather(line),h2h:options.mlbGames.h2h(line)}:null;
+    return {line:{id:line.id,playerName:line.playerName,team:line.team,opponent:line.opponent,sport:line.sport,market:line.market,
+      threshold:line.threshold,lineType:line.lineType,eventName:line.eventName,eventStartTime:line.eventStartTime},
+      gkr:analysisView(analysis),evidence:evidenceRows(service.getEvidence().filter((item)=>ids.has(item.id))),
+      games:await gamesBehind(line),mlb,
+      edge:edgePick?{side:edgePick.side,probability:edgePick.probability,breakEven:edgePick.breakEven,edge:edgePick.edge,
+        projection:edgePick.projection.mean,reasons:edgePick.reasons}:null,
+      profile:options.playerProfiles?.profile(line.sport,line.playerName)??null};
+  });
+  app.get('/v1/owner/evidence/pick/:trackedPickId',async(request,reply)=>{
+    if(!await isOwner(request)||!options.product)return reply.code(404).send({code:'NOT_FOUND'});
+    const decision=await options.product.decision((request.params as {trackedPickId:string}).trackedPickId);
+    if(!decision)return reply.code(404).send({code:'PICK_NOT_FOUND'});
+    const line=decision.lineSnapshot;
+    return {pick:{trackedPickId:decision.trackedPickId,playerName:decision.playerName,team:decision.team,opponent:decision.opponent,
+      sport:decision.sport,market:decision.market,exactLine:decision.exactLine,direction:decision.direction,lineType:decision.lineType,
+      lineScore:decision.lineScore,modelVersion:decision.modelVersion,eventStartTime:decision.eventStartTime,createdAt:decision.createdAt,
+      grade:decision.grade,actualResult:decision.actualResult,resultSource:decision.resultSourceName,resultSourceUrl:decision.resultSourceUrl},
+      gkr:analysisView(decision.analysisSnapshot),evidence:evidenceRows(decision.evidenceSnapshot??[]),games:line?await gamesBehind(line):[]};
+  });
+  app.get('/v1/owner/audit',async(request,reply)=>{
+    if(!await isOwner(request)||!options.product)return reply.code(404).send({code:'NOT_FOUND'});
+    const count=Math.min(30,Math.max(1,Number((request.query as {count?:string}).count??10)||10));
+    return {picks:await options.product.auditSample(count),summary:await options.product.auditSummary()};
+  });
+  app.post('/v1/owner/audit/:trackedPickId',async(request,reply)=>{
+    if(!await isOwner(request)||!options.product)return reply.code(404).send({code:'NOT_FOUND'});
+    const input=z.object({verdict:z.enum(['ACCURATE','WRONG']),note:z.string().trim().max(500).optional()}).safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'INVALID_AUDIT'});
+    try{return {summary:await options.product.audit((request.params as {trackedPickId:string}).trackedPickId,input.data.verdict,input.data.note||null)};}
+    catch{return reply.code(404).send({code:'PICK_NOT_FOUND'});}
+  });
+  // A player's permanent profile (ESPN roster facts) and season summaries from his games. Display only.
+  app.get('/v1/players/profile',async(request,reply)=>{
+    const query=z.object({sport:z.string().trim().min(2).max(20),name:z.string().trim().min(2).max(80),eventId:z.string().max(200).optional(),
+      market:z.string().trim().max(80).optional()}).safeParse(request.query);
+    if(!query.success)return reply.code(400).send({code:'INVALID_QUERY'});
+    const {sport,name,eventId,market}=query.data,profile=options.playerProfiles?.profile(sport,name)??null;
+    const line={sport:sport as PropLine['sport'],eventId:eventId??'',playerName:name};
+    const games=await options.proplineHistory?.cachedFor(line).catch(()=>null)??[],sportKey=options.proplineHistory?.sportKey(line)??null;
+    const folded=sportKey&&options.playerStore?options.playerStore.seasons(`${sportKey}|${normalizedName(name)}`):[];
+    // The line's own stat per season (and home/away) when a market is given, from the games still held.
+    const read=market?proplineStat(sport,market):null,team=profile?.team??playerTeam(games);
+    const statOf=(rows:readonly typeof games[number][])=>{const values=read?rows.flatMap((game)=>{const v=gameValue(game.stats,read);return v===null?[]:[v];}):[];
+      return values.length?{average:Math.round(values.reduce((a,b)=>a+b,0)/values.length*100)/100,games:values.length}:null;};
+    const seasons=sportKey?seasonSummaries(sportKey,games,folded,team).map((season)=>{
+      const rows=games.filter((game)=>seasonOf(sportKey,game.at)===season.season);
+      const home=rows.filter((game)=>!!team&&!!game.home&&normalizedName(game.home)===normalizedName(team));
+      const away=rows.filter((game)=>!!team&&!!game.away&&normalizedName(game.away)===normalizedName(team));
+      return {...season,stat:statOf(rows),statHome:statOf(home),statAway:statOf(away)};
+    }):[];
+    return {profile,seasons};
+  });
   app.get('/v1/notice',async()=>{
     const until=Date.parse(process.env.CROWNIQ_NOTICE_UNTIL??'');
     if(Number.isFinite(until)&&now().getTime()>=until)return {message:null,link:null};
@@ -2479,6 +2568,10 @@ export function buildServer(options: ServerOptions = {}) {
     });
     admin.get('/members', async (_request, reply) => options.product ? options.product.membership()
       : reply.code(503).send({ code: 'PRODUCT_UNCONFIGURED' }));
+    admin.post('/player-profiles/refresh', async (_request, reply) => options.playerProfiles ? options.playerProfiles.refresh()
+      : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
+    admin.get('/player-store', async (_request, reply) => options.playerStore ? { store: options.playerStore.counts(), history: options.proplineHistory?.status() ?? null }
+      : reply.code(503).send({ code: 'PLAYER_STORE_UNCONFIGURED' }));
     admin.get('/mlb-context', async (_request, reply) => options.mlbGames ? options.mlbGames.status()
       : reply.code(503).send({ code: 'MLB_CONTEXT_UNCONFIGURED' }));
     admin.post('/mlb-context/refresh', async (_request, reply) => {
