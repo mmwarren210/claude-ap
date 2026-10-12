@@ -49,9 +49,12 @@ const football: Readonly<Record<string, Read>> = { passing_yards: 'passing_yards
   player_reception_tds: 'receiving_tds', rec_tds: 'receiving_tds', receiving_tds: 'receiving_tds',
   player_reception_longest: 'longest_reception', longest_rec: 'longest_reception', player_receiving_targets: 'receiving_targets',
   receiving_targets: 'receiving_targets', targets: 'receiving_targets', player_pass_rush_yds: 'pass_rush_yds',
-  player_rush_reception_yds: 'rush_reception_yds', anytime_tds: 'total_tds', player_solo_tackles: 'solo_tackles',
+  // Anytime TDs are rushing + receiving TDs; total_tds also counts a quarterback's passing TDs (audit, 2026-10-12).
+  player_rush_reception_yds: 'rush_reception_yds', anytime_tds: 'anytime_td', player_solo_tackles: 'solo_tackles',
   player_tackles_assists: 'tackles_assists', player_sacks: 'sacks', player_field_goals: 'field_goals_made', fg_made: 'field_goals_made',
-  player_pats: 'extra_points_made', player_kicking_points: 'kicking_points' };
+  player_pats: 'extra_points_made', player_kicking_points: 'kicking_points',
+  // PropLine's own keys for these (audit, 2026-10-12: graded props whose stat had no read).
+  player_anytime_td: 'anytime_td', player_assists: 'assists', player_fumbles_lost: 'fumbles_lost', player_pass_rush_reception_tds: 'pass_rush_rec_tds' };
 const READS: Readonly<Record<string, Readonly<Record<string, Read>>>> = {
   NBA: basketball, WNBA: basketball, NCAAB: basketball, NFL: football, NCAAFB: football,
   MLB: { batter_hits: 'hits', hits: 'hits', batter_total_bases: 'total_bases', total_bases: 'total_bases', batter_singles: 'singles',
@@ -60,16 +63,18 @@ const READS: Readonly<Record<string, Readonly<Record<string, Read>>>> = {
     batter_walks: 'walks', sb: 'stolen_bases', stolen_bases: 'stolen_bases', hitter_ks: 'batter_strikeouts',
     batter_strikeouts: 'batter_strikeouts', batter_hits_runs_rbis: 'hits_runs_rbis', pitcher_strikeouts: 'strikeouts',
     pitcher_outs: 'outs', pitching_outs: 'outs', pitcher_earned_runs: 'earned_runs', hits_allowed: 'hits_allowed',
-    walks_allowed: 'walks_allowed' },
+    walks_allowed: 'walks_allowed', batter_runs: 'runs' },
   NHL: { goals: 'goals', assists: 'assists', points: 'points_nhl', shots_on_goal: 'shots_on_goal', blocked_shots: 'blocked_shots',
-    power_play_points: 'power_play_points', player_power_play_points: 'power_play_points', saves: 'saves' },
+    power_play_points: 'power_play_points', player_power_play_points: 'power_play_points', saves: 'saves', hits: 'hits', player_hits: 'hits' },
   SOCCER: { goals: 'goals', assists: 'assists', shots: 'shots', shots_on_target: 'shots_on_target', sot: 'shots_on_target',
-    fouls: 'fouls_committed', goals_plus_assists: ['goals', 'assists'], goal_plus_assist: ['goals', 'assists'], saves: 'saves' },
+    fouls: 'fouls_committed', goals_plus_assists: ['goals', 'assists'], goal_plus_assist: ['goals', 'assists'], saves: 'saves',
+    player_shots: 'shots', player_shots_on_target: 'shots_on_target', player_assists: 'assists', player_goals: 'goals',
+    goalie_saves: 'saves', player_saves: 'saves', goal_or_assist: ['goals', 'assists'], player_fouls: 'fouls_committed' },
   // PropLine's tennis "total_games" and "set_1_games" are the player's own games (owner report, 2026-10-12: a 13-15 match
   // read as 13). A match's total comes from both sides' games (match_total_games, added when the game is read); games won
   // is the player's own count. The first set's total has no opponent count, so it isn't read.
   TENNIS: { total_games: 'match_total_games', games_won: 'total_games', total_games_won: 'total_games', aces: 'aces',
-    double_faults: 'dblfaults' },
+    double_faults: 'dblfaults', break_points_won: 'breakpts_w', total_sets: 'sets', total_tiebreaks: 'tiebreaks' },
 };
 
 // A stat missing from a game the player played in means zero only when the box score carries others of the same kind

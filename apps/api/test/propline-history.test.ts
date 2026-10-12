@@ -143,3 +143,12 @@ test('tennis total games is the whole match (both players), games won is the pla
   assert.equal(proplineStat('TENNIS', 'first_set_total_games'), null, 'no opponent count for the first set, so no read');
   assert.equal(asked, 1);
 });
+
+test('anytime TDs never count a quarterback’s passing touchdowns; soccer, NHL hits and MLB runs read PropLine’s own keys', () => {
+  assert.equal(proplineStat('NFL', 'anytime_tds'), 'anytime_td');
+  assert.equal(gameValue({ passing_tds: 2, total_tds: 2, anytime_td: 0 }, proplineStat('NFL', 'anytime_tds')!), 0);
+  assert.equal(proplineStat('SOCCER', 'player_shots'), 'shots');
+  assert.deepEqual(proplineStat('SOCCER', 'goal_or_assist'), ['goals', 'assists']);
+  assert.equal(proplineStat('NHL', 'player_hits'), 'hits');
+  assert.equal(proplineStat('MLB', 'batter_runs'), 'runs');
+});
