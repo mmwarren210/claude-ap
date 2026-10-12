@@ -146,6 +146,8 @@ const selectedEvidence=(analysis:Analysis,evidence:EvidenceLookup)=>
     const item=evidence.get(id);return item?[item]:[];
   }) : evidence.filter((item)=>analysis.evidenceIds.includes(item.id)))
     .sort((a,b)=>a.id.localeCompare(b.id));
+/** From this moment GKR's record counts one pick per player, stat, game and side (owner approved 2026-10-12). */
+export const ONE_PICK_PER_GAME_FROM='2026-10-12T14:15:00.000Z';
 export const decisionKeyOf=(value:{eventId:string;playerId:string;market:string;exactLine:number;
   direction:string;lineType:string;modelVersion:string})=>createHash('sha256').update(JSON.stringify([
   value.eventId,value.playerId,value.market,value.exactLine,value.direction,value.lineType,value.modelVersion]))
@@ -984,15 +986,24 @@ export class ProductLedger {
       const ranks=new Map(board.rankedLineIds.map((id,index)=>[id,index+1]));
       const byKey=new Map(data.decisions.map((item)=>[item.decisionKey!,item]));
       const findings=new Map(evidence.map((item)=>[item.id,item]));
+      // One counted pick per player, stat, game and side (owner, 2026-10-12: Tyson Bagent's one read was saved at nine
+      // line numbers, nine losses). From ONE_PICK_PER_GAME_FROM on, the first one saved stands, the standard line before
+      // Goblins and Demons; earlier picks keep their record as they were.
+      const sameBet=(item:{eventId:string;playerId:string;market:string;direction:string})=>`${item.eventId}|${item.playerId}|${item.market}|${item.direction}`;
+      const counted=new Set(data.decisions.filter((item)=>item.createdAt>=ONE_PICK_PER_GAME_FROM).map(sameBet));
+      const typeOrder=(line:{lineType:string})=>line.lineType==='REGULAR'?0:1;
       let revised=false;
-      for(const line of board.board.lines){
+      for(const line of [...board.board.lines].sort((a,b)=>typeOrder(a)-typeOrder(b))){
         const analysis=analyses.get(line.id);
         if(!analysis || !eligible(line,analysis) ||
           !(['CROWN_STRONG','CROWN_ELITE'].includes(analysis.scoreBand??'') ||
             this.minimumBand==='PLAYABLE' && analysis.scoreBand==='PLAYABLE'))continue;
         const next=snapshot(line,analysis,findings,ranks.get(line.id)??null,this.clock());
         const existing=byKey.get(next.decisionKey!);
-        if(!existing){byKey.set(next.decisionKey!,next);data.decisions.push(next);continue;}
+        if(!existing){
+          if(next.createdAt>=ONE_PICK_PER_GAME_FROM){if(counted.has(sameBet(next)))continue;counted.add(sameBet(next));}
+          byKey.set(next.decisionKey!,next);data.decisions.push(next);continue;
+        }
         const revisions=existing.revisions?.length??0;
         upsertDecision(data,next);
         if((existing.revisions?.length??0)!==revisions)revised=true;

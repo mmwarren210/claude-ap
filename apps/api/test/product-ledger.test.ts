@@ -37,23 +37,23 @@ function fact(line:PropLine,actual:number|null,status:ResultFact['status']='FINA
     completedAt:'2030-09-25T04:00:00Z'};
 }
 
-test('strong decisions are immutable, idempotent, distinct after line movement; verified L10 keeps full archive',async()=>{
+test('strong decisions are immutable, idempotent, one per bet after line movement; verified L10 keeps full archive',async()=>{
   const folder=await mkdtemp(join(tmpdir(),'crowniq-ledger-'));
   try {
     let clock=now;const ledger=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>clock);
     const first=build('e0');
     assert.equal(await ledger.track(first,[]),1);
     assert.equal(await ledger.track(first,[]),0);
-    assert.equal(await ledger.track(build('e0','alpha',25.5),[]),1);
+    assert.equal(await ledger.track(build('e0','alpha',25.5),[]),0,'the same bet at a moved line counts once (the first stands)');
     assert.equal(await ledger.track(build('pass','alpha',24.5,'PASS'),[]),0);
     const boards=Array.from({length:12},(_,i)=>build(`e${i+1}`));
     for(const board of boards)await ledger.track(board,[]);
     clock=new Date('2030-09-26T00:00:00Z');
     for(const board of [first,...boards])await ledger.grade([fact(board.board.lines[0],25)]);
     const all=await ledger.listDecisions(0,100);
-    assert.equal(all.total,14);
+    assert.equal(all.total,13);
     const history=await ledger.history('NFL','alpha',first.board.lines[0].market);
-    assert.equal(history.sampleSize,10);assert.equal(history.fullArchiveCount,14);
+    assert.equal(history.sampleSize,10);assert.equal(history.fullArchiveCount,13);
     assert.equal(history.label,'CrownIQ Tracked L10');
     assert.equal(history.internalOutcomeDistribution?.mean,25);
     const earlier=all.decisions.find((item)=>item.exactLine===24.5 && item.eventId==='e0')!;
@@ -61,10 +61,10 @@ test('strong decisions are immutable, idempotent, distinct after line movement; 
     assert.equal(earlier.grade,'WIN');
     const learning=await ledger.learningSummary();
     assert.deepEqual({tracked:learning.tracked,pending:learning.pending,graded:learning.graded,
-      dnpVoid:learning.dnpVoid},{tracked:14,pending:0,graded:14,dnpVoid:0});
-    assert.equal(learning.models[0].picks,14);
+      dnpVoid:learning.dnpVoid},{tracked:13,pending:0,graded:13,dnpVoid:0});
+    assert.equal(learning.models[0].picks,13);
     const restarted=new ProductLedger(join(folder,'ledger.json'),'CROWN_STRONG',()=>clock);
-    assert.equal((await restarted.listDecisions()).total,14);
+    assert.equal((await restarted.listDecisions()).total,13);
   } finally {await rm(folder,{recursive:true,force:true});}
 });
 
@@ -351,12 +351,12 @@ test('re-tracking the same decision keeps one decision and records changed reads
     // The identical second read adds nothing; the changed score is kept as one revision.
     assert.deepEqual(decisions[0].revisions?.map((item)=>item.lineScore),[91]);
     assert.equal(decisions[0].lineScore,89,'the first read stays the graded decision');
-    // A different line (moved threshold) is a different decision.
-    assert.equal(await ledger.track(build('dedupe','alpha',25.5),[]),1);
+    // A different line (moved threshold) for the same bet doesn't count again (one pick per player, stat, game and side).
+    assert.equal(await ledger.track(build('dedupe','alpha',25.5),[]),0);
     clock=new Date('2030-09-26T00:00:00Z');
-    // One result grades each distinct line once: two decisions, never a copy per re-analysis.
-    assert.deepEqual(await ledger.grade([fact(board.board.lines[0],30)]),{graded:2,unmatched:0,personal:0});
-    assert.deepEqual([(await ledger.learningSummary()).tracked,(await ledger.learningSummary()).graded],[2,2]);
+    // One result grades the one decision once, never a copy per re-analysis.
+    assert.deepEqual(await ledger.grade([fact(board.board.lines[0],30)]),{graded:1,unmatched:0,personal:0});
+    assert.deepEqual([(await ledger.learningSummary()).tracked,(await ledger.learningSummary()).graded],[1,1]);
   }finally{await rm(folder,{recursive:true,force:true});}
 });
 
@@ -479,5 +479,19 @@ test('personal slips: Underdog and DK Pick’em take up to 8 picks, PrizePicks u
     await assert.rejects(()=>ledger.savePersonalCrown(account,legs(7),board),/INVALID_PRIVATE_CROWN/);
     assert.equal((await ledger.savePersonalCrown(account,legs(8),board,'underdog')).alreadySaved,false);
     await assert.rejects(()=>ledger.savePersonalCrown(account,legs(9),board,'pick6'),/INVALID_PRIVATE_CROWN/);
+  }finally{await rm(folder,{recursive:true,force:true});}
+});
+
+test('one counted pick per player, stat, game and side: the standard line wins over a Goblin seen in the same pass',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-one-pick-'));
+  try{
+    const ledger=new ProductLedger(join(folder,'data.json'),'CROWN_STRONG',()=>now);
+    const regular=build('one','alpha',24.5),goblin=build('one','alpha',19.5);
+    const goblinLine={...goblin.board.lines[0]!,id:'goblin-line',lineType:'GOBLIN' as const};
+    const both=combine({...goblin,board:{...goblin.board,lines:[goblinLine]},analyses:[{...goblin.analyses[0]!,lineId:'goblin-line'}],rankedLineIds:['goblin-line']},regular);
+    assert.equal(await ledger.track(both,[]),1);
+    const [kept]=(await ledger.listDecisions()).decisions;
+    assert.equal(kept!.lineType,'REGULAR');
+    assert.equal(kept!.exactLine,24.5);
   }finally{await rm(folder,{recursive:true,force:true});}
 });
