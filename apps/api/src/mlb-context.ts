@@ -29,33 +29,40 @@ export interface Adjustment { readonly factor: number; readonly reasons: string[
 const PROPLINE_ID = /propline:(\d+)/;
 export const proplineEventId = (eventId: string) => PROPLINE_ID.exec(eventId)?.[1] ?? null;
 
+// PropLine records a pitching stat only when a prop was offered on it, so a missing stat is unknown, not zero: batters
+// faced needs outs, hits and walks all present, and each rate counts only the starts that carry its stat.
+const has = (stats: Readonly<Record<string, number>>, key: string) => Number.isFinite(stats[key]);
 const battersFaced = (stats: Readonly<Record<string, number>>) =>
-  (stats.outs ?? 0) + (stats.hits_allowed ?? 0) + (stats.walks_allowed ?? 0);
+  has(stats, 'outs') && has(stats, 'hits_allowed') && has(stats, 'walks_allowed') ? stats.outs! + stats.hits_allowed! + stats.walks_allowed! : null;
 const starts = (games: readonly Game[], before = Infinity) => games
-  .filter((game) => game.stats.pitcher_started === 1 && Date.parse(game.at) < before && battersFaced(game.stats) > 0)
+  .filter((game) => game.stats.pitcher_started === 1 && Date.parse(game.at) < before && (battersFaced(game.stats) ?? 0) > 0)
   .sort((a, b) => b.at.localeCompare(a.at));
+const RATE_STATS = { hits: 'hits_allowed', strikeouts: 'strikeouts', walks: 'walks_allowed', earnedRuns: 'earned_runs' } as const;
+type Totals = Record<keyof typeof RATE_STATS, { count: number; bf: number }>;
+const emptyTotals = (): Totals => ({ hits: { count: 0, bf: 0 }, strikeouts: { count: 0, bf: 0 }, walks: { count: 0, bf: 0 }, earnedRuns: { count: 0, bf: 0 } });
+const addStart = (totals: Totals, stats: Readonly<Record<string, number>>) => {
+  const bf = battersFaced(stats)!;
+  for (const [rate, key] of Object.entries(RATE_STATS) as [keyof Totals, string][])
+    if (has(stats, key)) { totals[rate].count += stats[key]!; totals[rate].bf += bf; }
+};
 
 /** League rates per batter faced from every cached start. */
 export function leagueRates(players: readonly (readonly Game[])[]): Omit<PitcherRates, 'name' | 'starts'> | null {
-  let bf = 0, hits = 0, strikeouts = 0, walks = 0, earnedRuns = 0;
-  for (const games of players) for (const game of starts(games)) {
-    bf += battersFaced(game.stats); hits += game.stats.hits_allowed ?? 0; strikeouts += game.stats.strikeouts ?? 0;
-    walks += game.stats.walks_allowed ?? 0; earnedRuns += game.stats.earned_runs ?? 0;
-  }
-  return bf >= 500 ? { hits: hits / bf, strikeouts: strikeouts / bf, walks: walks / bf, earnedRuns: earnedRuns / bf } : null;
+  const totals = emptyTotals();
+  for (const games of players) for (const game of starts(games)) addStart(totals, game.stats);
+  if (Object.values(totals).some((item) => item.bf < 500)) return null;
+  return { hits: totals.hits.count / totals.hits.bf, strikeouts: totals.strikeouts.count / totals.strikeouts.bf,
+    walks: totals.walks.count / totals.walks.bf, earnedRuns: totals.earnedRuns.count / totals.earnedRuns.bf };
 }
 
 /** A starter's last 10 starts before a time, as rates per batter faced shrunk toward the league (worth 60 batters). */
 export function pitcherRates(name: string, games: readonly Game[], league: Omit<PitcherRates, 'name' | 'starts'>, before: number): PitcherRates | null {
   const recent = starts(games, before).slice(0, 10);
   if (recent.length < 3) return null;
-  const prior = 60;
-  let bf = prior, hits = league.hits * prior, strikeouts = league.strikeouts * prior, walks = league.walks * prior, earnedRuns = league.earnedRuns * prior;
-  for (const game of recent) {
-    bf += battersFaced(game.stats); hits += game.stats.hits_allowed ?? 0; strikeouts += game.stats.strikeouts ?? 0;
-    walks += game.stats.walks_allowed ?? 0; earnedRuns += game.stats.earned_runs ?? 0;
-  }
-  return { name, starts: recent.length, hits: hits / bf, strikeouts: strikeouts / bf, walks: walks / bf, earnedRuns: earnedRuns / bf };
+  const totals = emptyTotals();
+  for (const game of recent) addStart(totals, game.stats);
+  const shrunk = (rate: keyof Totals) => (totals[rate].count + league[rate] * 60) / (totals[rate].bf + 60);
+  return { name, starts: recent.length, hits: shrunk('hits'), strikeouts: shrunk('strikeouts'), walks: shrunk('walks'), earnedRuns: shrunk('earnedRuns') };
 }
 
 type Rate = 'hits' | 'strikeouts' | 'walks' | 'earnedRuns';

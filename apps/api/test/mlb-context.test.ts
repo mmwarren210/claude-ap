@@ -69,3 +69,11 @@ test('MLB games refresh each game at most hourly and learn starters and batters\
   assert.equal(asked.length, 2);
   assert.equal(games.context('pp-game:other:1'), null);
 });
+
+test('a pitching stat PropLine didn\'t record is unknown, not zero', () => {
+  const partial = Array.from({ length: 30 }, (_, i) => start(i, i % 2 ? { outs: 18, hits_allowed: 6, walks_allowed: 2, strikeouts: 6, earned_runs: 3 }
+    : { outs: 18, hits_allowed: 6, strikeouts: 6, earned_runs: 3 }));
+  const league = leagueRates([partial, average])!;
+  assert.equal(league.walks.toFixed(3), (2 / 26).toFixed(3), 'starts without a walks entry are left out');
+  assert.equal(league.strikeouts.toFixed(3), (6 / 26).toFixed(3));
+});
