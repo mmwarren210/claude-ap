@@ -131,6 +131,8 @@ export class PropLineHistory {
   private readonly waiting: (() => void)[] = [];
   private day = '';
   readonly stats = { requests: 0, found: 0, empty: 0, failed: 0, skippedBudget: 0 };
+  /** The last few failed requests (player and error), for the admin status. */
+  private readonly failures: { key: string; error: string; at: string }[] = [];
 
   constructor(private readonly client: PropLineClient, private readonly file: string | null,
     /** PropLine's own sport key for a game it listed (soccer needs it: one key per league). */
@@ -237,7 +239,12 @@ export class PropLineHistory {
       return found;
     }).finally(() => this.loading.delete(key));
     this.loading.set(key, request);
-    try { return await request; } catch { this.stats.failed++; return undefined; }
+    try { return await request; } catch (error) {
+      this.stats.failed++;
+      this.failures.push({ key, error: String(error instanceof Error ? error.message : error).slice(0, 160), at: new Date(this.clock()).toISOString() });
+      if (this.failures.length > 10) this.failures.shift();
+      return undefined;
+    }
   }
 
   /**
@@ -311,5 +318,5 @@ export class PropLineHistory {
     return { players: players.size, found, empty, skipped };
   }
 
-  status() { return { ...this.stats, players: this.cache.size, store: this.options.store?.counts() ?? null }; }
+  status() { return { ...this.stats, players: this.cache.size, store: this.options.store?.counts() ?? null, recentFailures: [...this.failures] }; }
 }
