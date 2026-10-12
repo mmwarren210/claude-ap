@@ -59,7 +59,9 @@ export interface PricingInput {
  * so no edge). ODDS: a sportsbook single at decimal odds. `blocked` names why a side is never ranked as an edge (a
  * promo pick), while its probability still shows.
  */
-export type SidePayout = { readonly kind: 'ENTRY'; readonly multiplier: number | null; readonly blocked?: string }
+export type SidePayout = { readonly kind: 'ENTRY'; readonly multiplier: number | null; readonly blocked?: string;
+    /** Ranked only when the read is backed by sportsbook prices or the player's stats (not a ladder alone); the reason otherwise. */
+    readonly needsBacking?: string }
   | { readonly kind: 'ODDS'; readonly decimal: number };
 
 /** Quarter Kelly, capped at 2% of bankroll per bet (spec §4; EDGE_KELLY_FRACTION can change the fraction). */
@@ -333,7 +335,8 @@ export function priceBoard(input: PricingInput): PricingResult {
         // bet needs 1 / decimal odds.
         const breakEven = payout.kind === 'ODDS' ? 1 / payout.decimal
           : payout.multiplier ? reference / payout.multiplier : reference;
-        const edge = payout.kind === 'ENTRY' && (payout.multiplier === null || payout.blocked) ? null : probability - breakEven;
+        const unbacked = payout.kind === 'ENTRY' && !!payout.needsBacking && tier === 'LADDER';
+        const edge = payout.kind === 'ENTRY' && (payout.multiplier === null || payout.blocked || unbacked) ? null : probability - breakEven;
         return { line, side, probability, rawProbability, payout, breakEven, edge };
       }).sort((a, b) => (b.edge ?? -9) - (a.edge ?? -9) || b.probability - a.probability);
       const best = scored[0];
@@ -403,6 +406,7 @@ export function priceBoard(input: PricingInput): PricingResult {
       if (unbacked) warnings.push('No other sportsbook prices this player and stat: a stats-only read against the book’s odds is shown but not ranked.');
       if (review) warnings.push(`Held for review: a ${pct(edge!)} edge is bigger than real edges get; usually the sources disagree on the stat or game.`);
       if (best.payout.kind === 'ENTRY' && best.payout.blocked) warnings.push(best.payout.blocked);
+      if (best.payout.kind === 'ENTRY' && best.payout.needsBacking && tier === 'LADDER') warnings.push(best.payout.needsBacking);
       if (unrankable) warnings.push('Plus/minus isn’t ranked: it swings on the whole team and no model reads it reliably.');
       if (factor !== null && best.payout.kind === 'ENTRY' && (best.line.lineType === 'GOBLIN' || best.line.lineType === 'DEMON') && !input.sidePayout)
         warnings.push(`Payout ${factor}× is Edge's estimate (the app often pays a bit more); worth it at ${round(reference / p, 2)}× or better. Power only.`);

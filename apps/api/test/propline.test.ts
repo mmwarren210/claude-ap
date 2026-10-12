@@ -94,6 +94,8 @@ test('Dabble: a Less the app does not offer (home runs, goals, or a heavily favo
     { key: 'batter_rbis', outcomes: [{ name: 'Over', description: 'Andy Pages', point: 0.5, price: 313 }, { name: 'Under', description: 'Andy Pages', point: 0.5, price: -312 }] },
     { key: 'batter_hits', outcomes: [{ name: 'Over', description: 'Andy Pages', point: 0.5, price: -130 }, { name: 'Under', description: 'Andy Pages', point: 0.5, price: 131 }] }] }] };
   const lines = eventLines(event, 'MLB', 'MLB' as never, { app: 'dabble', bookmaker: 'dabble' });
+  // Each kept side carries the feed's price, for the −250 to +300 playable range.
+  assert.deepEqual(lines.find((line) => line.marketKey?.includes('home') || line.stat.toLowerCase().includes('home'))?.prices, { MORE: 924 });
   assert.deepEqual(lines.map((line) => [line.stat, line.directions]), [['home runs', ['MORE']], ['rbis', ['MORE']], ['hits', ['MORE', 'LESS']]]
     .map(([stat, sides]) => [lines.find((line) => line.stat.toLowerCase().includes(String(stat).split(' ')[0]!))!.stat, sides]));
 });

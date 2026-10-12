@@ -38,8 +38,13 @@ export function appLines(stored: readonly StoredLine[], app: 'underdog' | 'pick6
     const moved = line.promo?.originalLine != null && line.promo.originalLine !== line.line;
     if (line.promo?.gimme || moved) promos.set(id, moved ? line.promo!.originalLine : null);
     const blocked = promos.has(id) ? 'A Pick6 promo pick: its payout is promotional, so it is never ranked as an edge.' : undefined;
+    // Dabble's playable range (owner, 2026-10-12): a side the feed prices outside −250 to +300 is ranked only when sportsbook
+    // prices or the player's stats back the read.
+    const outside = (side: PlayableDirection) => { const price = app === 'dabble' ? line.prices?.[side] : undefined;
+      return price !== undefined && (price < -250 || price > 300); };
     payouts.set(id, Object.fromEntries(sides.map((side) => [side, { kind: 'ENTRY', multiplier: line.multipliers?.[side] ?? 1,
-      ...(blocked ? { blocked } : {}) } satisfies SidePayout])));
+      ...(blocked ? { blocked } : {}),
+      ...(outside(side) ? { needsBacking: 'Priced outside −250 to +300 on Dabble with no sportsbook or stats read behind it, so it is not ranked.' } : {}) } satisfies SidePayout])));
   }
   return { lines, payouts, promos };
 }

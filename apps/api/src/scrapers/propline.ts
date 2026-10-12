@@ -205,7 +205,7 @@ export function eventLines(event: Event, league: string, sport: Sport, options: 
   if (!startTime) { drop('NO_START'); return []; }
   const book = event.bookmakers?.find((item) => item.key === options.bookmaker);
   const grouped = new Map<string, { player: string; market: string; tier: ScrapedTier; point: number; sides: Set<PlayableDirection>;
-    multiplier: number | null }>();
+    multiplier: number | null; prices: Partial<Record<PlayableDirection, number>> }>();
   for (const market of book?.markets ?? []) {
     for (const outcome of market.outcomes ?? []) {
       const player = outcome.description?.trim();
@@ -226,8 +226,9 @@ export function eventLines(event: Event, league: string, sport: Sport, options: 
       const key = JSON.stringify([player.toLowerCase(), market.key, tier, outcome.point]);
       const multiplier = Number(outcome.payout_multiplier);
       const entry = grouped.get(key) ?? { player, market: market.key, tier, point: outcome.point, sides: new Set(),
-        multiplier: Number.isFinite(multiplier) && multiplier > 0 ? multiplier : null };
+        multiplier: Number.isFinite(multiplier) && multiplier > 0 ? multiplier : null, prices: {} };
       entry.sides.add(side);
+      if (typeof outcome.price === 'number' && Number.isFinite(outcome.price)) entry.prices[side] = outcome.price;
       grouped.set(key, entry);
     }
   }
@@ -240,5 +241,6 @@ export function eventLines(event: Event, league: string, sport: Sport, options: 
     directions: [...entry.sides].sort((a, b) => a === 'MORE' ? -1 : b === 'MORE' ? 1 : 0), startTime, imageUrl: null,
     home: home ? { abbreviation: home, name: home } : null, away: away ? { abbreviation: away, name: away } : null,
     ...(entry.multiplier && entry.tier !== 'REGULAR' ? { multipliers: { MORE: entry.multiplier } } : {}),
+    ...(options.app === 'dabble' && Object.keys(entry.prices).length ? { prices: entry.prices } : {}),
   }));
 }
