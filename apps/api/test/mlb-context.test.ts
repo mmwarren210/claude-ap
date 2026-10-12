@@ -78,3 +78,23 @@ test('a pitching stat PropLine didn\'t record is unknown, not zero', () => {
   assert.ok(Math.abs(league.strikeouts - 6 / 26) < .002, 'and still count for the others, batters faced estimated');
   assert.equal(leagueRates([average.slice(0, 5)]), MLB_TYPICAL, 'too few starts: the usual MLB rates');
 });
+
+test('head-to-head: a batter against tonight\'s starter first, else against the team, shrunk by sample and capped', async () => {
+  const { headToHead } = await import('../src/mlb-context.js');
+  const at = (i: number) => new Date(Date.parse('2030-09-24T00:00:00Z') - (i + 1) * 86_400_000).toISOString();
+  const opponents = ['Cubs', 'Reds', 'Cardinals', 'Pirates', 'Cubs', 'Reds', 'Cardinals', 'Pirates', 'Cubs', 'Reds', 'Cubs', 'Cubs'];
+  // 2 hits a game against the Cubs, 1 against everyone else.
+  const batter: Game[] = opponents.map((away, i) => ({ at: at(i), opponent: null, home: 'Brewers', away, stats: { hits: away === 'Cubs' ? 2 : 1 } }));
+  const hits = (stats: Readonly<Record<string, number>>) => Number.isFinite(stats.hits) ? stats.hits! : null;
+  const team = headToHead(hits, batter, Date.parse('2030-09-24T00:00:00Z'), { opponent: 'Chicago Cubs' })!;
+  assert.equal(team.kind, 'team');
+  assert.equal(team.games, 5);
+  assert.ok(team.factor > 1 && team.factor <= 1.08, `more hits against the Cubs, shrunk and capped (${team.factor})`);
+  // The Cubs' starter started two of those games (days 1 and 5): matched on date and teams.
+  const starter: Game[] = [0, 4].map((i) => ({ at: at(i), opponent: null, home: 'Brewers', away: 'Cubs', stats: { pitcher_started: 1, outs: 18, hits_allowed: 6 } }));
+  const vsStarter = headToHead(hits, batter, Date.parse('2030-09-24T00:00:00Z'), { starter: { name: 'Cubs Ace', games: starter }, opponent: 'Cubs' })!;
+  assert.equal(vsStarter.kind, 'starter');
+  assert.equal(vsStarter.games, 2);
+  assert.equal(headToHead(hits, batter.slice(0, 5), Date.parse('2030-09-24T00:00:00Z'), { opponent: 'Cubs' }), null, 'too few games overall');
+  assert.equal(headToHead(hits, batter, Date.parse('2030-09-24T00:00:00Z'), { opponent: 'Mets' }), null, 'never faced them');
+});

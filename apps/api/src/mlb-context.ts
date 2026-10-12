@@ -1,6 +1,7 @@
 import type { PropLine } from '@crowniq/contracts';
 import { normalizedName } from './context/match.js';
 import { playerTeam, sameTeam } from './gkr2.js';
+import { gameValue, proplineStat } from './propline-history.js';
 import type { Game, PropLineHistory } from './propline-history.js';
 import type { PropLineClient } from './scrapers/propline.js';
 
@@ -146,6 +147,52 @@ export function mlbAdjustment(line: PropLine, team: string | null, game: MlbCont
   return reasons.length ? { factor, reasons } : null;
 }
 
+/** Head-to-head from game logs: the player's value for a stat in matching games, against his value in all games. */
+export interface HeadToHead { readonly kind: 'starter' | 'team'; readonly against: string; readonly games: number;
+  readonly average: number; readonly overall: number; readonly factor: number }
+
+const sameGame = (a: Game, b: Game) => Math.abs(Date.parse(a.at) - Date.parse(b.at)) <= 6 * 3600_000 &&
+  !!a.home && !!a.away && sameTeam(a.home, b.home) && sameTeam(a.away, b.away);
+const average = (values: readonly number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
+
+/**
+ * Head-to-head (owner, 2026-10-11: "use h2h history", playoffs repeat matchups): PropLine's box scores are per game, so
+ * "against this starter" is the batter's games the starter started against his team (matched by date and teams), and
+ * "against this team" is the player's games against tonight's opponent. Few games say little: the head-to-head average
+ * over the player's own counts for n/(n+k) of the way (k = 6 starter games, 10 team games), within ±8%. Null under 2 games.
+ */
+export function headToHead(value: (stats: Readonly<Record<string, number>>) => number | null, playerGames: readonly Game[],
+  before: number, options: { starter?: { name: string; games: readonly Game[] } | null; opponent?: string | null }): HeadToHead | null {
+  const played = playerGames.filter((game) => Date.parse(game.at) < before);
+  const valued = (games: readonly Game[]) => games.flatMap((game) => { const v = value(game.stats); return v === null || !Number.isFinite(v) ? [] : [v]; });
+  const all = valued(played);
+  if (all.length < 8) return null;
+  const overall = average(all);
+  if (overall <= 0) return null;
+  const read = (kind: HeadToHead['kind'], against: string, games: readonly Game[], k: number): HeadToHead | null => {
+    const values = valued(games);
+    if (values.length < 2) return null;
+    const mean = average(values), weight = values.length / (values.length + k);
+    const factor = Math.max(.92, Math.min(1.08, 1 + weight * (mean / overall - 1)));
+    return { kind, against, games: values.length, average: mean, overall, factor };
+  };
+  const starter = options.starter;
+  if (starter) {
+    const starts = starter.games.filter((game) => game.stats.pitcher_started === 1);
+    const found = read('starter', starter.name, played.filter((game) => starts.some((start) => sameGame(game, start))), 6);
+    if (found) return found;
+  }
+  const team = playerTeam(playerGames), opponent = options.opponent;
+  if (!team || !opponent) return null;
+  return read('team', opponent, played.filter((game) => {
+    const other = game.home && game.away ? sameTeam(game.home, team) ? game.away : sameTeam(game.away, team) ? game.home : null : null;
+    return !!other && sameTeam(other, opponent);
+  }), 10);
+}
+
+export const h2hReason = (h2h: HeadToHead, label: string) => `Head-to-head: ${h2h.average.toFixed(1)} ${label} a game in ${h2h.games} games against ` +
+  `${h2h.against}${h2h.kind === 'starter' ? ' starting' : ''} (vs ${h2h.overall.toFixed(1)} overall), so the projection is ×${h2h.factor.toFixed(2)}.`;
+
 type Raw = { home_team?: string; away_team?: string; venue?: string | null; roof_type?: string | null; is_indoor?: boolean;
   home_probable_pitcher?: string | null; away_probable_pitcher?: string | null; home_probable_pitcher_hand?: string | null;
   away_probable_pitcher_hand?: string | null; weather?: { temperature_f?: number | null; precip_probability_pct?: number | null;
@@ -168,6 +215,8 @@ export class MlbGames {
   private league: Omit<PitcherRates, 'name' | 'starts'> | null = null;
   /** Each board batter's team in his game (game id|player), worked out at refresh for synchronous reads. */
   private teams = new Map<string, string>();
+  /** The board players' and starters' cached games, by name, for head-to-head. */
+  private playerGames = new Map<string, readonly Game[]>();
   constructor(private readonly client: Pick<PropLineClient, 'get'>, private readonly history: PropLineHistory | null,
     private readonly clock: () => Date = () => new Date()) {}
 
@@ -191,19 +240,29 @@ export class MlbGames {
       await this.history.ready();
       this.league = leagueRates(this.history.cachedGames('baseball_mlb'));
       const rates = new Map<string, PitcherRates>();
+      const playerGames = new Map<string, readonly Game[]>();
       for (const { context } of this.games.values()) for (const name of [context?.homePitcher, context?.awayPitcher]) {
         if (!name || !this.league) continue;
         const games = await this.history.cachedFor({ sport: 'MLB', eventId: '', playerName: name });
+        if (games) playerGames.set(normalizedName(name), games);
         const found = games ? pitcherRates(name, games, this.league, now) : null;
         if (found) rates.set(normalizedName(name), found);
       }
+      for (const line of lines) {
+        const key = normalizedName(line.playerName);
+        if (line.sport !== 'MLB' || playerGames.has(key)) continue;
+        const games = await this.history.cachedFor({ sport: 'MLB', eventId: '', playerName: line.playerName });
+        if (games) playerGames.set(key, games);
+      }
+      this.playerGames = playerGames;
       this.rates = rates;
       const teams = new Map<string, string>();
       for (const line of lines) {
         const id = line.sport === 'MLB' ? proplineEventId(line.eventId) : null, game = id ? this.games.get(id)?.context : null;
         const key = `${id}|${normalizedName(line.playerName)}`;
         if (!id || !game || teams.has(key)) continue;
-        const team = line.team ?? await this.cachedTeam(line.playerName, game);
+        const cached = this.playerGames.get(normalizedName(line.playerName));
+        const team = line.team ?? (cached ? this.teamIn(cached, game) : null);
         if (team) teams.set(key, team);
       }
       this.teams = teams;
@@ -216,10 +275,26 @@ export class MlbGames {
     return id ? this.games.get(id)?.context ?? null : null;
   }
 
-  private async cachedTeam(playerName: string, game: MlbContext): Promise<string | null> {
-    const games = await this.history?.cachedFor({ sport: 'MLB', eventId: '', playerName });
-    const team = games ? playerTeam(games) : null;
+  private teamIn(games: readonly Game[], game: MlbContext): string | null {
+    const team = playerTeam(games);
     return team && (sameTeam(team, game.home) || sameTeam(team, game.away)) ? team : null;
+  }
+
+  /**
+   * Head-to-head for a line: a batter against tonight's starter (else his team), a pitcher against tonight's lineup's team.
+   * Synchronous, from the games kept at refresh.
+   */
+  h2h(line: PropLine): HeadToHead | null {
+    const game = line.sport === 'MLB' ? this.context(line.eventId) : null, read = proplineStat('MLB', line.market);
+    const games = this.playerGames.get(normalizedName(line.playerName)), team = game ? this.teamOf(line) : null;
+    if (!game || !read || !games || !team) return null;
+    const home = sameTeam(team, game.home) && !sameTeam(team, game.away);
+    const opponent = home ? game.away : game.home, pitcher = isPitcherMarket(line.market);
+    const starterName = pitcher ? null : home ? game.awayPitcher : game.homePitcher;
+    const starterGames = starterName ? this.playerGames.get(normalizedName(starterName)) : undefined;
+    const games_ = pitcher ? games.filter((item) => item.stats.pitcher_started === 1) : games;
+    return headToHead((stats) => gameValue(stats, read), games_, Date.parse(line.eventStartTime),
+      { starter: starterName && starterGames ? { name: starterName, games: starterGames } : null, opponent });
   }
 
   private teamOf(line: Pick<PropLine, 'eventId' | 'playerName' | 'team'>): string | null {
@@ -241,7 +316,10 @@ export class MlbGames {
   /** Edge's MLB adjustment for a line (starter, weather, rain). */
   adjustment(line: PropLine): Adjustment | null {
     const game = line.sport === 'MLB' ? this.context(line.eventId) : null;
-    return game ? mlbAdjustment(line, this.teamOf(line), game, this.rates, this.league) : null;
+    if (!game) return null;
+    const base = mlbAdjustment(line, this.teamOf(line), game, this.rates, this.league), h2h = this.h2h(line);
+    if (!h2h || Math.abs(h2h.factor - 1) < .01) return base;
+    return { factor: (base?.factor ?? 1) * h2h.factor, reasons: [...base?.reasons ?? [], h2hReason(h2h, line.market.replace(/_/g, ' '))] };
   }
 
   status() {

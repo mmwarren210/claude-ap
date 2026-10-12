@@ -196,6 +196,8 @@ export interface Gkr2Context {
   readonly leagueTeamTotal: number | null;
   /** MLB: the opposing starter's rate for this stat over the league's (a batter's line). */
   readonly pitcher?: { readonly pitcher: string; readonly ratio: number; readonly starts: number } | null;
+  /** MLB: head-to-head against tonight's starter or team (its shrunk multiplier). */
+  readonly h2h?: { readonly factor: number; readonly games: number; readonly against: string } | null;
   /** MLB: the first-pitch weather's multiplier at an open-air park. */
   readonly weather?: { readonly factor: number; readonly reasons: readonly string[] } | null;
 }
@@ -255,7 +257,7 @@ export function gkr2Evidence(line: PropLine, games: readonly Game[], context: Gk
   const scriptShift = scriptRatio === null ? 1 : clamp(1 + (scriptRatio - 1) / 3, .95, 1.05);
   // MLB: half the starter's effect (at most 10%, in place of the team read) and the weather's.
   const pitcherShift = pitcher ? clamp(1 + (pitcher.ratio - 1) / 2, .9, 1.1) : 1;
-  midpoint *= (pitcher ? 1 : opponentShift) * scriptShift * pitcherShift * (context.weather?.factor ?? 1);
+  midpoint *= (pitcher ? 1 : opponentShift) * scriptShift * pitcherShift * (context.weather?.factor ?? 1) * (context.h2h?.factor ?? 1);
   push('projection:' + line.market, `GKR 2 projection from ${values.length} PropLine games, recent games weighted more, adjusted for opponent and game script.`,
     midpoint, spread, line.market.replace(/_/g, ' '));
 
@@ -355,7 +357,8 @@ export class Gkr2 {
       const playerGames = await this.history.cachedFor(line);
       if (!playerGames) continue;
       const own = gkr2Evidence(line, playerGames, { opponents: this.opponents.index(sportKey, read), games,
-        leagueTeamTotal: totals.get(line.league) ?? null, pitcher: this.mlb?.matchup(line) ?? null, weather: this.mlb?.weather(line) ?? null },
+        leagueTeamTotal: totals.get(line.league) ?? null, pitcher: this.mlb?.matchup(line) ?? null, weather: this.mlb?.weather(line) ?? null,
+        h2h: this.mlb?.h2h(line) ?? null },
         now, gkr2Definition(definition));
       if (!own.length) continue;
       out.push(evaluateLine(line, [...byPlayer.get(`${line.eventId}|${line.playerId}`) ?? [], ...shared.get(line.eventId) ?? [], ...own], registry, now));
