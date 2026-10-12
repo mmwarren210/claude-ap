@@ -8,6 +8,7 @@ import { normalizedName } from './context/match.js';
 import { gameValue, proplineStat } from './propline-history.js';
 import type { Game, PropLineHistory } from './propline-history.js';
 import { gameScriptFor } from './shadow-record.js';
+import type { MlbGames } from './mlb-context.js';
 
 // GKR 2 (owner, 2026-10-11: "Do all"; runs in shadow first, switched on only when its graded record beats GKR's).
 // The same models as GKR with four changes:
@@ -193,6 +194,10 @@ export interface Gkr2Context {
   readonly games: readonly GameLine[];
   /** The average implied team total in this line's league today, the script's reference. */
   readonly leagueTeamTotal: number | null;
+  /** MLB: the opposing starter's rate for this stat over the league's (a batter's line). */
+  readonly pitcher?: { readonly pitcher: string; readonly ratio: number; readonly starts: number } | null;
+  /** MLB: the first-pitch weather's multiplier at an open-air park. */
+  readonly weather?: { readonly factor: number; readonly reasons: readonly string[] } | null;
 }
 
 /** GKR 2's evidence for one line from the player's PropLine games. The PrizePicks line is never read here. */
@@ -223,7 +228,13 @@ export function gkr2Evidence(line: PropLine, games: readonly Game[], context: Gk
   const team = line.team ?? playerTeam(games);
   const opponent = opponentOf(line, team);
   const opponentRead = opponent ? context.opponents?.get(nickname(opponent)) ?? null : null;
-  if (opponentRead !== null) for (const [factor] of definition.factors) if (isOpponentFactor(factor) || factor === 'opponent_allowed')
+  // MLB: the opposing starter fills the pitcher factors (the team read fills the rest), and the weather fills the park's.
+  const pitcher = context.pitcher ?? null;
+  if (pitcher) for (const [factor] of definition.factors) if (/pitcher/.test(factor))
+    push('metric:' + factor, `${pitcher.pitcher} has allowed ${Math.round(pitcher.ratio * 100)}% of the league's rate for this stat over his last ${pitcher.starts} starts.`, pitcher.ratio, 1);
+  if (context.weather) for (const [factor] of definition.factors) if (factor === 'park' || factor === 'weather')
+    push('metric:' + factor, context.weather.reasons.join(' '), context.weather.factor, 1);
+  if (opponentRead !== null) for (const [factor] of definition.factors) if ((isOpponentFactor(factor) || factor === 'opponent_allowed') && !(pitcher && /pitcher/.test(factor)))
     push('metric:' + factor, `Players have produced ${Math.round(opponentRead * 100)}% of their usual ${line.market.replace(/_/g, ' ')} against ${opponent}.`, opponentRead, 1);
 
   // Game script: the team's implied total (and spread for rushing) against today's league average.
@@ -242,7 +253,9 @@ export function gkr2Evidence(line: PropLine, games: readonly Game[], context: Gk
   // of the script's (at most 5%).
   const opponentShift = opponentRead === null ? 1 : clamp(1 + (opponentRead - 1) / 2, .92, 1.08);
   const scriptShift = scriptRatio === null ? 1 : clamp(1 + (scriptRatio - 1) / 3, .95, 1.05);
-  midpoint *= opponentShift * scriptShift;
+  // MLB: half the starter's effect (at most 10%, in place of the team read) and the weather's.
+  const pitcherShift = pitcher ? clamp(1 + (pitcher.ratio - 1) / 2, .9, 1.1) : 1;
+  midpoint *= (pitcher ? 1 : opponentShift) * scriptShift * pitcherShift * (context.weather?.factor ?? 1);
   push('projection:' + line.market, `GKR 2 projection from ${values.length} PropLine games, recent games weighted more, adjusted for opponent and game script.`,
     midpoint, spread, line.market.replace(/_/g, ' '));
 
@@ -312,7 +325,7 @@ export class Gkr2 {
   private readonly opponents: OpponentReads;
   constructor(private readonly history: PropLineHistory, private readonly registry: () => ModelRegistry,
     private readonly gameLines: (() => Promise<readonly GameLine[]>) | null, private readonly clock: () => Date = () => new Date(),
-    opponents?: OpponentReads) {
+    opponents?: OpponentReads, private readonly mlb: MlbGames | null = null) {
     this.opponents = opponents ?? new OpponentReads(history, clock);
   }
 
@@ -340,7 +353,8 @@ export class Gkr2 {
       const playerGames = await this.history.cachedFor(line);
       if (!playerGames) continue;
       const own = gkr2Evidence(line, playerGames, { opponents: this.opponents.index(sportKey, read), games,
-        leagueTeamTotal: totals.get(line.league) ?? null }, now, gkr2Definition(definition));
+        leagueTeamTotal: totals.get(line.league) ?? null, pitcher: this.mlb?.matchup(line) ?? null, weather: this.mlb?.weather(line) ?? null },
+        now, gkr2Definition(definition));
       if (!own.length) continue;
       out.push(evaluateLine(line, [...byPlayer.get(`${line.eventId}|${line.playerId}`) ?? [], ...shared.get(line.eventId) ?? [], ...own], registry, now));
     }

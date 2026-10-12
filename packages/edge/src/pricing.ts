@@ -12,7 +12,7 @@ import type { EntryDefinition } from './payouts.js';
 import { projectFromRows, projectFromValues } from './projection.js';
 import type { StatProjection } from './projection.js';
 
-/** 1.1 (2026-10-11): the stats projection also moves with tonight's opponent (PropLine games). */
+/** 1.1 (2026-10-11): the stats projection also moves with tonight's opponent, and for MLB the opposing starter and weather. */
 export const EDGE_MODEL_VERSION = 'EDGE-1.1';
 
 export interface HistoryLookup {

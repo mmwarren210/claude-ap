@@ -48,6 +48,8 @@ export interface EdgeServiceOptions {
   readonly values?: ((line: PropLine) => Promise<{ values: number[] } | null>) | null;
   /** How tonight's opponent has treated the line's stat (1.10 = players do 10% better than usual), from PropLine games. */
   readonly opponent?: ((line: PropLine) => { opponent: string; index: number } | null) | null;
+  /** MLB: the opposing starter and the first-pitch weather (PropLine's game context), as a projection multiplier. */
+  readonly mlb?: ((line: PropLine) => { factor: number; reasons: string[] } | null) | null;
   readonly ledger?: EdgeLedger | null;
   readonly payouts: Payouts;
   readonly alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>;
@@ -555,10 +557,13 @@ export class EdgeService {
         const env = environment.factor(line);
         const before = lastGame.get(playerKey(line.sport, line.playerName));
         const rest = restFactor(line, before && before < Date.parse(line.eventStartTime) ? before : null, this.rest.effects);
-        const opponent = opponentFactor(this.options.opponent?.(line) ?? null);
-        if (!env && !rest && !opponent) return null;
-        return { factor: (env?.factor ?? 1) * (rest?.factor ?? 1) * (opponent?.factor ?? 1),
-          reasons: [...env?.reasons ?? [], ...rest?.reasons ?? [], ...opponent?.reasons ?? []] };
+        // MLB batters read the opposing starter in place of the team read; pitchers keep the team read.
+        const mlb = this.options.mlb?.(line) ?? null;
+        const starter = mlb?.reasons.some((reason) => reason.startsWith('Facing ')) ?? false;
+        const opponent = starter ? null : opponentFactor(this.options.opponent?.(line) ?? null);
+        if (!env && !rest && !opponent && !mlb) return null;
+        return { factor: (env?.factor ?? 1) * (rest?.factor ?? 1) * (opponent?.factor ?? 1) * (mlb?.factor ?? 1),
+          reasons: [...env?.reasons ?? [], ...rest?.reasons ?? [], ...opponent?.reasons ?? [], ...mlb?.reasons ?? []] };
       };
       const fresh: EdgeAlert[] = [];
       // One platform at a time, yielding between them so requests keep being answered while the board reprices.

@@ -26,6 +26,7 @@ import { SlotLedger } from './scrapers/slot-ledger.js';
 import { ContextFeeds, injuryReports } from './context/feeds.js';
 import { proplineGameLines } from './context/propline-game-lines.js';
 import { createGkr2Registry, Gkr2, OpponentReads } from './gkr2.js';
+import { MlbGames } from './mlb-context.js';
 import { espnInjuries } from './context/espn-injuries.js';
 import { ClaudeWebResearchAdapter } from './claude-web-research.js';
 import { ProductLedger } from './product-ledger.js';
@@ -343,9 +344,11 @@ const gameLines=propLine?proplineGameLines(propLine):null;
 // opponent and game script, scored in shadow beside GKR. CROWNIQ_GKR2=off leaves it out.
 // Opponent reads from PropLine's cached games, for Edge's projection and GKR 2. CROWNIQ_OPPONENT_READS=off leaves them out.
 const opponents=proplineHistory&&process.env.CROWNIQ_OPPONENT_READS!=='off'?new OpponentReads(proplineHistory):null;
+// MLB probable starters, park and weather from PropLine's game context (Edge and GKR 2). CROWNIQ_MLB_CONTEXT=off leaves it out.
+const mlbGames=propLine&&process.env.CROWNIQ_MLB_CONTEXT!=='off'?new MlbGames(propLine,proplineHistory):null;
 const gkr2=proplineHistory&&process.env.CROWNIQ_GKR2!=='off'?new Gkr2(proplineHistory,
   (()=>{const registry=createGkr2Registry(models.versions(),(key)=>approvedModelKeys.includes(key));return ()=>registry;})(),gameLines,
-  undefined,opponents??undefined):null;
+  undefined,opponents??undefined,mlbGames):null;
 const proplineEvidence=proplineHistory?new PropLineGkrEvidence(proplineHistory,approvedModelKeys):null;
 const secondLookAdapters=[statEvidence,currentContext,espnEvidence,freeHistoryEvidence,proplineEvidence]
   .filter((item):item is NonNullable<typeof item>=>!!item);
@@ -476,7 +479,7 @@ const app = buildServer({ ufcHistory, soccerHistory, adminToken: process.env.ADM
     return {store,reader,grader:reader?new TipGrader(store,reader):null};})(),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
-  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,proplineHistory,bookAccuracy,contextFeeds,gameLines,gkr2,opponents,gkr2Public:process.env.CROWNIQ_GKR2_PUBLIC==='true',injuries:process.env.CROWNIQ_ESPN_INJURIES==='off'?null:espnInjuries(),sharpProps,evBreakEven,payouts,
+  scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,proplineHistory,bookAccuracy,contextFeeds,gameLines,gkr2,opponents,mlbGames,gkr2Public:process.env.CROWNIQ_GKR2_PUBLIC==='true',injuries:process.env.CROWNIQ_ESPN_INJURIES==='off'?null:espnInjuries(),sharpProps,evBreakEven,payouts,
   booksHistoryFile:process.env.CROWNIQ_BOOKS_HISTORY_FILE ?? `${dataDir}/books-history.jsonl`,
   webAppDir:existsSync(webAppDir)?webAppDir:null,
   research:gkrResearch,secondLookResearch,startupResearch:internalEvidence,

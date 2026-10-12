@@ -101,3 +101,20 @@ test('Edge moves its stats projection by half the opponent read, within 8%, and 
   assert.ok(read!.index > 1.2);
   assert.equal(reads.read({ ...line, homeTeam: null, awayTeam: null }), null, 'no opponent known');
 });
+
+test('MLB: GKR 2 fills pitcher factors from the opposing starter and the park factor from the weather', () => {
+  const hits = gkr2Definition(marketDefinitions.find((item) => item.version === 'GKR-MLB-BATTER-HITS-1.3')!);
+  const hrs = gkr2Definition(marketDefinitions.find((item) => item.version === 'GKR-MLB-BATTER-HOME-RUNS-1.3')!);
+  const games: Game[] = Array.from({ length: 12 }, (_, i) => ({ at: day(i + 1), opponent: null, home: 'Brewers', away: 'Cubs',
+    stats: { hits: i % 3 ? 1 : 2, at_bats: 4, walks: 1, home_runs: i % 4 ? 0 : 1, total_bases: 2 } }));
+  const line = fixtureLine({ sport: 'MLB', league: 'MLB', market: 'batter_hits', threshold: .5, team: 'Brewers', opponent: 'Cubs' });
+  const context = { opponents: new Map([['cubs', .9]]), games: [], leagueTeamTotal: null,
+    pitcher: { pitcher: 'Away Arm', ratio: 1.3, starts: 8 }, weather: { factor: 1.06, reasons: ['90°F at first pitch.'] } };
+  const now = new Date('2030-09-24T12:00:00Z');
+  const value = (evidence: ReturnType<typeof gkr2Evidence>, kind: string) => evidence.find((item) => item.kind === kind)?.numeric;
+  const forHits = gkr2Evidence(line, games, context, now, hits);
+  assert.deepEqual(value(forHits, 'metric:pitcher_matchup'), { value: 1.3, baseline: 1 }, 'the starter, not the team read');
+  assert.ok(value(forHits, 'metric:expected_pa'), 'plate appearances from at-bats plus walks');
+  const forHrs = gkr2Evidence({ ...line, market: 'batter_home_runs' }, games, context, now, hrs);
+  assert.deepEqual(value(forHrs, 'metric:park'), { value: 1.06, baseline: 1 });
+});

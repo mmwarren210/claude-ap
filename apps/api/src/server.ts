@@ -101,6 +101,7 @@ import { gameCounts, marketCounts, registerEdgeRoutes, sportCounts } from './edg
 import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
 import type { Gkr2, OpponentReads } from './gkr2.js';
+import type { MlbGames } from './mlb-context.js';
 
 const gzipAsync = promisify(gzip);
 
@@ -180,6 +181,8 @@ export interface ServerOptions {
   opponents?: OpponentReads | null;
   /** Show GKR 2's read to everyone (CROWNIQ_GKR2_PUBLIC=true); otherwise only the owner sees it while it's tested. */
   gkr2Public?: boolean;
+  /** MLB game context from PropLine (probable starters, park, weather), refreshed every 20 minutes for the board's games. */
+  mlbGames?: MlbGames | null;
   /** Every standard line graded after its game, for Trends (CrownIQ's own hit rates). */
   baseRates?: BaseRates | null;
   /** Beta feedback: testers' bug reports and suggestions, and the patch notes that answer them. */
@@ -361,6 +364,13 @@ export function buildServer(options: ServerOptions = {}) {
       }
       return {graded,wins};
     }:null,options.clock):null;
+  // MLB game context: the board's games every 20 minutes (each game asked at most hourly), first a minute after start.
+  if(options.mlbGames&&!options.clock){
+    const mlb=options.mlbGames;
+    const refreshMlb=()=>{const board=service.getBoard();
+      if(board)void mlb.refresh(board.board.lines.filter((line)=>line.sport==='MLB')).catch(()=>undefined);};
+    setTimeout(refreshMlb,60_000).unref();setInterval(refreshMlb,20*60_000).unref();
+  }
   // Shadow records: Books picks, the sportsbook tabs' picks and game-script snapshots, saved every 15 minutes and graded
   // hourly in their own record (never GKR's).
   const shadowTimers:NodeJS.Timeout[]=[];
@@ -1709,7 +1719,7 @@ export function buildServer(options: ServerOptions = {}) {
     sharp:options.sharpProps?{prices:async()=>(await options.sharpProps!.current()).prices,
       pickem:async()=>(await options.sharpProps!.pickemLines()).lines}:null,
     appBoards:options.scrapedLines??null,pick6PayoutsConfirmed:options.edge.pick6PayoutsConfirmed===true,
-    history:options.internalHistory??null,values:(line)=>historyReads.valuesFor(line),opponent:options.opponents?(line)=>options.opponents!.read(line):null,ledger:options.edge.ledger??null,
+    history:options.internalHistory??null,values:(line)=>historyReads.valuesFor(line),opponent:options.opponents?(line)=>options.opponents!.read(line):null,mlb:options.mlbGames?(line)=>options.mlbGames!.adjustment(line):null,ledger:options.edge.ledger??null,
     payouts:options.payouts??DEFAULT_PAYOUTS,...(options.edge.alternateFactors?{alternateFactors:options.edge.alternateFactors}:{}),
     ...(options.edge.alternateCurve?{alternateCurve:options.edge.alternateCurve}:{}),
     valuesCacheFile:options.edge.valuesCacheFile??null,movement,snapshots:options.edge.snapshots??null,
@@ -2469,6 +2479,13 @@ export function buildServer(options: ServerOptions = {}) {
     });
     admin.get('/members', async (_request, reply) => options.product ? options.product.membership()
       : reply.code(503).send({ code: 'PRODUCT_UNCONFIGURED' }));
+    admin.get('/mlb-context', async (_request, reply) => options.mlbGames ? options.mlbGames.status()
+      : reply.code(503).send({ code: 'MLB_CONTEXT_UNCONFIGURED' }));
+    admin.post('/mlb-context/refresh', async (_request, reply) => {
+      if (!options.mlbGames) return reply.code(503).send({ code: 'MLB_CONTEXT_UNCONFIGURED' });
+      const board = service.getBoard();
+      return { fetched: board ? await options.mlbGames.refresh(board.board.lines.filter((line) => line.sport === 'MLB')) : 0, ...options.mlbGames.status() };
+    });
     admin.get('/gkr2', async (_request, reply) => options.shadowRecord ? options.shadowRecord.compare(['gkr1','gkr2'])
       : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
     admin.get('/shadow', async (_request, reply) => options.shadowRecord ? options.shadowRecord.status()
