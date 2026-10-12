@@ -67,7 +67,7 @@ export function MemberResetCode() {
 type Member = { publicId: string; username: string; email: string | null; plan: 'LIFETIME' | 'MEMBER' | 'GUEST';
   revoked: boolean; createdAt: string 
   /** The paid plan, and a payment request waiting for the owner's approval (owner, 2026-10-11). */
-  paid?: { plan: string; paidAt: string; until: string | null } | null;
+  paid?: { plan: string; paidAt: string; until: string | null; free?: boolean } | null;
   waiting?: { id: string; plan: string; method: string; at: string } | null; guestExpiresAt?: string };
 const planWord: Readonly<Record<Member['plan'], string>> = { LIFETIME: 'Lifetime', MEMBER: 'Member', GUEST: 'Guest' };
 /** Time frames the owner can grant (months are 31 days). */
@@ -75,7 +75,7 @@ const GRANTS: readonly { plan: string; label: string }[] = [{ plan: 'WEEK', labe
   { plan: 'QUARTER', label: '3 months' }, { plan: 'HALF_YEAR', label: '6 months' }, { plan: 'YEAR', label: '1 year' }];
 const grantLabel = (plan: string) => GRANTS.find((item) => item.plan === plan)?.label ?? plan;
 const shortDate = (iso: string) => new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-const paidText = (paid: NonNullable<Member['paid']>) => `${grantLabel(paid.plan)} · ${paid.until ? `ends ${shortDate(paid.until)}` : 'never ends'}`;
+const paidText = (paid: NonNullable<Member['paid']>) => `${paid.free ? 'Free week (survey)' : grantLabel(paid.plan)} · ${paid.until ? `ends ${shortDate(paid.until)}` : 'never ends'}`;
 
 /** Owner only: every account, with a button to revoke or restore its access. */
 export function MemberAccess() {

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { ProductLedger } from '../src/product-ledger.js';
+import { buildServer } from '../src/server.js';
 
 /** A trial's login (owner, 2026-10-12: a new trial needs one), unique per device. */
 const signup = (device: string) => ({ username: `T_${device.replace(/[^A-Za-z0-9]/g, '').slice(-12)}`, email: `${device}@example.com`, password: 'trial-password-1' });
@@ -147,4 +148,38 @@ test('a new trial needs a login; the same person signs in on another device with
   // When the pass ends, its login says so instead of signing in.
   now = new Date('2026-10-14T12:00:01Z');
   await assert.rejects(ledger.login('jordan@example.com', 'trial-password-1'), /GUEST_PASS_EXPIRED/);
+});
+
+test('a completed survey earns a free week of membership, from any device with the trial login, once', async () => {
+  let now = new Date('2026-10-12T12:00:00Z');
+  const product = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'free-week-')), 'ledger.json'), 'CROWN_STRONG', () => now);
+  const [key] = await product.issueTrialKeys(1);
+  await product.trialLogin(key, 'phone-freeweekfreeweek', { username: 'Sam_7', email: 'sam@example.com', password: 'trial-password-1' });
+  const app = buildServer({ product, requireProfiles: true, clock: () => now });
+  try {
+    now = new Date('2026-10-14T13:00:00Z'); // the pass ended at 12:00
+    const login = await app.inject({ method: 'POST', url: '/v1/auth/login', payload: { login: 'sam@example.com', password: 'trial-password-1' } });
+    assert.equal(login.statusCode, 403);
+    assert.equal(login.json().code, 'GUEST_PASS_EXPIRED', 'the survey is still open');
+    const answers = { recommend: 'YES', liked: ['Vetted'], improve: 'More NHL props and faster loading please', plan: 'MONTH', price: '$21–30' };
+    const survey = (body: object) => app.inject({ method: 'POST', url: '/v1/auth/trial-poll', payload: body });
+    // Only a complete survey counts: something liked, a real written answer, the plan and its price.
+    for (const missing of [{ liked: [] }, { improve: 'ok' }, { improve: 'aaaaaaaaaaaaaaaaaaaa' }, { price: null }])
+      assert.equal((await survey({ login: 'Sam_7', password: 'trial-password-1', answers: { ...answers, ...missing } })).statusCode, 400);
+    assert.equal((await survey({ login: 'Sam_7', password: 'wrong-password-123', answers })).statusCode, 404);
+    const done = await survey({ login: 'Sam_7', password: 'trial-password-1', answers });
+    assert.equal(done.statusCode, 200);
+    assert.ok(done.json().freeWeekUntil.startsWith('2026-10-21T13:00'), 'a week from now, since the pass already ended');
+    const token = done.json().token as string;
+    const subscription = await product.subscription((await product.authenticate(token))!.accountId);
+    assert.deepEqual([subscription?.plan, subscription?.free, subscription?.daysLeft], ['WEEK', true, 7]);
+    assert.equal((await survey({ login: 'Sam_7', password: 'trial-password-1', answers })).statusCode, 409, 'one free week per account');
+    // "I wouldn't subscribe" needs no price.
+    assert.notEqual((await survey({ login: 'Sam_7', password: 'trial-password-1', answers: { ...answers, plan: 'NONE', price: null } })).statusCode, 400);
+    // Signing in works through the free week, then says the free time is over.
+    assert.equal((await product.login('Sam_7', 'trial-password-1')).profile.plan, 'GUEST');
+    now = new Date('2026-10-21T13:00:01Z');
+    const over = await app.inject({ method: 'POST', url: '/v1/auth/login', payload: { login: 'Sam_7', password: 'trial-password-1' } });
+    assert.equal(over.json().code, 'PLAN_ENDED');
+  } finally { await app.close(); }
 });

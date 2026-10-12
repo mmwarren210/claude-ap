@@ -54,7 +54,8 @@ interface Account {
   /** Signed up with the shared family code as the password; must set their own before anything else. */
   mustChangePassword?:true;
   /** A paid plan from a member key the owner issued after checking the payment (owner, 2026-10-11). */
-  paid?:{plan:PaidPlan;paidAt:string;until:string|null};
+  /** `free`: the free week a completed trial survey earns (owner, 2026-10-12); not a payment. */
+  paid?:{plan:PaidPlan;paidAt:string;until:string|null;free?:boolean};
   /** Tapped "I've paid" while on a trial: 24 extra hours were given once while the owner checks the payment. */
   payGrace?:string;
   /** Signed up from a trial key (owner, 2026-10-11): kept so Trial users still lists them after they became members. */
@@ -450,7 +451,7 @@ export class ProductLedger {
     const now=this.clock(),days=PLAN_DAYS[plan];
     const from=Math.max(now.getTime(),account.paid?.until?Date.parse(account.paid.until):0);
     const lifetime=days===null||(!!account.paid&&account.paid.until===null);
-    account.paid={plan:lifetime&&days!==null?account.paid!.plan:plan,paidAt:now.toISOString(),
+    account.paid={plan:lifetime&&days!==null?account.paid!.plan:plan,paidAt:now.toISOString(),free:false,
       until:lifetime?null:new Date(from+days*86_400_000).toISOString()};
     if(account.guest)account.guest.expiresAt=account.paid.until??'2100-01-01T00:00:00.000Z';
   }
@@ -502,7 +503,7 @@ export class ProductLedger {
     const data=await this.read(),account=data.accounts.find((item)=>item.id===accountId);
     if(!account?.paid)return null;
     const until=account.paid.until;
-    return {plan:account.paid.plan,paidAt:account.paid.paidAt,until,
+    return {plan:account.paid.plan,paidAt:account.paid.paidAt,until,free:!!account.paid.free,
       daysLeft:until===null?null:Math.ceil((Date.parse(until)-this.clock().getTime())/86_400_000)};
   }
   /** The account's latest payment request still waiting for the owner, if any. */
@@ -529,9 +530,11 @@ export class ProductLedger {
    * Saves a trial's poll answers once and adds 7 days from the later of now and its end. Found by the signed-in account, or
    * (after the pass ended, when sign-in no longer works) by the trial key and the device that used it. Returns a new session.
    */
-  async answerTrialPoll(who:{accountId:string}|{code:string;deviceId:string},answers:TrialPollAnswer){return this.exclusive(async()=>{
+  async answerTrialPoll(who:{accountId:string}|{code:string;deviceId:string}|{login:string;password:string},answers:TrialPollAnswer){return this.exclusive(async()=>{
     const data=await this.read(),keys=data.trialKeys??[],now=this.clock();
-    const account='accountId' in who?data.accounts.find((item)=>item.id===who.accountId)
+    // A trial with a login answers from any device once its pass ended (sign-in itself no longer works then).
+    const byLogin='login' in who?await this.passwordAccount(data,who.login,who.password):undefined;
+    const account='login' in who?byLogin:'accountId' in who?data.accounts.find((item)=>item.id===who.accountId)
       :keys.some((key)=>key.hash===tokenHash(who.code.trim()))?data.accounts.find((item)=>!!item.guest&&keys.some((key)=>key.hash===item.guest!.pass)&&
         item.guest.deviceHash===tokenHash(`${item.guest.pass}:${who.deviceId}`)):undefined;
     if(!account?.guest||!keys.some((key)=>key.hash===account.guest!.pass))throw new Error('TRIAL_NOT_FOUND');
@@ -540,8 +543,14 @@ export class ProductLedger {
     if(Date.parse(account.guest.expiresAt)-now.getTime()>POLL_WINDOW_MS)throw new Error('POLL_NOT_OPEN');
     account.guest.poll={...answers,liked:answers.liked.slice(0,6),improve:answers.improve?.slice(0,500)??null,
       plan:answers.plan??null,price:answers.price?.slice(0,40)??null,at:now.toISOString()};
-    account.guest.expiresAt=new Date(Math.max(now.getTime(),Date.parse(account.guest.expiresAt))+TRIAL_POLL_DAYS*24*60*60_000).toISOString();
-    const result=this.session(data,account);await this.write(data);return result;
+    // A completed survey earns a free week of membership (owner, 2026-10-12), from the later of now and the pass's end, so no
+    // trial time is lost. It shows as a Week plan marked free, and the usual renewal reminders take over when it ends.
+    const until=new Date(Math.max(now.getTime(),Date.parse(account.guest.expiresAt))+TRIAL_POLL_DAYS*24*60*60_000).toISOString();
+    account.paid={plan:'WEEK',paidAt:now.toISOString(),until,free:true};
+    account.guest.expiresAt=until;
+    // The account's other sign-ins (capped at the pass's old end) last to the end of the free week.
+    for(const session of data.sessions)if(session.accountId===account.id&&Date.parse(session.expiresAt)<Date.parse(until))session.expiresAt=until;
+    const result=this.session(data,account);await this.write(data);return {...result,freeWeekUntil:until};
   });}
   /**
    * Every account that came from a trial key, newest first, whether still on its pass, ended or signed up: which key, when it
@@ -712,7 +721,8 @@ export class ProductLedger {
     if(!account?.passwordHash || !timingSafeEqual(actual,stored) || account.status==='SUSPENDED')
       throw new Error('INVALID_CREDENTIALS');
     // A trial with a login signs in on any device until its pass ends.
-    if(guestExpired(account,this.clock()))throw new Error('GUEST_PASS_EXPIRED');
+    // The pass ended: the survey is still open (GUEST_PASS_EXPIRED) or the free week is used too (PLAN_ENDED).
+    if(guestExpired(account,this.clock()))throw new Error(account.guest!.poll||account.paid?'PLAN_ENDED':'GUEST_PASS_EXPIRED');
     const result=this.session(data,account);await this.write(data);return {...result,...(account.guest?{guestExpiresAt:account.guest.expiresAt}:{})};
   });}
   async loginWithProvider(provider:IdentityProvider,subject:string,email:string|null,username?:string){
@@ -768,6 +778,13 @@ export class ProductLedger {
       :!data.profiles.some((item)=>item.actorKey===account.id)?'NO_PROFILE':'OK';
     return {step,inFile:!!inFile,inCache:!!inCache,cacheBuilt:!!this.authCache,guest:!!account?.guest};
   });}
+  /** The account a login and password open (no session made); undefined when they don't match. */
+  private async passwordAccount(data:Data,login:string,password:string){
+    const account=this.accountByLogin(data,login);
+    const actual=await passwordKey(password,account?.passwordSalt??'0'.repeat(32));
+    const stored=Buffer.from(account?.passwordHash??'0'.repeat(128),'hex');
+    return account?.passwordHash&&timingSafeEqual(actual,stored)?account:undefined;
+  }
   private accountByLogin(data:Data,login:string){
     const entered=login.trim();
     if(entered.includes('@'))return data.accounts.find((item)=>item.email===normalizedEmail(entered)&&(!item.guest||!!item.passwordHash));

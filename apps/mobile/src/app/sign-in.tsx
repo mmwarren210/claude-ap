@@ -17,6 +17,8 @@ export default function SignIn() {
   const [creating, setCreating] = useState(true), [username, setUsername] = useState(''),
     [email, setEmail] = useState(''), [password, setPassword] = useState(''),
     [busy, setBusy] = useState(false), [error, setError] = useState('');
+  // A trial whose pass ended signs in here: the survey (free week) opens with its login, or Subscribe once that's used.
+  const [ended, setEnded] = useState<{ login: string; password: string; survey: boolean } | null>(null);
   // Sign-up is locked until a code unlocks it (family code: lifetime). Everyone else is asked to contact the owner.
   const [signup, setSignup] = useState<{ open: boolean; contact: string | null } | null>(null);
   const [accessCode, setAccessCode] = useState(''), [unlocked, setUnlocked] = useState(false);
@@ -47,7 +49,9 @@ export default function SignIn() {
     try { if (resetting) await resetPassword(email.trim(), code.trim(), password);
       else if (creating) await register(username.trim(), email.trim(), unlocked ? accessCode.trim() : password);
       else await login(email.trim(), password); }
-    catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not sign in.'); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not sign in.');
+      const code = (failure as { code?: string | null }).code;
+      if (!resetting && !creating && (code === 'GUEST_PASS_EXPIRED' || code === 'PLAN_ENDED')) setEnded({ login: email.trim(), password, survey: code === 'GUEST_PASS_EXPIRED' }); }
     finally { setBusy(false); }
   };
   return <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -68,6 +72,12 @@ export default function SignIn() {
             : <Text accessibilityRole="alert" style={styles.error}>{guest.message}</Text>}
           {guest.expired && <TrialPollForm />}
           {guest.expired && <><Text style={styles.title}>Or subscribe now</Text><SubscribePanel /></>}
+        </View>}
+        {ended && <View style={styles.panel}>
+          {ended.survey ? <><Text style={styles.title}>Get a free week</Text>
+            <Text style={styles.detail}>Your 2-day pass has ended. Finish this short survey and your account gets a free week of membership.</Text>
+            <TrialPollForm login={{ login: ended.login, password: ended.password }} /></> : null}
+          <Text style={styles.title}>{ended.survey ? 'Or subscribe now' : 'Subscribe to keep going'}</Text><SubscribePanel />
         </View>}
         <View style={styles.panel}>
           <Text style={styles.title}>{resetting ? 'Reset your password' : creating ? 'Create your profile' : 'Welcome back'}</Text>

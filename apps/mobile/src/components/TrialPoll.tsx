@@ -6,7 +6,8 @@ import { useAuth } from '../auth';
 import type { TrialPlan, TrialPollAnswers } from '../auth';
 import { colors, radius } from '../theme';
 
-// End-of-trial poll (owner, 2026-10-11): 3 quick questions in a trial's last day (or after it ended) for 7 more free days.
+// End-of-trial survey (owner, 2026-10-11): a trial's last day (or after it ended). Completing every question earns a free week
+// of membership (owner, 2026-10-12).
 
 const LIKED = ['Vetted', 'GKR picks', 'Edge', 'Top Picks', 'Crown builder', 'Results'];
 // Subscription lengths and the price ranges to ask about (owner, 2026-10-11; estimates pending the owner's final numbers).
@@ -19,9 +20,9 @@ const PLANS: readonly { value: TrialPlan; label: string; prices: string[] }[] = 
   { value: 'NONE', label: 'I wouldn’t subscribe', prices: [] },
 ];
 /** Shown with the poll and after it: the bonus week is the last free time. */
-export const TRIAL_AFTER_NOTE = 'After your 7 bonus days, a subscription is required to keep using CrownIQ.';
+export const TRIAL_AFTER_NOTE = 'After your free week, a subscription is required to keep using CrownIQ.';
 
-export function TrialPollForm({ onDone }: { onDone?: () => void }) {
+export function TrialPollForm({ onDone, login }: { onDone?: () => void; login?: { login: string; password: string } }) {
   const { answerTrialPoll } = useAuth();
   const [recommend, setRecommend] = useState<TrialPollAnswers['recommend'] | null>(null);
   const [liked, setLiked] = useState<string[]>([]);
@@ -32,11 +33,15 @@ export function TrialPollForm({ onDone }: { onDone?: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const send = async () => {
+    // Every question counts toward the free week (owner, 2026-10-12), the written one included.
     if (!recommend) { setError('Pick an answer for the first question.'); return; }
-    setBusy(true); setError('');
+    if (!liked.length) { setError('Pick at least one thing you liked.'); return; }
     if (!plan) { setError('Pick the plan you’d choose (or “I wouldn’t subscribe”).'); return; }
     if (prices.length && !price) { setError('Pick a price range for that plan.'); return; }
-    try { await answerTrialPoll({ recommend, liked, improve: improve.trim() || null, plan, price: prices.length ? price : null }); onDone?.(); }
+    if (improve.trim().length < 15 || new Set(improve.toLowerCase().replace(/[^a-z]/g, '')).size < 6) {
+      setError('Tell us what to improve in a sentence or two.'); return; }
+    setBusy(true); setError('');
+    try { await answerTrialPoll({ recommend, liked, improve: improve.trim(), plan, price: prices.length ? price : null }, login); onDone?.(); }
     catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not send your answers.'); }
     finally { setBusy(false); }
   };
@@ -44,7 +49,7 @@ export function TrialPollForm({ onDone }: { onDone?: () => void }) {
     <Text style={styles.question}>1. Would you recommend CrownIQ to a friend?</Text>
     <View style={styles.chips}>{(['YES', 'MAYBE', 'NO'] as const).map((value) => <Chip key={value} label={value === 'YES' ? 'Yes' : value === 'MAYBE' ? 'Maybe' : 'No'}
       on={recommend === value} onPress={() => setRecommend(value)} />)}</View>
-    <Text style={styles.question}>2. What did you like most? (pick any)</Text>
+    <Text style={styles.question}>2. What did you like most? (pick at least one)</Text>
     <View style={styles.chips}>{LIKED.map((value) => <Chip key={value} label={value} on={liked.includes(value)}
       onPress={() => setLiked((list) => list.includes(value) ? list.filter((item) => item !== value) : [...list, value])} />)}</View>
     <Text style={styles.question}>3. Which plan would you pick?</Text>
@@ -54,13 +59,13 @@ export function TrialPollForm({ onDone }: { onDone?: () => void }) {
       <Text style={styles.question}>4. What price feels fair for {PLANS.find((item) => item.value === plan)?.label.toLowerCase()}?</Text>
       <View style={styles.chips}>{prices.map((value) => <Chip key={value} label={value} on={price === value} onPress={() => setPrice(value)} />)}</View>
     </>}
-    <Text style={styles.question}>{prices.length ? '5' : '4'}. What should we improve? (optional)</Text>
+    <Text style={styles.question}>{prices.length ? '5' : '4'}. What should we improve?</Text>
     <TextInput value={improve} onChangeText={setImprove} multiline maxLength={500} placeholder="Anything missing, confusing or slow…"
       placeholderTextColor={colors.textFaint} style={styles.input} />
     <Text style={styles.note}>{TRIAL_AFTER_NOTE}</Text>
     {!!error && <Text style={styles.error}>{error}</Text>}
     <Pressable accessibilityRole="button" disabled={busy} onPress={() => void send()} style={[styles.button, busy && { opacity: .5 }]}>
-      {busy ? <ActivityIndicator color={colors.mintInk} /> : <Text style={styles.buttonText}>Send and get 7 more days</Text>}
+      {busy ? <ActivityIndicator color={colors.mintInk} /> : <Text style={styles.buttonText}>Send and get my free week</Text>}
     </Pressable>
   </View>;
 }
@@ -93,8 +98,8 @@ export function TrialPollCard() {
   const hours = status?.hours ?? null;
   return <>
     <Pressable accessibilityRole="button" onPress={() => thanks ? router.push('/subscribe') : setOpen(true)} style={styles.card}>
-      <Text style={styles.cardText}>{thanks ? `🎉 Thanks! 7 more free days added. ${TRIAL_AFTER_NOTE} Tap to see plans (10% off now) →`
-        : `⏳ Your free pass ends in ${hours ?? 'a few'} ${hours === 1 ? 'hour' : 'hours'}. Answer a few quick questions for 7 more days free  →`}</Text>
+      <Text style={styles.cardText}>{thanks ? `🎉 Thanks! Your free week of membership has started. ${TRIAL_AFTER_NOTE} Tap to see plans (10% off now) →`
+        : `⏳ Your free pass ends in ${hours ?? 'a few'} ${hours === 1 ? 'hour' : 'hours'}. Finish a short survey for a free week of membership  →`}</Text>
     </Pressable>
     <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
       <View style={styles.backdrop}><View style={styles.sheet}>

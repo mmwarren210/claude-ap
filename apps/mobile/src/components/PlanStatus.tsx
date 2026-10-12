@@ -7,7 +7,7 @@ import { colors } from '../theme';
 
 // A member's paid plan (owner, 2026-10-11): the end date in More, and a renewal alert across the app from 3 days before.
 
-export type Paid = { plan: string; label: string; paidAt: string; until: string | null; daysLeft: number | null };
+export type Paid = { plan: string; label: string; paidAt: string; until: string | null; daysLeft: number | null; free?: boolean };
 
 export type Waiting = { plan: string; label: string; method: string; at: string };
 
@@ -52,7 +52,8 @@ export function RenewalAlert() {
   if (!paid || paid.daysLeft === null || paid.daysLeft > 3) return null;
   const when = paid.daysLeft <= 0 ? 'today' : paid.daysLeft === 1 ? 'tomorrow' : `in ${paid.daysLeft} days`;
   return <Pressable accessibilityRole="button" onPress={() => router.push('/subscribe')} style={styles.bar}>
-    <Text style={styles.text}>⏳ Your {paid.label.toLowerCase()} plan ends {when}. Renew now so you don’t lose access (allow up to 24 hours for your key) →</Text>
+    <Text style={styles.text}>{paid.free ? `⏳ Your free week ends ${when}. Subscribe now so you don’t lose access (allow up to 24 hours for your key) →`
+      : `⏳ Your ${paid.label.toLowerCase()} plan ends ${when}. Renew now so you don’t lose access (allow up to 24 hours for your key) →`}</Text>
   </Pressable>;
 }
 

@@ -28,7 +28,7 @@ const trialLoginMessages:Record<string,string>={EMAIL_TAKEN:'That email already 
   INVALID_REGISTRATION:'Use a 3–24 character username (letters, numbers or _), your email, and a password of at least 12 characters.'};
 const guestMessages:Record<string,string>={TRIALS_ALL_USED:'All free trial keys have been claimed. Thanks for your interest in CrownIQ! Watch for the next round.',
   GUEST_PASS_FULL:'This guest link or trial key has already been used.',
-  GUEST_PASS_EXPIRED:'Your free trial has ended. Thanks for testing CrownIQ! Answer a few quick questions for 7 more free days, or sign up below to keep your picks and profile.',
+  GUEST_PASS_EXPIRED:'Your free trial has ended. Thanks for testing CrownIQ! Finish a short survey for a free week of membership, or subscribe below to keep your picks and profile.',
   GUEST_PASS_INVALID:'This guest link is not valid.',TOO_MANY_ATTEMPTS:'Too many attempts. Please wait a minute.'};
 
 type Profile={publicId:string;username:string;email:string|null;plan:'FREE'|'LIFETIME'|'GUEST'|'SUSPENDED'|'DEMO';
@@ -50,8 +50,9 @@ type AuthContext={profile:Profile|null;register:(username:string,email:string,pa
   /** A guest link is signing in, or why it could not. `expired`: a trial pass that ended (it can still take the poll). */
   /** A new trial starts with a login (owner, 2026-10-12): `start` sends it; `formError` asks for a fix and keeps the form. */
   guest:{signingIn:boolean;waiting:boolean;start:(login:TrialLogin)=>void;message:string;expired:boolean;formError:string};
-  /** Answers the end-of-trial poll (7 more free days): signed in, or with the trial link after the pass ended. */
-  answerTrialPoll:(answers:TrialPollAnswers)=>Promise<void>};
+  /** Answers the end-of-trial survey (a free week of membership): signed in, with the trial link, or with the trial login. */
+  /** `login`: a trial whose pass ended answers from any device with its login (owner, 2026-10-12). */
+  answerTrialPoll:(answers:TrialPollAnswers,login?:{login:string;password:string})=>Promise<void>};
 export type Session={token:string;profile:Profile};
 export type TrialLogin={username:string;email:string;password:string};
 export type TrialPlan='WEEK'|'MONTH'|'QUARTER'|'HALF_YEAR'|'YEAR'|'NONE';
@@ -71,9 +72,11 @@ async function parseSession(response:Response):Promise<Session>{
       PASSWORD_NOT_NEW:'Choose a password different from the family code.',
       INVALID_RESET:'Enter your email or username, the 8-character code and a password of at least 12 characters.',INVALID_CREDENTIALS:'Email, username or password is incorrect.',
       TOO_MANY_ATTEMPTS:'Too many attempts. Please wait a minute.',
-      GUEST_PASS_EXPIRED:'Your 2-day pass has ended. Subscribe to keep using CrownIQ.',
+      GUEST_PASS_EXPIRED:'Your 2-day pass has ended. Finish the short survey below for a free week, or subscribe.',
+      PLAN_ENDED:'Your free time has ended. Subscribe to keep using CrownIQ.',
       INVALID_REGISTRATION:'Use a 3–24 character username with letters, numbers or underscores, and a password of at least 12 characters.'};
-    throw new Error(messages[payload.code??'']??'Sign-in failed. Try again.');}
+    // The code rides along so a screen can react to it (a trial that ended opens the survey).
+    throw Object.assign(new Error(messages[payload.code??'']??'Sign-in failed. Try again.'),{code:payload.code??null});}
   const value=await response.json() as Session;
   if(!value.token || !value.profile?.publicId)throw new Error('The server did not create a session.');
   return value;
@@ -146,15 +149,16 @@ export function AuthProvider({children}:{children:ReactNode}){
   const value=useMemo<AuthContext>(()=>({
     profile:session?.profile??(demo?demoProfile:null),demo,guest,
     enterDemo:()=>setDemo(true),
-    answerTrialPoll:async(answers)=>{
+    answerTrialPoll:async(answers,login)=>{
       if(!base)throw new Error('Set EXPO_PUBLIC_API_URL to your CrownIQ server first.');
-      const signedIn=!!session?.token, code=guestCode();
+      const signedIn=!login&&!!session?.token, code=guestCode();
       const response=await fetch(`${base}${signedIn?'/v1/trial/poll':'/v1/auth/trial-poll'}`,{method:'POST',
         headers:{'content-type':'application/json',...(signedIn?{authorization:`Bearer ${session!.token}`}:{})},
-        body:JSON.stringify(signedIn?answers:{code,deviceId:guestDeviceId(),answers})});
+        body:JSON.stringify(signedIn?answers:login?{...login,answers}:{code,deviceId:guestDeviceId(),answers})});
       if(!response.ok){const payload=await response.json().catch(()=>({})) as {code?:string};
         throw new Error(payload.code==='POLL_ALREADY_ANSWERED'?'You already answered the poll. Thanks!'
-          :payload.code==='TRIAL_NOT_FOUND'?'This poll is for the 2-day trial passes.':'Could not send your answers. Try again.');}
+          :payload.code==='TRIAL_NOT_FOUND'?'This survey is for the 2-day trial passes.':payload.code==='INVALID_POLL'?'Answer every question to get your free week.'
+          :payload.code==='POLL_NOT_OPEN'?'The survey opens in the last day of your pass.':'Could not send your answers. Try again.');}
       signIn(await parseSession(response));setGuestResult({done:true,message:''});
     },
     adoptSession:(next)=>signIn(next),

@@ -588,8 +588,8 @@ export function buildServer(options: ServerOptions = {}) {
       .strict().refine((value)=>!!(value.login??value.email)).safeParse(request.body);
     if(!input.success)return reply.code(400).send({code:'INVALID_LOGIN'});
     try{return await options.product.login((input.data.login??input.data.email)!,input.data.password);}
-    catch(error){return (error as Error).message==='GUEST_PASS_EXPIRED'?reply.code(403).send({code:'GUEST_PASS_EXPIRED'})
-      :reply.code(401).send({code:'INVALID_CREDENTIALS'});}
+    catch(error){const code=(error as Error).message;
+      return code==='GUEST_PASS_EXPIRED'||code==='PLAN_ENDED'?reply.code(403).send({code}):reply.code(401).send({code:'INVALID_CREDENTIALS'});}
   });
   app.post('/v1/auth/guest',async(request,reply)=>{
     if(!options.product)return reply.code(404).send({code:'GUEST_PASS_INVALID'});
@@ -633,7 +633,7 @@ export function buildServer(options: ServerOptions = {}) {
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     const paid=options.product?await options.product.subscription(user.accountId):null;
     const waiting=options.product?await options.product.pendingPayment(user.accountId):null;
-    return {paid:paid?{...paid,label:PLAN_LABELS[paid.plan]??paid.plan}:null,
+    return {paid:paid?{...paid,label:paid.free?'Free week':PLAN_LABELS[paid.plan]??paid.plan}:null,
       waiting:waiting?{...waiting,label:PLAN_LABELS[waiting.plan]??waiting.plan}:null};
   });
   app.post('/v1/subscribe/paid',async(request,reply)=>{
@@ -650,10 +650,13 @@ export function buildServer(options: ServerOptions = {}) {
     try{return await options.product.redeemMemberKey(user.accountId,input.data.key);}
     catch(error){const code=(error as Error).message;return reply.code(code==='MEMBER_KEY_INVALID'?404:409).send({code});}
   });
-  // End-of-trial poll (owner, 2026-10-11): a trial in its last day (or already ended) answers 3 questions for 7 more free days.
-  const pollAnswer=z.object({recommend:z.enum(['YES','MAYBE','NO']),liked:z.array(z.string().trim().min(1).max(40)).max(6),
-    improve:z.string().trim().max(500).nullable().optional(),plan:z.enum(TRIAL_PLANS).nullable().optional(),
-    price:z.string().trim().min(1).max(40).nullable().optional()}).strict();
+  // End-of-trial survey (owner, 2026-10-11): a trial in its last day (or already ended) answers it for a free week of
+  // membership. Only a fully completed survey counts (owner, 2026-10-12): something liked, a real written answer on what to
+  // improve, and the plan and price they'd pick.
+  const pollAnswer=z.object({recommend:z.enum(['YES','MAYBE','NO']),liked:z.array(z.string().trim().min(1).max(40)).min(1).max(6),
+    improve:z.string().trim().min(15).max(500).refine((text)=>new Set(text.toLowerCase().replace(/[^a-z]/g,'')).size>=6),
+    plan:z.enum(TRIAL_PLANS),price:z.string().trim().min(1).max(40).nullable().optional()}).strict()
+    .refine((answers)=>answers.plan==='NONE'||!!answers.price);
   const pollError=(reply:FastifyReply,error:unknown)=>{const code=(error as Error).message;
     if(code==='POLL_ALREADY_ANSWERED'||code==='POLL_NOT_OPEN')return reply.code(409).send({code});
     if(code==='TRIAL_NOT_FOUND'||code==='ACCOUNT_SUSPENDED')return reply.code(404).send({code:'TRIAL_NOT_FOUND'});
@@ -672,9 +675,12 @@ export function buildServer(options: ServerOptions = {}) {
   // After the pass has ended (sign-in no longer works): the trial key and the device that used it.
   app.post('/v1/auth/trial-poll',async(request,reply)=>{
     if(limited(`guest:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
-    const input=z.object({code:z.string().trim().min(1).max(100),deviceId:z.string().min(16).max(100),answers:pollAnswer}).strict().safeParse(request.body);
+    // Or the trial's login, from any device (owner, 2026-10-12).
+    const input=z.union([z.object({code:z.string().trim().min(1).max(100),deviceId:z.string().min(16).max(100),answers:pollAnswer}).strict(),
+      z.object({login:z.string().trim().min(1).max(254),password:z.string().min(1).max(128),answers:pollAnswer}).strict()]).safeParse(request.body);
     if(!input.success||!options.product)return reply.code(400).send({code:'INVALID_POLL'});
-    try{return await options.product.answerTrialPoll({code:input.data.code,deviceId:input.data.deviceId},
+    try{return await options.product.answerTrialPoll('login' in input.data?{login:input.data.login,password:input.data.password}
+      :{code:input.data.code,deviceId:input.data.deviceId},
       {...input.data.answers,improve:input.data.answers.improve??null,plan:input.data.answers.plan??null,price:input.data.answers.price??null});}
     catch(error){return pollError(reply,error);}
   });
