@@ -1,5 +1,6 @@
 import type { Analysis } from '@crowniq/contracts';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from '../Text';
 import { colors, radius } from '../../theme';
 
 const grades: Readonly<Record<Analysis['evidenceQuality'], { letter: string; title: string; color: string }>> = {

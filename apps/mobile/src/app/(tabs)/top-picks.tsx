@@ -1,7 +1,8 @@
 import type { Analysis, RankingCard, SecondLookCard } from '@crowniq/contracts';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from '../../components/Text';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { evidenceDetail, matchup } from '../../components/BoardCard';
 import { optionLabel } from '../../components/FilterSheet';

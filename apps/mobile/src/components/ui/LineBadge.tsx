@@ -1,5 +1,6 @@
 import type { PropLine } from '@crowniq/contracts';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from '../Text';
 import { lineStyleOf, lineStyles, radius } from '../../theme';
 import { alpha } from './color';
 import { Icon } from './Icon';

@@ -1,5 +1,6 @@
 import type { ScoreBand } from '@crowniq/contracts';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from '../Text';
 import Svg, { Circle } from 'react-native-svg';
 import { bandColor, bandLabel, colors } from '../../theme';
 

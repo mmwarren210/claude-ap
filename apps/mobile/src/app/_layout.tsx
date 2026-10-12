@@ -9,6 +9,7 @@ import { useAutoUpdate } from '../auto-update';
 import { useActivityBeat } from '../use-activity';
 import { IntroSplash } from '../components/IntroSplash';
 import { Watermark } from '../components/Watermark';
+import { LanguageNote } from '../components/LanguageNote';
 import { useState } from 'react';
 import { View } from 'react-native';
 
@@ -33,6 +34,8 @@ function ProfileRouter(){
         <Stack.Screen name="owner/board" />
         <Stack.Screen name="owner/research" />
         <Stack.Screen name="owner/learning" />
+        <Stack.Screen name="owner/audit" />
+        <Stack.Screen name="owner/evidence" />
       </Stack.Protected>
       <Stack.Protected guard={!profile}><Stack.Screen name="sign-in" /></Stack.Protected>
     </Stack>;
@@ -53,7 +56,8 @@ export default function RootLayout() {
   return <ThemeProvider value={crownTheme}>
     <StatusBar style="light" />
     <View style={{ flex: 1 }}>
-      <AuthProvider><ProfileRouter /></AuthProvider>
+      {/* The language note waits for the opening to finish. */}
+      <AuthProvider><ProfileRouter /><LanguageNote hidden={intro} /></AuthProvider>
       {intro && <IntroSplash onDone={() => { introPlayed = true; setIntro(false); }} />}
     </View>
   </ThemeProvider>;

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, Share, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from './Text';
 import { useAuth } from '../auth';
 import { colors, radius } from '../theme';
 import { GhostButton, PrimaryButton } from './ui/Controls';

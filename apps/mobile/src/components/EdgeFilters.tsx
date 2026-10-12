@@ -1,5 +1,6 @@
 import type { EdgePick } from '@crowniq/contracts';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import { marketLabel } from '../edge-format';
 import { gameTime } from '../insights';
 import { palette, rankAccents } from '../theme';

@@ -1,7 +1,8 @@
 import { edgeSlipSchema } from '@crowniq/contracts';
 import type { EdgeEntry, EdgeSlip } from '@crowniq/contracts';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from './Text';
 import { useAuth } from '../auth';
 import { formatLine, marketLabel, pct, slipDollars, usd } from '../edge-format';
 import { edgeStake, STAKES, useEdgeStake } from '../edge-stake';

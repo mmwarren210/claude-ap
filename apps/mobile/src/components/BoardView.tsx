@@ -1,7 +1,8 @@
 import { LineShopBoard } from './LineShop';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from './Text';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Window } from '../insights';
 import { boardLinesForMode, evidenceExpired, playCounts, withBooksPicks } from '../state';

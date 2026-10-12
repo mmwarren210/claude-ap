@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
+import { Text } from '../../components/Text';
 import { Notice, Screen } from '../../components/Screen';
 import { palette } from '../../theme';
 import { useAuth } from '../../auth';

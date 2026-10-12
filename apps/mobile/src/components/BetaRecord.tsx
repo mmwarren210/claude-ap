@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import { useAuth } from '../auth';
 import { colors, radius } from '../theme';
 import { useBeta } from '../use-model';

@@ -1,6 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import { useAuth } from '../auth';
 import { byLabels, linkPanels, rankAll, sourceLabels } from '../all-picks';
 import type { AnyPick, PickSource } from '../all-picks';

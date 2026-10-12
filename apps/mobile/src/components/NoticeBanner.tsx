@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { Href } from 'expo-router';
 import { router } from 'expo-router';
-import { Pressable, Text } from 'react-native';
+import { Pressable } from 'react-native';
+import { Text } from './Text';
 import { useAuth } from '../auth';
 import { colors } from '../theme';
 

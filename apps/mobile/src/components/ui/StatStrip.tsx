@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from '../Text';
 import { colors } from '../../theme';
 
 export type Stat = { label: string; value: string; tone?: 'good' | 'bad' | 'plain'; suffix?: string };

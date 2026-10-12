@@ -1,7 +1,8 @@
 import type { EdgePlatform } from '@crowniq/contracts';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import { useAuth } from '../auth';
 import { formatLine, marketLabel, pct } from '../edge-format';
 import { palette } from '../theme';

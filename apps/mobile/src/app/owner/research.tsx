@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { router } from 'expo-router';
-import { ActivityIndicator, Platform, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, Share, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from '../../components/Text';
 import { File, Paths } from 'expo-file-system';
 import { Notice, Screen } from '../../components/Screen';
 import { useAuth } from '../../auth';

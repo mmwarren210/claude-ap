@@ -1,6 +1,7 @@
 import type { Analysis, PlayableDirection, PropLine } from '@crowniq/contracts';
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import type { LegTip, TipId } from '../state';
 import { useDraft } from '../use-draft';
 import { colors, radius } from '../theme';

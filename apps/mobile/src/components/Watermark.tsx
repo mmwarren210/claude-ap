@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 
 /**
  * A faint repeated watermark over every screen for trial accounts (owner, 2026-10-11): any screenshot or recording that gets

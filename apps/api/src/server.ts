@@ -905,6 +905,19 @@ export function buildServer(options: ServerOptions = {}) {
         reference:item.reference??null}))}:null,
       record:record?{gkr:record.gkr1!.all,gkr2:record.gkr2!.all}:null};
   });
+  // The member's app language, kept on the account so another phone opens in it (owner, 2026-10-12).
+  app.get('/v1/me/language',async(request,reply)=>{
+    const user=await currentUser(request);
+    if(!user||!options.product)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    return {language:await options.product.language(user.accountId)};
+  });
+  app.put('/v1/me/language',async(request,reply)=>{
+    const user=await currentUser(request);
+    if(!user||!options.product)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    const input=z.object({language:z.enum(['en','es'])}).safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'INVALID_LANGUAGE'});
+    return {language:await options.product.setLanguage(user.accountId,input.data.language).catch(()=>null)};
+  });
   app.post('/v1/secrets/unlock',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     if(limited(`secrets:${user.accountId}`))return reply.code(429).send({code:'TOO_MANY_TRIES'});

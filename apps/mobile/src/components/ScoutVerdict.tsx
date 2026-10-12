@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import { colors, radius } from '../theme';
 import { lateNews, scoutVerdict, verdictText } from '../use-ai-picks';
 import type { AiRead } from '../use-ai-picks';

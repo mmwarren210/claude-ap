@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from './Text';
 import { palette } from '../theme';
 
 /** Player search box for the Edge and GKR+ tabs; hands the text on after a short pause in typing. */

@@ -44,7 +44,9 @@ export interface PublicCrown {publicCrownId:string;ownerPublicId:string;createdA
     eventId:string;playerId:string;sport:string}[];unsharedAt:string|null}
 export interface Follow {followerPublicId:string;followedPublicId:string;createdAt:string}
 type IdentityProvider='GOOGLE'|'APPLE';
-interface Account {id:string;username:string;email:string|null;passwordSalt:string|null;
+interface Account {
+  /** The app language the member chose (owner, 2026-10-12); unset until they choose. */
+  language?:'en'|'es';id:string;username:string;email:string|null;passwordSalt:string|null;
   passwordHash:string|null;identities:{provider:IdentityProvider;subject:string}[];
   createdAt:string;status:'FREE'|'SUSPENDED';
   /** A lifetime family member: signed up with the family code (owner, 2026-10-05). */
@@ -986,6 +988,14 @@ export class ProductLedger {
   async listDecisions(offset=0,limit=100){return this.exclusive(async()=>{
     const data=await this.read();return {total:data.decisions.length,
       decisions:data.decisions.slice().reverse().slice(offset,offset+limit)};
+  });}
+  /** The account's chosen app language, or null when it never chose. */
+  async language(accountId:string){return (await this.read()).accounts.find((item)=>item.id===accountId)?.language??null;}
+  async setLanguage(accountId:string,language:'en'|'es'){return this.exclusive(async()=>{
+    const data=await this.read(),account=data.accounts.find((item)=>item.id===accountId);
+    if(!account)throw new Error('NOT_FOUND');
+    if(account.language!==language){account.language=language;await this.write(data);}
+    return language;
   });}
   /** One tracked decision, for its evidence page. */
   async decision(trackedPickId:string){return (await this.read()).decisions.find((item)=>item.trackedPickId===trackedPickId)??null;}

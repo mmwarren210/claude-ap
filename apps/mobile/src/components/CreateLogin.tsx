@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from './Text';
 import { useAuth } from '../auth';
 import { colors, radius } from '../theme';
 import { useSubscription } from './PlanStatus';

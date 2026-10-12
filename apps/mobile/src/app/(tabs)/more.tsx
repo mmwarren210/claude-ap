@@ -3,7 +3,8 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import type { Href } from 'expo-router';
 import { endsText, usePaidPlan } from '../../components/PlanStatus';
 import { useCallback, useEffect, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from '../../components/Text';
 import { openExternal } from '../../port';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../auth';
@@ -24,6 +25,8 @@ import { colors, radius } from '../../theme';
 import { useDraft } from '../../use-draft';
 import { gkrPlusAccess, useGkrPlusAccess } from '../../use-gkr-plus';
 import { appCommit, isOutdated } from '../../version';
+import { setLanguage, useLanguage } from '../../i18n';
+import { saveLanguage } from '../../components/LanguageNote';
 
 const helpUrl = 'https://www.ncpgambling.org/help-treatment/about-the-national-problem-gambling-helpline/';
 
@@ -205,6 +208,7 @@ function AppVersion() {
 export default function MoreScreen() {
   const { profile, logout, request, setUsername, demo } = useAuth();
   const { viewMode, setViewMode, ready, hiddenTips, showAllTips } = useDraft();
+  const language = useLanguage();
   const [owner, setOwner] = useState(false);
   const gkrPlus = useGkrPlusAccess();
   const [stats, setStats] = useState<{ picks: number; crowns: number; rate: number | null } | null>(null);
@@ -292,6 +296,9 @@ export default function MoreScreen() {
       <View style={styles.group}>
         <Row icon="help-circle-outline" title="How to use CrownIQ" detail="What each tab does" onPress={() => go('/guide')} />
         <Row icon="account-outline" title="Account" detail="Display username" onPress={() => setSheet('account')} />
+        {/* Shown in both languages so anyone can find it. */}
+        <Row icon="translate" title="Language · Idioma" detail={language === 'es' ? 'Español' : 'English'}
+          onPress={() => { const next = language === 'es' ? 'en' : 'es'; setLanguage(next); void saveLanguage(request, next); }} />
         <Row icon="view-grid-outline" title="Board view" detail={viewMode === 'LITE' ? 'Lite · top qualified' : 'Full · every line'}
           onPress={ready ? () => setViewMode(viewMode === 'LITE' ? 'FULL' : 'LITE') : undefined} />
         <Row icon="cash-multiple" title="Payout estimates" detail="By app" onPress={() => setSheet('payouts')} />

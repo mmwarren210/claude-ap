@@ -1,6 +1,7 @@
 import type { EdgePick } from '@crowniq/contracts';
 import { router } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import { edgeSummary, elsewhereText, headline, lineComparison, moveBadges, pct, ratingColor, ratingLabel, tierLabel } from '../edge-format';
 import { edgeSlip } from '../edge-slip';
 import { palette } from '../theme';

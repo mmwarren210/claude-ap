@@ -1,5 +1,6 @@
 import { router } from 'expo-router';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
+import { Text } from '../components/Text';
 import { Screen } from '../components/Screen';
 import { SubscribePanel } from '../components/Subscribe';
 import { colors } from '../theme';

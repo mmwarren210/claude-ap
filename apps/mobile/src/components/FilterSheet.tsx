@@ -1,6 +1,7 @@
 import type { BoardResponse } from '@crowniq/contracts';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import { gameTime, marketLabel } from '../insights';
 import { emptyFilters, passes, toggleFilter } from '../state';
 import type { Filters, ViewMode } from '../state';

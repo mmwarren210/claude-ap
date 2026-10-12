@@ -101,3 +101,15 @@ test('spot checks: a random sample of unchecked picks, verdicts recorded and tal
   assert.ok(!(await ledger.auditSample(10, 14)).some((item) => item.trackedPickId === sample[0]!.trackedPickId), 'checked picks leave the pool');
   await assert.rejects(ledger.audit('nope', 'WRONG', null));
 });
+
+test('an account keeps its chosen language', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'lang-'));
+  const ledger = new ProductLedger(join(folder, 'ledger.json'));
+  await ledger.register('spanishfan', 'a-long-password-123', 'fan@example.com');
+  const data = JSON.parse(await (await import('node:fs/promises')).readFile(join(folder, 'ledger.json'), 'utf8')) as { accounts: { id: string }[] };
+  const id = data.accounts[0]!.id;
+  assert.equal(await ledger.language(id), null, 'unset until chosen');
+  assert.equal(await ledger.setLanguage(id, 'es'), 'es');
+  assert.equal(await ledger.language(id), 'es');
+  await assert.rejects(ledger.setLanguage('nobody', 'en'));
+});

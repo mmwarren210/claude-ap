@@ -1,5 +1,6 @@
 import { router } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import { formatLine, marketAbbrev } from '../insights';
 import { colors, radius } from '../theme';
 import { useBoard } from '../use-board';

@@ -1,7 +1,8 @@
 import { edgeGenResponseSchema, edgePickSchema } from '@crowniq/contracts';
 import type { EdgeEntry, EdgeGenResponse, EdgePick, EdgeSlip } from '@crowniq/contracts';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import { useAuth } from '../auth';
 import { dayWindow, marketLabel, pct, usd } from '../edge-format';
 import { useEdgeStake } from '../edge-stake';

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from './Text';
 import { router } from 'expo-router';
 import { useAuth } from '../auth';
 import type { TrialPlan, TrialPollAnswers } from '../auth';

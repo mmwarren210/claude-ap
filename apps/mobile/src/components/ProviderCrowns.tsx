@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Text } from './Text';
 import { useCrownLegs } from '../crown-legs';
 import { buildBookSlip, parlayAmerican } from '../slip-builders';
 import { colors } from '../theme';
