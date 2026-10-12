@@ -30,3 +30,13 @@ test('no game yet stays pending; no game three days later is VOID; a moneyline i
   assert.deepEqual(await gradeFromBoxScores([tip({ market: 'MONEYLINE' })], history(games), now), []);
   assert.deepEqual(await gradeFromBoxScores([tip({ stat: 'Fantasy Score' })], history(games), now), [], 'no box-score stat for it');
 });
+
+test('a player log cached before the game finished is asked again', async () => {
+  // The first answer is a copy from before Sunday night's start; asking again (fresh) brings the game.
+  const asked: (number | undefined)[] = [];
+  const stale = { gamesFor: async (_line: unknown, _wait: number, freshSince?: number) => { asked.push(freshSince); return freshSince ? games : games.slice(0, 1); } } as unknown as PropLineHistory;
+  const now = new Date('2026-10-12T17:30:00Z');
+  const [graded] = await gradeFromBoxScores([tip({ eventDate: null })], stale, now);
+  assert.equal(graded?.status, 'WON');
+  assert.deepEqual(asked, [undefined, now.getTime() - 2 * 3600_000]);
+});

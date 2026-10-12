@@ -40,9 +40,17 @@ export async function gradeFromBoxScores(tips: readonly Tip[], history: PropLine
     const sport = tip.sport.toUpperCase();
     const read = marketKeysFor(tip.stat).map((key) => proplineStat(sport, key)).find((value) => value !== null) ?? null;
     if (!read) continue;
-    const games = await history.gamesFor({ sport: sport as never, eventId: '', playerName: tip.selection, league: tip.league }, 8000).catch(() => null);
+    const player = { sport: sport as never, eventId: '', playerName: tip.selection, league: tip.league };
+    let games = await history.gamesFor(player, 8000).catch(() => null);
     if (!games || games === 'PENDING') continue;
-    const game = gameOf(tip as never, games);
+    let game = gameOf(tip as never, games);
+    // A log cached before the game finished doesn't have it yet (owner, 2026-10-12: a Sunday night start sat ungraded on
+    // Monday): ask again when the copy is over two hours old.
+    if (!game) {
+      games = await history.gamesFor(player, 8000, now.getTime() - 2 * 3600_000).catch(() => null);
+      if (!games || games === 'PENDING') continue;
+      game = gameOf(tip as never, games);
+    }
     if (!game) {
       const date = Date.parse(tip.eventDate ?? tip.createdAt);
       if (now.getTime() - date > 3 * DAY) out.push({ id: tip.id, status: 'VOID', result: `No ${tip.selection} game found on PropLine (did not play?)` });

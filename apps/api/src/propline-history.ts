@@ -210,14 +210,15 @@ export class PropLineHistory {
   }
 
   /** A player's recent games (cached 6 hours, a player PropLine doesn't know too); undefined when it couldn't be asked. */
-  private async games(sportKey: string, playerName: string, refresh?: { keepMs: number; olderThanMs: number }): Promise<readonly Game[] | null | undefined> {
+  private async games(sportKey: string, playerName: string, refresh?: { keepMs: number; olderThanMs: number }, freshSince?: number): Promise<readonly Game[] | null | undefined> {
     await this.load();
     const key = `${sportKey}|${normalizedName(playerName)}`, now = this.clock();
     const cached = this.cache.get(key);
     // The nightly pull also refetches anything from before the deep game log, however fresh.
     // A tennis log read before the match total was added is re-asked (its totals would read as one player's games).
     const stale = sportKey === 'tennis' && !!cached?.games?.length && !cached.games.some((game) => 'match_total_games' in game.stats);
-    if (cached && !stale && (!refresh || (cached.deep && cached.teams)) && now - cached.at < (refresh ? refresh.olderThanMs : cached.keepMs ?? this.options.ttlMs ?? 6 * 3600_000))
+    if (cached && !stale && (!refresh || (cached.deep && cached.teams)) && (freshSince === undefined || cached.at >= freshSince) &&
+      now - cached.at < (refresh ? refresh.olderThanMs : cached.keepMs ?? this.options.ttlMs ?? 6 * 3600_000))
       return cached.games;
     const pending = this.loading.get(key);
     if (pending) return pending;
@@ -281,14 +282,15 @@ export class PropLineHistory {
   }
 
   /** The player's PropLine games with every stat (any order), null when PropLine has none; 'PENDING' as in `values`. */
+  /** `freshSince`: a log fetched before this time is asked again (a grader that knows a game has finished since). */
   async gamesFor(line: Pick<PropLine, 'sport' | 'eventId' | 'playerName'> & { league?: string | null },
-    waitMs = Infinity): Promise<readonly Game[] | null | 'PENDING'> {
+    waitMs = Infinity, freshSince?: number): Promise<readonly Game[] | null | 'PENDING'> {
     const sportKey = this.sportKey(line);
     // A soccer line with no league to go on tries PropLine's soccer leagues in turn (each answer is kept 6 hours).
     const keys = sportKey ? [sportKey] : line.sport === 'SOCCER' ? Object.values(SOCCER_KEYS) : [];
     if (!keys.length) return null;
     const request = (async () => {
-      for (const key of keys) { const games = await this.games(key, line.playerName); if (games !== null) return games; }
+      for (const key of keys) { const games = await this.games(key, line.playerName, undefined, freshSince); if (games !== null) return games; }
       return null;
     })();
     const games = Number.isFinite(waitMs) ? await Promise.race([request, new Promise<'PENDING'>((done) => {
