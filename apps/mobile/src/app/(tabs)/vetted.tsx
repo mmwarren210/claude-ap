@@ -7,6 +7,7 @@ import { useAuth } from '../../auth';
 import { pickImage } from '../../pick-image';
 import { AppHeader } from '../../components/ui/AppHeader';
 import { ModelBanner } from '../../components/ui/ModelBanner';
+import { ManualPick } from '../../components/ManualPick';
 import { colors, radius } from '../../theme';
 
 // Vetted (owner, 2026-10-11): outside tips CrownIQ checked and rated PLAY, for everyone. Who posted a tip is never shown.
@@ -117,6 +118,7 @@ export default function VettedTab() {
         </Pressable>
         {mine?.uploadsLeft !== null && mine?.uploadsLeft !== undefined && <Text style={styles.faint}>{mine.uploadsLeft} of {mine.dailyLimit} left today</Text>}
         {!!message && <Text style={styles.muted}>{message}</Text>}
+        <ManualPick onAdded={() => { void loadMine(); void load(); }} />
         {recentMine.length > 0 && <Text style={[styles.section, { marginTop: 4 }]}>YOUR SUBMISSIONS</Text>}
         {recentMine.map((tip) => <MineRow key={tip.id} tip={tip} />)}
         {passed > 0 && <Text style={styles.faint}>{passed} more {passed === 1 ? 'pick was' : 'picks were'} checked with no play on any line or app, so {passed === 1 ? 'it’s' : 'they’re'} not listed.</Text>}

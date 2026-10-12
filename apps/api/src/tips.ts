@@ -34,7 +34,7 @@ export type TipVerdict = 'PLAY' | 'LEAN' | 'PASS' | 'FADE';
 /** CrownIQ's read on a tip: its chance (Pinnacle's no-vig price when the game is on the board, else Claude's estimate), the
  * best price known (the post's odds, else the odds Claude found), the EV at that price and a verdict. */
 export interface TipAnalysis {
-  readonly verdict: TipVerdict; readonly chance: number; readonly chanceSource: 'Pinnacle' | 'Claude';
+  readonly verdict: TipVerdict; readonly chance: number; readonly chanceSource: 'Pinnacle' | 'Claude' | 'Edge';
   readonly price: number | null; readonly priceSource: string | null; readonly ev: number | null; readonly fairOdds: number;
   readonly reasons: string[]; readonly event: string | null; readonly start: string | null; readonly analyzedAt: string;
 }
@@ -50,6 +50,8 @@ export interface Tip extends TipDraft {
   submittedBy?: string;
   /** The verdict came from an identical pick already checked, so no AI call was made. */
   reused?: boolean;
+  /** Added by hand from a board line (owner, 2026-10-12): no AI read; GKR and Edge decide. */
+  manual?: boolean;
   /**
    * GKR's and Edge's read when the prop is on a CrownIQ board (owner, 2026-10-11: Vetted picks are checked by GKR and Edge
    * too). `rejected` when Edge says FADE at the tip's own price (its chance 5+ points under break-even): the pick stays out of
@@ -104,6 +106,31 @@ export interface TipReader {
   analyze(tips: readonly (TipDraft & { id: string; market_read: TipMarketRead | null })[], today: string): Promise<TipOpinion[]>;
   /** Looks up final results; returns one entry per tip it could settle. */
   grade(tips: readonly Tip[], today: string): Promise<{ id: string; status: Exclude<TipStatus, 'PENDING'>; result: string }[]>;
+}
+
+/** Picks added by hand per account in any 24 hours (no AI cost; the cap only stops floods). */
+export const USER_DAILY_MANUAL = 20;
+
+/** A board line the person picked by hand, with the side they chose. */
+export interface ManualLine {
+  readonly sport: string; readonly league: string | null; readonly playerName: string; readonly opponent: string | null;
+  readonly market: string; readonly line: number; readonly side: 'MORE' | 'LESS'; readonly eventName: string; readonly start: string;
+  readonly platform: string;
+}
+/** The tip for a hand-picked line. The date is the game's date in Eastern time, which box-score grading matches on. */
+export function manualDraft(line: ManualLine): TipDraft {
+  const date = new Date(Date.parse(line.start) - 4 * 3600_000).toISOString().slice(0, 10);
+  // A market key ("pitcher_strikeouts") reads as words ("Pitcher Strikeouts"); box-score grading turns it back into keys.
+  const stat = line.market.includes('_') ? line.market.replace(/^player_/, '').split('_').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+    : line.market;
+  return { text: `${line.playerName} ${line.side === 'MORE' ? 'More' : 'Less'} ${line.line} ${stat} (${line.platform})`, sport: line.sport,
+    league: line.league, selection: line.playerName, opponent: line.opponent, market: 'PLAYER_PROP', line: line.line,
+    side: line.side === 'MORE' ? 'OVER' : 'UNDER', stat, odds: null, eventDate: date };
+}
+/** The no-AI read for a hand-picked line: Edge's chance on the chosen side; the verdict stays neutral (GKR and Edge approve). */
+export function manualAnalysis(line: ManualLine, chance: number, at: string): TipAnalysis {
+  return { verdict: 'PASS', chance: Math.round(chance * 1000) / 1000, chanceSource: 'Edge', price: null, priceSource: null, ev: null,
+    fairOdds: americanFromChance(Math.min(.99, Math.max(.01, chance))), reasons: [], event: line.eventName, start: line.start, analyzedAt: at };
 }
 
 /** Uploads per account in any 24 hours (each one is a paid Claude call). */
@@ -207,8 +234,26 @@ export class TipStore {
   /** Uploads (batches) this account made in the last 24 hours. */
   async uploadsToday(accountId: string): Promise<number> {
     const now = this.clock().getTime();
-    return new Set((await this.load()).tips.filter((tip) => tip.accountId === accountId && Date.parse(tip.createdAt) > now - DAY)
+    return new Set((await this.load()).tips.filter((tip) => tip.accountId === accountId && !tip.manual && Date.parse(tip.createdAt) > now - DAY)
       .map((tip) => tip.batchId)).size;
+  }
+  /** Picks this account added by hand in the last 24 hours. */
+  async manualToday(accountId: string): Promise<number> {
+    const now = this.clock().getTime();
+    return (await this.load()).tips.filter((tip) => tip.accountId === accountId && tip.manual && Date.parse(tip.createdAt) > now - DAY).length;
+  }
+  /** Saves one hand-picked line with its no-AI read and GKR's and Edge's check. */
+  addManual(accountId: string, draft: TipDraft, analysis: TipAnalysis, check: { edge: TipVerdict | null; gkr: TipVerdict | null;
+    edgeChance?: number | null; gkrChance?: number | null; breakEven?: number | null }, submittedBy?: string): Promise<Tip> {
+    return this.exclusive(async () => {
+      const data = await this.load(), now = this.clock().toISOString();
+      const tip: Tip = { ...draft, id: randomUUID(), accountId, batchId: randomUUID(), source: 'Added by hand', createdAt: now, status: 'PENDING',
+        gradedAt: null, gradedBy: null, result: null, market_read: null, analysis, analyzing: false, manual: true,
+        modelCheck: { ...check, checkedAt: now, rejected: check.edge === 'FADE', v: 2 }, ...(submittedBy ? { submittedBy } : {}) };
+      data.tips.push(tip);
+      await this.save();
+      return { ...tip };
+    });
   }
 
   /** Saves one upload's picks under a service name. */
@@ -336,7 +381,7 @@ export class TipStore {
   /** A verdict already made for the same pick in the last 18 hours (any uploader), to reuse instead of asking the AI again. */
   async knownAnalysis(tip: Tip): Promise<TipAnalysis | null> {
     const key = tipKey(tip), since = this.clock().getTime() - 18 * 3600_000;
-    const match = (await this.load()).tips.find((item) => item.id !== tip.id && item.analysis && Date.parse(item.analysis.analyzedAt) >= since &&
+    const match = (await this.load()).tips.find((item) => item.id !== tip.id && item.analysis && !item.manual && Date.parse(item.analysis.analyzedAt) >= since &&
       tipKey(item) === key);
     return match?.analysis ?? null;
   }

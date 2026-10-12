@@ -94,8 +94,8 @@ import type { EdgeLedger } from './edge/ledger.js';
 import type { SnapshotStore } from './edge/snapshots.js';
 import type { BookWeightStore } from './edge/book-weights.js';
 import type { DispersionStore } from './edge/dispersion-store.js';
-import { analyzeTips, approvalOf, DAILY_TIP_UPLOADS, marketRead, USER_DAILY_UPLOADS } from './tips.js';
-import type { TipDraft, TipGrader, TipReader, TipStore } from './tips.js';
+import { analyzeTips, approvalOf, DAILY_TIP_UPLOADS, manualAnalysis, manualDraft, marketRead, USER_DAILY_MANUAL, USER_DAILY_UPLOADS } from './tips.js';
+import type { ManualLine, TipDraft, TipGrader, TipReader, TipStore } from './tips.js';
 import { matchTip, modelRead, suggestFor } from './tip-models.js';
 import type { TipModelRead, TipSuggestion } from './tip-models.js';
 import { gameCounts, marketCounts, registerEdgeRoutes, sportCounts } from './edge/routes.js';
@@ -758,6 +758,12 @@ export function buildServer(options: ServerOptions = {}) {
   // Set once Edge is running: the best play on the same player and stat across every app and book, for tips that aren't PLAYs.
   let tipSuggestions:((tips:readonly (TipDraft&{id:string})[])=>Promise<Map<string,TipSuggestion>>)|null=null;
   let tipModelReads:((tips:readonly (TipDraft&{id:string})[])=>Promise<Map<string,{edge:TipModelRead|null;gkrPlus:TipModelRead|null}>>)|null=null;
+  // Set once Edge is running: upcoming board lines for a player name, and Edge's and GKR+'s read on one chosen line and side
+  // (owner, 2026-10-12: add a pick by hand, no AI).
+  type BoardLine={platform:string;lineId:string;playerName:string;sport:string;league:string|null;team:string|null;market:string;
+    line:number;lineType:string;start:string;eventName:string};
+  let tipLineSearch:((query:string)=>Promise<BoardLine[]>)|null=null;
+  let tipManualRead:((platform:string,lineId:string,side:'MORE'|'LESS')=>Promise<{line:ManualLine;edge:TipModelRead;gkrPlus:TipModelRead}|null>)|null=null;
   // Everyone can submit screenshots and see their own picks (owner, 2026-10-11); Edge/GKR+ reads stay the owner's.
   app.get('/v1/tips',async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
@@ -779,6 +785,34 @@ export function buildServer(options: ServerOptions = {}) {
     // Edge's and GKR+'s reads on each prop tip, fresh on every load (the Edge tab's own pricing; nothing is pulled).
     const reads=tipModelReads?await tipModelReads(mine.tips).catch(()=>null):null;
     return {...mine,tips:mine.tips.map((tip)=>({...tip,models:reads?.get(tip.id)??null})),reading:!!options.tips.reader,uploadsLeft:null,dailyLimit:null};
+  });
+  // Add a pick by hand (owner, 2026-10-12): search a player, choose one of their real board lines and a side. No AI: GKR and
+  // Edge check that exact line at once, and a PLAY from either joins Vetted like a screenshot pick.
+  app.get('/v1/tips/lines',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    const query=String((request.query as {q?:unknown}).q??'').trim();
+    if(query.length<2||query.length>60)return {lines:[]};
+    if(!tipLineSearch)return reply.code(503).send({code:'BOARD_LOADING'});
+    return {lines:await tipLineSearch(query).catch(()=>[])};
+  });
+  app.post('/v1/tips/manual',async(request,reply)=>{
+    const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    if(!options.tips)return reply.code(503).send({code:'TIPS_UNAVAILABLE'});
+    if(!tipManualRead)return reply.code(503).send({code:'BOARD_LOADING'});
+    const input=z.object({platform:z.string().min(2).max(30),lineId:z.string().min(1).max(300),side:z.enum(['MORE','LESS'])}).strict().safeParse(request.body);
+    if(!input.success)return reply.code(400).send({code:'INVALID_PICK'});
+    const owner=await isOwner(request);
+    if(!owner&&await options.tips.store.manualToday(user.accountId)>=USER_DAILY_MANUAL)return reply.code(429).send({code:'DAILY_LIMIT',limit:USER_DAILY_MANUAL});
+    const read=await tipManualRead(input.data.platform,input.data.lineId,input.data.side).catch(()=>null);
+    if(!read)return reply.code(404).send({code:'LINE_GONE'});
+    if(Date.parse(read.line.start)<=now().getTime())return reply.code(409).send({code:'GAME_STARTED'});
+    const at=now().toISOString();
+    const tip=await options.tips.store.addManual(user.accountId,manualDraft(read.line),manualAnalysis(read.line,read.edge.chance,at),
+      {edge:read.edge.verdict,gkr:read.gkrPlus.verdict,edgeChance:read.edge.chance,gkrChance:read.gkrPlus.chance,breakEven:read.edge.breakEven},user.username);
+    vettedCache=null;
+    const approval=approvalOf(tip);
+    return reply.code(201).send({id:tip.id,approved:approval.approved,approvedBy:approval.approvedBy,
+      checks:{edge:read.edge.verdict,gkr:read.gkrPlus.verdict,chance:read.edge.chance,breakEven:read.edge.breakEven}});
   });
   // Vetted: every outside tip CrownIQ rated PLAY, for every signed-in user; never who posted it. Trial accounts don't get the
   // reasons (owner, 2026-10-11: they see picks, not how CrownIQ makes them).
@@ -1875,6 +1909,35 @@ export function buildServer(options: ServerOptions = {}) {
         }
       }
       return out;
+    };
+    tipLineSearch=async(query)=>{
+      const wanted=normalizedName(query),soon=now().getTime(),out:BoardLine[]=[];
+      for(const platform of EDGE_PLATFORMS){
+        const snapshot=await edge.snapshot(platform).catch(()=>null);
+        if(!snapshot)continue;
+        for(const pick of snapshot.byLine.values()){
+          if(Date.parse(pick.eventStartTime)<=soon||!normalizedName(pick.playerName).includes(wanted))continue;
+          out.push({platform,lineId:pick.lineId,playerName:pick.playerName,sport:pick.sport,league:pick.league??null,team:pick.team??null,
+            market:pick.market,line:pick.threshold,lineType:pick.lineType,start:pick.eventStartTime,eventName:pick.eventName});
+        }
+      }
+      // PrizePicks first, then by player, stat and number; the regular line before its alternates.
+      const order=(platform:string)=>EDGE_PLATFORMS.indexOf(platform as EdgePlatform);
+      return out.sort((a,b)=>order(a.platform)-order(b.platform)||a.playerName.localeCompare(b.playerName)||a.market.localeCompare(b.market)||
+        (a.lineType==='REGULAR'?0:1)-(b.lineType==='REGULAR'?0:1)||a.line-b.line).slice(0,80);
+    };
+    tipManualRead=async(platform,lineId,side)=>{
+      if(!EDGE_PLATFORMS.includes(platform as EdgePlatform))return null;
+      const snapshot=await edge.snapshot(platform as EdgePlatform).catch(()=>null);
+      const pick=snapshot?.byLine.get(lineId);
+      if(!pick)return null;
+      const sides=await gkrSides(platform as EdgePlatform).catch(()=>()=>null);
+      const tipSide={side:side==='MORE'?'OVER' as const:'UNDER' as const};
+      const teams=pick.eventName.split(/\s+(?:@|vs\.?|at)\s+/i);
+      const opponent=pick.team&&teams.length===2?teams.find((team)=>normalizedName(team)!==normalizedName(pick.team!))??null:null;
+      return {line:{sport:pick.sport,league:pick.league??null,playerName:pick.playerName,opponent,market:pick.market,line:pick.threshold,side,
+        eventName:pick.eventName,start:pick.eventStartTime,platform},
+        edge:modelRead(tipSide,pick,platform),gkrPlus:modelRead(tipSide,blendPick(pick,sides(pick)),platform)};
     };
     app.register(async(owner)=>{
       owner.addHook('preHandler',async(request,reply)=>{

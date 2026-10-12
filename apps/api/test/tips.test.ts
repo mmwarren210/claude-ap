@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { GameLine } from '../src/context/feeds.js';
 import { ProductLedger } from '../src/product-ledger.js';
 import { buildServer } from '../src/server.js';
-import { marketRead, sourceRecord, TipGrader, TipStore } from '../src/tips.js';
+import { manualAnalysis, manualDraft, marketRead, sourceRecord, TipGrader, TipStore } from '../src/tips.js';
 import type { Tip, TipDraft, TipReader } from '../src/tips.js';
 
 // Synthetic tips and prices only.
@@ -137,4 +137,30 @@ test('the tips grader runs soon after start, not only after its first full inter
   await new Promise((resolve) => setTimeout(resolve, 80));
   grader.stop();
   assert.equal(runs, 1);
+});
+
+test('a pick added by hand needs no AI: GKR or Edge approve it, and it never counts as a screenshot', async () => {
+  let clock = new Date('2030-10-12T15:00:00Z');
+  const store = new TipStore(null, () => clock);
+  const line = { sport: 'MLB', league: 'MLB', playerName: 'Drew Rasmussen', opponent: 'Yankees', market: 'Strikeouts', line: 6, side: 'LESS' as const,
+    eventName: 'Rays @ Yankees', start: '2030-10-12T23:05:00Z', platform: 'prizepicks' };
+  const draft = manualDraft(line);
+  assert.equal(draft.side, 'UNDER');
+  assert.equal(draft.eventDate, '2030-10-12', 'the game date in Eastern time');
+  const at = clock.toISOString();
+  const kept = await store.addManual('acct', draft, manualAnalysis(line, .61, at), { edge: 'PLAY', gkr: 'LEAN', edgeChance: .61, breakEven: .55 }, 'Owner');
+  const dropped = await store.addManual('acct', manualDraft({ ...line, playerName: 'Someone Else' }), manualAnalysis(line, .5, at),
+    { edge: 'PASS', gkr: 'PASS' }, 'Owner');
+  const vetted = await store.vetted();
+  assert.deepEqual(vetted.picks.map((pick) => pick.id), [kept.id], 'only the pick GKR or Edge backs is listed');
+  assert.deepEqual(vetted.picks[0].approvedBy, ['Edge']);
+  assert.equal(vetted.picks[0].start, line.start);
+  assert.equal(await store.uploadsToday('acct'), 0, 'hand picks never use a screenshot');
+  assert.equal(await store.manualToday('acct'), 2);
+  // A screenshot of the same pick later still gets its own AI read, not the hand pick's neutral one.
+  const [shot] = await store.add('acct', 'Service', [draft], [null]);
+  assert.equal(await store.knownAnalysis(shot), null);
+  assert.ok(dropped.manual);
+  clock = new Date('2030-10-13T16:00:00Z');
+  assert.equal(await store.manualToday('acct'), 0, 'the daily count rolls off after 24 hours');
 });
