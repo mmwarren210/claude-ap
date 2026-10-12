@@ -98,7 +98,8 @@ export default function VettedTab() {
   };
   // Only picks worth acting on: approved PLAYs, suggested better plays, and ones still being read. True passes stay off.
   const worthShowing = (tip: MyTip) => tip.analyzing || tip.approval?.approved || !!tip.suggestion;
-  const recentMine = mine?.tips.filter(worthShowing).slice(0, 12) ?? [];
+  // Graded picks leave the list (owner, 2026-10-12): their results live in the scoreboard above.
+  const recentMine = mine?.tips.filter((tip) => worthShowing(tip) && tip.status === 'PENDING').slice(0, 12) ?? [];
   const passed = mine ? mine.tips.slice(0, 40).filter((tip) => !worthShowing(tip) && tip.status === 'PENDING').length : 0;
   const upcoming = data?.picks.filter((pick) => pick.status === 'PENDING') ?? [];
   const settled = data?.picks.filter((pick) => pick.status !== 'PENDING') ?? [];
