@@ -419,6 +419,18 @@ export class TipStore {
     }).filter((tip, index, all) => all.findIndex((other) => tipKey(other) === tipKey(tip)) === index).slice(0, limit);
   }
 
+  /**
+   * Pending player props up to 10 days old, one per pick, for the box-score grader on every run (owner, 2026-10-12: a Sunday
+   * pick with no date on the slip waited a day after posting before anything looked). Box scores list finished games only,
+   * so asking early is safe; a prop is settled the moment its game is final.
+   */
+  async pendingProps(limit = 120): Promise<Tip[]> {
+    const now = this.clock().getTime();
+    return (await this.load()).tips.filter((tip) => tip.status === 'PENDING' && tip.market === 'PLAYER_PROP' && tip.line !== null &&
+      Date.parse(tip.createdAt) >= now - 10 * DAY)
+      .filter((tip, index, all) => all.findIndex((other) => tipKey(other) === tipKey(tip)) === index).slice(0, limit).map((tip) => ({ ...tip }));
+  }
+
   /** Saves graded results (only tips still pending). */
   settle(results: readonly { id: string; status: Exclude<TipStatus, 'PENDING'>; result: string }[]): Promise<number> {
     return this.exclusive(async () => {
@@ -481,11 +493,12 @@ export class TipGrader {
     let graded = 0, error: string | null = null;
     try {
       let pending = await this.store.gradable(60);
-      if (this.boxScores && pending.length) {
-        const results = await this.boxScores(pending);
+      if (this.boxScores) {
+        const props = await this.store.pendingProps();
+        const results = props.length ? await this.boxScores(props) : [];
         graded += await this.store.settle(results);
-        const done = new Set(results.map((item) => item.id));
-        pending = pending.filter((tip) => !done.has(tip.id));
+        const done = new Set(results.map((item) => tipKey(props.find((tip) => tip.id === item.id)!)));
+        pending = pending.filter((tip) => !done.has(tipKey(tip)));
       }
       if (this.reader) for (let index = 0; index < pending.length; index += 15) {
         const results = await this.reader.grade(pending.slice(index, index + 15), this.clock().toISOString().slice(0, 10));

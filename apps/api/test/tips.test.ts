@@ -164,3 +164,20 @@ test('a pick added by hand needs no AI: GKR or Edge approve it, and it never cou
   clock = new Date('2030-10-13T16:00:00Z');
   assert.equal(await store.manualToday('acct'), 0, 'the daily count rolls off after 24 hours');
 });
+
+test('box scores grade a pending prop as soon as its game is final, even with no date on the slip', async () => {
+  const clock = new Date('2026-10-12T17:00:00Z');
+  const store = new TipStore(null, () => clock);
+  const draft: TipDraft = { text: 'Misiorowski U7.5 K', sport: 'MLB', league: 'MLB', selection: 'Jacob Misiorowski', opponent: null, market: 'PLAYER_PROP',
+    line: 7.5, side: 'UNDER', stat: 'Pitcher Strikeouts', odds: null, eventDate: null };
+  // Posted Sunday afternoon; the game ended Sunday night. The old timing waited until a day after posting.
+  const [tip] = await store.add('acct', 'Service', [draft], [null]);
+  const seen: string[] = [];
+  const grader = new TipGrader(store, null, () => clock, async (tips) => {
+    seen.push(...tips.map((item) => item.id));
+    return tips.map((item) => ({ id: item.id, status: 'WON' as const, result: 'Jacob Misiorowski had 5 pitcher strikeouts' }));
+  });
+  assert.equal(await grader.runOnce(), 1);
+  assert.deepEqual(seen, [tip.id]);
+  assert.equal((await store.mine('acct')).tips[0].status, 'WON');
+});
