@@ -240,8 +240,7 @@ export class TipStore {
     const now = this.clock().getTime(), since = now - 14 * DAY;
     const loaded = (await this.load()).tips;
     const approved = (tip: Tip) => approvalOf(tip).approved;
-    const hidden = loaded.filter((tip) => approvalOf(tip).hiddenByModels &&
-      (tip.status === 'PENDING' || Date.parse(tip.gradedAt ?? tip.createdAt) >= since))
+    const hidden = loaded.filter((tip) => approvalOf(tip).hiddenByModels && tip.status === 'PENDING')
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .filter((tip, index, list) => list.findIndex((other) => tipKey(other) === tipKey(tip)) === index)
       .map((tip) => ({ id: tip.id, sport: tip.sport, league: tip.league, selection: tip.selection, market: tip.market, line: tip.line,
@@ -255,7 +254,8 @@ export class TipStore {
       if (!firsts.has(tipKey(tip))) firsts.set(tipKey(tip), tip);
     const unique = new Set(firsts.values());
     all.splice(0, all.length, ...all.filter((tip) => unique.has(tip)));
-    const plays = all.filter((tip) => tip.status === 'PENDING' || Date.parse(tip.gradedAt ?? tip.createdAt) >= since);
+    // Graded picks leave the list and count in the record (owner, 2026-10-12); the list holds picks still to play.
+    const plays = all.filter((tip) => tip.status === 'PENDING');
     const started = (tip: Tip) => { const time = Date.parse(tip.analysis?.start ?? ''); return Number.isFinite(time) && time <= now; };
     return {
       picks: plays.map((tip) => ({ id: tip.id, sport: tip.sport, league: tip.league, selection: tip.selection, opponent: tip.opponent,
@@ -427,14 +427,22 @@ export class TipGrader {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   last: { at: string; graded: number; error: string | null } | null = null;
-  constructor(private readonly store: TipStore, private readonly reader: TipReader, private readonly clock: () => Date = () => new Date()) {}
+  /** `boxScores`: grades player props from box scores first (owner, 2026-10-12); the reader's web search takes the rest. */
+  constructor(private readonly store: TipStore, private readonly reader: TipReader | null, private readonly clock: () => Date = () => new Date(),
+    private readonly boxScores: ((tips: readonly Tip[]) => Promise<{ id: string; status: Exclude<TipStatus, 'PENDING'>; result: string }[]>) | null = null) {}
   async runOnce(): Promise<number> {
     if (this.running) return 0;
     this.running = true;
     let graded = 0, error: string | null = null;
     try {
-      const pending = await this.store.gradable(60);
-      for (let index = 0; index < pending.length; index += 15) {
+      let pending = await this.store.gradable(60);
+      if (this.boxScores && pending.length) {
+        const results = await this.boxScores(pending);
+        graded += await this.store.settle(results);
+        const done = new Set(results.map((item) => item.id));
+        pending = pending.filter((tip) => !done.has(tip.id));
+      }
+      if (this.reader) for (let index = 0; index < pending.length; index += 15) {
         const results = await this.reader.grade(pending.slice(index, index + 15), this.clock().toISOString().slice(0, 10));
         graded += await this.store.settle(results);
       }

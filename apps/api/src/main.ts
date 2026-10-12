@@ -27,6 +27,7 @@ import { ContextFeeds, injuryReports } from './context/feeds.js';
 import { proplineGameLines } from './context/propline-game-lines.js';
 import { createGkr2Registry, Gkr2, OpponentReads } from './gkr2.js';
 import { MlbGames } from './mlb-context.js';
+import { gradeFromBoxScores } from './tip-box-grade.js';
 import { PlayerStore } from './player-store.js';
 import { PlayerProfiles } from './player-profiles.js';
 import { espnInjuries } from './context/espn-injuries.js';
@@ -484,7 +485,9 @@ const app = buildServer({ ufcHistory, soccerHistory, adminToken: process.env.ADM
   tips:(()=>{const store=new TipStore(`${dataDir}/tips.json`);
     const reader=claudeKey?new ClaudeTipReader({apiKey:claudeKey,model:process.env.CROWNIQ_TIPS_MODEL??'claude-sonnet-5-5',
       readModel:process.env.CROWNIQ_TIPS_READ_MODEL??'claude-haiku-4-5'}):null;
-    return {store,reader,grader:reader?new TipGrader(store,reader):null};})(),
+    // Player props grade from PropLine box scores first; the web search takes what box scores can't settle.
+    const boxScores=proplineHistory?(tips:Parameters<typeof gradeFromBoxScores>[0])=>gradeFromBoxScores(tips,proplineHistory,new Date()):null;
+    return {store,reader,grader:reader||boxScores?new TipGrader(store,reader,undefined,boxScores):null};})(),
   shadowRecord:new ShadowRecord(`${dataDir}/shadow-record.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   baseRates:new BaseRates(`${dataDir}/base-rates.json`,new BoxScoreResults(fetch,undefined,historyArchive)),
   scrapedLines,appGkrScores:process.env.CROWNIQ_APP_GKR_SCORES==='true',appShadow:scrapedLines?{file:`${dataDir}/app-shadow.json`,boxScores:new BoxScoreResults(fetch,undefined,historyArchive)}:null,boardCache:new BoardCache(boardCacheFile),contextRefresh,contextLookupBudget,scraperPuller,proplinePush,proplineResults,proplineHistory,bookAccuracy,contextFeeds,gameLines,gkr2,opponents,mlbGames,playerStore,playerProfiles,gkr2Public:process.env.CROWNIQ_GKR2_PUBLIC==='true',injuries:process.env.CROWNIQ_ESPN_INJURIES==='off'?null:espnInjuries(),sharpProps,evBreakEven,payouts,
