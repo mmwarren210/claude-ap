@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fixtureLine } from '../../../packages/engine/test/fixtures.js';
-import { batterRate, leagueRates, MlbGames, mlbAdjustment, parseContext, pitcherMatchup, pitcherRates, proplineEventId, weatherFactor } from '../src/mlb-context.js';
+import { batterRate, leagueRates, MLB_TYPICAL, MlbGames, mlbAdjustment, parseContext, pitcherMatchup, pitcherRates, proplineEventId, weatherFactor } from '../src/mlb-context.js';
 import type { Game, PropLineHistory } from '../src/propline-history.js';
 import type { PropLineClient } from '../src/scrapers/propline.js';
 
@@ -76,4 +76,5 @@ test('a pitching stat PropLine didn\'t record is unknown, not zero', () => {
   const league = leagueRates([partial, average])!;
   assert.equal(league.walks.toFixed(3), (2 / 26).toFixed(3), 'starts without a walks entry are left out');
   assert.equal(league.strikeouts.toFixed(3), (6 / 26).toFixed(3));
+  assert.equal(leagueRates([average.slice(0, 5)]), MLB_TYPICAL, 'too few starts: the usual MLB rates');
 });

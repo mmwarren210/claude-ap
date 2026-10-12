@@ -46,11 +46,16 @@ const addStart = (totals: Totals, stats: Readonly<Record<string, number>>) => {
     if (has(stats, key)) { totals[rate].count += stats[key]!; totals[rate].bf += bf; }
 };
 
-/** League rates per batter faced from every cached start. */
-export function leagueRates(players: readonly (readonly Game[])[]): Omit<PitcherRates, 'name' | 'starts'> | null {
+/** The usual MLB rates per batter faced, used when the saved starts are too few to measure the league. */
+export const MLB_TYPICAL = { hits: .215, strikeouts: .222, walks: .083, earnedRuns: .11 } as const;
+
+/** League rates per batter faced from every cached start (the usual rates when there are too few). */
+export function leagueRates(players: readonly (readonly Game[])[]): Omit<PitcherRates, 'name' | 'starts'> {
   const totals = emptyTotals();
   for (const games of players) for (const game of starts(games)) addStart(totals, game.stats);
-  if (Object.values(totals).some((item) => item.bf < 500)) return null;
+  // Too few saved starts (late in the season only the playoff teams' players are saved): the usual MLB rates per batter
+  // faced (about 22% strikeouts, 8% walks, 21.5% hits, 11% earned runs) stand in.
+  if (Object.values(totals).some((item) => item.bf < 500)) return MLB_TYPICAL;
   return { hits: totals.hits.count / totals.hits.bf, strikeouts: totals.strikeouts.count / totals.strikeouts.bf,
     walks: totals.walks.count / totals.walks.bf, earnedRuns: totals.earnedRuns.count / totals.earnedRuns.bf };
 }
@@ -238,6 +243,11 @@ export class MlbGames {
     return game ? mlbAdjustment(line, this.teamOf(line), game, this.rates, this.league) : null;
   }
 
-  status() { return { games: this.games.size, withContext: [...this.games.values()].filter((entry) => entry.context).length,
-    starters: this.rates.size, league: this.league }; }
+  status() {
+    const cached = this.history?.cachedGames('baseball_mlb') ?? [];
+    const pitchers = cached.filter((games) => games.some((game) => game.stats.pitcher_started === 1));
+    return { cachedPlayers: cached.length, cachedPitchers: pitchers.length, usableStarts: cached.reduce((sum, games) => sum + starts(games).length, 0),
+      allStarts: cached.reduce((sum, games) => sum + games.filter((game) => game.stats.pitcher_started === 1).length, 0), games: this.games.size, withContext: [...this.games.values()].filter((entry) => entry.context).length,
+    starters: this.rates.size, league: this.league };
+  }
 }
