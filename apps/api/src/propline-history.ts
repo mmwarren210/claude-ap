@@ -244,6 +244,9 @@ export class PropLineHistory {
     return null;
   }
 
+  /** Loads the saved games (at startup, before any synchronous read of the cache). */
+  async ready(): Promise<void> { await this.load(); }
+
   /** The cached players' games for one PropLine sport (no requests): what the opponent index reads. */
   cachedGames(sportKey: string): (readonly Game[])[] {
     const prefix = `${sportKey}|`;

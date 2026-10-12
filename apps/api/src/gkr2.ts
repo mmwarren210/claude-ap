@@ -304,7 +304,8 @@ export class OpponentReads {
     const key = `${sportKey}|${JSON.stringify(read)}`, now = this.clock().getTime(), cached = this.cache.get(key);
     if (cached && now - cached.at < 3600_000) return cached.index;
     const index = opponentIndex(this.history.cachedGames(sportKey), read);
-    this.cache.set(key, { at: now, index });
+    // An empty index (saved games not loaded yet) isn't kept, so the next read tries again.
+    if (index.size) this.cache.set(key, { at: now, index });
     return index;
   }
 
@@ -331,6 +332,7 @@ export class Gkr2 {
 
   async analyses(lines: readonly PropLine[], evidence: readonly Evidence[]): Promise<Analysis[]> {
     const registry = this.registry(), now = this.clock();
+    await this.history.ready();
     const games = this.gameLines ? await this.gameLines().catch(() => [] as GameLine[]) : [];
     const totals = leagueTeamTotals(games);
     // GKR's evidence for a line: the player's own plus the event's and teams' (indexed once, not filtered per line).

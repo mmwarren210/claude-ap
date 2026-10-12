@@ -163,6 +163,8 @@ const proplineHistory=propLine&&process.env.CROWNIQ_PROPLINE_HISTORY!=='off'?new
   (eventId)=>proplineResults?.sportKeyFor(eventId)??null,
   {dailyRequests:Number(process.env.CROWNIQ_PROPLINE_HISTORY_DAILY??40_000)||40_000,concurrency:4}):null;
 if(proplineHistory)setInterval(()=>{void proplineHistory.save().catch(()=>undefined);},10*60_000).unref();
+// The saved games load at startup, so synchronous reads (Edge's opponent read) see them from the first pass.
+if(proplineHistory)void proplineHistory.ready().catch(()=>undefined);
 const proplineEvery=Math.min(60,Math.max(5,Number(process.env.CROWNIQ_PROPLINE_EVERY_MINUTES??15)||15));
 const scraperPuller=scrapedLines?new ScraperPuller(apify,scrapedLines,scraperBudget,
   // PrizePicks' partner address serves the whole board (esports, Goblins and Demons included) for free, every two hours.

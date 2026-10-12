@@ -54,7 +54,7 @@ test('MLB games refresh each game at most hourly and learn starters and batters\
   const client = { get: async (path: string) => { asked.push(path); return raw; } } as unknown as PropLineClient;
   const batterGames: Game[] = ['Chicago Cubs', 'Cincinnati Reds', 'St. Louis Cardinals'].map((away, i) => ({ at: `2030-09-2${i + 1}T00:00:00.000Z`,
     opponent: null, stats: { hits: 1, at_bats: 4 }, home: 'Milwaukee Brewers', away }));
-  const history = { cachedGames: () => [average, average], cachedFor: async (line: { playerName: string }) =>
+  const history = { ready: async () => undefined, cachedGames: () => [average, average], cachedFor: async (line: { playerName: string }) =>
     line.playerName === 'Away Arm' ? leaky : line.playerName === 'Test Player' ? batterGames : null } as unknown as PropLineHistory;
   let now = new Date('2030-09-24T12:00:00Z');
   const games = new MlbGames(client, history, () => now);

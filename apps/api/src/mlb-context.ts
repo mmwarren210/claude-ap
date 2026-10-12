@@ -182,6 +182,7 @@ export class MlbGames {
     }
     for (const [id, entry] of this.games) if (now - entry.at > 48 * 3600_000) this.games.delete(id);
     if (this.history) {
+      await this.history.ready();
       this.league = leagueRates(this.history.cachedGames('baseball_mlb'));
       const rates = new Map<string, PitcherRates>();
       for (const { context } of this.games.values()) for (const name of [context?.homePitcher, context?.awayPitcher]) {
