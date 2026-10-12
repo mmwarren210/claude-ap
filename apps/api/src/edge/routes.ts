@@ -160,7 +160,9 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     const body = z.object({ platform: platformSchema, type: z.enum(['POWER', 'FLEX', 'PARLAY']), size: z.number().int().min(2).max(20),
       count: z.number().int().min(1).max(10).default(3), sport: choiceSchema, market: marketChoiceSchema, event: eventChoiceSchema,
       from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(),
-      maxPerGame: z.number().int().min(1).max(3).default(2), maxLegUses: z.number().int().min(1).max(5).default(1),
+      // Picks from one game: by default only the app's own rule limits it (owner, 2026-10-12): at least two games, so up to the
+      // entry's size less one. Same-game legs are priced with their correlation either way.
+      maxPerGame: z.number().int().min(1).max(20).optional(), maxLegUses: z.number().int().min(1).max(5).default(1),
       objective: z.enum(['ev', 'growth']).default('ev'),
       // Goblins and Demons go in only when the member turns them on.
       alternates: z.boolean().default(false) })
@@ -170,13 +172,13 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     if (!snapshot) return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
     const entry = snapshot.response.entries.find((item) => item.type === body.data.type && item.size === body.data.size);
     if (!entry) return reply.code(422).send({ code: 'ENTRY_UNSUPPORTED' });
-    const nowMs = now().getTime();
+    const nowMs = now().getTime(), maxPerGame = body.data.maxPerGame ?? Math.max(1, entry.size - (snapshot.minEvents > 1 ? 1 : 0));
     if (held(body.data.platform)) return { modelVersion: EDGE_MODEL_VERSION, builtAt: new Date(nowMs).toISOString(), pool: 0, slips: [],
       notes: ['Edge entries for this platform are on hold while its new prices are checked for one-sided bias.'] };
     const slips = generateEntries(snapshot.response.picks, entry, { count: body.data.count, nowMs,
       ...(body.data.sport ? { sport: body.data.sport } : {}), ...(body.data.market ? { market: body.data.market } : {}),
       ...(body.data.event ? { event: body.data.event } : {}), ...(body.data.from ? { from: Date.parse(body.data.from) } : {}), ...(body.data.to ? { to: Date.parse(body.data.to) } : {}),
-      maxPerEvent: body.data.maxPerGame, maxLegUses: body.data.maxLegUses, minEvents: snapshot.minEvents, objective: body.data.objective, alternates: body.data.alternates });
+      maxPerEvent: maxPerGame, maxLegUses: body.data.maxLegUses, minEvents: snapshot.minEvents, objective: body.data.objective, alternates: body.data.alternates });
     const pool = snapshot.response.picks.filter((pick) => pick.edge !== null && pick.edge > 0 && pick.rating !== 'NONE' &&
       Date.parse(pick.eventStartTime) > nowMs && inChoice(body.data.sport, pick.sport) && inChoice(body.data.market, pick.market) && inChoice(body.data.event, pick.eventId) &&
       (!body.data.from || Date.parse(pick.eventStartTime) >= Date.parse(body.data.from)) &&
@@ -191,11 +193,11 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     // ask on a 5-game day said "not enough legs" when the limit of 2 per game was what stopped it).
     const usable = pool.filter((pick) => body.data.alternates || !isAlternate(pick)), perGame = new Map<string, Set<string>>();
     for (const pick of usable) perGame.set(pick.eventId, (perGame.get(pick.eventId) ?? new Set()).add(pick.playerId));
-    const capacity = [...perGame.values()].reduce((sum, players) => sum + Math.min(players.size, body.data.maxPerGame), 0);
+    const capacity = [...perGame.values()].reduce((sum, players) => sum + Math.min(players.size, maxPerGame), 0);
     if (slips.length < body.data.count) notes.push(slips.length
       ? `Only ${slips.length} of ${body.data.count} entries had enough distinct +EV legs; Edge does not pad entries with weak legs.`
       : capacity < body.data.size
-        ? `These +EV legs come from ${perGame.size} ${perGame.size === 1 ? 'game' : 'games'}, and an entry takes at most ${body.data.maxPerGame} picks from one game, so the biggest entry right now is ${capacity} ${capacity === 1 ? 'pick' : 'picks'}. Pick a smaller entry, or choose All days for more games.`
+        ? `These +EV legs come from ${perGame.size} ${perGame.size === 1 ? 'game' : 'games'}, and an entry takes at most ${maxPerGame} picks from one game, so the biggest entry right now is ${capacity} ${capacity === 1 ? 'pick' : 'picks'}. Pick a smaller entry, or choose All days for more games.`
         : 'Not enough +EV legs across two or more games for this entry right now.');
     notes.push(isBookPlatform(body.data.platform)
       ? 'A parlay pays the legs’ odds multiplied together and only if every leg wins; each leg also works as a single bet. Same-game legs are correlated.'

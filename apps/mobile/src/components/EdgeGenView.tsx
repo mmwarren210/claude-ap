@@ -58,7 +58,7 @@ export function EdgeGenView({ entries, filter, nowMs, starts }: { entries: reado
     edgeSlip.set(picks.filter((pick): pick is EdgePick => !!pick));
   };
   return <View style={styles.wrap}>
-    <Text style={styles.intro}>Builds entries from Edge&apos;s own +EV reads: one leg per player, at most two per game{book ? '' : ', at least two games'}, and no player reused across entries. Same-game legs are priced with their correlation.</Text>
+    <Text style={styles.intro}>Builds entries from Edge&apos;s own +EV reads: one leg per player, as many from one game as the app allows{book ? '' : ', at least two games'}, and no player reused across entries, so you can mix and match. Same-game legs are priced with their correlation.</Text>
     <Label text="ENTRY" />
     {types.length > 1 && <Chips options={types.map((value) => ({ key: value, label: value === 'PARLAY' ? 'Parlay'
       : value === 'POWER' ? platform === 'underdog' ? 'Standard' : 'Power' : 'Flex' }))} value={type} onChange={setType} />}

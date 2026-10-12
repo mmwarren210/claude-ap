@@ -1417,4 +1417,6 @@ export const es: Readonly<Record<string, string>> = {
   "game": "partido",
   "picks": "picks",
   "pick": "pick",
+  "Builds entries from Edge's own +EV reads: one leg per player, as many from one game as the app allows": "Arma jugadas con las lecturas +EV de Edge: un pick por jugador, tantos de un partido como permita la app",
+  ", and no player reused across entries, so you can mix and match. Same-game legs are priced with their correlation.": ", y ningún jugador se repite entre jugadas, para que puedas combinarlas. Los picks del mismo partido se calculan con su correlación.",
 };

@@ -95,6 +95,9 @@ test('Edge routes: every line read or No read, leave-one-out, Gen, slips and own
     // An entry bigger than the day's games allow says so (at most 2 picks from one game), not "not enough legs".
     const big = (await app.inject({ method: 'POST', url: '/v1/edge/gen', payload: { type: 'POWER', size: 6, count: 1 } })).json();
     assert.ok(big.notes.some((note: string) => /biggest entry right now is \d+ picks?/.test(note)), JSON.stringify(big.notes));
+    // With no limit asked, one game may give all but one leg (the app's two-game rule); a 1-per-game ask is kept.
+    const one = (await app.inject({ method: 'POST', url: '/v1/edge/gen', payload: { type: 'POWER', size: 3, count: 1, maxPerGame: 1 } })).json();
+    assert.ok(one.slips.every((slip: { legs: { eventId: string }[] }) => new Set(slip.legs.map((leg) => leg.eventId)).size === slip.legs.length));
 
     // Hard Rock is held out of ranked picks and Gen until the side-bias check clears it (9b).
     const held = await app.inject({ method: 'POST', url: '/v1/edge/gen', payload: { platform: 'hardrock', type: 'PARLAY', size: 2 } });
