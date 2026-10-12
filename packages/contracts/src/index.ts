@@ -396,7 +396,7 @@ export const edgePickSchema = z.object({
     payoutMultiplier: z.number().positive().finite().optional(), ev: z.number().finite().optional() })).optional(),
 });
 export const edgeEntrySchema = z.object({
-  type: z.enum(['POWER', 'FLEX', 'PARLAY']), size: z.number().int().min(2).max(20),
+  type: z.enum(['POWER', 'FLEX', 'PARLAY']), size: z.number().int().min(2).max(50),
   // payouts[k] is the multiple of the entry returned when exactly k legs hit.
   payouts: z.record(z.string(), z.number().nonnegative()),
   breakEven: probability,

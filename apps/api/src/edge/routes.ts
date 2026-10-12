@@ -157,12 +157,12 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
   });
 
   app.post('/v1/edge/gen', async (request, reply) => {
-    const body = z.object({ platform: platformSchema, type: z.enum(['POWER', 'FLEX', 'PARLAY']), size: z.number().int().min(2).max(20),
+    const body = z.object({ platform: platformSchema, type: z.enum(['POWER', 'FLEX', 'PARLAY']), size: z.number().int().min(2).max(50),
       count: z.number().int().min(1).max(10).default(3), sport: choiceSchema, market: marketChoiceSchema, event: eventChoiceSchema,
       from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(),
       // Picks from one game: by default only the app's own rule limits it (owner, 2026-10-12): at least two games, so up to the
       // entry's size less one. Same-game legs are priced with their correlation either way.
-      maxPerGame: z.number().int().min(1).max(20).optional(), maxLegUses: z.number().int().min(1).max(5).default(1),
+      maxPerGame: z.number().int().min(1).max(50).optional(), maxLegUses: z.number().int().min(1).max(5).default(1),
       objective: z.enum(['ev', 'growth']).default('ev'),
       // Goblins and Demons go in only when the member turns them on.
       alternates: z.boolean().default(false) })
@@ -247,7 +247,7 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
 
   app.post('/v1/edge/slip', async (request, reply) => {
     const body = z.object({ platform: platformSchema, type: z.enum(['POWER', 'FLEX', 'PARLAY']),
-      lineIds: z.array(z.string().min(1).max(300)).min(2).max(20),
+      lineIds: z.array(z.string().min(1).max(300)).min(2).max(50),
       // The payouts the app showed for this exact ticket (hits → multiple), when the member typed them in.
       payouts: z.record(z.string().regex(/^\d{1,2}$/), z.number().min(0).max(10_000)).optional() }).strict().safeParse(request.body);
     if (!body.success) return reply.code(400).send({ code: 'INVALID_SLIP' });
