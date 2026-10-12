@@ -1358,4 +1358,5 @@ export const es: Readonly<Record<string, string>> = {
   "Updates and Beta feedback: what changed, and report a problem.": "Actualizaciones y Comentarios beta: qué cambió, y reportar un problema.",
   "Language · Idioma: English or Español.": "Language · Idioma: English o Español.",
   "Social: the Top 10 members and public Crowns.": "Social: los 10 mejores miembros y los Crowns públicos.",
+  "Enjoy your 2 days!": "¡Disfruta tus 2 días!",
 };

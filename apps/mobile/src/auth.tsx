@@ -5,6 +5,7 @@ import { apiBaseUrl } from './api-base';
 import { guestCode, startsInDemo } from './links';
 import { clearSession, loadSession, saveSession } from './local-store';
 import { reportMobileFailure } from './diagnostics';
+import { t } from './i18n';
 
 const demoProfile:Profile={publicId:'demo',username:'Demo',email:null,plan:'DEMO'};
 
@@ -120,9 +121,9 @@ export function AuthProvider({children}:{children:ReactNode}){
           throw new Error(guestMessages[payload.code??'']??'Could not open the guest link. Try again.');}
         const value=await parseSession(response);
         if(active){signIn(value);setGuestResult({done:true,message:''});
-          // A posted trial key someone already used rolls over to the next free one; say which.
+          // A shared trial link rolls over to the next free key; a short welcome, no key numbers (owner, 2026-10-12).
           const note=(value as {trialNote?:string}).trialNote;
-          if(note)setTimeout(()=>{if(typeof window!=='undefined'&&typeof window.alert==='function')window.alert(note);},300);}
+          if(note)setTimeout(()=>{if(typeof window!=='undefined'&&typeof window.alert==='function')window.alert(t(note));},300);}
       }catch(error){
         if(active)setGuestResult({done:true,message:error instanceof Error?error.message:'Could not open the guest link.'});
       }

@@ -17,7 +17,7 @@ test('trial keys: single use, 2 days from first use, off the member list after, 
   assert.equal((await ledger.trialLogin(other, device)).trialNote, undefined);
   assert.equal((await ledger.membership()).trials.used, 1);
   // Someone else clicks the used key: they get the next one.
-  assert.match((await ledger.trialLogin(key, 'device-bbbbbbbbbbbbbbbb')).trialNote ?? '', /#1 was already used.*#2/);
+  assert.equal((await ledger.trialLogin(key, 'device-bbbbbbbbbbbbbbbb')).trialNote, 'Enjoy your 2 days!');
   await assert.rejects(ledger.trialLogin(key, 'device-cccccccccccccccc'), /TRIALS_ALL_USED/);
   assert.equal((await ledger.membership()).trials.used, 2);
   assert.equal((await ledger.membership()).members.used, 0);

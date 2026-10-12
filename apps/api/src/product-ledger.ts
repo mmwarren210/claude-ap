@@ -611,7 +611,7 @@ export class ProductLedger {
     if(account.status==='SUSPENDED')throw new Error('ACCOUNT_SUSPENDED');
     if(guestExpired(account,now))throw new Error('GUEST_PASS_EXPIRED');
     const result=this.session(data,account);await this.write(data);
-    return {...result,...(assigned?{trialNote:`Key #${clicked+1} was already used, so you got key #${assigned}. Enjoy your 2 days!`}:{})};
+    return {...result,...(assigned?{trialNote:'Enjoy your 2 days!'}:{})};
   });}
   /** Seat counts for the owner (no names or emails). */
   async membership(){
