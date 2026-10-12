@@ -1,4 +1,4 @@
-import { roleChange } from './history-read.js';
+import { lineSaysRoleChanged, roleChange } from './history-read.js';
 import { boardSchema, propLineSchema } from '@crowniq/contracts';
 import type { Analysis, Board, BoardResponse, Evidence, PlayerMedia, PropLine, SecondLookAudit } from '@crowniq/contracts';
 import { collectResearch, effectiveEvidenceExpiry, evaluateBoard, evaluateLine, ModelRegistry, researchTargetsFor } from '@crowniq/engine';
@@ -241,8 +241,15 @@ export class BoardService {
     const board = this.withIdentity(source, evidence, now);
     const result = evaluateBoard(board, evidence, this.models, now);
     const lineFor=new Map(board.lines.map((line)=>[line.id,line]));
+    const blocked=new Set<string>();
     const analyses=result.analyses.map((scored)=>{
       const line=lineFor.get(scored.lineId),values=line&&this.recentValues?this.recentValues(line):null;
+      // The line itself says the role changed (owner approved, 2026-10-12): that side isn't played, with the reason shown.
+      const market=line&&values?lineSaysRoleChanged(line.threshold,values,scored.direction):null;
+      if(market){blocked.add(scored.lineId);
+        return {...scored,direction:'PASS' as const,score:null,scoreBand:'PASS' as const,reasonCode:'MARKET_ROLE_CHANGE',
+          ruleChecks:[...scored.ruleChecks,'MARKET_ROLE_CHANGE'],opposingFactors:[market,...scored.opposingFactors],
+          reviewStatus:'STANDARD' as const,secondLook:null};}
       const changed=line&&values?roleChange(line.threshold,values,scored.direction):null;
       // A warning only: the score stays (owner, 2026-10-10: a favorable matchup can still make it a good pick).
       const analysis=changed?{...scored,ruleChecks:[...scored.ruleChecks,'ROLE_CHANGE'],
@@ -253,7 +260,7 @@ export class BoardService {
     });
     const players = new Set(board.lines.map((line) => line.playerId));
     const media = Object.fromEntries(Object.entries(this.playerMedia).filter(([playerId]) => players.has(playerId)));
-    this.snapshot = { board, analyses, rankedLineIds:result.rankedLineIds, builtAt: now.toISOString(),
+    this.snapshot = { board, analyses, rankedLineIds:result.rankedLineIds.filter((id)=>!blocked.has(id)), builtAt: now.toISOString(),
       ...(Object.keys(media).length ? { playerMedia: media } : {}) };
     this.evidence = evidence;
     this.nextDeadline = Infinity;

@@ -41,3 +41,19 @@ test('History Reads look each player and stat up once, skip started games, and l
   assert.equal(lookups, 2, 'one lookup per player and stat');
   assert.equal(out.get('a')?.direction, 'MORE');
 });
+
+test('a line far above a player’s history blocks LESS (the books expect a new role); ordinary lines are untouched', async () => {
+  const { lineSaysRoleChanged } = await import('../src/history-read.js');
+  // Tyson Bagent: mop-up passing yards, then a 203.5 line the day he started.
+  const bagent = [0, 12, 31, 0, 8, 45, 0, 16];
+  assert.match(lineSaysRoleChanged(203.5, bagent, 'LESS') ?? '', /doesn’t play LESS/);
+  assert.equal(lineSaysRoleChanged(203.5, bagent, 'MORE'), null, 'only the side against the market is blocked');
+  // Ollie Gordon II: backup carries, then a starter's 42.5.
+  assert.ok(lineSaysRoleChanged(42.5, [14, 22, 9, 31, 18, 25, 12, 20, 16], 'LESS'));
+  // A normal line near the player's average stays a normal pick.
+  assert.equal(lineSaysRoleChanged(62.5, [70, 55, 81, 48, 66, 59, 73], 'LESS'), null);
+  assert.equal(lineSaysRoleChanged(4.5, [3, 6, 2, 5], 'LESS'), null);
+  // The mirror: a starter's average against a bench-sized line blocks MORE.
+  assert.match(lineSaysRoleChanged(9.5, [30, 28, 35, 26, 31], 'MORE') ?? '', /doesn’t play MORE/);
+  assert.equal(lineSaysRoleChanged(9.5, [1, 2], 'LESS'), null, 'too few games to judge');
+});

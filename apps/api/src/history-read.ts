@@ -83,6 +83,26 @@ export function roleChange(threshold: number, recent: readonly number[], directi
     `${threshold}. Check the matchup and team news before playing this ${direction}.`;
 }
 
+/**
+ * The line says the role changed (owner, 2026-10-12: Tyson Bagent, a backup QB averaging 14 passing yards, got LESS 203.5 at
+ * 100 the day he started; Ollie Gordon II the same at running back). A line at least twice the player's recent average and
+ * two spreads above it means the books expect a new job, so LESS isn't played; the mirror (half the average, two spreads
+ * below) blocks MORE. Values are newest first (the last 10 count). Returns the plain reason, or null.
+ */
+export function lineSaysRoleChanged(threshold: number, recent: readonly number[], direction: 'MORE' | 'LESS' | 'PASS'): string | null {
+  const values = recent.filter((value) => Number.isFinite(value)).slice(0, 10);
+  if (direction === 'PASS' || values.length < 4) return null;
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const spread = Math.max(1, Math.sqrt(values.reduce((sum, value) => sum + (value - average) ** 2, 0) / Math.max(1, values.length - 1)));
+  if (direction === 'LESS' && threshold >= 2 * Math.max(average, 0.5) && threshold - average >= 2 * spread)
+    return `Line ${threshold} is ${average > 0 ? `${(threshold / average).toFixed(1)}x` : 'far above'} his recent average (${average.toFixed(1)}): ` +
+      'the books expect a bigger role than his history shows (a new starter or a teammate out), so GKR doesn’t play LESS here.';
+  if (direction === 'MORE' && threshold <= average / 2 && average - threshold >= 2 * spread)
+    return `Line ${threshold} is under half his recent average (${average.toFixed(1)}): the books expect a smaller role ` +
+      '(limited minutes, a benching or an injury), so GKR doesn’t play MORE here.';
+  return null;
+}
+
 /** True when the last two games both sit far from the earlier games' average, the same way (a new role, either way). */
 export function roleShift(recent: readonly number[]): boolean {
   const values = recent.filter((value) => Number.isFinite(value));
