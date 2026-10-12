@@ -30,10 +30,11 @@ const PROPLINE_ID = /propline:(\d+)/;
 export const proplineEventId = (eventId: string) => PROPLINE_ID.exec(eventId)?.[1] ?? null;
 
 // PropLine records a pitching stat only when a prop was offered on it, so a missing stat is unknown, not zero: batters
-// faced needs outs, hits and walks all present, and each rate counts only the starts that carry its stat.
+// faced needs outs and hits (walks estimated when missing), and each rate counts only the starts that carry its stat.
 const has = (stats: Readonly<Record<string, number>>, key: string) => Number.isFinite(stats[key]);
-const battersFaced = (stats: Readonly<Record<string, number>>) =>
-  has(stats, 'outs') && has(stats, 'hits_allowed') && has(stats, 'walks_allowed') ? stats.outs! + stats.hits_allowed! + stats.walks_allowed! : null;
+// Batters faced when walks weren't recorded: outs plus hits, grossed up by the usual walk share (about 8%).
+const battersFaced = (stats: Readonly<Record<string, number>>) => !has(stats, 'outs') || !has(stats, 'hits_allowed') ? null
+  : has(stats, 'walks_allowed') ? stats.outs! + stats.hits_allowed! + stats.walks_allowed! : (stats.outs! + stats.hits_allowed!) / (1 - .083);
 const starts = (games: readonly Game[], before = Infinity) => games
   .filter((game) => game.stats.pitcher_started === 1 && Date.parse(game.at) < before && (battersFaced(game.stats) ?? 0) > 0)
   .sort((a, b) => b.at.localeCompare(a.at));
