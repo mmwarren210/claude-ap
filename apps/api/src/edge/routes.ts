@@ -195,8 +195,11 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     if (!snapshot) return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
     const picks = modePicks(snapshot.byLine.values(), query.data.mode, now().getTime());
     const reads = await deps.reads?.(query.data.platform, picks).catch(() => null) ?? null;
+    // GKR+ is the owner's only (owner, 2026-10-13); members get Edge, GKR and GKR 2.
+    const owner = await deps.isOwner(request);
     return { mode: query.data.mode, minChance: MODE_MIN_CHANCE,
-      picks: picks.map((pick) => ({ ...pick, reads: reads?.get(pick.lineId) ?? { gkr: null, gkrPlus: null } })) };
+      picks: picks.map((pick) => { const read = reads?.get(pick.lineId) ?? { gkr: null, gkr2: null, gkrPlus: null };
+        return { ...pick, reads: owner ? read : { ...read, gkrPlus: null } }; }) };
   });
 
   app.get('/v1/edge/board', async (request, reply) => {

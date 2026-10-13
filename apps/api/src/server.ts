@@ -94,7 +94,7 @@ import type { EdgeLedger } from './edge/ledger.js';
 import type { SnapshotStore } from './edge/snapshots.js';
 import type { BookWeightStore } from './edge/book-weights.js';
 import type { DispersionStore } from './edge/dispersion-store.js';
-import { analyzeTips, approvalOf, DAILY_TIP_UPLOADS, manualAnalysis, manualDraft, marketRead, USER_DAILY_MANUAL, USER_DAILY_UPLOADS } from './tips.js';
+import { analyzeTips, approvalOf, memberApprovers, DAILY_TIP_UPLOADS, manualAnalysis, manualDraft, marketRead, USER_DAILY_MANUAL, USER_DAILY_UPLOADS } from './tips.js';
 import type { ManualLine, TipDraft, TipGrader, TipReader, TipStore } from './tips.js';
 import { matchTip, modelRead, suggestFor } from './tip-models.js';
 import { closeScreenshotReader, picksInText, screenshotText } from './tip-ocr.js';
@@ -819,11 +819,13 @@ export function buildServer(options: ServerOptions = {}) {
     const open=raw.tips.filter((tip)=>tip.status==='PENDING'&&!approvalOf(tip).approved&&tip.analysis?.verdict!=='FADE');
     const suggestions=tipSuggestions&&open.length?await tipSuggestions(open).catch(()=>new Map<string,TipSuggestion>()):new Map<string,TipSuggestion>();
     const mine={...raw,tips:raw.tips.map((tip)=>{const approval=approvalOf(tip);
-      return {...tip,approval:{approved:approval.approved,approvedBy:approval.approvedBy},suggestion:suggestions.get(tip.id)??null};})};
+      return {...tip,approval:{approved:approval.approved,approvedBy:owner?approval.approvedBy:memberApprovers(approval.approvedBy)},
+        suggestion:suggestions.get(tip.id)??null};})};
     const uploadsLeft=owner?null:Math.max(0,USER_DAILY_UPLOADS-await options.tips.store.uploadsToday(user.accountId));
     if(!owner){
-      // Trial accounts get verdicts and numbers, not the reasons behind them.
-      const tips=mine.tips.map((tip)=>user.plan==='GUEST'&&tip.analysis?{...tip,analysis:{...tip.analysis,reasons:[]}}:tip);
+      // Trial accounts get verdicts and numbers, not the reasons behind them. GKR+'s verdict stays the owner's.
+      const tips=mine.tips.map((tip)=>({...tip,modelCheck:tip.modelCheck?(({gkr:_gkr,gkrChance:_chance,...rest})=>rest)(tip.modelCheck):tip.modelCheck}))
+        .map((tip)=>user.plan==='GUEST'&&tip.analysis?{...tip,analysis:{...tip.analysis,reasons:[]}}:tip);
       return {...mine,tips,reading:!!options.tips.reader,uploadsLeft,dailyLimit:USER_DAILY_UPLOADS};
     }
     // Edge's and GKR+'s reads on each prop tip, fresh on every load (the Edge tab's own pricing; nothing is pulled).
@@ -855,8 +857,8 @@ export function buildServer(options: ServerOptions = {}) {
       {edge:read.edge.verdict,gkr:read.gkrPlus.verdict,edgeChance:read.edge.chance,gkrChance:read.gkrPlus.chance,breakEven:read.edge.breakEven},user.username);
     vettedCache=null;
     const approval=approvalOf(tip);
-    return reply.code(201).send({id:tip.id,approved:approval.approved,approvedBy:approval.approvedBy,
-      checks:{edge:read.edge.verdict,gkr:read.gkrPlus.verdict,chance:read.edge.chance,breakEven:read.edge.breakEven}});
+    return reply.code(201).send({id:tip.id,approved:approval.approved,approvedBy:owner?approval.approvedBy:memberApprovers(approval.approvedBy),
+      checks:{edge:read.edge.verdict,...owner?{gkr:read.gkrPlus.verdict}:{},chance:read.edge.chance,breakEven:read.edge.breakEven}});
   });
   // Vetted: every outside tip CrownIQ rated PLAY, for every signed-in user; never who posted it. Trial accounts don't get the
   // reasons (owner, 2026-10-11: they see picks, not how CrownIQ makes them).
@@ -888,7 +890,10 @@ export function buildServer(options: ServerOptions = {}) {
     const {hidden,...vetted}=await vettedCache.value;
     // The owner also sees the picks GKR and Edge kept off the list, with their reads, to check the filter is fair.
     if(await isOwner(request))return {...vetted,hidden};
-    return user.plan==='GUEST'?{...vetted,picks:vetted.picks.map(({reasons:_reasons,...pick})=>pick)}:vetted;
+    // GKR+ stays the owner's (owner, 2026-10-13): members get "CrownIQ" for it and no GKR+ verdict or chance.
+    const member=vetted.picks.map((pick)=>({...pick,approvedBy:memberApprovers(pick.approvedBy),
+      checks:pick.checks?(({gkr:_gkr,gkrChance:_chance,...rest})=>rest)(pick.checks):null}));
+    return user.plan==='GUEST'?{...vetted,picks:member.map(({reasons:_reasons,...pick})=>pick)}:{...vetted,picks:member};
   });
   app.post('/v1/tips/upload',{bodyLimit:8_000_000},async(request,reply)=>{
     const user=await currentUser(request);if(!user)return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
@@ -998,8 +1003,8 @@ export function buildServer(options: ServerOptions = {}) {
   const isOwner=async(request:FastifyRequest)=>{const user=await currentUser(request);
     return !!options.ownerPublicId&&user?.publicId===options.ownerPublicId;};
   // GKR+ is the owner's, plus any account unlocked with the Secrets password.
-  const hasGkrPlus=async(request:FastifyRequest)=>{if(await isOwner(request))return true;
-    const user=await currentUser(request);return !!user&&!!options.secrets&&await options.secrets.unlocks.has(user.accountId);};
+  // GKR+ is the owner's only (owner, 2026-10-13: "GKR+ shouldn't be public, only to me"); secret unlocks no longer open it.
+  const hasGkrPlus=async(request:FastifyRequest)=>isOwner(request);
   app.get('/v1/secrets',async(request,reply)=>{
     if(!await currentUser(request))return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     return {gkrPlus:await hasGkrPlus(request)};
@@ -1048,8 +1053,8 @@ export function buildServer(options: ServerOptions = {}) {
     if(limited(`secrets:${user.accountId}`))return reply.code(429).send({code:'TOO_MANY_TRIES'});
     const input=z.object({password:z.string().max(200)}).strict().safeParse(request.body);
     if(!input.success||!options.secrets)return reply.code(400).send({code:'INVALID_PASSWORD'});
-    if(!passwordMatches(input.data.password,options.secrets.password))return reply.code(403).send({code:'WRONG_PASSWORD'});
-    await options.secrets.unlocks.add(user.accountId,user.username??null);
+    // GKR+ is the owner's only (owner, 2026-10-13): the password no longer opens it for anyone else.
+    if(!passwordMatches(input.data.password,options.secrets.password)||!await isOwner(request))return reply.code(403).send({code:'WRONG_PASSWORD'});
     return {gkrPlus:true};
   });
   // Time on the app: one beat a minute from a signed-in member's open app; the owner sees the totals.
@@ -1924,7 +1929,8 @@ export function buildServer(options: ServerOptions = {}) {
     registerEdgeRoutes(app,{edge,feedNote,heldReason,
       // Streaks and Ladders (owner, 2026-10-13): GKR's and GKR+'s reads beside Edge's on every pick.
       reads:async(platform,picks)=>{const gkrFor=await gkrSides(platform),gkr2For=await gkr2Sides();
-        return new Map(picks.map((pick)=>{const gkr=gkrFor(pick),gkr2=gkr2For(pick),blended=blendPick(pick,gkr2);
+        return new Map(picks.map((pick)=>{const gkr=gkrFor(pick),gkr2=gkr2For(pick);
+          const blended=blendPick(pick,[...gkr?[{...gkr,label:'GKR'}]:[],...gkr2?[{...gkr2,label:'GKR 2'}]:[]]);
           return [pick.lineId,{gkr:gkr?{side:gkr.direction,score:gkr.score}:null,gkr2:gkr2?{side:gkr2.direction,score:gkr2.score}:null,
             gkrPlus:blended.probability>=.5?{side:blended.side,probability:blended.probability}
               // Under 50% GKR+ favors the other side: say so, with that side's chance.
@@ -1934,7 +1940,7 @@ export function buildServer(options: ServerOptions = {}) {
         sharpApi:options.sharpProps?await options.sharpProps.status():null,
         scrapers:options.scraperPuller?await options.scraperPuller.status():null,
         contextFeeds:options.contextFeeds?await options.contextFeeds.status():null})});
-    // GKR+ (owner only): Edge's read blended with history at the number and GKR 2's side (owner, 2026-10-13; GKR's before), on every
+    // GKR+ (owner only): Edge's read blended with history at the number and GKR's and GKR 2's sides (owner, 2026-10-13), on every
     // platform; its own ledger.
     const gkrPlusLedger=options.edge?.gkrPlusLedger??null;
     const gkrPlusWorker=gkrPlusLedger?new EdgeResultsWorker(gkrPlusLedger,options.internalHistory??null,options.edge?.boxScores??null,()=>now(),
@@ -1958,10 +1964,16 @@ export function buildServer(options: ServerOptions = {}) {
         {direction:item.side,score:item.gkr!.score}] as const));
       return (pick)=>byKey.get(key(pick.sport,pick.playerName,pick.market,pick.threshold))??null;
     };
+    // GKR+'s model nudge (owner, 2026-10-13): GKR's and GKR 2's sides together.
+    const plusSides=async(platform:EdgePlatform):Promise<(pick:EdgePick)=>GkrSide[]>=>{
+      const [gkrFor,gkr2For]=await Promise.all([gkrSides(platform).catch(()=>()=>null),gkr2Sides().catch(()=>()=>null)]);
+      return (pick)=>{const one=gkrFor(pick),two=gkr2For(pick);
+        return [...one?[{...one,label:'GKR'}]:[],...two?[{...two,label:'GKR 2'}]:[]];};
+    };
     const gkrPlus=async(platform:EdgePlatform)=>{
       const snapshot=await edge.snapshot(platform);
       if(!snapshot)return null;
-      const picks=blendPicks(snapshot.response.picks,await gkr2Sides());
+      const picks=blendPicks(snapshot.response.picks,await plusSides(platform));
       return {snapshot,picks};
     };
     sportMix=async(platform)=>{
@@ -1997,14 +2009,14 @@ export function buildServer(options: ServerOptions = {}) {
         if(!open.length)break;
         const snapshot=await edge.snapshot(platform).catch(()=>null);
         if(!snapshot)continue;
-        let sides:((pick:EdgePick)=>GkrSide|null)|null=null;
+        let sides:((pick:EdgePick)=>GkrSide|null)|null=null,plus:((pick:EdgePick)=>GkrSide[])|null=null;
         for(const tip of open){
           const pick=matchTip(tip,snapshot.byLine.values());
           if(!pick)continue;
-          sides??=await gkr2Sides().catch(()=>()=>null);
+          sides??=await gkr2Sides().catch(()=>()=>null);plus??=await plusSides(platform).catch(()=>()=>[]);
           const price=(tip as {analysis?:{price:number|null}|null}).analysis?.price??tip.odds??null;
           const gkr2=sides(pick);
-          out.set(tip.id,{edge:modelRead(tip,pick,platform,price),gkrPlus:modelRead(tip,blendPick(pick,gkr2),platform,price),
+          out.set(tip.id,{edge:modelRead(tip,pick,platform,price),gkrPlus:modelRead(tip,blendPick(pick,plus(pick)),platform,price),
             gkr2:gkr2?{side:gkr2.direction,score:gkr2.score}:null});
         }
       }
@@ -2036,7 +2048,7 @@ export function buildServer(options: ServerOptions = {}) {
       const snapshot=await edge.snapshot(platform as EdgePlatform).catch(()=>null);
       const pick=snapshot?.byLine.get(lineId);
       if(!pick)return null;
-      const sides=await gkr2Sides().catch(()=>()=>null);
+      const sides=await plusSides(platform as EdgePlatform).catch(()=>()=>[]);
       const tipSide={side:side==='MORE'?'OVER' as const:'UNDER' as const};
       const teams=pick.eventName.split(/\s+(?:@|vs\.?|at)\s+/i);
       const opponent=pick.team&&teams.length===2?teams.find((team)=>normalizedName(team)!==normalizedName(pick.team!))??null:null;
@@ -2065,7 +2077,7 @@ export function buildServer(options: ServerOptions = {}) {
         const nowMs=now().getTime(),live=result.picks.filter((pick)=>Date.parse(pick.eventStartTime)>nowMs+5*60_000);
         // Player search: every line Edge read for the player, blended, plays or not.
         if(query.data.q){
-          const sides=await gkr2Sides().catch(()=>()=>null);
+          const sides=await plusSides(query.data.platform).catch(()=>()=>[]);
           const found=blendPicks(searchPicks(result.snapshot,query.data.q,nowMs,query.data.limit),sides)
             .filter((pick)=>query.data.day!=='today'||easternDay(new Date(pick.eventStartTime))===easternDay(new Date(nowMs)));
           return {...result.snapshot.response,picks:found,slips:[],modelVersion:GKR_PLUS_VERSION};

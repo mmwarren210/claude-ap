@@ -13,10 +13,15 @@ import { rankScore } from '@crowniq/edge';
 // Blended in log-odds; the edge is the blended chance less the same break-even Edge uses. Picks Edge holds back (held for
 // review, unbacked book bets, far rungs, promos) stay unranked here too.
 
-/** v2 (owner, 2026-10-13): GKR 2's side and score nudge the blend in place of GKR's. */
+/**
+ * v2 (owner, 2026-10-13: "keep GKR+ on GKR 1 and 2"): GKR's and GKR 2's sides both nudge the blend, averaged, so when they
+ * agree the nudge is as strong as GKR's alone was, when they split it cancels, and when only one reads the line it counts alone.
+ */
 export const GKR_PLUS_VERSION = 'gkr-plus-v2';
 
-export interface GkrSide { readonly direction: 'MORE' | 'LESS'; readonly score: number }
+export interface GkrSide { readonly direction: 'MORE' | 'LESS'; readonly score: number;
+  /** Which model this read is from ("GKR", "GKR 2"); GKR+ names it in its reasons. */
+  readonly label?: string }
 
 const logit = (p: number) => Math.log(p / (1 - p));
 const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
@@ -27,7 +32,8 @@ const round = (value: number, digits = 4) => Math.round(value * 10 ** digits) / 
 export const ratingOf = (edge: number) => edge >= .07 ? 'ELITE' as const : edge >= .045 ? 'STRONG' as const
   : edge >= .02 ? 'VALUE' as const : edge > 0 ? 'THIN' as const : 'NONE' as const;
 
-export function blendPick(pick: EdgePick, gkr: GkrSide | null): EdgePick {
+export function blendPick(pick: EdgePick, gkr: GkrSide | readonly GkrSide[] | null): EdgePick {
+  const reads = gkr === null ? [] : 'direction' in gkr ? [gkr as GkrSide] : gkr as readonly GkrSide[];
   const stats = pick.sources.stats;
   const games = stats?.samples ?? 0, hitRate = stats?.hitRateAtLine ?? null;
   const parts: { logit: number; weight: number }[] = [{ logit: logit(clampP(pick.probability)), weight: 1 }];
@@ -38,9 +44,9 @@ export function blendPick(pick: EdgePick, gkr: GkrSide | null): EdgePick {
     reasons.push(`History: hit ${hits} of ${games} at ${pick.threshold} (counted ${Math.round(weight * 100)}% of Edge's weight).`);
   }
   let nudge = 0;
-  if (gkr) {
-    nudge = (gkr.direction === pick.side ? 1 : -1) * .3 * Math.min(1, Math.max(0, gkr.score) / 100);
-    reasons.push(`GKR 2 ${gkr.direction === pick.side ? 'agrees' : 'plays the other side'} (score ${Math.round(gkr.score)}).`);
+  for (const read of reads) {
+    nudge += (read.direction === pick.side ? 1 : -1) * .3 * Math.min(1, Math.max(0, read.score) / 100) / reads.length;
+    reasons.push(`${read.label ?? 'GKR'} ${read.direction === pick.side ? 'agrees' : 'plays the other side'} (score ${Math.round(read.score)}).`);
   }
   const total = parts.reduce((sum, part) => sum + part.weight, 0);
   const probability = round(sigmoid(parts.reduce((sum, part) => sum + part.logit * part.weight, 0) / total + nudge));
@@ -59,7 +65,7 @@ export function blendPick(pick: EdgePick, gkr: GkrSide | null): EdgePick {
 }
 
 /** Blended picks, ranked by blended edge (unranked ones after, by chance). */
-export function blendPicks(picks: readonly EdgePick[], gkrFor: (pick: EdgePick) => GkrSide | null): EdgePick[] {
+export function blendPicks(picks: readonly EdgePick[], gkrFor: (pick: EdgePick) => GkrSide | readonly GkrSide[] | null): EdgePick[] {
   return picks.map((pick) => reRank(pick, blendPick(pick, gkrFor(pick))))
     .sort((a, b) => (b.rank ?? -1) - (a.rank ?? -1) || b.probability - a.probability);
 }

@@ -24,13 +24,13 @@ test('GKR+: history at the number pulls Edge’s chance toward it, weighted by s
   assert.ok(Math.abs(strong.edge! - (strong.probability - .5425)) < 1e-6);
 });
 
-test('GKR+: GKR 2 (in place of GKR since 2026-10-13) nudges toward its side, or away when it plays the other side', () => {
+test('GKR+: a model read nudges toward its side, or away when it plays the other side', () => {
   const base = blendPick(pick(), null).probability;
   assert.ok(blendPick(pick(), { direction: 'MORE', score: 90 }).probability > base);
   const against = blendPick(pick(), { direction: 'LESS', score: 90 });
   assert.ok(against.probability < base);
   assert.equal(against.rating, 'NONE', 'pushed under break-even, it is no longer ranked');
-  assert.match(against.reasons.join(' '), /GKR 2 plays the other side/);
+  assert.match(against.reasons.join(' '), /GKR plays the other side/);
 });
 
 test('GKR+: picks Edge holds back stay held; book EV and stake follow the blended chance; ranked first by edge', () => {
@@ -63,4 +63,15 @@ test('GKR+ ranks by its own blended value, keeping the trust Edge gave the read'
   const edgePick = { edge: .05, rank: .03, rating: 'STRONG' } as unknown as import('@crowniq/contracts').EdgePick;
   assert.equal(reRank(edgePick, { ...edgePick, edge: .1 }).rank, .06, 'twice the value, same trust (0.6)');
   assert.equal(reRank(edgePick, { ...edgePick, edge: -.01, rating: 'NONE' }).rank, undefined, 'no play, no rank');
+});
+
+test('GKR+ v2 takes GKR\'s and GKR 2\'s sides together: agreeing is as strong as GKR alone was, splitting cancels', async () => {
+  const { blendPick } = await import('../src/edge/blend.js');
+  const pick = { side: 'MORE', probability: .6, breakEven: .5, edge: .1, rating: 'VALUE', threshold: 10, reasons: [],
+    sources: { market: null, stats: null, ladder: null } } as never;
+  const gkr = { direction: 'MORE' as const, score: 80, label: 'GKR' }, gkr2 = { direction: 'MORE' as const, score: 80, label: 'GKR 2' };
+  const alone = blendPick(pick, gkr).probability, both = blendPick(pick, [gkr, gkr2]).probability;
+  assert.equal(both, alone);
+  assert.equal(blendPick(pick, [gkr, { ...gkr2, direction: 'LESS' }]).probability, blendPick(pick, []).probability);
+  assert.match(blendPick(pick, [gkr, gkr2]).reasons.join(' '), /GKR agrees.*GKR 2 agrees/);
 });

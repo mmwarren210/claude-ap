@@ -36,7 +36,10 @@ test('GKR 2\'s Top Picks are its 80+ plays, best first', () => {
 test('All agree keeps only Streaks and Ladders picks every model backs on the same side', async () => {
   const { allAgree } = await import('../src/gkr2.js');
   const reads = { gkr: { side: 'MORE', score: 80 }, gkr2: { side: 'MORE', score: 85 }, gkrPlus: { side: 'MORE', probability: .8 } };
-  assert.equal(allAgree({ side: 'MORE', reads } as never), true);
-  assert.equal(allAgree({ side: 'MORE', reads: { ...reads, gkr2: { side: 'LESS', score: 70 } } } as never), false);
-  assert.equal(allAgree({ side: 'MORE', reads: { ...reads, gkr: null } } as never), false);
+  assert.equal(allAgree({ side: 'MORE', reads } as never, true), true);
+  assert.equal(allAgree({ side: 'MORE', reads: { ...reads, gkr2: { side: 'LESS', score: 70 } } } as never, true), false);
+  assert.equal(allAgree({ side: 'MORE', reads: { ...reads, gkr: null } } as never, true), false);
+  // Members never get GKR+, so theirs is Edge, GKR and GKR 2; the owner's also needs GKR+.
+  assert.equal(allAgree({ side: 'MORE', reads: { ...reads, gkrPlus: null } } as never, false), true);
+  assert.equal(allAgree({ side: 'MORE', reads: { ...reads, gkrPlus: { side: 'LESS', probability: .6 } } } as never, true), false);
 });

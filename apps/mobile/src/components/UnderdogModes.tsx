@@ -20,7 +20,7 @@ const sideWord = (side: 'MORE' | 'LESS') => side === 'MORE' ? 'More' : 'Less';
  * Edge's, GKR's, GKR 2's (β: Beta, still calibrating) and GKR+'s reads side by side (owner, 2026-10-13), each saying when it
  * agrees or plays the other side. GKR+ blends GKR 2 now.
  */
-function ReadsRow({ pick }: { pick: ModePick }) {
+function ReadsRow({ pick, withPlus }: { pick: ModePick; withPlus: boolean }) {
   const gkr = pick.reads?.gkr ?? null, gkr2 = pick.reads?.gkr2 ?? null, plus = pick.reads?.gkrPlus ?? null;
   const item = (label: string, text: string, agrees: boolean | null) => <View style={styles.read}>
     <Text style={styles.readLabel}>{label}</Text>
@@ -29,7 +29,7 @@ function ReadsRow({ pick }: { pick: ModePick }) {
     {item('Edge', `${sideWord(pick.side)} · ${Math.round(pick.probability * 100)}%`, true)}
     {item('GKR', gkr ? `${sideWord(gkr.side)} · ${Math.round(gkr.score)}` : 'No read', gkr ? gkr.side === pick.side : null)}
     {item('GKR 2 β', gkr2 ? `${sideWord(gkr2.side)} · ${Math.round(gkr2.score)}` : 'No read', gkr2 ? gkr2.side === pick.side : null)}
-    {item('GKR+', plus ? `${sideWord(plus.side)} · ${Math.round(plus.probability * 100)}%` : 'No read', plus ? plus.side === pick.side : null)}
+    {withPlus && item('GKR+', plus ? `${sideWord(plus.side)} · ${Math.round(plus.probability * 100)}%` : 'No read', plus ? plus.side === pick.side : null)}
   </View>;
 }
 const ABOUT: Record<Mode, string> = {
@@ -52,7 +52,9 @@ export function UnderdogModes({ inSlip }: { inSlip: ReadonlySet<string> }) {
   const [agreeOnly, setAgreeOnly] = useState(false);
   const loaded = result && result.mode === mode ? result.picks : undefined;
   // "All agree": only picks every model backs on the same side, the shortest and safest list.
-  const shown = loaded && agreeOnly ? loaded.filter(allAgree) : loaded;
+  // GKR+ is the owner's only: its reads come back for the owner alone.
+  const withPlus = !!loaded?.some((pick) => !!pick.reads?.gkrPlus);
+  const shown = loaded && agreeOnly ? loaded.filter((pick) => allAgree(pick, withPlus)) : loaded;
   return <View style={styles.box}>
     <View style={styles.chips}>{(['streaks', 'ladders'] as const).map((item) => <Pressable key={item} accessibilityRole="button"
       accessibilityState={{ selected: mode === item }} onPress={() => setMode(mode === item ? null : item)} style={[styles.chip, mode === item && styles.chipOn]}>
@@ -61,13 +63,13 @@ export function UnderdogModes({ inSlip }: { inSlip: ReadonlySet<string> }) {
       <Text style={styles.about}>{ABOUT[mode]}</Text>
       <Pressable accessibilityRole="switch" accessibilityState={{ checked: agreeOnly }} onPress={() => setAgreeOnly(!agreeOnly)}
         style={[styles.chip, styles.agree, agreeOnly && styles.chipOn]}>
-        <Text style={[styles.chipText, agreeOnly && styles.chipTextOn]}>{agreeOnly ? '✓ ' : ''}All agree: Edge, GKR, GKR 2 and GKR+</Text></Pressable>
+        <Text style={[styles.chipText, agreeOnly && styles.chipTextOn]}>{agreeOnly ? '✓ ' : ''}{withPlus ? 'All agree: Edge, GKR, GKR 2 and GKR+' : 'All agree: Edge, GKR and GKR 2'}</Text></Pressable>
       {shown === undefined ? <ActivityIndicator color={colors.mint} /> : shown === null ? <Text style={styles.about}>Couldn’t load these right now. Pull down to refresh.</Text>
-        : !shown.length ? <Text style={styles.about}>{agreeOnly && loaded?.length ? 'No pick today has all four models on the same side. Turn off All agree to see the rest.'
+        : !shown.length ? <Text style={styles.about}>{agreeOnly && loaded?.length ? 'No pick today has every model on the same side. Turn off All agree to see the rest.'
           : 'Nothing backed by sportsbooks reaches 70% today. CrownIQ only lists the surest picks, so some days there are none.'}</Text>
         : shown.map((pick, index) => <View key={pick.lineId + pick.side} style={styles.item}>
           <Text style={styles.worth}>#{index + 1} · {Math.round(pick.probability * 100)}% to hit{mode === 'streaks' ? ` · worth it at ${(1 / pick.probability).toFixed(2)}x or more` : ''}</Text>
-          <ReadsRow pick={pick} />
+          <ReadsRow pick={pick} withPlus={withPlus} />
           <EdgePickCard pick={pick} accent={colors.mint} inSlip={inSlip.has(pick.lineId)} />
         </View>)}
     </>}

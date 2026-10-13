@@ -69,7 +69,11 @@ export function gkr2Note(read: Gkr2Read | undefined, shownModel: 'GKR' | 'GKR2')
 }
 
 type Side = 'MORE' | 'LESS';
-/** Every model reads the line and takes the pick's side: Edge (the pick itself), GKR, GKR 2 and GKR+ (owner, 2026-10-13). */
-export const allAgree = (pick: { side: Side; reads?: { gkr: { side: Side } | null; gkr2?: { side: Side } | null; gkrPlus: { side: Side } | null } }) =>
-  !!pick.reads?.gkr && !!pick.reads.gkr2 && !!pick.reads.gkrPlus &&
-  pick.reads.gkr.side === pick.side && pick.reads.gkr2.side === pick.side && pick.reads.gkrPlus.side === pick.side;
+/**
+ * Every model reads the line and takes the pick's side: Edge (the pick itself), GKR and GKR 2, and GKR+ too for the owner
+ * (owner, 2026-10-13: GKR+ is the owner's only, so members' "All agree" is the three they see).
+ */
+export const allAgree = (pick: { side: Side; reads?: { gkr: { side: Side } | null; gkr2?: { side: Side } | null; gkrPlus: { side: Side } | null } },
+  withPlus: boolean) =>
+  !!pick.reads?.gkr && !!pick.reads.gkr2 && pick.reads.gkr.side === pick.side && pick.reads.gkr2.side === pick.side &&
+  (!withPlus || (!!pick.reads.gkrPlus && pick.reads.gkrPlus.side === pick.side));

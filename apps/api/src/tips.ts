@@ -79,6 +79,12 @@ export function approvalOf(tip: Pick<Tip, 'analysis' | 'modelCheck'>): { approve
   return { approved: byAi || byModels, approvedBy, hiddenByModels: tip.analysis?.verdict === 'PLAY' && edgeFade && !byModels };
 }
 
+/**
+ * Who approved a pick, as members see it (owner, 2026-10-13: GKR+ is the owner's only): GKR+ shows as "CrownIQ", so its name
+ * and numbers stay private while members still see a pick was approved.
+ */
+export const memberApprovers = (names: readonly string[]) => names.map((name) => name === 'GKR+' ? 'CrownIQ' : name);
+
 /** One pick across uploads: the same selection, market, line, side and stat on the same day is the same pick. */
 export function tipKey(tip: Pick<Tip, 'sport' | 'selection' | 'opponent' | 'market' | 'line' | 'side' | 'stat' | 'eventDate' | 'createdAt'>): string {
   const norm = (value: string | null) => (value ?? '').toLowerCase().replace(/[^a-z0-9.]+/g, ' ').trim();
