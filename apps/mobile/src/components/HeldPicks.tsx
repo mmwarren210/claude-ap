@@ -10,7 +10,8 @@ export function HeldPicks({ held, inSlip }: { held?: { reason: string; picks: Ed
   if (!held?.picks.length) return null;
   return <View style={styles.section}>
     <Text style={styles.title}>HELD · {held.picks.length} {held.picks.length === 1 ? 'PICK' : 'PICKS'}</Text>
-    <Text style={styles.reason}>{held.reason}</Text>
+    <Text style={styles.reason}>What is Held? When most of an app’s +EV picks lean the same way, or its prices are new to CrownIQ, CrownIQ keeps them out of Top Picks and Gen until the prices check out. They’re listed here so you can still see them.</Text>
+    <Text style={styles.reason}>Right now: {held.reason}</Text>
     {held.picks.map((pick) => <EdgePickCard key={pick.key + pick.side} pick={pick} accent={colors.gold} inSlip={inSlip.has(pick.lineId)} />)}
   </View>;
 }
