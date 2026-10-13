@@ -15,6 +15,11 @@ type Stats = Readonly<Record<string, number>>;
 export interface Game { readonly at: string; readonly opponent: string | null; readonly stats: Stats;
   /** The game's two teams (PropLine's own player_team/opponent fields are sometimes swapped, so these decide). */
   readonly home?: string | null; readonly away?: string | null }
+/** When tennis logs started carrying each match's total games (deployed 2026-10-12). */
+/** How long a fetched player stays in memory when the player store holds him (code check, 2026-10-13). */
+const MEMORY_MS = 7 * 86_400_000;
+const TENNIS_TOTALS_SINCE = Date.parse('2026-10-12T03:00:00Z');
+
 interface Entry { readonly at: number; readonly games: readonly Game[] | null;
   /** How long this entry stays fresh: the nightly pull keeps its answers ~26 hours (default: the 6-hour TTL). */
   readonly keepMs?: number;
@@ -167,8 +172,9 @@ export class PropLineHistory {
       // First start with the store: the JSON file's players move into it once.
       for (const [key, entry] of saved) store.put(key, key.split('|')[0]!, { at: entry.at, ...(entry.keepMs ? { keepMs: entry.keepMs } : {}),
         deep: entry.deep, teams: entry.teams, empty: !entry.games }, entry.games ?? [], this.clock());
-      // Every stored player is kept in memory (stale ones are re-asked when read, and still count for opponent reads).
-      for (const [key, { fetch, games }] of store.all())
+      // Players fetched in the last week are kept in memory (they feed the opponent reads); older ones are read from the store
+      // when asked for (code check, 2026-10-13: every stored player's two seasons in memory risked running out of heap).
+      for (const [key, { fetch, games }] of store.all(this.clock() - MEMORY_MS))
         this.cache.set(key, { at: fetch.at, games: fetch.empty || !games.length ? null : games, deep: fetch.deep, teams: fetch.teams,
           ...(fetch.keepMs ? { keepMs: fetch.keepMs } : {}) });
       return;
@@ -189,10 +195,10 @@ export class PropLineHistory {
         if (entry) store.put(key, key.split('|')[0]!, { at: entry.at, ...(entry.keepMs ? { keepMs: entry.keepMs } : {}), deep: entry.deep,
           teams: entry.teams, empty: !entry.games }, entry.games ?? [], now);
       }
-      // Players nobody asked about in 30 days leave memory and the store (their season summaries stay).
-      const cutoff = now - 30 * 86_400_000;
-      for (const [key, entry] of this.cache) if (entry.at < cutoff) this.cache.delete(key);
-      store.prune(cutoff);
+      // Players not fetched in a week leave memory (the store keeps them); after 30 days they leave the store too (their
+      // season summaries stay).
+      for (const [key, entry] of this.cache) if (entry.at < now - MEMORY_MS) this.cache.delete(key);
+      store.prune(now - 30 * 86_400_000);
       return;
     }
     if (!this.file) return;
@@ -201,6 +207,19 @@ export class PropLineHistory {
     const temporary = `${this.file}.tmp`;
     await writeFile(temporary, JSON.stringify([...this.cache]));
     await rename(temporary, this.file);
+  }
+
+  /** A player's entry: from memory, else from the store (put back in memory once read). */
+  private entry(key: string): Entry | undefined {
+    const held = this.cache.get(key);
+    if (held || !this.options.store) return held;
+    const fetch = this.options.store.fetch(key);
+    if (!fetch) return undefined;
+    const games = this.options.store.games(key);
+    const entry: Entry = { at: fetch.at, games: fetch.empty || !games.length ? null : games, deep: fetch.deep, teams: fetch.teams,
+      ...(fetch.keepMs ? { keepMs: fetch.keepMs } : {}) };
+    this.cache.set(key, entry);
+    return entry;
   }
 
   private async slot<T>(work: () => Promise<T>): Promise<T> {
@@ -213,10 +232,12 @@ export class PropLineHistory {
   private async games(sportKey: string, playerName: string, refresh?: { keepMs: number; olderThanMs: number }, freshSince?: number): Promise<readonly Game[] | null | undefined> {
     await this.load();
     const key = `${sportKey}|${normalizedName(playerName)}`, now = this.clock();
-    const cached = this.cache.get(key);
+    const cached = this.entry(key);
     // The nightly pull also refetches anything from before the deep game log, however fresh.
     // A tennis log read before the match total was added is re-asked (its totals would read as one player's games).
-    const stale = sportKey === 'tennis' && !!cached?.games?.length && !cached.games.some((game) => 'match_total_games' in game.stats);
+    // Only logs fetched before that change (code check, 2026-10-13: a player whose games come without scores was re-asked on every read).
+    const stale = sportKey === 'tennis' && !!cached?.games?.length && cached.at < TENNIS_TOTALS_SINCE
+      && !cached.games.some((game) => 'match_total_games' in game.stats);
     if (cached && !stale && (!refresh || (cached.deep && cached.teams)) && (freshSince === undefined || cached.at >= freshSince) &&
       now - cached.at < (refresh ? refresh.olderThanMs : cached.keepMs ?? this.options.ttlMs ?? 6 * 3600_000))
       return cached.games;
@@ -303,7 +324,7 @@ export class PropLineHistory {
     await this.load();
     const sportKey = this.sportKey(line);
     const keys = sportKey ? [sportKey] : line.sport === 'SOCCER' ? Object.values(SOCCER_KEYS) : [];
-    for (const key of keys) { const games = this.cache.get(`${key}|${normalizedName(line.playerName)}`)?.games; if (games) return games; }
+    for (const key of keys) { const games = this.entry(`${key}|${normalizedName(line.playerName)}`)?.games; if (games) return games; }
     return null;
   }
 

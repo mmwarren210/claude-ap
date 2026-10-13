@@ -13,6 +13,9 @@ import { DatabaseSync } from 'node:sqlite';
 
 export interface StoredGame { readonly at: string; readonly opponent: string | null; readonly home?: string | null;
   readonly away?: string | null; readonly stats: Readonly<Record<string, number>> }
+const fetchOf = (row: Record<string, unknown>): FetchInfo => ({ at: Number(row.at), ...(row.keepMs != null ? { keepMs: Number(row.keepMs) } : {}),
+  deep: row.deep === 1, teams: row.teams === 1, empty: row.empty === 1 });
+
 export interface FetchInfo { readonly at: number; readonly keepMs?: number; readonly deep?: boolean; readonly teams?: boolean;
   readonly empty?: boolean }
 export interface SeasonSummary { readonly season: string; readonly games: number; readonly averages: Readonly<Record<string, number>> }
@@ -53,16 +56,23 @@ export class PlayerStore {
   isEmpty(): boolean { return !(this.db.prepare('SELECT 1 AS one FROM fetches LIMIT 1').get()); }
 
   /** Every player's fetch record and games (newest first): what the history loads at startup. */
-  all(): Map<string, { fetch: FetchInfo; games: StoredGame[] }> {
+  /** Every player fetched since `since` (all of them when left out), with his games. */
+  all(since = 0): Map<string, { fetch: FetchInfo; games: StoredGame[] }> {
     const out = new Map<string, { fetch: FetchInfo; games: StoredGame[] }>();
-    for (const row of this.db.prepare('SELECT * FROM fetches').all() as Record<string, unknown>[])
-      out.set(String(row.player), { fetch: { at: Number(row.at), ...(row.keepMs != null ? { keepMs: Number(row.keepMs) } : {}),
-        deep: row.deep === 1, teams: row.teams === 1, empty: row.empty === 1 }, games: [] });
-    for (const row of this.db.prepare('SELECT * FROM games ORDER BY player, at DESC').all() as Record<string, unknown>[]) {
+    for (const row of this.db.prepare('SELECT * FROM fetches WHERE at >= ?').all(since) as Record<string, unknown>[])
+      out.set(String(row.player), { fetch: fetchOf(row), games: [] });
+    for (const row of this.db.prepare('SELECT g.* FROM games g JOIN fetches f ON f.player = g.player WHERE f.at >= ? ORDER BY g.player, g.at DESC')
+      .all(since) as Record<string, unknown>[]) {
       const entry = out.get(String(row.player));
       if (entry) entry.games.push(gameOf(row));
     }
     return out;
+  }
+
+  /** One player's last fetch, or null when he was never fetched. */
+  fetch(player: string): FetchInfo | null {
+    const row = this.db.prepare('SELECT * FROM fetches WHERE player = ?').get(player) as Record<string, unknown> | undefined;
+    return row ? fetchOf(row) : null;
   }
 
   /** A player's games, newest first. */

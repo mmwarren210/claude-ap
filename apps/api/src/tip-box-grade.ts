@@ -1,4 +1,4 @@
-import { normalizedName } from './context/match.js';
+import { teamsMatch } from './edge/market-map.js';
 import { gameValue, proplineStat } from './propline-history.js';
 import type { Game, PropLineHistory } from './propline-history.js';
 import type { Tip, TipStatus } from './tips.js';
@@ -33,35 +33,67 @@ export function gameOf(tip: Pick<Tip, 'eventDate' | 'createdAt'> & { analysis?: 
   return [...games].sort((a, b) => a.at.localeCompare(b.at)).find((game) => { const time = Date.parse(game.at); return time >= from && time <= to; }) ?? null;
 }
 
+/**
+ * Whether the box-score game is the tip's: its teams must include the tip's game (from the read's "Away @ Home") or its
+ * opponent. With neither known, nothing is matched (CLAUDE.md shared-names rule: two Max Muncys), and the web grader decides.
+ */
+export function sameGameAsTip(tip: Pick<Tip, 'opponent'> & { analysis?: { event?: string | null } | null; market_read?: { event?: string } | null },
+  game: Pick<Game, 'home' | 'away'>): boolean {
+  const teams = [game.home, game.away].filter((team): team is string => !!team);
+  if (teams.length < 2) return false;
+  const event = tip.market_read?.event ?? tip.analysis?.event ?? null;
+  const sides = event?.split(/\s+(?:@|at|vs\.?|v)\s+/i).map((side) => side.trim()).filter(Boolean) ?? [];
+  if (sides.length === 2) return sides.every((side) => teams.some((team) => teamsMatch(side, team)));
+  return !!tip.opponent && teams.some((team) => teamsMatch(tip.opponent!, team));
+}
+
+const HOUR = 3600_000;
+/** When the tip's game should be over: 3h after a known start; else from its date or posting. Null with no clue at all. */
+const overAt = (tip: Tip) => {
+  const known = tip.market_read?.start ?? tip.analysis?.start ?? null;
+  if (known && Number.isFinite(Date.parse(known))) return { at: Date.parse(known) + 3 * HOUR, known: true };
+  return { at: (tip.eventDate ? Date.parse(tip.eventDate) + 20 * HOUR : Date.parse(tip.createdAt)) + 3 * HOUR, known: false };
+};
+
 export async function gradeFromBoxScores(tips: readonly Tip[], history: PropLineHistory, now: Date): Promise<Result[]> {
   const out: Result[] = [];
-  for (const tip of tips) {
-    if (tip.market !== 'PLAYER_PROP' || tip.line === null || !tip.side || !tip.stat || !tip.sport) continue;
+  // Four at a time (code check, 2026-10-13: one at a time, a run could take many minutes and hold up the next).
+  const queue = [...tips];
+  const one = async (tip: Tip) => {
+    if (tip.market !== 'PLAYER_PROP' || tip.line === null || !tip.side || !tip.stat || !tip.sport) return;
+    const due = overAt(tip);
+    // A game known not to be over yet isn't asked about (code check, 2026-10-13: future picks were refetched every 2 hours).
+    if (due.known && due.at > now.getTime()) return;
     const sport = tip.sport.toUpperCase();
     const read = marketKeysFor(tip.stat).map((key) => proplineStat(sport, key)).find((value) => value !== null) ?? null;
-    if (!read) continue;
+    if (!read) return;
     const player = { sport: sport as never, eventId: '', playerName: tip.selection, league: tip.league };
+    const mine = (list: readonly Game[]) => { const game = gameOf(tip as never, list); return game && sameGameAsTip(tip, game) ? game : null; };
     let games = await history.gamesFor(player, 8000).catch(() => null);
-    if (!games || games === 'PENDING') continue;
-    let game = gameOf(tip as never, games);
+    if (!games || games === 'PENDING') return;
+    let game = mine(games);
     // A log cached before the game finished doesn't have it yet (owner, 2026-10-12: a Sunday night start sat ungraded on
-    // Monday): ask again when the copy is over two hours old.
-    if (!game) {
-      games = await history.gamesFor(player, 8000, now.getTime() - 2 * 3600_000).catch(() => null);
-      if (!games || games === 'PENDING') continue;
-      game = gameOf(tip as never, games);
+    // Monday): ask again when the copy is over two hours old, once the game should be over.
+    if (!game && due.at <= now.getTime()) {
+      games = await history.gamesFor(player, 8000, now.getTime() - 2 * HOUR).catch(() => null);
+      if (!games || games === 'PENDING') return;
+      game = mine(games);
     }
     if (!game) {
       const date = Date.parse(tip.eventDate ?? tip.createdAt);
-      if (now.getTime() - date > 3 * DAY) out.push({ id: tip.id, status: 'VOID', result: `No ${tip.selection} game found on PropLine (did not play?)` });
-      continue;
+      // VOID only when the tip's teams are known (else a namesake's missing game proves nothing).
+      const teamsKnown = !!(tip.market_read?.event ?? tip.analysis?.event ?? tip.opponent);
+      if (teamsKnown && now.getTime() - date > 3 * DAY) out.push({ id: tip.id, status: 'VOID', result: `No ${tip.selection} game found on PropLine (did not play?)` });
+      return;
     }
     const value = gameValue(game.stats, read);
-    if (value === null) continue;
+    if (value === null) return;
     const over = value > tip.line, under = value < tip.line;
     const status: Result['status'] = !over && !under ? 'PUSH' : (tip.side === 'OVER') === over ? 'WON' : 'LOST';
     out.push({ id: tip.id, status, result: `${tip.selection} had ${value} ${tip.stat.toLowerCase()} (${game.away && game.home ? `${game.away} @ ${game.home}, ` : ''}${game.at.slice(0, 10)}) · PropLine box score` });
-  }
-  void normalizedName;
+  };
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+    for (let tip = queue.shift(); tip; tip = queue.shift()) await one(tip);
+  }));
   return out;
 }

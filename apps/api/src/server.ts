@@ -607,7 +607,7 @@ export function buildServer(options: ServerOptions = {}) {
     catch(error){const code=(error as Error).message;
       if(code==='TRIALS_ALL_USED')return reply.code(403).send({code});
       if(code==='LOGIN_REQUIRED')return reply.code(428).send({code});
-      if(code==='USERNAME_TAKEN'||code==='EMAIL_TAKEN')return reply.code(409).send({code});
+      if(code==='USERNAME_TAKEN'||code==='EMAIL_TAKEN'||code==='LOGIN_EXISTS')return reply.code(409).send({code});
       if(code==='GUEST_PASS_FULL'||code==='GUEST_PASS_EXPIRED')return reply.code(403).send({code});
       if(code==='GUEST_PASS_INVALID'||code==='ACCOUNT_SUSPENDED')return reply.code(404).send({code:'GUEST_PASS_INVALID'});
       return reply.code(503).send({code:'PROFILE_STORAGE_UNAVAILABLE'});}
@@ -830,6 +830,8 @@ export function buildServer(options: ServerOptions = {}) {
   // Vetted: every outside tip CrownIQ rated PLAY, for every signed-in user; never who posted it. Trial accounts don't get the
   // reasons (owner, 2026-10-11: they see picks, not how CrownIQ makes them).
   let vettedCache:{at:number;value:ReturnType<TipStore['vetted']>}|null=null;
+  // Free screenshot reads per person per day (account:date → count); the free reader is shared, so it has its own limit.
+  const freeReadsToday=new Map<string,number>(),USER_DAILY_FREE_READS=5;
   // GKR's and Edge's check on PLAY player props (once Edge is running): a pick both call PASS or FADE leaves Vetted.
   const checkTipsWithModels=async()=>{
     if(!options.tips||!tipModelReads)return;
@@ -871,15 +873,25 @@ export function buildServer(options: ServerOptions = {}) {
     console.log(`[tips] upload (${attempt})`);
     // The free reader (owner, 2026-10-12): when the AI is missing or fails, the screenshot's text is read on the server and
     // matched to board lines; nothing is saved until the person taps More or Less on each one (a hand-added pick).
+    // Free reads are limited per person per day too (code check, 2026-10-13: they saved nothing, so the upload limit never
+    // counted them, and one person could keep the shared reader busy).
+    const freeReadKey=`${user.accountId}:${now().toISOString().slice(0,10)}`;
     const freeRead=async()=>{
       if(!input.data.image||!tipBoardLines)return null;
+      const used=freeReadsToday.get(freeReadKey)??0;
+      if(!owner&&used>=USER_DAILY_FREE_READS)throw new Error('FREE_READ_LIMIT');
+      if(freeReadsToday.size>5000)freeReadsToday.clear();
+      freeReadsToday.set(freeReadKey,used+1);
       const text=await screenshotText(input.data.image.data);
       const found=picksInText(text,await tipBoardLines());
       console.log(`[tips] free read: ${found.length} picks matched`);
       return found.map((item)=>({...item.line,side:item.side}));
     };
     const fallback=async(code:string,status:number)=>{
-      const lines=await freeRead().catch((error:unknown)=>{console.warn('[tips] free read failed',error instanceof Error?error.message:error);return null;});
+      let limited=false;
+      const lines=await freeRead().catch((error:unknown)=>{if(error instanceof Error&&error.message==='FREE_READ_LIMIT'){limited=true;return null;}
+        console.warn('[tips] free read failed',error instanceof Error?error.message:error);return null;});
+      if(limited)return reply.code(429).send({code:'DAILY_LIMIT',limit:USER_DAILY_FREE_READS});
       if(lines===null)return reply.code(status).send({code});
       return lines.length?reply.code(200).send({free:true,lines}):reply.code(422).send({code:'NO_TIPS_FOUND',free:true});
     };

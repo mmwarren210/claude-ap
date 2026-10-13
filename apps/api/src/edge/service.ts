@@ -49,7 +49,7 @@ export interface EdgeServiceOptions {
   /** How tonight's opponent has treated the line's stat (1.10 = players do 10% better than usual), from PropLine games. */
   readonly opponent?: ((line: PropLine) => { opponent: string; index: number } | null) | null;
   /** MLB: the opposing starter and the first-pitch weather (PropLine's game context), as a projection multiplier. */
-  readonly mlb?: ((line: PropLine) => { factor: number; reasons: string[] } | null) | null;
+  readonly mlb?: ((line: PropLine) => { factor: number; reasons: string[]; replacesOpponent?: boolean } | null) | null;
   readonly ledger?: EdgeLedger | null;
   readonly payouts: Payouts;
   readonly alternateFactors?: Partial<Record<'GOBLIN' | 'DEMON', number>>;
@@ -559,7 +559,7 @@ export class EdgeService {
         const rest = restFactor(line, before && before < Date.parse(line.eventStartTime) ? before : null, this.rest.effects);
         // MLB batters read the opposing starter in place of the team read; pitchers keep the team read.
         const mlb = this.options.mlb?.(line) ?? null;
-        const starter = mlb?.reasons.some((reason) => reason.startsWith('Facing ')) ?? false;
+        const starter = mlb?.replacesOpponent ?? false;
         const opponent = starter ? null : opponentFactor(this.options.opponent?.(line) ?? null);
         if (!env && !rest && !opponent && !mlb) return null;
         return { factor: (env?.factor ?? 1) * (rest?.factor ?? 1) * (opponent?.factor ?? 1) * (mlb?.factor ?? 1),

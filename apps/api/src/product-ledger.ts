@@ -546,7 +546,10 @@ export class ProductLedger {
     // A completed survey earns a free week of membership (owner, 2026-10-12), from the later of now and the pass's end, so no
     // trial time is lost. It shows as a Week plan marked free, and the usual renewal reminders take over when it ends.
     const until=new Date(Math.max(now.getTime(),Date.parse(account.guest.expiresAt))+TRIAL_POLL_DAYS*24*60*60_000).toISOString();
-    account.paid={plan:'WEEK',paidAt:now.toISOString(),until,free:true};
+    // A plan they paid for keeps its name and payment date and just runs a week longer (code check, 2026-10-13).
+    // A plan with no end (lifetime) stays as it is.
+    const paidPlan=account.paid&&!account.paid.free&&(account.paid.until===null||Date.parse(account.paid.until)>now.getTime())?account.paid:null;
+    account.paid=paidPlan?{...paidPlan,until:paidPlan.until===null?null:until}:{plan:'WEEK',paidAt:now.toISOString(),until,free:true};
     account.guest.expiresAt=until;
     // The account's other sign-ins (capped at the pass's old end) last to the end of the free week.
     for(const session of data.sessions)if(session.accountId===account.id&&Date.parse(session.expiresAt)<Date.parse(until))session.expiresAt=until;
@@ -580,7 +583,9 @@ export class ProductLedger {
    */
   async releaseGuests(accountIds:readonly string[]){return this.exclusive(async()=>{
     const data=await this.read(),keys=new Set((data.trialKeys??[]).map((key)=>key.hash)),wanted=new Set(accountIds);
-    const gone=data.accounts.filter((item)=>wanted.has(item.id)&&item.guest&&keys.has(item.guest.pass)&&!item.guest.poll&&!item.fromTrial);
+    // Never an account someone made a login for or paid on (code check, 2026-10-13): those are real people, used or not.
+    const gone=data.accounts.filter((item)=>wanted.has(item.id)&&item.guest&&keys.has(item.guest.pass)&&!item.guest.poll&&!item.fromTrial
+      &&!item.passwordHash&&!item.email&&!item.paid);
     if(!gone.length)return [];
     const ids=new Set(gone.map((item)=>item.id));
     data.accounts=data.accounts.filter((item)=>!ids.has(item.id));
@@ -624,6 +629,27 @@ export class ProductLedger {
       data.accounts.push(account);data.profiles.push({publicId:randomUUID(),actorKey:account.id,displayName:name,avatarUrl:null,
         socialEnabled:true,profileVisible:true,isSuspended:false,createdAt:account.createdAt});
       if(free!==clicked)assigned=free+1;
+    }
+    else if(login){
+      // This device already has a trial (code check, 2026-10-13: the login typed here was dropped). One with no login yet takes
+      // this one, so it works on other devices; one that already has a login is told to sign in with it.
+      const found=account;
+      if(found.passwordHash){
+        // The same login again just reopens the pass; a different one is told to sign in with the first.
+        const same=found.email===normalizedEmail(login.email)&&!!found.passwordSalt
+          &&timingSafeEqual(await passwordKey(login.password,found.passwordSalt),Buffer.from(found.passwordHash,'hex'));
+        if(!same)throw new Error('LOGIN_EXISTS');
+      }else{
+        const name=login.username.trim(),address=normalizedEmail(login.email);
+      if(data.accounts.some((item)=>item.id!==found.id&&item.email===address))throw new Error('EMAIL_TAKEN');
+      if(data.profiles.some((item)=>item.actorKey!==found.id&&normalizedName(item.displayName)===normalizedName(name)))throw new Error('USERNAME_TAKEN');
+      const salt=randomBytes(16).toString('hex');
+      Object.assign(found,{username:name,email:address,passwordSalt:salt,passwordHash:(await passwordKey(login.password,salt)).toString('hex')});
+      const profile=data.profiles.find((item)=>item.actorKey===found.id);
+      if(profile)profile.displayName=name;
+      else data.profiles.push({publicId:randomUUID(),actorKey:found.id,displayName:name,avatarUrl:null,socialEnabled:true,profileVisible:true,
+        isSuspended:false,createdAt:found.createdAt});
+      }
     }
     if(account.status==='SUSPENDED')throw new Error('ACCOUNT_SUSPENDED');
     if(guestExpired(account,now))throw new Error('GUEST_PASS_EXPIRED');

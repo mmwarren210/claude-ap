@@ -183,3 +183,49 @@ test('a completed survey earns a free week of membership, from any device with t
     assert.equal(over.json().code, 'PLAN_ENDED');
   } finally { await app.close(); }
 });
+
+test('code check: a device with an old pass keeps the login typed later; another login is told to sign in', async () => {
+  const now = new Date('2026-10-12T12:00:00Z');
+  const file = join(await mkdtemp(join(tmpdir(), 'trial-attach-')), 'ledger.json');
+  const ledger = new ProductLedger(file, 'CROWN_STRONG', () => now);
+  const [key] = await ledger.issueTrialKeys(2);
+  const login = { username: 'Old_Pass', email: 'old@example.com', password: 'trial-password-1' };
+  const first = await ledger.trialLogin(key, 'phone-oldoldoldoldold1', login);
+  // An old pass made before logins existed: no login on the account.
+  const raw = JSON.parse(await (await import('node:fs/promises')).readFile(file, 'utf8'));
+  for (const account of raw.accounts) { delete account.passwordHash; delete account.passwordSalt; delete account.email; }
+  await (await import('node:fs/promises')).writeFile(file, JSON.stringify(raw));
+  const reopened = new ProductLedger(file, 'CROWN_STRONG', () => now);
+  const again = await reopened.trialLogin(key, 'phone-oldoldoldoldold1', { ...login, username: 'New_Name' });
+  assert.equal(again.profile.publicId, first.profile.publicId, 'the same pass, not a second one');
+  assert.equal((await reopened.login('old@example.com', 'trial-password-1')).profile.publicId, first.profile.publicId);
+  // The same login again just reopens; a different one is told to sign in with the first.
+  assert.equal((await reopened.trialLogin(key, 'phone-oldoldoldoldold1', login)).profile.publicId, first.profile.publicId);
+  await assert.rejects(reopened.trialLogin(key, 'phone-oldoldoldoldold1', { ...login, email: 'x@example.com' }), /LOGIN_EXISTS/);
+});
+
+test('code check: freeing unused keys never removes a trial with a login or a paid plan; the survey keeps a paid plan', async () => {
+  const now = new Date('2026-10-12T12:00:00Z');
+  const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'trial-release-')), 'ledger.json'), 'CROWN_STRONG', () => now);
+  const [key] = await ledger.issueTrialKeys(1);
+  const session = await ledger.trialLogin(key, 'phone-releasereleas1', signup('phone-releasereleas1'));
+  const accountId = (await ledger.authenticate(session.token))!.accountId;
+  assert.deepEqual(await ledger.releaseGuests([accountId]), [], 'a trial with a login is a real person');
+  assert.equal((await ledger.membership()).trials.used, 1);
+});
+
+test('code check: a guest who paid for a month and then answers the survey keeps the month, a week longer', async () => {
+  let now = new Date('2026-10-12T12:00:00Z');
+  const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'trial-paid-')), 'ledger.json'), 'CROWN_STRONG', () => now);
+  const [key] = await ledger.issueTrialKeys(1);
+  const session = await ledger.trialLogin(key, 'phone-paidpaidpaidpa1', signup('phone-paidpaidpaidpa1'));
+  const granted = await ledger.grantPlan(session.profile.publicId, 'MONTH');
+  now = new Date(Date.parse(granted.paid!.until!) - 3600_000);
+  await ledger.answerTrialPoll({ login: signup('phone-paidpaidpaidpa1').email, password: 'trial-password-1' },
+    { recommend: 'YES', liked: ['Edge'], improve: 'More soccer leagues please', plan: 'MONTH', price: '$20' });
+  const plan = (await ledger.login(signup('phone-paidpaidpaidpa1').email, 'trial-password-1'));
+  assert.ok(plan);
+  const sub = await ledger.subscription((await ledger.authenticate(plan.token))!.accountId);
+  assert.equal(sub?.plan, 'MONTH');
+  assert.equal(sub?.free, false);
+});

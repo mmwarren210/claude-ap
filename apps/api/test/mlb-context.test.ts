@@ -37,6 +37,7 @@ test('the opposing starter reads against the league, shrunk, and moves a batter\
   const adjustment = mlbAdjustment(batter, batter.team, game, rates, league)!;
   assert.ok(adjustment.factor > 1.1, 'starter (capped at +10%) and warm weather together');
   assert.ok(adjustment.reasons.some((reason) => reason.startsWith('Facing Away Arm (LHP)')));
+  assert.equal(adjustment.replacesOpponent, true, 'the starter stands in for the team read (a flag, not a reason text)');
   assert.ok(adjustment.reasons.some((reason) => /rain/.test(reason)));
 });
 

@@ -25,7 +25,9 @@ export interface MlbContext {
 export interface PitcherRates { readonly name: string; readonly starts: number; readonly hits: number; readonly strikeouts: number;
   readonly walks: number; readonly earnedRuns: number }
 
-export interface Adjustment { readonly factor: number; readonly reasons: string[] }
+export interface Adjustment { readonly factor: number; readonly reasons: string[];
+  /** The opposing starter's read is in this adjustment, in place of the team opponent read (Edge then leaves that out). */
+  readonly replacesOpponent?: boolean }
 
 const PROPLINE_ID = /propline:(\d+)/;
 export const proplineEventId = (eventId: string) => PROPLINE_ID.exec(eventId)?.[1] ?? null;
@@ -131,12 +133,12 @@ export function weatherFactor(line: Pick<PropLine, 'market'>, game: MlbContext):
 export function mlbAdjustment(line: PropLine, team: string | null, game: MlbContext, rates: ReadonlyMap<string, PitcherRates>,
   league: Omit<PitcherRates, 'name' | 'starts'> | null): Adjustment | null {
   const reasons: string[] = [];
-  let factor = 1;
+  let factor = 1, replacesOpponent = false;
   const matchup = pitcherMatchup(line, team, game, rates, league);
   if (matchup) {
     const move = Math.max(.9, Math.min(1.1, 1 + (matchup.ratio - 1) / 2));
     if (Math.abs(move - 1) >= .01) {
-      factor *= move;
+      factor *= move; replacesOpponent = true;
       reasons.push(`Facing ${matchup.pitcher}${matchup.hand ? ` (${matchup.hand}HP)` : ''}, who has allowed ${Math.round(matchup.ratio * 100)}% of the league's ` +
         `${rateWords[matchup.rate]} per batter over his last ${matchup.starts} starts, so the projection is ×${move.toFixed(2)}.`);
     }
@@ -144,7 +146,7 @@ export function mlbAdjustment(line: PropLine, team: string | null, game: MlbCont
   const weather = weatherFactor(line, game);
   if (weather) { factor *= weather.factor; reasons.push(...weather.reasons); }
   if (game.outdoor && (game.rainChance ?? 0) >= 60) reasons.push(`${Math.round(game.rainChance!)}% chance of rain: a delay or shortened game is possible.`);
-  return reasons.length ? { factor, reasons } : null;
+  return reasons.length ? { factor, reasons, ...(replacesOpponent ? { replacesOpponent } : {}) } : null;
 }
 
 /** Head-to-head from game logs: the player's value for a stat in matching games, against his value in all games. */
@@ -319,7 +321,8 @@ export class MlbGames {
     if (!game) return null;
     const base = mlbAdjustment(line, this.teamOf(line), game, this.rates, this.league), h2h = this.h2h(line);
     if (!h2h || Math.abs(h2h.factor - 1) < .01) return base;
-    return { factor: (base?.factor ?? 1) * h2h.factor, reasons: [...base?.reasons ?? [], h2hReason(h2h, line.market.replace(/_/g, ' '))] };
+    return { factor: (base?.factor ?? 1) * h2h.factor, reasons: [...base?.reasons ?? [], h2hReason(h2h, line.market.replace(/_/g, ' '))],
+      ...(base?.replacesOpponent ? { replacesOpponent: true } : {}) };
   }
 
   status() {

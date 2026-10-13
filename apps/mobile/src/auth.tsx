@@ -24,7 +24,7 @@ function guestDeviceId():string{
 const noSubscription=()=>()=>undefined;
 /** What to fix when a new trial's login can't be used (the form stays open). */
 const trialLoginMessages:Record<string,string>={EMAIL_TAKEN:'That email already has an account or trial. Sign in with it below instead.',
-  USERNAME_TAKEN:'That username is taken. Pick another.',LOGIN_REQUIRED:'Create your login to start your pass.',
+  USERNAME_TAKEN:'That username is taken. Pick another.',LOGIN_REQUIRED:'Create your login to start your pass.',LOGIN_EXISTS:'This device already started a pass with a login. Sign in with it below.',
   INVALID_REGISTRATION:'Use a 3–24 character username (letters, numbers or _), your email, and a password of at least 12 characters.'};
 const guestMessages:Record<string,string>={TRIALS_ALL_USED:'All free trial keys have been claimed. Thanks for your interest in CrownIQ! Watch for the next round.',
   GUEST_PASS_FULL:'This guest link or trial key has already been used.',

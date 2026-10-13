@@ -1387,6 +1387,7 @@ export const es: Readonly<Record<string, string>> = {
   "Enter your email.": "Escribe tu email.",
   "Password: at least 12 characters.": "Contraseña: al menos 12 caracteres.",
   "That email already has an account or trial. Sign in with it below instead.": "Ese email ya tiene una cuenta o prueba. Entra con él abajo.",
+  "This device already started a pass with a login. Sign in with it below.": "Este dispositivo ya empezó un pase con un login. Entra con él abajo.",
   "That username is taken. Pick another.": "Ese usuario ya existe. Elige otro.",
   "Create your login to start your pass.": "Crea tu acceso para empezar tu pase.",
   "Use a 3–24 character username (letters, numbers or _), your email, and a password of at least 12 characters.": "Usa un usuario de 3–24 caracteres (letras, números o _), tu email y una contraseña de al menos 12 caracteres.",

@@ -152,3 +152,13 @@ test('anytime TDs never count a quarterback’s passing touchdowns; soccer, NHL 
   assert.equal(proplineStat('NHL', 'player_hits'), 'hits');
   assert.equal(proplineStat('MLB', 'batter_runs'), 'runs');
 });
+
+test('code check: a tennis log fetched after match totals were added is not re-asked when its games have no scores', async () => {
+  let asked = 0;
+  const client = { get: async () => { asked++; return { games: [
+    { commence_time: '2026-10-06T00:00:00Z', status: 'final', home_team: 'A Player', away_team: 'B Player', stats: { total_games: 13 } }] }; } } as unknown as PropLineClient;
+  const history = new PropLineHistory(client, null, () => 'tennis', {}, () => Date.parse('2026-10-13T12:00:00Z'));
+  const line = { sport: 'TENNIS' as const, market: 'total_games_won', playerName: 'A Player', eventId: 'e', eventStartTime: '2026-10-14T00:00:00Z' };
+  await history.values(line); await history.values(line);
+  assert.equal(asked, 1);
+});

@@ -123,11 +123,32 @@ test('ghost trial accounts give their keys back; a poll answer or a signed-up ac
   const ledger = new ProductLedger(join(folder, 'ledger.json'));
   const [key] = await ledger.issueTrialKeys(2, 2);
   await ledger.trialLogin(key!, 'preview-bot', signup('preview-bot'));
-  const trials = await ledger.trialUsers();
+  let trials = await ledger.trialUsers();
   assert.equal(trials.length, 1);
-  assert.deepEqual(await ledger.releaseGuests([trials[0]!.accountId]), [trials[0]!.username]);
-  assert.equal((await ledger.trialUsers()).length, 0, 'the key is free again');
-  await ledger.trialLogin(key!, 'real-person', signup('real-person'));
-  assert.equal((await ledger.membership()).trials.used, 1);
-  assert.deepEqual(await ledger.releaseGuests(['not-a-guest']), []);
+  // A trial with a login is a real person (code check, 2026-10-13): never released.
+  assert.deepEqual(await ledger.releaseGuests([trials[0]!.accountId]), []);
+  // A ghost from before logins were required (a link preview's pass, no login) gives its key back.
+  const { readFile } = await import('node:fs/promises');
+  const raw = JSON.parse(await readFile(join(folder, 'ledger.json'), 'utf8'));
+  for (const account of raw.accounts) { delete account.passwordHash; delete account.passwordSalt; delete account.email; }
+  await writeFile(join(folder, 'ledger.json'), JSON.stringify(raw));
+  const reopened = new ProductLedger(join(folder, 'ledger.json'));
+  trials = await reopened.trialUsers();
+  assert.deepEqual(await reopened.releaseGuests([trials[0]!.accountId]), [trials[0]!.username]);
+  assert.equal((await reopened.trialUsers()).length, 0, 'the key is free again');
+  await reopened.trialLogin(key!, 'real-person', signup('real-person'));
+  assert.equal((await reopened.membership()).trials.used, 1);
+  assert.deepEqual(await reopened.releaseGuests(['not-a-guest']), []);
+});
+
+test('code check: only players fetched in the last week sit in memory; older ones are read from the store when asked', async () => {
+  const store = new PlayerStore(null);
+  const now = Date.parse('2026-10-13T12:00:00Z');
+  store.put('icehockey_nhl|old player', 'icehockey_nhl', { at: now - 10 * 86_400_000, deep: true, teams: true },
+    [{ at: '2026-10-01T00:00:00.000Z', opponent: null, home: 'A', away: 'B', stats: { goals: 1 } }], now);
+  store.put('icehockey_nhl|new player', 'icehockey_nhl', { at: now - 86_400_000, deep: true, teams: true },
+    [{ at: '2026-10-11T00:00:00.000Z', opponent: null, home: 'A', away: 'B', stats: { goals: 2 } }], now);
+  assert.deepEqual([...store.all(now - 7 * 86_400_000).keys()], ['icehockey_nhl|new player']);
+  assert.equal(store.fetch('icehockey_nhl|old player')?.at, now - 10 * 86_400_000);
+  assert.equal(store.all().size, 2);
 });
