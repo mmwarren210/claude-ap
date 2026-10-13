@@ -59,16 +59,19 @@ export interface Tip extends TipDraft {
    */
   modelCheck?: { edge: TipVerdict | null; gkr: TipVerdict | null; checkedAt: string; rejected: boolean; v?: number;
     /** The models' chance on the tip's side, and the break-even they judged it against. */
-    edgeChance?: number | null; gkrChance?: number | null; breakEven?: number | null };
+    edgeChance?: number | null; gkrChance?: number | null; breakEven?: number | null;
+    /** GKR 2's side and score on the line (owner, 2026-10-13), shown with a Beta label; it doesn't decide approval. v3 checks have it. */
+    gkr2?: { side: 'MORE' | 'LESS'; score: number } | null };
 }
 
 /**
- * Who rates a tip PLAY (owner, 2026-10-11): the AI (market check), GKR, Edge. A pick is approved when any of them says PLAY
+ * Who rates a tip PLAY (owner, 2026-10-11): the AI (market check), GKR+ (the `gkr` check: Edge blended with history and GKR 2's
+ * side, labeled GKR+ since 2026-10-13), Edge. A pick is approved when any of them says PLAY
  * and none calls it a FADE (the AI's FADE, or Edge's FADE at the tip's own price).
  */
 export function approvalOf(tip: Pick<Tip, 'analysis' | 'modelCheck'>): { approved: boolean; approvedBy: string[]; hiddenByModels: boolean } {
   const current = (tip.modelCheck?.v ?? 1) >= 2 ? tip.modelCheck : undefined;
-  const approvedBy = [tip.analysis?.verdict === 'PLAY' ? 'AI' : null, current?.gkr === 'PLAY' ? 'GKR' : null,
+  const approvedBy = [tip.analysis?.verdict === 'PLAY' ? 'AI' : null, current?.gkr === 'PLAY' ? 'GKR+' : null,
     current?.edge === 'PLAY' ? 'Edge' : null].filter((name): name is string => !!name);
   const aiFade = tip.analysis?.verdict === 'FADE', edgeFade = current?.edge === 'FADE';
   const byModels = !!current && (current.gkr === 'PLAY' || current.edge === 'PLAY') && !aiFade;
@@ -308,7 +311,7 @@ export class TipStore {
         live: tip.status === 'PENDING' && started(tip), createdAt: tip.createdAt, gradedAt: tip.gradedAt, chance: tip.analysis!.chance,
         price: tip.analysis!.price, ev: tip.analysis!.ev, event: tip.analysis!.event, start: tip.analysis!.start, reasons: tip.analysis!.reasons, submittedBy: tip.submittedBy ?? null,
         checks: tip.modelCheck ? { edge: tip.modelCheck.edge, gkr: tip.modelCheck.gkr, edgeChance: tip.modelCheck.edgeChance ?? null,
-          gkrChance: tip.modelCheck.gkrChance ?? null, breakEven: tip.modelCheck.breakEven ?? null } : null,
+          gkrChance: tip.modelCheck.gkrChance ?? null, breakEven: tip.modelCheck.breakEven ?? null, gkr2: tip.modelCheck.gkr2 ?? null } : null,
         approvedBy: approvalOf(tip).approvedBy })),
       record: vettedRecord(plays),
       hidden,
@@ -360,11 +363,11 @@ export class TipStore {
    */
   async uncheckedPlays(limit = 60): Promise<Tip[]> {
     return (await this.load()).tips.filter((tip) => !!tip.analysis && tip.status === 'PENDING' &&
-      tip.market === 'PLAYER_PROP' && tip.line !== null && (tip.modelCheck?.v ?? 1) < 2).slice(0, limit).map((tip) => ({ ...tip }));
+      tip.market === 'PLAYER_PROP' && tip.line !== null && (tip.modelCheck?.v ?? 1) < 3).slice(0, limit).map((tip) => ({ ...tip }));
   }
   /** Saves GKR's and Edge's reads; every copy of the same pick gets the same check. */
   setModelChecks(checks: ReadonlyMap<string, { edge: TipVerdict | null; gkr: TipVerdict | null; edgeChance?: number | null;
-    gkrChance?: number | null; breakEven?: number | null }>): Promise<void> {
+    gkrChance?: number | null; breakEven?: number | null; gkr2?: { side: 'MORE' | 'LESS'; score: number } | null }>): Promise<void> {
     return this.exclusive(async () => {
       if (!checks.size) return;
       const data = await this.load(), now = this.clock().toISOString();
@@ -372,7 +375,7 @@ export class TipStore {
       for (const tip of data.tips) { const check = checks.get(tip.id); if (check) byKey.set(tipKey(tip), check); }
       for (const tip of data.tips) {
         const check = byKey.get(tipKey(tip));
-        if (check) tip.modelCheck = { ...check, checkedAt: now, rejected: check.edge === 'FADE', v: 2 };
+        if (check) tip.modelCheck = { ...check, checkedAt: now, rejected: check.edge === 'FADE', v: 3 };
       }
       await this.save();
     });

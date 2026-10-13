@@ -36,6 +36,8 @@ export interface EdgeRouteDeps {
 /** The other two reads beside Edge's on a Streaks or Ladders pick; null when that model has no read on the line. */
 export interface ModeReads {
   readonly gkr: { readonly side: 'MORE' | 'LESS'; readonly score: number } | null;
+  /** GKR 2 (Beta), which also feeds GKR+. */
+  readonly gkr2?: { readonly side: 'MORE' | 'LESS'; readonly score: number } | null;
   readonly gkrPlus: { readonly side: 'MORE' | 'LESS'; readonly probability: number } | null;
 }
 

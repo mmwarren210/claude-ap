@@ -30,6 +30,9 @@ import { Icon } from './ui/Icon';
 import { ReportNudge } from './ReportNudge';
 import { UpdateStatus } from './UpdateStatus';
 import { ModelBanner } from './ui/ModelBanner';
+import { ModelPicker } from './ModelPicker';
+import { boardForModel, cardModel, gkr2Note } from '../gkr2';
+import { useGkr2Reads, useModelChoice } from '../use-gkr2';
 
 export const windows: readonly { value: Window; label: string }[] = [
   { value: 'L5', label: 'L5' }, { value: 'L10', label: 'L10' }, { value: 'L15', label: 'L15' },
@@ -59,7 +62,12 @@ export default function BoardView() {
 }
 
 function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
-  const { status, data, message, freshness, refreshing, nowMs, reload, needsBootstrap, bootstrapPull } = useBoard();
+  const { status, data: gkrData, message, freshness, refreshing, nowMs, reload, needsBootstrap, bootstrapPull } = useBoard();
+  // The model the member chose (owner, 2026-10-13): GKR, GKR 2 (Beta) or both, shared with Top Picks.
+  const [model, setModel] = useModelChoice();
+  const gkr2Reads = useGkr2Reads(model !== 'GKR');
+  const data = useMemo(() => gkrData ? boardForModel(gkrData, model, gkr2Reads) : gkrData, [gkrData, model, gkr2Reads]);
+  const gkrAnalyses = useMemo(() => new Map(gkrData?.analyses.map((item) => [item.lineId, item])), [gkrData]);
   const { filters, setFilters, viewMode, ready } = useDraft();
   // While the Board is on screen, reread the saved board every 5 minutes (free; picks up context refreshes).
   useFocusEffect(useCallback(() => {
@@ -105,6 +113,8 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
     <AppHeader subtitle="Sports Intelligence · Powered by GKR" />
     <ModelBanner title="GKR Model Picks" text="CrownIQ's rating for each line, built from player history, matchups and the books. Tap a pick to see why." />
     <BoardPicker value="prizepicks" onChange={onApp} />
+    {data && freshness !== 'DEMO' && <ModelPicker value={model} onChange={setModel} />}
+    {model !== 'GKR' && !gkr2Reads && data && <Text style={styles.note}>Loading GKR 2’s reads…</Text>}
     {data && <Text style={styles.builderNote}>Every line with where it scores. Open a player to add a pick to your Crown;
       build whole Crowns in the Crown tab.</Text>}
     {data && <TextInput value={query} onChangeText={setQuery} placeholder="Search any player" placeholderTextColor={colors.textFaint}
@@ -149,7 +159,9 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
         booksPick={booksPicks?.get(item.id)} historyRead={historyReads?.get(item.id)} betaLine={betaNote(beta?.get(item.id))}
         more={(counts.get(item.eventId + '|' + item.playerId) ?? 1) - 1}
         photoUrl={data?.playerMedia?.[item.playerId]?.photoUrl} accent={rankAccents[index % rankAccents.length]}
-        window={window} expired={(() => { const analysis = analyses.get(item.id);
+        window={window} model={cardModel(model, gkrAnalyses.get(item.id), gkr2Reads?.get(item.id))}
+        gkr2Line={model === 'BOTH' ? gkr2Note(gkr2Reads?.get(item.id), cardModel(model, gkrAnalyses.get(item.id), gkr2Reads?.get(item.id))) : null}
+        expired={(() => { const analysis = analyses.get(item.id);
           return analysis?.direction !== 'PASS' && evidenceExpired(analysis, nowMs); })()} onPress={() => open(item.id)} />}
       ListEmptyComponent={<Notice title={!ready || status === 'loading' ? 'Loading board' : data && viewMode === 'LITE'
         ? 'No qualified plays yet' : data ? 'No matching lines' : 'Board unavailable'}

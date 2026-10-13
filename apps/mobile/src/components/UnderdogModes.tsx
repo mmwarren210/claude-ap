@@ -10,19 +10,23 @@ import { colors, palette } from '../theme';
 // or stats, today's games, one per player, best 10). Underdog's own Streaks multipliers and Ladder payouts aren't in any feed,
 // so each pick shows the smallest multiplier that makes it worth playing instead of an EV.
 type Mode = 'streaks' | 'ladders';
-type Reads = { gkr: { side: 'MORE' | 'LESS'; score: number } | null; gkrPlus: { side: 'MORE' | 'LESS'; probability: number } | null };
+type Reads = { gkr: { side: 'MORE' | 'LESS'; score: number } | null; gkr2?: { side: 'MORE' | 'LESS'; score: number } | null; gkrPlus: { side: 'MORE' | 'LESS'; probability: number } | null };
 type ModePick = EdgePick & { reads?: Reads };
 const sideWord = (side: 'MORE' | 'LESS') => side === 'MORE' ? 'More' : 'Less';
 
-/** Edge's, GKR's and GKR+'s reads side by side (owner, 2026-10-13), each saying when it agrees or plays the other side. */
+/**
+ * Edge's, GKR's, GKR 2's (β: Beta, still calibrating) and GKR+'s reads side by side (owner, 2026-10-13), each saying when it
+ * agrees or plays the other side. GKR+ blends GKR 2 now.
+ */
 function ReadsRow({ pick }: { pick: ModePick }) {
-  const gkr = pick.reads?.gkr ?? null, plus = pick.reads?.gkrPlus ?? null;
+  const gkr = pick.reads?.gkr ?? null, gkr2 = pick.reads?.gkr2 ?? null, plus = pick.reads?.gkrPlus ?? null;
   const item = (label: string, text: string, agrees: boolean | null) => <View style={styles.read}>
     <Text style={styles.readLabel}>{label}</Text>
     <Text style={[styles.readText, agrees === false && styles.readOff]}>{text}</Text></View>;
   return <View style={styles.reads}>
     {item('Edge', `${sideWord(pick.side)} · ${Math.round(pick.probability * 100)}%`, true)}
     {item('GKR', gkr ? `${sideWord(gkr.side)} · ${Math.round(gkr.score)}` : 'No read', gkr ? gkr.side === pick.side : null)}
+    {item('GKR 2 β', gkr2 ? `${sideWord(gkr2.side)} · ${Math.round(gkr2.score)}` : 'No read', gkr2 ? gkr2.side === pick.side : null)}
     {item('GKR+', plus ? `${sideWord(plus.side)} · ${Math.round(plus.probability * 100)}%` : 'No read', plus ? plus.side === pick.side : null)}
   </View>;
 }

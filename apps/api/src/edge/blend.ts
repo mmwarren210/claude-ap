@@ -13,7 +13,8 @@ import { rankScore } from '@crowniq/edge';
 // Blended in log-odds; the edge is the blended chance less the same break-even Edge uses. Picks Edge holds back (held for
 // review, unbacked book bets, far rungs, promos) stay unranked here too.
 
-export const GKR_PLUS_VERSION = 'gkr-plus-v1';
+/** v2 (owner, 2026-10-13): GKR 2's side and score nudge the blend in place of GKR's. */
+export const GKR_PLUS_VERSION = 'gkr-plus-v2';
 
 export interface GkrSide { readonly direction: 'MORE' | 'LESS'; readonly score: number }
 
@@ -39,7 +40,7 @@ export function blendPick(pick: EdgePick, gkr: GkrSide | null): EdgePick {
   let nudge = 0;
   if (gkr) {
     nudge = (gkr.direction === pick.side ? 1 : -1) * .3 * Math.min(1, Math.max(0, gkr.score) / 100);
-    reasons.push(`GKR ${gkr.direction === pick.side ? 'agrees' : 'plays the other side'} (score ${Math.round(gkr.score)}).`);
+    reasons.push(`GKR 2 ${gkr.direction === pick.side ? 'agrees' : 'plays the other side'} (score ${Math.round(gkr.score)}).`);
   }
   const total = parts.reduce((sum, part) => sum + part.weight, 0);
   const probability = round(sigmoid(parts.reduce((sum, part) => sum + part.logit * part.weight, 0) / total + nudge));

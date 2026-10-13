@@ -24,13 +24,13 @@ test('GKR+: history at the number pulls Edge’s chance toward it, weighted by s
   assert.ok(Math.abs(strong.edge! - (strong.probability - .5425)) < 1e-6);
 });
 
-test('GKR+: GKR nudges toward its side, or away when it plays the other side', () => {
+test('GKR+: GKR 2 (in place of GKR since 2026-10-13) nudges toward its side, or away when it plays the other side', () => {
   const base = blendPick(pick(), null).probability;
   assert.ok(blendPick(pick(), { direction: 'MORE', score: 90 }).probability > base);
   const against = blendPick(pick(), { direction: 'LESS', score: 90 });
   assert.ok(against.probability < base);
   assert.equal(against.rating, 'NONE', 'pushed under break-even, it is no longer ranked');
-  assert.match(against.reasons.join(' '), /GKR plays the other side/);
+  assert.match(against.reasons.join(' '), /GKR 2 plays the other side/);
 });
 
 test('GKR+: picks Edge holds back stay held; book EV and stake follow the blended chance; ranked first by edge', () => {

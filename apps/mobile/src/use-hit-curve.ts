@@ -37,7 +37,7 @@ export function hitBand(curve: HitCurve | null, cushion: number | null | undefin
 
 /** GKR 2's read on one line and both models' graded records (owner-only while it's tested; null when hidden). */
 export type Gkr2Read = {
-  analysis: { direction: 'MORE' | 'LESS' | 'PASS'; score: number | null; scoreBand: string; reasonCode: string | null } | null;
+  analysis: { direction: 'MORE' | 'LESS' | 'PASS'; score: number | null; scoreBand: string; reasonCode: string | null; why?: string | null } | null;
   record: { gkr: Record_; gkr2: Record_ } | null;
 };
 type Record_ = { picks: number; graded: number; wins: number; hitRate: number | null };

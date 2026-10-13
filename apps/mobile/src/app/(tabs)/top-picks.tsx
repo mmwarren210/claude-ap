@@ -39,6 +39,9 @@ import type { FilterValue } from '../../components/FilterBar';
 import { useLeagueStatFilter } from '../../components/LeagueStatFilter';
 import { UpdateStatus } from '../../components/UpdateStatus';
 import { ModelBanner } from '../../components/ui/ModelBanner';
+import { ModelPicker } from '../../components/ModelPicker';
+import { boardForModel, gkr2Note, gkr2Rankings } from '../../gkr2';
+import { useGkr2Reads, useModelChoice } from '../../use-gkr2';
 
 const cardStat = (card: { market: string }) => card.market;
 
@@ -60,9 +63,10 @@ function insight(card: Card, l10: ReturnType<typeof lineStats>, l5: ReturnType<t
     : evidenceDetail(analysis) };
 }
 
-function PickCard({ card, rank, accent, photoUrl, analysis, scout, betaLine = null, onAdd }: { card: Card; rank: number | null;
+function PickCard({ card, rank, accent, photoUrl, analysis, scout, betaLine = null, model = 'GKR', gkr2Line = null, onAdd }: { card: Card; rank: number | null;
   accent: string; photoUrl: string | null | undefined; analysis: Analysis | undefined; scout?: AiRead; betaLine?: string | null;
-  onAdd: () => void }) {
+  /** GKR 2's list shows its score labeled Beta; with both models, GKR 2's read sits under GKR's. */
+  model?: 'GKR' | 'GKR2'; gkr2Line?: string | null; onAdd: () => void }) {
   const { log } = usePlayerGames(card);
   const l5 = lineStats(log, card.threshold, card.direction, 'L5');
   const l10 = lineStats(log, card.threshold, card.direction, 'L10');
@@ -90,7 +94,8 @@ function PickCard({ card, rank, accent, photoUrl, analysis, scout, betaLine = nu
         <Text style={styles.pick} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
           {card.direction} {formatLine(card.threshold)}</Text>
       </View>
-      <ScoreRing score={card.score} band={card.scoreBand} size={68} />
+      <View style={styles.ringBox}><ScoreRing score={card.score} band={card.scoreBand} size={68} {...model === 'GKR2' ? { who: 'GKR 2' } : {}} />
+        {model === 'GKR2' && <Text style={styles.betaTag}>GKR 2 · BETA</Text>}</View>
       <View style={styles.insight}>
         <Icon name={note.icon} size={20} color={colors.mint} />
         <Text style={styles.insightTitle}>{note.title}</Text>
@@ -105,6 +110,7 @@ function PickCard({ card, rank, accent, photoUrl, analysis, scout, betaLine = nu
     ]} /></View>
     <BooksBadge view={books?.get(card.lineId)} side={card.direction} />
     {!!betaLine && <Text style={styles.betaLine}>{betaLine}</Text>}
+    {!!gkr2Line && <Text style={[styles.betaLine, { color: colors.amber }]}>{gkr2Line}</Text>}
     <ScoutVerdict read={scout} gkrDirection={card.direction} />
     </Pressable>
     <PrimaryButton label="Add to Crown" icon="plus" onPress={onAdd} />
@@ -182,13 +188,19 @@ export default function TopPicksScreen() {
   const { pickers, filter: pickedFilter } = useLeagueStatFilter(cards, cardStat);
   const keep = (card: Card) => Date.parse(card.eventStartTime) > nowMs && passes(filter.lineType, card.lineType) &&
     picked(pickedFilter.sports, card.league) && picked(pickedFilter.games, card.eventId) && picked(pickedFilter.stats, card.market);
-  const rankings = (data?.rankings ?? []).filter(keep);
-  const watchlist = (data?.watchlist ?? []).filter(keep);
+  // The model the member chose (owner, 2026-10-13), shared with the Board: GKR's rankings, GKR 2's (Beta), or GKR's with GKR 2's read on each.
+  const [model, setModel] = useModelChoice();
+  const gkr2Reads = useGkr2Reads(model !== 'GKR');
+  const gkr2Cards = useMemo(() => board && gkr2Reads ? gkr2Rankings(board, gkr2Reads, nowMs) : [], [board, gkr2Reads, nowMs]);
+  const modelAnalyses = useMemo(() => new Map((board && model === 'GKR2' ? boardForModel(board, model, gkr2Reads) : board)?.analyses
+    .map((item) => [item.lineId, item])), [board, model, gkr2Reads]);
+  const rankings = (model === 'GKR2' ? gkr2Cards : data?.rankings ?? []).filter(keep);
+  const watchlist = model === 'GKR2' ? [] : (data?.watchlist ?? []).filter(keep);
   const options: Record<keyof ListFilter, string[]> = {
     lineType: ['REGULAR', 'GOBLIN', 'DEMON'],
   };
   const addCard = (card: Card) => {
-    const line = lineById.get(card.lineId), analysis = analysisById.get(card.lineId);
+    const line = lineById.get(card.lineId), analysis = modelAnalyses.get(card.lineId);
     if (!line || !analysis || analysis.direction === 'PASS') { setNotice('That line is no longer on the board.'); return; }
     tips.attempt(line, analysis, analysis.direction, `Added ${card.playerName} to your Crown.`);
   };
@@ -216,6 +228,7 @@ export default function TopPicksScreen() {
               }} />)}
         {!!notice && <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text>}
       </> : <>
+      {!demo && <ModelPicker value={model} onChange={setModel} />}
       <Segmented label="How many top picks" options={sizes} value={size} onChange={setSize} />
       {pickers}
       <ChipRow>
@@ -228,8 +241,9 @@ export default function TopPicksScreen() {
         : rankings.length === 0 ? <Notice title="No top picks right now"
           detail="Nothing on the board scores 80 or higher for these filters. PASS is a valid result." />
           : rankings.slice(0, size).map((card, index) => <PickCard key={card.lineId} card={card} rank={card.rank} scout={scoutReads?.get(card.lineId)}
-            betaLine={betaNote(beta?.get(card.lineId))}
-            accent={rankAccents[index % rankAccents.length]} analysis={analysisById.get(card.lineId)}
+            betaLine={model === 'GKR2' ? null : betaNote(beta?.get(card.lineId))} model={model === 'GKR2' ? 'GKR2' : 'GKR'}
+            gkr2Line={model === 'BOTH' ? gkr2Note(gkr2Reads?.get(card.lineId), 'GKR') : null}
+            accent={rankAccents[index % rankAccents.length]} analysis={modelAnalyses.get(card.lineId)}
             photoUrl={board?.playerMedia?.[card.playerId]?.photoUrl} onAdd={() => addCard(card)} />)}
       {data && rankings.length > size && <Text style={styles.more}>{rankings.length - size} more qualified
         {rankings.length - size === 1 ? ' pick' : ' picks'} below the cut. Raise the Top count to see them.</Text>}
@@ -259,6 +273,8 @@ export default function TopPicksScreen() {
 
 const styles = StyleSheet.create({
   betaLine: { color: colors.gold, fontSize: 12.5, fontWeight: '700', marginTop: 6 },
+  ringBox: { alignItems: 'center', gap: 2 },
+  betaTag: { color: colors.amber, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
   safe: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 16, paddingBottom: 32, gap: 14 },
   note: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },

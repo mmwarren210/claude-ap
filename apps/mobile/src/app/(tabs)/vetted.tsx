@@ -16,7 +16,8 @@ type VettedPick = { id: string; sport: string | null; league: string | null; sel
   line: number | null; side: 'OVER' | 'UNDER' | null; stat: string | null; eventDate: string | null;
   status: 'PENDING' | 'WON' | 'LOST' | 'PUSH' | 'VOID'; createdAt: string; chance: number; price: number | null; ev: number | null;
   event: string | null; start: string | null; reasons?: string[]; live?: boolean; submittedBy?: string | null;
-  checks?: { edge: string | null; gkr: string | null; edgeChance?: number | null; gkrChance?: number | null; breakEven?: number | null } | null;
+  checks?: { edge: string | null; gkr: string | null; edgeChance?: number | null; gkrChance?: number | null; breakEven?: number | null;
+    gkr2?: { side: 'MORE' | 'LESS'; score: number } | null } | null;
   /** Who rated it PLAY: the AI (market check), GKR, Edge. */
   approvedBy?: string[] };
 type VettedRecord = { won: number; lost: number; push: number; units: number; roi: number | null };
@@ -142,7 +143,7 @@ export default function VettedTab() {
             {pick.status === 'PENDING' ? 'HIDDEN' : pick.status}</Text></View>
         <Text style={styles.selection}>{pick.selection}</Text>
         <Text style={styles.market}>{pick.side === 'UNDER' ? 'Under' : 'Over'} {pick.line ?? ''} {pick.stat ?? ''}</Text>
-        <Text style={styles.muted}>AI: {Math.round(pick.chance * 100)}%{pick.price !== null ? ` at ${odds(pick.price)}` : ''}  ·  Edge {pick.checks.edge ?? '—'}  ·  GKR {pick.checks.gkr ?? '—'}</Text>
+        <Text style={styles.muted}>AI: {Math.round(pick.chance * 100)}%{pick.price !== null ? ` at ${odds(pick.price)}` : ''}  ·  Edge {pick.checks.edge ?? '—'}  ·  GKR+ {pick.checks.gkr ?? '—'}</Text>
         {pick.submittedBy && <Text style={styles.faint}>Submitted by {pick.submittedBy}</Text>}
       </View>)}
     </ScrollView>
@@ -203,11 +204,14 @@ const chanceText = (pick: VettedPick) => {
   return `${Math.round(chance * 100)}% to hit${model !== null && pick.checks?.breakEven ? ` (needs ${Math.round(pick.checks.breakEven * 100)}%)` : ''}`;
 };
 
-// GKR's and Edge's own read on the pick (player props on a CrownIQ board).
+// GKR+'s and Edge's own read on the pick (player props on a CrownIQ board), and GKR 2's side and score (Beta, still
+// calibrating: shown, never deciding).
 const agrees = (verdict: string | null) => verdict === 'PLAY' || verdict === 'LEAN';
-const checkLine = (checks: { edge: string | null; gkr: string | null }) =>
-  [checks.gkr ? `GKR ${agrees(checks.gkr) ? '✓' : '✗'}` : null, checks.edge ? `Edge ${agrees(checks.edge) ? '✓' : '✗'}` : null]
+const checkLine = (checks: NonNullable<VettedPick['checks']>, side: string | null) => {
+  const gkr2 = checks.gkr2 ? `GKR 2 (Beta) ${checks.gkr2.side === (side === 'UNDER' ? 'LESS' : 'MORE') ? '✓' : '✗'} ${Math.round(checks.gkr2.score)}` : null;
+  return [checks.gkr ? `GKR+ ${agrees(checks.gkr) ? '✓' : '✗'}` : null, checks.edge ? `Edge ${agrees(checks.edge) ? '✓' : '✗'}` : null, gkr2]
     .filter(Boolean).join('  ·  ') + (agrees(checks.gkr) && agrees(checks.edge) ? '  ·  Confirmed by both' : '');
+};
 
 function PickCard({ pick }: { pick: VettedPick }) {
   const time = when(pick);
@@ -223,7 +227,7 @@ function PickCard({ pick }: { pick: VettedPick }) {
     {pick.approvedBy?.length ? <Text style={styles.approved}>Approved by {pick.approvedBy.join(' + ')}</Text> : null}
     <Text style={styles.numbers}>{chanceText(pick)}{pick.price !== null ? ` · ${odds(pick.price)}` : ''}
       {pick.ev !== null && pick.approvedBy?.includes('AI') ? ` · EV ${pick.ev >= 0 ? '+' : ''}${(pick.ev * 100).toFixed(1)}%` : ''}</Text>
-    {pick.checks && <Text style={styles.checks}>{checkLine(pick.checks)}</Text>}
+    {pick.checks && <Text style={styles.checks}>{checkLine(pick.checks, pick.side)}</Text>}
     {pick.submittedBy && <Text style={styles.faint}>Submitted by {pick.submittedBy}</Text>}
     {pick.reasons?.slice(0, 2).map((reason) => <Text key={reason} style={styles.reason}>• {reason}</Text>)}
   </View>;

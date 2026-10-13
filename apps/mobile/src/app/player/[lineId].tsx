@@ -271,10 +271,11 @@ export default function PlayerResearch() {
         {owner ? <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: '/owner/evidence', params: { line: line.id } })}>
           <Text style={[styles.hitRate, { color: colors.mint }]}>Evidence for this line →</Text></Pressable> : null}
         {gkr2?.analysis && !aiSide ? <View style={styles.gkr2}>
-          <Text style={styles.gkr2Title}>GKR 2 · TESTING</Text>
+          <Text style={[styles.gkr2Title, { color: colors.amber }]}>GKR 2 · BETA · STILL CALIBRATING, USE AT YOUR OWN RISK</Text>
           <Text style={styles.gkr2Read}>{gkr2.analysis.direction === 'PASS' ? 'PASS'
             : `${gkr2.analysis.direction} ${Math.round(gkr2.analysis.score ?? 0)}`}  ·  GKR {analysis?.direction === 'PASS' || !analysis
             ? 'PASS' : `${analysis.direction} ${Math.round(analysis.score ?? 0)}`}</Text>
+          {gkr2.analysis.why ? <Text style={styles.hitRate}>{gkr2.analysis.why}</Text> : null}
           {gkr2.record ? <Text style={styles.hitRate}>Same lines, graded: GKR 2 {gkr2.record.gkr2.wins}-{gkr2.record.gkr2.graded - gkr2.record.gkr2.wins}
             {'  ·  '}GKR {gkr2.record.gkr.wins}-{gkr2.record.gkr.graded - gkr2.record.gkr.wins}</Text> : null}
         </View> : null}

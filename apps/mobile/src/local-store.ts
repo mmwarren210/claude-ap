@@ -75,3 +75,6 @@ export async function loadSession():Promise<{token:string}|null> {
 }
 export async function saveSession(token:string):Promise<void> { if (Platform.OS === 'web') await write('session',{token}); }
 export async function clearSession():Promise<void> { if (Platform.OS === 'web') await write('session',null); }
+/** A small saved choice (which model the Board and Top Picks show), or null. */
+export async function loadPref(key:string):Promise<unknown> { return read(`pref-${key}`); }
+export async function savePref(key:string,value:unknown):Promise<void> { await write(`pref-${key}`,value).catch(()=>undefined); }

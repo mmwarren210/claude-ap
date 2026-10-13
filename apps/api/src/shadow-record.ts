@@ -18,7 +18,7 @@ import { normalizedName } from './context/match.js';
 //   game-script proposal (docs/PROPOSAL_GAME_SCRIPT.md).
 // - gkr1 / gkr2: GKR's play and GKR 2's (owner, 2026-10-11) on the lines GKR 2 could read, graded side by side.
 
-export type ShadowKind = 'books' | 'book:draftkings' | 'book:hardrock' | 'book:pinnacle' | 'book:kalshi' | 'script' | 'gkr' | 'beta' | 'beta-pass' | 'history' | 'trend' | 'book-history' | 'book-value' | 'gkr1' | 'gkr2';
+export type ShadowKind = 'books' | 'book:draftkings' | 'book:hardrock' | 'book:pinnacle' | 'book:kalshi' | 'script' | 'gkr' | 'beta' | 'beta-pass' | 'history' | 'trend' | 'book-history' | 'book-value' | 'gkr1' | 'gkr2' | 'gkr3';
 export type ShadowGrade = 'PENDING' | 'WIN' | 'LOSS' | 'PUSH' | 'DNP' | 'VOID';
 
 /** The game's expected script when the pick was saved. */
@@ -207,7 +207,7 @@ export class ShadowRecord {
       const wins = done.filter((entry) => entry.grade === 'WIN').length;
       return { picks: group.length, graded: done.length, wins, hitRate: done.length ? Math.round(wins / done.length * 1000) / 1000 : null };
     };
-    const kinds: ShadowKind[] = ['books', 'book:draftkings', 'book:hardrock', 'book:pinnacle', 'book:kalshi', 'script', 'gkr', 'beta', 'beta-pass', 'history', 'trend', 'book-history', 'book-value', 'gkr1', 'gkr2'];
+    const kinds: ShadowKind[] = ['books', 'book:draftkings', 'book:hardrock', 'book:pinnacle', 'book:kalshi', 'script', 'gkr', 'beta', 'beta-pass', 'history', 'trend', 'book-history', 'book-value', 'gkr1', 'gkr2', 'gkr3'];
     // Game script: how GKR's side did with the script for it or against it. A team favored by 7+ or a high total
     // favors MORE on volume stats; an underdog by 7+ or a low total favors LESS.
     const scripts = all.filter((entry) => entry.kind === 'script' && entry.script);

@@ -103,6 +103,8 @@ import { gameCounts, marketCounts, registerEdgeRoutes, sportCounts } from './edg
 import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
 import type { Gkr2, OpponentReads } from './gkr2.js';
+import { gkr3Read } from './gkr3.js';
+import { gkr2Reads, whyDifferent } from './gkr2-reads.js';
 import type { MlbGames } from './mlb-context.js';
 import type { PlayerStore } from './player-store.js';
 import type { PlayerProfiles } from './player-profiles.js';
@@ -253,6 +255,30 @@ export function buildServer(options: ServerOptions = {}) {
     options.models ?? new ModelRegistry(), options.clock, options.boardCache,
     options.secondLookResearch ?? null,options.startupResearch ?? null);
   const now=()=>options.clock?.()??new Date();
+  // GKR 2 on the PrizePicks board, read once per board (owner, 2026-10-13: GKR 2 is on the Board, Top Picks, Vetted and GKR+,
+  // and GKR 3 builds on it). Re-read when the board changes or every 15 minutes.
+  let gkr2Cache:{builtAt:string;at:number;analyses:Promise<Analysis[]>}|null=null;
+  const gkr2Board=async():Promise<{board:BoardResponse;analyses:Map<string,Analysis>}|null>=>{
+    const board=service.getBoard();
+    if(!board||!options.gkr2)return null;
+    if(!gkr2Cache||gkr2Cache.builtAt!==board.builtAt||now().getTime()-gkr2Cache.at>15*60_000){
+      const analyses=options.gkr2.analyses(board.board.lines,service.getEvidence());
+      gkr2Cache={builtAt:board.builtAt,at:now().getTime(),analyses};
+      analyses.catch(()=>{if(gkr2Cache?.analyses===analyses)gkr2Cache=null;});
+    }
+    return {board,analyses:new Map((await gkr2Cache.analyses).map((item)=>[item.lineId,item]))};
+  };
+  const marketKey=(sport:string,player:string,market:string,line:number)=>`${normalizedName(player)}|${canonicalMarket(sport,market)}|${line}`;
+  /** GKR 2's side and score for a pick on any app: by line on PrizePicks, else by player, stat and number. */
+  const gkr2Sides=async():Promise<(pick:Pick<EdgePick,'lineId'|'sport'|'playerName'|'market'|'threshold'>&{platform?:string})=>GkrSide|null>=>{
+    const read=await gkr2Board().catch(()=>null);
+    if(!read)return ()=>null;
+    const side=(item:Analysis|undefined)=>item&&item.direction!=='PASS'&&item.score!==null?{direction:item.direction as 'MORE'|'LESS',score:item.score}:null;
+    const byKey=new Map(read.board.board.lines.flatMap((line)=>{const found=side(read.analyses.get(line.id));
+      return found?[[marketKey(line.sport,line.playerName,line.market,line.threshold),found] as const]:[];}));
+    return (pick)=>(pick.platform??'prizepicks')==='prizepicks'&&read.analyses.has(pick.lineId)?side(read.analyses.get(pick.lineId))
+      :byKey.get(marketKey(pick.sport,pick.playerName,pick.market,pick.threshold))??null;
+  };
   const bearer=(request:FastifyRequest)=>request.headers.authorization?.startsWith('Bearer ')
     ? request.headers.authorization.slice(7):'';
   const currentUser=(request:FastifyRequest)=>options.product?.authenticate(bearer(request))??null;
@@ -421,14 +447,19 @@ export function buildServer(options: ServerOptions = {}) {
           if(script)picks.push({kind:'script',line,side:analysis.direction,strength:analysis.score,script});
         }
       }
-      // GKR 2 and GKR on the same lines (only lines GKR 2 could read), so the two records compare fairly.
-      if(options.gkr2){
+      // GKR 2, GKR and GKR 3 on the same lines (only lines GKR 2 could read), so the records compare fairly. GKR 3 (owner,
+      // 2026-10-13, shadow only) is GKR 2's read blended with Edge's chance and the player's history at the number.
+      const read2=await gkr2Board().catch(()=>null);
+      if(read2&&read2.board===board){
         const live=new Map(board.analyses.map((analysis)=>[analysis.lineId,analysis]));
-        for(const analysis of await options.gkr2.analyses(board.board.lines,service.getEvidence())){
+        const edgeLines=edge?(await edge.snapshot('prizepicks').catch(()=>null))?.byLine??null:null;
+        for(const analysis of read2.analyses.values()){
           const line=lines.get(analysis.lineId),gkr=live.get(analysis.lineId);
           if(!line)continue;
           if(analysis.direction!=='PASS'&&analysis.score!==null)picks.push({kind:'gkr2',line,side:analysis.direction,strength:analysis.score});
           if(gkr&&gkr.direction!=='PASS'&&gkr.score!==null)picks.push({kind:'gkr1',line,side:gkr.direction,strength:gkr.score});
+          const gkr3=gkr3Read(analysis,edgeLines?.get(analysis.lineId));
+          if(gkr3)picks.push({kind:'gkr3',line,side:gkr3.side,strength:gkr3.strength});
         }
       }
       // Free History Reads on PrizePicks lines GKR doesn't play, graded in their own record.
@@ -769,7 +800,7 @@ export function buildServer(options: ServerOptions = {}) {
   // Set once Edge is running: each tip's Edge and GKR+ read from the boards.
   // Set once Edge is running: the best play on the same player and stat across every app and book, for tips that aren't PLAYs.
   let tipSuggestions:((tips:readonly (TipDraft&{id:string})[])=>Promise<Map<string,TipSuggestion>>)|null=null;
-  let tipModelReads:((tips:readonly (TipDraft&{id:string})[])=>Promise<Map<string,{edge:TipModelRead|null;gkrPlus:TipModelRead|null}>>)|null=null;
+  let tipModelReads:((tips:readonly (TipDraft&{id:string})[])=>Promise<Map<string,{edge:TipModelRead|null;gkrPlus:TipModelRead|null;gkr2:{side:'MORE'|'LESS';score:number}|null}>>)|null=null;
   // Set once Edge is running: upcoming board lines for a player name, and Edge's and GKR+'s read on one chosen line and side
   // (owner, 2026-10-12: add a pick by hand, no AI).
   type BoardLine={platform:string;lineId:string;playerName:string;sport:string;league:string|null;team:string|null;market:string;
@@ -840,7 +871,9 @@ export function buildServer(options: ServerOptions = {}) {
     const reads=await tipModelReads(open).catch(()=>null);
     if(!reads)return;
     const checks=new Map([...reads].map(([id,read])=>[id,{edge:read.edge?.verdict??null,gkr:read.gkrPlus?.verdict??null,
-      edgeChance:read.edge?.chance??null,gkrChance:read.gkrPlus?.chance??null,breakEven:read.edge?.breakEven??null}]));
+      edgeChance:read.edge?.chance??null,gkrChance:read.gkrPlus?.chance??null,breakEven:read.edge?.breakEven??null,
+      // GKR 2's own side and score (owner, 2026-10-13), shown with a Beta label; it doesn't decide approval.
+      gkr2:read.gkr2??null}]));
     await options.tips.store.setModelChecks(checks);
     vettedCache=null;
   };
@@ -971,19 +1004,30 @@ export function buildServer(options: ServerOptions = {}) {
     if(!await currentUser(request))return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
     return {gkrPlus:await hasGkrPlus(request)};
   });
+  // GKR 2 is out of shadow (owner, 2026-10-13: GKR 3 takes its place there): every signed-in member sees it, labeled Beta.
+  // CROWNIQ_GKR2_PUBLIC=false puts it back to owner-only.
+  const gkr2Visible=async(request:FastifyRequest)=>!!options.gkr2&&(options.gkr2Public!==false?!!await currentUser(request):await isOwner(request));
+  // GKR 2's reads on the PrizePicks board: its side and score on each line it plays (or passes on where GKR plays), and why
+  // it differs from GKR, for the Board's and Top Picks' model choice (GKR, GKR 2, both).
+  app.get('/v1/gkr2/board',async(request,reply)=>{
+    if(!await gkr2Visible(request))return reply.code(404).send({code:'NOT_FOUND'});
+    const read=await gkr2Board().catch(()=>null);
+    if(!read)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    return {builtAt:read.board.builtAt,reads:gkr2Reads(new Map(read.board.analyses.map((item)=>[item.lineId,item])),[...read.analyses.values()])};
+  });
   // GKR 2's read on one line, beside GKR's (owner, 2026-10-11), with both models' graded records on the lines GKR 2 reads.
-  // Owner-only while it's tested, unless CROWNIQ_GKR2_PUBLIC=true.
   app.get('/v1/gkr2/:lineId',async(request,reply)=>{
-    if(!options.gkr2||(!options.gkr2Public&&!await isOwner(request)))return reply.code(404).send({code:'NOT_FOUND'});
+    if(!await gkr2Visible(request))return reply.code(404).send({code:'NOT_FOUND'});
     const {lineId}=request.params as {lineId:string};
     const board=service.getBoard(),line=board?.board.lines.find((item)=>item.id===lineId);
     if(!line)return reply.code(404).send({code:'LINE_NOT_FOUND'});
-    const [analysis]=await options.gkr2.analyses([line],service.getEvidence());
+    const [analysis]=await options.gkr2!.analyses([line],service.getEvidence());
+    const gkr=board?.analyses.find((item)=>item.lineId===lineId);
     const record=options.shadowRecord?await options.shadowRecord.compare(['gkr1','gkr2']):null;
     return {analysis:analysis?{direction:analysis.direction,score:analysis.score,scoreBand:analysis.scoreBand,
       reasonCode:analysis.reasonCode,thresholdCushion:analysis.thresholdCushion??null,
       factors:(analysis.contextBreakdown??[]).filter((item)=>item.measured).map((item)=>({name:item.name,observed:item.observed??null,
-        reference:item.reference??null}))}:null,
+        reference:item.reference??null})),why:whyDifferent(gkr,analysis)}:null,
       record:record?{gkr:record.gkr1!.all,gkr2:record.gkr2!.all}:null};
   });
   // The member's app language, kept on the account so another phone opens in it (owner, 2026-10-12).
@@ -1879,9 +1923,9 @@ export function buildServer(options: ServerOptions = {}) {
       :'This app\'s prices are new to CrownIQ and haven\'t passed its first checks yet. These look +EV, but play them on your own judgment.';
     registerEdgeRoutes(app,{edge,feedNote,heldReason,
       // Streaks and Ladders (owner, 2026-10-13): GKR's and GKR+'s reads beside Edge's on every pick.
-      reads:async(platform,picks)=>{const gkrFor=await gkrSides(platform);
-        return new Map(picks.map((pick)=>{const gkr=gkrFor(pick),blended=blendPick(pick,gkr);
-          return [pick.lineId,{gkr:gkr?{side:gkr.direction,score:gkr.score}:null,
+      reads:async(platform,picks)=>{const gkrFor=await gkrSides(platform),gkr2For=await gkr2Sides();
+        return new Map(picks.map((pick)=>{const gkr=gkrFor(pick),gkr2=gkr2For(pick),blended=blendPick(pick,gkr2);
+          return [pick.lineId,{gkr:gkr?{side:gkr.direction,score:gkr.score}:null,gkr2:gkr2?{side:gkr2.direction,score:gkr2.score}:null,
             gkrPlus:blended.probability>=.5?{side:blended.side,probability:blended.probability}
               // Under 50% GKR+ favors the other side: say so, with that side's chance.
               :{side:blended.side==='MORE'?'LESS' as const:'MORE' as const,probability:Math.round((1-blended.probability)*1e4)/1e4}}] as const;}));},held:(platform)=>edge.sideBiasFlagged(platform)||(heldPlatforms.has(platform)&&!edge.sideBiasCleared(platform)),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
@@ -1890,7 +1934,8 @@ export function buildServer(options: ServerOptions = {}) {
         sharpApi:options.sharpProps?await options.sharpProps.status():null,
         scrapers:options.scraperPuller?await options.scraperPuller.status():null,
         contextFeeds:options.contextFeeds?await options.contextFeeds.status():null})});
-    // GKR+ (owner only): Edge's read blended with history at the number and GKR's side, on every platform; its own ledger.
+    // GKR+ (owner only): Edge's read blended with history at the number and GKR 2's side (owner, 2026-10-13; GKR's before), on every
+    // platform; its own ledger.
     const gkrPlusLedger=options.edge?.gkrPlusLedger??null;
     const gkrPlusWorker=gkrPlusLedger?new EdgeResultsWorker(gkrPlusLedger,options.internalHistory??null,options.edge?.boxScores??null,()=>now(),
       options.playerHistory?(sport,playerName,market)=>options.playerHistory!.values(sport,playerName,market):null,undefined,
@@ -1916,7 +1961,7 @@ export function buildServer(options: ServerOptions = {}) {
     const gkrPlus=async(platform:EdgePlatform)=>{
       const snapshot=await edge.snapshot(platform);
       if(!snapshot)return null;
-      const picks=blendPicks(snapshot.response.picks,await gkrSides(platform));
+      const picks=blendPicks(snapshot.response.picks,await gkr2Sides());
       return {snapshot,picks};
     };
     sportMix=async(platform)=>{
@@ -1943,7 +1988,7 @@ export function buildServer(options: ServerOptions = {}) {
       return out;
     };
     tipModelReads=async(tips)=>{
-      const out=new Map<string,{edge:TipModelRead|null;gkrPlus:TipModelRead|null}>();
+      const out=new Map<string,{edge:TipModelRead|null;gkrPlus:TipModelRead|null;gkr2:{side:'MORE'|'LESS';score:number}|null}>();
       const props=tips.filter((tip)=>tip.market==='PLAYER_PROP'&&tip.line!==null);
       if(!props.length)return out;
       // PrizePicks first (most uploads are PrizePicks slips), then the other apps and books.
@@ -1956,9 +2001,11 @@ export function buildServer(options: ServerOptions = {}) {
         for(const tip of open){
           const pick=matchTip(tip,snapshot.byLine.values());
           if(!pick)continue;
-          sides??=await gkrSides(platform).catch(()=>()=>null);
+          sides??=await gkr2Sides().catch(()=>()=>null);
           const price=(tip as {analysis?:{price:number|null}|null}).analysis?.price??tip.odds??null;
-          out.set(tip.id,{edge:modelRead(tip,pick,platform,price),gkrPlus:modelRead(tip,blendPick(pick,sides(pick)),platform,price)});
+          const gkr2=sides(pick);
+          out.set(tip.id,{edge:modelRead(tip,pick,platform,price),gkrPlus:modelRead(tip,blendPick(pick,gkr2),platform,price),
+            gkr2:gkr2?{side:gkr2.direction,score:gkr2.score}:null});
         }
       }
       return out;
@@ -1989,7 +2036,7 @@ export function buildServer(options: ServerOptions = {}) {
       const snapshot=await edge.snapshot(platform as EdgePlatform).catch(()=>null);
       const pick=snapshot?.byLine.get(lineId);
       if(!pick)return null;
-      const sides=await gkrSides(platform as EdgePlatform).catch(()=>()=>null);
+      const sides=await gkr2Sides().catch(()=>()=>null);
       const tipSide={side:side==='MORE'?'OVER' as const:'UNDER' as const};
       const teams=pick.eventName.split(/\s+(?:@|vs\.?|at)\s+/i);
       const opponent=pick.team&&teams.length===2?teams.find((team)=>normalizedName(team)!==normalizedName(pick.team!))??null:null;
@@ -2018,7 +2065,7 @@ export function buildServer(options: ServerOptions = {}) {
         const nowMs=now().getTime(),live=result.picks.filter((pick)=>Date.parse(pick.eventStartTime)>nowMs+5*60_000);
         // Player search: every line Edge read for the player, blended, plays or not.
         if(query.data.q){
-          const sides=await gkrSides(query.data.platform).catch(()=>()=>null);
+          const sides=await gkr2Sides().catch(()=>()=>null);
           const found=blendPicks(searchPicks(result.snapshot,query.data.q,nowMs,query.data.limit),sides)
             .filter((pick)=>query.data.day!=='today'||easternDay(new Date(pick.eventStartTime))===easternDay(new Date(nowMs)));
           return {...result.snapshot.response,picks:found,slips:[],modelVersion:GKR_PLUS_VERSION};
@@ -2758,6 +2805,9 @@ export function buildServer(options: ServerOptions = {}) {
       const board = service.getBoard();
       return { fetched: board ? await options.mlbGames.refresh(board.board.lines.filter((line) => line.sport === 'MLB')) : 0, ...options.mlbGames.status() };
     });
+    // GKR 3 in shadow beside GKR 2 and GKR on the same lines (owner, 2026-10-13: a week's record, then a report).
+    admin.get('/gkr3', async (_request, reply) => options.shadowRecord ? options.shadowRecord.compare(['gkr1','gkr2','gkr3'])
+      : reply.code(503).send({ code: 'SHADOW_RECORD_UNCONFIGURED' }));
     admin.get('/gkr2', async (_request, reply) => options.shadowRecord ? options.shadowRecord.compare(['gkr1','gkr2'])
       : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
     admin.get('/shadow', async (_request, reply) => options.shadowRecord ? options.shadowRecord.status()

@@ -72,7 +72,7 @@ test('a PLAY that Edge calls FADE at the tip price stays out of Vetted (owner se
     [tips[1].id, { edge: 'FADE' as const, gkr: 'FADE' as const }], [third[0].id, { edge: 'PASS' as const, gkr: 'PASS' as const }]]));
   const vetted = await store.vetted();
   assert.deepEqual(vetted.picks.map((pick) => pick.selection).sort(), ['Austin Reaves', 'LeBron James']);
-  assert.deepEqual(vetted.picks.find((pick) => pick.selection === 'LeBron James')?.checks, { edge: 'PLAY', gkr: 'LEAN', edgeChance: null, gkrChance: null, breakEven: null });
+  assert.deepEqual(vetted.picks.find((pick) => pick.selection === 'LeBron James')?.checks, { edge: 'PLAY', gkr: 'LEAN', edgeChance: null, gkrChance: null, breakEven: null, gkr2: null });
   assert.deepEqual(vetted.hidden.map((pick) => pick.selection), ['Anthony Davis']);
   assert.equal((await store.uncheckedPlays()).length, 0);
 });
@@ -97,7 +97,7 @@ test('GKR or Edge can approve a pick the AI passed on; an AI FADE still keeps it
   await store.setModelChecks(new Map(tips.map((tip) => [tip.id, { edge: 'PLAY' as const, gkr: 'PLAY' as const, edgeChance: .61, gkrChance: .63, breakEven: .577 }])));
   const vetted = await store.vetted();
   assert.deepEqual(vetted.picks.map((pick) => pick.selection), ['Bo Nix']);
-  assert.deepEqual(vetted.picks[0].approvedBy, ['GKR', 'Edge']);
+  assert.deepEqual(vetted.picks[0].approvedBy, ['GKR+', 'Edge']);
 });
 
 test('a better line is suggested from the boards when the posted prop is not worth it', async () => {
@@ -108,4 +108,13 @@ test('a better line is suggested from the boards when the posted prop is not wor
   const best = suggestFor(tip, [pick(7.5, .01), pick(8.5, .07), pick(6.5, null), pick(9.5, .05, { playerName: 'Someone Else' })], 'underdog');
   assert.equal(best?.line, 8.5); assert.equal(best?.platform, 'underdog');
   assert.equal(suggestFor(tip, [pick(7.5, .01)], 'underdog'), null, 'no line clears the bar: a true pass, nothing suggested');
+});
+
+test('Vetted labels the gkr check GKR+ and carries GKR 2\'s side and score (Beta, never deciding)', async () => {
+  const { approvalOf } = await import('../src/tips.js');
+  const tip = { analysis: null, modelCheck: { edge: 'PASS' as const, gkr: 'PLAY' as const, checkedAt: '', rejected: false, v: 3,
+    gkr2: { side: 'LESS' as const, score: 90 } } };
+  assert.deepEqual(approvalOf(tip as never).approvedBy, ['GKR+']);
+  const without = { ...tip, modelCheck: { ...tip.modelCheck, gkr: 'PASS' as const } };
+  assert.equal(approvalOf(without as never).approved, false, 'GKR 2 alone never approves a pick');
 });
