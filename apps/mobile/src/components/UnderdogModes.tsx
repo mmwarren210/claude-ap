@@ -5,6 +5,7 @@ import { Text } from './Text';
 import { EdgePickCard } from './EdgePickCard';
 import { useAuth } from '../auth';
 import { colors, palette } from '../theme';
+import { allAgree } from '../gkr2';
 
 // Underdog Streaks and Ladders (owner, 2026-10-13): the day's surest picks only (a 70%+ chance, backed by sportsbook prices
 // or stats, today's games, one per player, best 10). Underdog's own Streaks multipliers and Ladder payouts aren't in any feed,
@@ -13,6 +14,7 @@ type Mode = 'streaks' | 'ladders';
 type Reads = { gkr: { side: 'MORE' | 'LESS'; score: number } | null; gkr2?: { side: 'MORE' | 'LESS'; score: number } | null; gkrPlus: { side: 'MORE' | 'LESS'; probability: number } | null };
 type ModePick = EdgePick & { reads?: Reads };
 const sideWord = (side: 'MORE' | 'LESS') => side === 'MORE' ? 'More' : 'Less';
+
 
 /**
  * Edge's, GKR's, GKR 2's (β: Beta, still calibrating) and GKR+'s reads side by side (owner, 2026-10-13), each saying when it
@@ -47,15 +49,22 @@ export function UnderdogModes({ inSlip }: { inSlip: ReadonlySet<string> }) {
     }).catch(() => { if (active) setResult({ mode, picks: null }); });
     return () => { active = false; };
   }, [mode, request]);
-  const shown = result && result.mode === mode ? result.picks : undefined;
+  const [agreeOnly, setAgreeOnly] = useState(false);
+  const loaded = result && result.mode === mode ? result.picks : undefined;
+  // "All agree": only picks every model backs on the same side, the shortest and safest list.
+  const shown = loaded && agreeOnly ? loaded.filter(allAgree) : loaded;
   return <View style={styles.box}>
     <View style={styles.chips}>{(['streaks', 'ladders'] as const).map((item) => <Pressable key={item} accessibilityRole="button"
       accessibilityState={{ selected: mode === item }} onPress={() => setMode(mode === item ? null : item)} style={[styles.chip, mode === item && styles.chipOn]}>
       <Text style={[styles.chipText, mode === item && styles.chipTextOn]}>{item === 'streaks' ? 'Streaks' : 'Ladders'}</Text></Pressable>)}</View>
     {mode && <>
       <Text style={styles.about}>{ABOUT[mode]}</Text>
+      <Pressable accessibilityRole="switch" accessibilityState={{ checked: agreeOnly }} onPress={() => setAgreeOnly(!agreeOnly)}
+        style={[styles.chip, styles.agree, agreeOnly && styles.chipOn]}>
+        <Text style={[styles.chipText, agreeOnly && styles.chipTextOn]}>{agreeOnly ? '✓ ' : ''}All agree: Edge, GKR, GKR 2 and GKR+</Text></Pressable>
       {shown === undefined ? <ActivityIndicator color={colors.mint} /> : shown === null ? <Text style={styles.about}>Couldn’t load these right now. Pull down to refresh.</Text>
-        : !shown.length ? <Text style={styles.about}>Nothing backed by sportsbooks reaches 70% today. CrownIQ only lists the surest picks, so some days there are none.</Text>
+        : !shown.length ? <Text style={styles.about}>{agreeOnly && loaded?.length ? 'No pick today has all four models on the same side. Turn off All agree to see the rest.'
+          : 'Nothing backed by sportsbooks reaches 70% today. CrownIQ only lists the surest picks, so some days there are none.'}</Text>
         : shown.map((pick, index) => <View key={pick.lineId + pick.side} style={styles.item}>
           <Text style={styles.worth}>#{index + 1} · {Math.round(pick.probability * 100)}% to hit{mode === 'streaks' ? ` · worth it at ${(1 / pick.probability).toFixed(2)}x or more` : ''}</Text>
           <ReadsRow pick={pick} />
@@ -70,6 +79,7 @@ const styles = StyleSheet.create({
   chips: { flexDirection: 'row', gap: 8 },
   chip: { borderWidth: 1, borderColor: palette.border, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 7 },
   chipOn: { borderColor: colors.mint, backgroundColor: colors.mintWash },
+  agree: { alignSelf: 'flex-start' },
   chipText: { color: palette.muted, fontSize: 13, fontWeight: '800' },
   chipTextOn: { color: colors.mint },
   about: { color: palette.muted, fontSize: 13, lineHeight: 18 },

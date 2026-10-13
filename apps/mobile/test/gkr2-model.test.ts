@@ -32,3 +32,11 @@ test('Both keeps GKR\'s plays and fills lines GKR passes with GKR 2 (labeled), w
 test('GKR 2\'s Top Picks are its 80+ plays, best first', () => {
   assert.deepEqual(gkr2Rankings(board, reads, 0).map((card) => [card.lineId, card.rank, card.direction]), [['b', 1, 'MORE'], ['a', 2, 'LESS']]);
 });
+
+test('All agree keeps only Streaks and Ladders picks every model backs on the same side', async () => {
+  const { allAgree } = await import('../src/gkr2.js');
+  const reads = { gkr: { side: 'MORE', score: 80 }, gkr2: { side: 'MORE', score: 85 }, gkrPlus: { side: 'MORE', probability: .8 } };
+  assert.equal(allAgree({ side: 'MORE', reads } as never), true);
+  assert.equal(allAgree({ side: 'MORE', reads: { ...reads, gkr2: { side: 'LESS', score: 70 } } } as never), false);
+  assert.equal(allAgree({ side: 'MORE', reads: { ...reads, gkr: null } } as never), false);
+});
