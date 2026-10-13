@@ -2946,7 +2946,9 @@ export function buildServer(options: ServerOptions = {}) {
     // Missing evidence by how soon the game starts (owner, 2026-10-13).
     admin.get('/evidence-timing',async(_request,reply)=>{
       const snapshot=service.getBoard();if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
-      return missingEvidenceTiming(snapshot,now());
+      // What the gaps are missing (the same count the owner diagnostics funnel gives), beside when their games start.
+      const missing=boardFunnel(snapshot,service.getStatus().modelRequirements,service.getEvidence()).missingHardEvidence;
+      return {...missingEvidenceTiming(snapshot,now()),missingByKind:missing.byKind};
     });
     admin.get('/board-check',async(_request,reply)=>{
       const snapshot=service.getBoard();if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});

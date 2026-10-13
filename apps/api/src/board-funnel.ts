@@ -98,9 +98,12 @@ export function outcomeCounts(board: BoardResponse): Record<string, number> {
  * lines inside the last few hours would point at a feed that isn't delivering.
  */
 export function missingEvidenceTiming(board: BoardResponse, now: Date): { total: number;
-  bySoon: Record<'under3h' | '3to6h' | '6to24h' | 'over24h', number>; soonBySport: Record<string, number> } {
+  bySoon: Record<'under3h' | '3to6h' | '6to24h' | 'over24h', number>; soonBySport: Record<string, number>;
+  soonByMarket: Record<string, { lines: number; players: number; samples: string[] }> } {
   const analyses = new Map(board.analyses.map((item) => [item.lineId, item]));
-  const out = { total: 0, bySoon: { under3h: 0, '3to6h': 0, '6to24h': 0, over24h: 0 }, soonBySport: {} as Record<string, number> };
+  const out = { total: 0, bySoon: { under3h: 0, '3to6h': 0, '6to24h': 0, over24h: 0 }, soonBySport: {} as Record<string, number>,
+    soonByMarket: {} as Record<string, { lines: number; players: number; samples: string[] }> };
+  const players = new Map<string, Set<string>>();
   for (const line of board.board.lines) {
     const analysis = analyses.get(line.id);
     if (!analysis || analysis.direction !== 'PASS' || !hardEvidenceReasons.has(analysis.reasonCode ?? '')) continue;
@@ -109,7 +112,13 @@ export function missingEvidenceTiming(board: BoardResponse, now: Date): { total:
     out.total++;
     const bucket = hours < 3 ? 'under3h' : hours < 6 ? '3to6h' : hours < 24 ? '6to24h' : 'over24h';
     out.bySoon[bucket]++;
-    if (hours < 6) increment(out.soonBySport, line.sport);
+    if (hours >= 6) continue;
+    increment(out.soonBySport, line.sport);
+    // Which stats the soon gaps sit in, with a few line ids to trace (GET /v1/admin/research/route/:lineId).
+    const key = `${line.sport}:${line.market}`, row = out.soonByMarket[key] ??= { lines: 0, players: 0, samples: [] };
+    row.lines++;
+    if (row.samples.length < 5) row.samples.push(line.id);
+    const seen = players.get(key) ?? new Set<string>(); seen.add(line.playerId); players.set(key, seen); row.players = seen.size;
   }
   return out;
 }

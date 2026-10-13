@@ -11,7 +11,7 @@ import { ModelRegistry } from '@crowniq/engine';
 import { fixtureAnalysis, fixtureAssessment, fixtureLine, now } from '../../../packages/engine/test/fixtures.js';
 import { auditSavedBoard } from '../src/board-audit.js';
 import { BoardCache } from '../src/board-cache.js';
-import { boardFunnel, outcomeCounts } from '../src/board-funnel.js';
+import { boardFunnel, missingEvidenceTiming, outcomeCounts } from '../src/board-funnel.js';
 
 const line = (id: string, overrides: Partial<PropLine> = {}) =>
   fixtureLine({ id, sourceLineId: id, playerId: 'p-' + id, playerName: 'Player ' + id, ...overrides });
@@ -110,4 +110,20 @@ test('npm run audit:board reads the saved board offline and prints the funnel', 
     assert.equal(report.evaluatedAt, new Date(now.getTime() + 60_000).toISOString());
     assert.equal(report.nameNearMisses.count, 1);
   } finally { await rm(folder, { recursive: true, force: true }); }
+});
+
+test('missing evidence timing names the stats the soon gaps sit in, with lines to trace', () => {
+  const soon = new Date(now.getTime() + 3600_000).toISOString(), later = new Date(now.getTime() + 30 * 3600_000).toISOString();
+  const lines = [line('a', { eventStartTime: soon }), line('b', { eventStartTime: soon, playerId: 'p-a' }),
+    line('c', { eventStartTime: later }), line('d', { eventStartTime: soon })];
+  const ids = new Map(lines.map((item) => [item.id, item]));
+  const board = boardResponseSchema.parse({ board: { provider: 'prizepicks', fetchedAt: now.toISOString(), lines },
+    analyses: [pass(ids.get('a')!, 'STALE_OR_MISSING_EVIDENCE'), pass(ids.get('b')!, 'CRITICAL_STATUS_UNCONFIRMED'),
+      pass(ids.get('c')!, 'STALE_OR_MISSING_EVIDENCE'), pass(ids.get('d')!, 'INSUFFICIENT_EDGE')],
+    rankedLineIds: [], builtAt: now.toISOString() });
+  const timing = missingEvidenceTiming(board, now);
+  assert.equal(timing.total, 2 + 1);
+  assert.deepEqual(timing.bySoon, { under3h: 2, '3to6h': 0, '6to24h': 0, over24h: 1 });
+  const key = `${lines[0].sport}:${lines[0].market}`;
+  assert.deepEqual(timing.soonByMarket, { [key]: { lines: 2, players: 1, samples: ['a', 'b'] } });
 });
