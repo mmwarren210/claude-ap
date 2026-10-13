@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Text } from '../../components/Text';
 import { EdgePickCard } from '../../components/EdgePickCard';
+import { HeldPicks } from '../../components/HeldPicks';
 import { EdgeRecord } from '../../components/EdgeRecord';
 import { EdgeSlipPanel, SlipSummary, StakePicker } from '../../components/EdgeSlipPanel';
 import { Notice, Screen } from '../../components/Screen';
@@ -80,8 +81,10 @@ export default function GkrPlusScreen() {
           : 'Each card shows GKR+\u2019s chance; its first lines say how Edge, history and GKR moved it.'}</Text>
         {picks.length ? picks.map((pick, index) => <EdgePickCard key={pick.key + pick.side} pick={pick} accent={rankAccents[index % rankAccents.length]} rank={searching ? undefined : index + 1} inSlip={inSlip.has(pick.lineId)} />)
           : searching ? <Notice title="No lines found" detail={`No upcoming line on ${platformLabel(platform)} for “${query.trim()}”.`} />
+          : data.held?.picks.length ? <Text style={styles.sectionDetail}>CrownIQ is holding this app’s picks right now; they’re listed under Held below.</Text>
           : <Notice title="Nothing qualifies right now" detail="No lines clear the bar after blending. No edge is a valid result." />}
       </View>
+      {!searching && <HeldPicks held={data.held} inSlip={inSlip} />}
       <Pressable accessibilityRole="button" onPress={retry}><Text style={styles.link}>Refresh GKR+</Text></Pressable>
     </>}
   </Screen>;

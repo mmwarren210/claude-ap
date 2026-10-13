@@ -1420,4 +1420,11 @@ export const es: Readonly<Record<string, string>> = {
   "Builds entries from Edge's own +EV reads: one leg per player, as many from one game as the app allows": "Arma jugadas con las lecturas +EV de Edge: un pick por jugador, tantos de un partido como permita la app",
   ", and no player reused across entries, so you can mix and match. Same-game legs are priced with their correlation.": ", y ningún jugador se repite entre jugadas, para que puedas combinarlas. Los picks del mismo partido se calculan con su correlación.",
   "Mix and match: these entries use different players, so you can combine legs from them into a bigger ticket.": "Combínalas: estas jugadas usan jugadores distintos, así que puedes juntar picks de ellas en una jugada más grande.",
+  "CrownIQ is holding this app’s picks right now; they’re listed under Held below.": "CrownIQ está reteniendo los picks de esta app por ahora; aparecen abajo en Retenidos.",
+  "HELD · {0} {1}": "RETENIDOS · {0} {1}",
+  "PICKS": "PICKS",
+  "PICK": "PICK",
+  "Most of this app's +EV picks lean the same way (More or Less), so CrownIQ isn't sure its prices are right. These look +EV, but play them on your own judgment.": "La mayoría de los picks +EV de esta app se inclinan al mismo lado (More o Less), así que CrownIQ no está seguro de que sus precios estén bien. Parecen +EV, pero júgalos bajo tu propio criterio.",
+  "This app's prices are new to CrownIQ and haven't passed its first checks yet. These look +EV, but play them on your own judgment.": "Los precios de esta app son nuevos para CrownIQ y aún no pasan sus primeras revisiones. Parecen +EV, pero júgalos bajo tu propio criterio.",
+  "CrownIQ is holding these picks while it checks this app's prices. They look +EV, but play them on your own judgment.": "CrownIQ retiene estos picks mientras revisa los precios de esta app. Parecen +EV, pero júgalos bajo tu propio criterio.",
 };

@@ -91,3 +91,25 @@ export function outcomeCounts(board: BoardResponse): Record<string, number> {
     increment(counts, analysis.direction === 'PASS' ? analysis.reasonCode ?? 'MODEL_PASS' : `SCORED_${analysis.scoreBand ?? 'UNKNOWN'}`);
   return sorted(counts);
 }
+
+/**
+ * Lines held back for missing evidence, by how soon their game starts (owner, 2026-10-13: "is our evidence truly missing
+ * 8k+ picks?"). Availability and lineups are published close to game time, so far-off games are expected to wait; many
+ * lines inside the last few hours would point at a feed that isn't delivering.
+ */
+export function missingEvidenceTiming(board: BoardResponse, now: Date): { total: number;
+  bySoon: Record<'under3h' | '3to6h' | '6to24h' | 'over24h', number>; soonBySport: Record<string, number> } {
+  const analyses = new Map(board.analyses.map((item) => [item.lineId, item]));
+  const out = { total: 0, bySoon: { under3h: 0, '3to6h': 0, '6to24h': 0, over24h: 0 }, soonBySport: {} as Record<string, number> };
+  for (const line of board.board.lines) {
+    const analysis = analyses.get(line.id);
+    if (!analysis || analysis.direction !== 'PASS' || !hardEvidenceReasons.has(analysis.reasonCode ?? '')) continue;
+    const hours = (Date.parse(line.eventStartTime) - now.getTime()) / 3600_000;
+    if (hours < 0) continue;
+    out.total++;
+    const bucket = hours < 3 ? 'under3h' : hours < 6 ? '3to6h' : hours < 24 ? '6to24h' : 'over24h';
+    out.bySoon[bucket]++;
+    if (hours < 6) increment(out.soonBySport, line.sport);
+  }
+  return out;
+}

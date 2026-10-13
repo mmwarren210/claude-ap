@@ -4,6 +4,7 @@ import { Text } from '../../components/Text';
 import { EdgeBoardView } from '../../components/EdgeBoardView';
 import { EdgeGenView } from '../../components/EdgeGenView';
 import { EdgePickCard } from '../../components/EdgePickCard';
+import { HeldPicks } from '../../components/HeldPicks';
 import { EdgeSlipPanel, SlipSummary, StakePicker } from '../../components/EdgeSlipPanel';
 import { Notice, Screen } from '../../components/Screen';
 import { ModelBanner } from '../../components/ui/ModelBanner';
@@ -112,8 +113,10 @@ export default function EdgeScreen() {
         {picks.length ? picks.map((pick, index) => <EdgePickCard key={pick.key + pick.side} pick={pick} accent={rankAccents[index % rankAccents.length]}
           rank={view === 'edges' && !searching ? index + 1 : undefined} inSlip={inSlip.has(pick.lineId)} />)
           : searching ? <Notice title="No lines found" detail={`No upcoming line on ${platformLabel(platform)} for “${query.trim()}”.`} />
+          : data.held?.picks.length ? <Text style={styles.sectionDetail}>CrownIQ is holding this app’s picks right now; they’re listed under Held below.</Text>
           : <Notice title="Nothing qualifies right now" detail="No lines clear the bar on the saved board. No edge is a valid result." />}
       </View>
+      {!searching && <HeldPicks held={data.held} inSlip={inSlip} />}
       <Pressable accessibilityRole="button" onPress={retry}><Text style={styles.link}>Refresh Edge</Text></Pressable>
     </>}
     </>}

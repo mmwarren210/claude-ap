@@ -437,6 +437,8 @@ export const edgeBoardResponseSchema = z.object({
     brier: z.number().nullable(), hitRate: z.number().nullable() }),
   picks: z.array(edgePickSchema),
   slips: z.array(edgeSlipSchema),
+  /** A held platform's +EV picks, kept out of Top Picks and entries, with why (owner, 2026-10-13). */
+  held: z.object({ reason: z.string(), picks: z.array(edgePickSchema) }).optional(),
   /** Why a sportsbook's tab is empty when its feed is down at the provider ("book unavailable"). */
   feedNote: z.string().optional(),
   /** Every sport with a rated upcoming pick on this platform and how many (the sport chips), whatever the list was cut to. */

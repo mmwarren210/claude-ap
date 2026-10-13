@@ -41,7 +41,7 @@ import { ResearchBuild } from './research-build.js';
 import { ProductLedger, resultFactSchema, TRIAL_PLANS } from './product-ledger.js';
 import type { GuestPass } from './product-ledger.js';
 import type { BoardCache } from './board-cache.js';
-import { boardFunnel, outcomeCounts } from './board-funnel.js';
+import { boardFunnel, missingEvidenceTiming, outcomeCounts } from './board-funnel.js';
 import { liteBoard, windowBoard } from './board-lite.js';
 import { ContextRefreshScheduler } from './context-refresh.js';
 import { appBoard, appCoverage, appScores, asBoard, otherApps, portLegs } from './app-boards.js';
@@ -1861,7 +1861,11 @@ export function buildServer(options: ServerOptions = {}) {
       const status=await options.sharpProps.status();
       return bookFeedNote(status,platform,({draftkings:'DraftKings',hardrock:'Hard Rock',pinnacle:'Pinnacle',kalshi:'Kalshi'} as const)[platform]);
     };
-    registerEdgeRoutes(app,{edge,feedNote,held:(platform)=>edge.sideBiasFlagged(platform)||(heldPlatforms.has(platform)&&!edge.sideBiasCleared(platform)),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
+    // Why a platform is held, for its Held picks (owner, 2026-10-13).
+    const heldReason=(platform:string)=>edge.sideBiasFlagged(platform)
+      ?'Most of this app\'s +EV picks lean the same way (More or Less), so CrownIQ isn\'t sure its prices are right. These look +EV, but play them on your own judgment.'
+      :'This app\'s prices are new to CrownIQ and haven\'t passed its first checks yet. These look +EV, but play them on your own judgment.';
+    registerEdgeRoutes(app,{edge,feedNote,heldReason,held:(platform)=>edge.sideBiasFlagged(platform)||(heldPlatforms.has(platform)&&!edge.sideBiasCleared(platform)),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
       internalHistory:options.internalHistory??null,isOwner:(request)=>isOwner(request),now,
       health:async()=>({board:{fetchedAt:service.getBoard()?.board.fetchedAt??null},
         sharpApi:options.sharpProps?await options.sharpProps.status():null,
@@ -1991,8 +1995,7 @@ export function buildServer(options: ServerOptions = {}) {
         const note=await feedNote(query.data.platform);
         if(note)return {...result.snapshot.response,picks:[],slips:[],feedNote:note,modelVersion:GKR_PLUS_VERSION};
         // A platform Edge holds (side-bias alarm, or a new feed not yet cleared) is held here too.
-        if(edge.sideBiasFlagged(query.data.platform)||(heldPlatforms.has(query.data.platform)&&!edge.sideBiasCleared(query.data.platform)))
-          return {...result.snapshot.response,picks:[],slips:[],counts:{...result.snapshot.response.counts,positiveEdge:0},modelVersion:GKR_PLUS_VERSION};
+        const isHeld=edge.sideBiasFlagged(query.data.platform)||(heldPlatforms.has(query.data.platform)&&!edge.sideBiasCleared(query.data.platform));
         const nowMs=now().getTime(),live=result.picks.filter((pick)=>Date.parse(pick.eventStartTime)>nowMs+5*60_000);
         // Player search: every line Edge read for the player, blended, plays or not.
         if(query.data.q){
@@ -2008,6 +2011,9 @@ export function buildServer(options: ServerOptions = {}) {
         // Sports and stats are multi-select (comma-separated lists).
         const chosen=query.data.sport??query.data.slipSport,
           inSport=ranked.filter((pick)=>inChoice(chosen,pick.sport)&&inChoice(query.data.market,pick.market)&&inChoice(query.data.event,pick.eventId));
+        // Held picks (owner, 2026-10-13): out of Top Picks and entries, listed in their own Held section with the reason.
+        if(isHeld)return {...result.snapshot.response,picks:[],slips:[],counts:{...result.snapshot.response.counts,positiveEdge:0},modelVersion:GKR_PLUS_VERSION,
+          held:{reason:heldReason(query.data.platform),picks:(query.data.sport||query.data.market||query.data.event?inSport:ranked).slice(0,query.data.limit)}};
         return {...result.snapshot.response,picks:(query.data.sport||query.data.market||query.data.event?inSport:ranked).slice(0,query.data.limit),
           sports:sportCounts(ranked),markets:marketCounts(ranked.filter((pick)=>inChoice(chosen,pick.sport)&&inChoice(query.data.event,pick.eventId))),
           games:gameCounts(ranked.filter((pick)=>inChoice(chosen,pick.sport))),
@@ -2936,6 +2942,11 @@ export function buildServer(options: ServerOptions = {}) {
       const platform=z.object({platform:z.enum(EDGE_PLATFORMS as [EdgePlatform,...EdgePlatform[]]).default('prizepicks')}).safeParse(request.query);
       if(!platform.success||!sportMix)return reply.code(400).send({code:'INVALID_PLATFORM'});
       return await sportMix(platform.data.platform)??reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+    });
+    // Missing evidence by how soon the game starts (owner, 2026-10-13).
+    admin.get('/evidence-timing',async(_request,reply)=>{
+      const snapshot=service.getBoard();if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
+      return missingEvidenceTiming(snapshot,now());
     });
     admin.get('/board-check',async(_request,reply)=>{
       const snapshot=service.getBoard();if(!snapshot)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});

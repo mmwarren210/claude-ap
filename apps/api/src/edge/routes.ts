@@ -25,6 +25,8 @@ export interface EdgeRouteDeps {
   readonly health?: () => Promise<Record<string, unknown>>;
   /** Platforms whose ranked picks and entries are held (a new feed not yet cleared by the side-bias check). */
   readonly held?: (platform: string) => boolean;
+  /** Why a held platform is held, in plain words (shown above its Held picks). */
+  readonly heldReason?: (platform: string) => string;
   /** A note when a sportsbook's feed is down at the provider (its tab is empty for that reason). */
   readonly feedNote?: (platform: string) => Promise<string | null>;
 }
@@ -94,6 +96,9 @@ const marketChoiceSchema = z.string().trim().min(1).max(2000).optional();
 /** Games (event ids), several at once. */
 const eventChoiceSchema = z.string().trim().min(1).max(4000).optional();
 
+/** The plain-words reason shown above a held platform's picks when no specific one is given. */
+export const HELD_REASON = 'CrownIQ is holding these picks while it checks this app\'s prices. They look +EV, but play them on your own judgment.';
+
 export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): void {
   const { edge, now } = deps;
   const held = (platform: string) => (deps.held ?? (() => false))(platform);
@@ -121,9 +126,11 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
       ...(query.data.minProbability !== undefined ? { minProbability: query.data.minProbability } : {}) };
     // A platform on hold (a new feed not yet cleared by the side-bias check, 9b) shows no ranked picks or entries; its
     // Board still lists every line with Edge's read.
-    if (held(query.data.platform) && query.data.view !== 'all') return { ...snapshot.response, picks: [], slips: [] };
     const today = query.data.day === 'today' ? easternDay(new Date(nowMs)) : null;
     const onDay = (pick: { eventStartTime: string }) => !today || easternDay(new Date(pick.eventStartTime)) === today;
+    // Held picks (owner, 2026-10-13): kept out of Top Picks and Gen, but listed in their own Held section with the reason.
+    if (held(query.data.platform) && query.data.view !== 'all') return { ...snapshot.response, picks: [], slips: [],
+      held: { reason: deps.heldReason?.(query.data.platform) ?? HELD_REASON, picks: viewPicks(snapshot, 'edges', { ...filters, limit: 5000 }).filter(onDay).slice(0, query.data.limit) } };
     // Today only covers the whole page: the top picks are taken from today's games, not cut first and filtered after.
     if (query.data.q) return { ...snapshot.response, picks: searchPicks(snapshot, query.data.q, nowMs, query.data.limit).filter(onDay), slips: [] };
     // The sport chips: every sport with a rated upcoming pick (today's, with Today only), counted before the list is cut.
