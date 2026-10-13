@@ -11,8 +11,8 @@ import { colors, palette } from '../theme';
 // so each pick shows the smallest multiplier that makes it worth playing instead of an EV.
 type Mode = 'streaks' | 'ladders';
 const ABOUT: Record<Mode, string> = {
-  streaks: 'Streaks: one pick at a time, and every pick has to hit. These are today’s surest picks (70%+ chance). Each shows the smallest Streaks multiplier that makes it worth it; take it when the app pays more.',
-  ladders: 'Ladders: More-only “X+” picks for your squad. These are today’s surest More picks (70%+ chance) to build from. Ladder payouts aren’t in CrownIQ’s data, so check them in the app.',
+  streaks: 'Streaks: one pick at a time, and every pick has to hit. These are today’s surest picks (70%+ chance, backed by sportsbook prices). Each shows the smallest Streaks multiplier that makes it worth it; take it when the app pays more.',
+  ladders: 'Ladders: More-only “X+” picks for your squad. These are today’s surest More picks (70%+ chance, backed by sportsbook prices) to build from. Ladder payouts aren’t in CrownIQ’s data, so check them in the app.',
 };
 
 export function UnderdogModes({ inSlip }: { inSlip: ReadonlySet<string> }) {
@@ -35,7 +35,7 @@ export function UnderdogModes({ inSlip }: { inSlip: ReadonlySet<string> }) {
     {mode && <>
       <Text style={styles.about}>{ABOUT[mode]}</Text>
       {shown === undefined ? <ActivityIndicator color={colors.mint} /> : shown === null ? <Text style={styles.about}>Couldn’t load these right now. Pull down to refresh.</Text>
-        : !shown.length ? <Text style={styles.about}>Nothing reaches 70% today. CrownIQ only lists the surest picks, so some days there are none.</Text>
+        : !shown.length ? <Text style={styles.about}>Nothing backed by sportsbooks reaches 70% today. CrownIQ only lists the surest picks, so some days there are none.</Text>
         : shown.map((pick, index) => <View key={pick.lineId + pick.side} style={styles.item}>
           <Text style={styles.worth}>#{index + 1} · {Math.round(pick.probability * 100)}% to hit{mode === 'streaks' ? ` · worth it at ${(1 / pick.probability).toFixed(2)}x or more` : ''}</Text>
           <EdgePickCard pick={pick} accent={colors.mint} inSlip={inSlip.has(pick.lineId)} />

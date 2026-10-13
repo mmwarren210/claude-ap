@@ -98,6 +98,15 @@ const eventChoiceSchema = z.string().trim().min(1).max(4000).optional();
 
 /** The surest picks need at least this chance to hit (owner, 2026-10-13: 70%). */
 export const MODE_MIN_CHANCE = 0.7;
+/**
+ * Only picks a sportsbook backs (owner, 2026-10-13: the stats model alone listed 99% Power Play Points Lesses and a Shai
+ * More 25.5 against Edge's own 38.5): a sportsbook price behind it, a real edge, a chance under 97% (higher is the model
+ * running out of range), and the app's number within 20% of Edge's line (further off is a different line, not a gift).
+ */
+export function modeTrusted(pick: EdgePick): boolean {
+  if (!pick.sources.market || pick.edge === null || pick.probability > 0.97) return false;
+  return Math.abs(pick.threshold - pick.fairLine) <= Math.max(1, 0.2 * Math.abs(pick.fairLine));
+}
 /** Streaks: the day's surest picks either side. Ladders: the same, More only. One per player, best 10. */
 export function modePicks(picks: Iterable<EdgePick>, mode: 'streaks' | 'ladders', nowMs: number, limit = 10): EdgePick[] {
   const today = easternDay(new Date(nowMs)), best = new Map<string, EdgePick>();
@@ -105,6 +114,7 @@ export function modePicks(picks: Iterable<EdgePick>, mode: 'streaks' | 'ladders'
     const start = Date.parse(pick.eventStartTime);
     if (start <= nowMs || easternDay(new Date(start)) !== today || pick.lineType !== 'REGULAR' || pick.tier === 'LADDER') continue;
     if (pick.probability < MODE_MIN_CHANCE || (mode === 'ladders' && pick.side !== 'MORE')) continue;
+    if (!modeTrusted(pick)) continue;
     const current = best.get(pick.playerId);
     if (!current || pick.probability > current.probability) best.set(pick.playerId, pick);
   }
