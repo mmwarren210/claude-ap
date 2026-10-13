@@ -1870,7 +1870,9 @@ export function buildServer(options: ServerOptions = {}) {
       reads:async(platform,picks)=>{const gkrFor=await gkrSides(platform);
         return new Map(picks.map((pick)=>{const gkr=gkrFor(pick),blended=blendPick(pick,gkr);
           return [pick.lineId,{gkr:gkr?{side:gkr.direction,score:gkr.score}:null,
-            gkrPlus:{side:blended.side,probability:blended.probability}}] as const;}));},held:(platform)=>edge.sideBiasFlagged(platform)||(heldPlatforms.has(platform)&&!edge.sideBiasCleared(platform)),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
+            gkrPlus:blended.probability>=.5?{side:blended.side,probability:blended.probability}
+              // Under 50% GKR+ favors the other side: say so, with that side's chance.
+              :{side:blended.side==='MORE'?'LESS' as const:'MORE' as const,probability:Math.round((1-blended.probability)*1e4)/1e4}}] as const;}));},held:(platform)=>edge.sideBiasFlagged(platform)||(heldPlatforms.has(platform)&&!edge.sideBiasCleared(platform)),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
       internalHistory:options.internalHistory??null,isOwner:(request)=>isOwner(request),now,
       health:async()=>({board:{fetchedAt:service.getBoard()?.board.fetchedAt??null},
         sharpApi:options.sharpProps?await options.sharpProps.status():null,
