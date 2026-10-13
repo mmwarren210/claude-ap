@@ -321,6 +321,8 @@ export class EdgeLedger {
         // STALE flags are measured as their own tier (spec §3 acceptance, §9).
         byTier: groupBy((pick) => pick.stale ? 'STALE' : pick.tier), byRating: groupBy((pick) => pick.rating),
         bySport: groupBy((pick) => pick.sport),
+        // Each Edge version's own record (owner, 2026-10-13: 1.2 is compared with 1.1).
+        byVersion: groupBy((pick) => pick.modelVersion ?? 'unknown'),
         gradingCoverage: gradingCoverage(picks, this.clock().getTime()),
         closingLine: closingLineReport(picks),
         recent: picks.filter((pick) => pick.outcome !== 'PENDING')

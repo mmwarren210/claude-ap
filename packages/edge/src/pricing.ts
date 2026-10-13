@@ -12,8 +12,13 @@ import type { EntryDefinition } from './payouts.js';
 import { projectFromRows, projectFromValues } from './projection.js';
 import type { StatProjection } from './projection.js';
 
-/** 1.1 (2026-10-11): the stats projection also moves with tonight's opponent, and for MLB the opposing starter and weather. */
-export const EDGE_MODEL_VERSION = 'EDGE-1.1';
+/**
+ * 1.1 (2026-10-11): the stats projection also moves with tonight's opponent, and for MLB the opposing starter and weather.
+ * 1.2 (2026-10-13, owner chose to rename rather than turn anything off): MLB head-to-head against tonight's starter or team, and
+ * Dabble prices outside −250 to +300 count only when a sportsbook backs them. Picks from here on are tracked as 1.2 so the
+ * record compares the two.
+ */
+export const EDGE_MODEL_VERSION = 'EDGE-1.2';
 
 export interface HistoryLookup {
   (player: { sport: string; playerId: string; playerName: string }): readonly StatRow[] | undefined;

@@ -85,6 +85,7 @@ test('Edge results worker grades tennis and esports picks from free history', as
   const report = await early.report();
   assert.equal(report.recent[0]!.outcome, 'WIN');
   assert.equal(report.recent[0]!.resultSource, 'ESPN tennis scoreboards');
+  assert.deepEqual(Object.keys(report.byVersion), [report.recent[0]!.modelVersion], 'each Edge version keeps its own record');
 });
 
 test('esports maps 1+2 history: per-map rows become series totals; leagues under other labels map to their sport', async () => {
