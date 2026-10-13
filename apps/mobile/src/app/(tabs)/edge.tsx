@@ -5,6 +5,7 @@ import { EdgeBoardView } from '../../components/EdgeBoardView';
 import { EdgeGenView } from '../../components/EdgeGenView';
 import { EdgePickCard } from '../../components/EdgePickCard';
 import { HeldPicks } from '../../components/HeldPicks';
+import { UnderdogModes } from '../../components/UnderdogModes';
 import { EdgeSlipPanel, SlipSummary, StakePicker } from '../../components/EdgeSlipPanel';
 import { Notice, Screen } from '../../components/Screen';
 import { ModelBanner } from '../../components/ui/ModelBanner';
@@ -72,6 +73,7 @@ export default function EdgeScreen() {
     {platform === 'prizepicks' && <View style={styles.chips}>{views.map((item) => <Pressable key={item.key} accessibilityRole="button"
       onPress={() => setView(item.key)} style={[styles.chip, view === item.key && styles.chipOn]}>
       <Text style={[styles.chipText, view === item.key && styles.chipTextOn]}>{item.label}</Text></Pressable>)}</View>}
+    {platform === 'underdog' && <UnderdogModes inSlip={inSlip} />}
     <PlayerSearch onSearch={setQuery} />
     {!data ? <>
       <Notice title={status === 'loading' ? 'Pricing the board' : 'Edge pending'}

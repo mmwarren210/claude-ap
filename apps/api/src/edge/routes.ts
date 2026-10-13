@@ -96,6 +96,21 @@ const marketChoiceSchema = z.string().trim().min(1).max(2000).optional();
 /** Games (event ids), several at once. */
 const eventChoiceSchema = z.string().trim().min(1).max(4000).optional();
 
+/** The surest picks need at least this chance to hit (owner, 2026-10-13: 70%). */
+export const MODE_MIN_CHANCE = 0.7;
+/** Streaks: the day's surest picks either side. Ladders: the same, More only. One per player, best 10. */
+export function modePicks(picks: Iterable<EdgePick>, mode: 'streaks' | 'ladders', nowMs: number, limit = 10): EdgePick[] {
+  const today = easternDay(new Date(nowMs)), best = new Map<string, EdgePick>();
+  for (const pick of picks) {
+    const start = Date.parse(pick.eventStartTime);
+    if (start <= nowMs || easternDay(new Date(start)) !== today || pick.lineType !== 'REGULAR' || pick.tier === 'LADDER') continue;
+    if (pick.probability < MODE_MIN_CHANCE || (mode === 'ladders' && pick.side !== 'MORE')) continue;
+    const current = best.get(pick.playerId);
+    if (!current || pick.probability > current.probability) best.set(pick.playerId, pick);
+  }
+  return [...best.values()].sort((a, b) => b.probability - a.probability).slice(0, limit);
+}
+
 /** The plain-words reason shown above a held platform's picks when no specific one is given. */
 export const HELD_REASON = 'CrownIQ is holding these picks while it checks this app\'s prices. They look +EV, but play them on your own judgment.';
 
@@ -147,6 +162,18 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
         snapshot.response.entries, { minEvents: snapshot.minEvents })
       : snapshot.response.slips.filter(live);
     return { ...snapshot.response, picks, slips, sports, markets, games };
+  });
+
+  // Underdog Streaks and Ladders (owner, 2026-10-13): only the day's surest picks. A streak needs every pick to hit, so the
+  // chance to hit is what counts; Ladders are More-only "X+" picks. Each pick: today's game (Eastern), not started, a regular
+  // line, backed by sportsbook prices or the player's stats (not a ladder read alone), a 70%+ chance, one per player, best 10.
+  // Underdog's Streaks multipliers and Ladder payouts aren't in any feed CrownIQ reads, so no EV is claimed.
+  app.get('/v1/edge/modes', async (request, reply) => {
+    const query = z.object({ platform: platformSchema, mode: z.enum(['streaks', 'ladders']) }).strict().safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ code: 'INVALID_QUERY' });
+    const snapshot = await edge.snapshot(query.data.platform);
+    if (!snapshot) return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
+    return { mode: query.data.mode, minChance: MODE_MIN_CHANCE, picks: modePicks(snapshot.byLine.values(), query.data.mode, now().getTime()) };
   });
 
   app.get('/v1/edge/board', async (request, reply) => {

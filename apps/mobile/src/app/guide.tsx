@@ -49,6 +49,7 @@ const topics: readonly Topic[] = [
       'DraftKings, Hard Rock, Pinnacle and Kalshi bets show a suggested stake (a small share of your bankroll, max 2%).',
       'Kalshi picks already count Kalshi’s trading fee. Parlays: DraftKings up to 8 legs, Hard Rock and Pinnacle 21, Kalshi 50.',
       'A new app’s picks stay out of Top Picks and Gen for its first few updates while CrownIQ checks them.',
+      'Underdog Streaks and Ladders: on Edge, pick Underdog and tap Streaks or Ladders for today’s surest picks (70%+ chance, backed by sportsbook prices or stats). Streaks show the smallest multiplier worth taking.',
       'Held: when most of an app’s +EV picks lean the same way, or its prices are new, CrownIQ keeps them out of Top Picks and Gen and lists them under Held, with the reason. Play them on your own judgment.'] },
   { key: 'results', icon: 'chart-bar', title: 'Results', when: 'See what is hitting', open: '/(tabs)/results', openLabel: 'Open Results',
     points: ['Switch between GKR Picks, Your Picks and Edge Picks.', 'Pick 7 days, 30 days or all time.', 'Your own calls are graded too, kept apart from GKR’s record.',
