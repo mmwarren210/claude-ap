@@ -29,6 +29,14 @@ export interface EdgeRouteDeps {
   readonly heldReason?: (platform: string) => string;
   /** A note when a sportsbook's feed is down at the provider (its tab is empty for that reason). */
   readonly feedNote?: (platform: string) => Promise<string | null>;
+  /** GKR's side and score, and GKR+'s blended chance, for each pick (Streaks and Ladders show all three reads). */
+  readonly reads?: (platform: EdgePlatform, picks: readonly EdgePick[]) => Promise<Map<string, ModeReads>>;
+}
+
+/** The other two reads beside Edge's on a Streaks or Ladders pick; null when that model has no read on the line. */
+export interface ModeReads {
+  readonly gkr: { readonly side: 'MORE' | 'LESS'; readonly score: number } | null;
+  readonly gkrPlus: { readonly side: 'MORE' | 'LESS'; readonly probability: number } | null;
 }
 
 /** A time's calendar date in Eastern time ("today" for the slate). */
@@ -183,7 +191,10 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     if (!query.success) return reply.code(400).send({ code: 'INVALID_QUERY' });
     const snapshot = await edge.snapshot(query.data.platform);
     if (!snapshot) return reply.code(503).send({ code: 'BOARD_UNAVAILABLE' });
-    return { mode: query.data.mode, minChance: MODE_MIN_CHANCE, picks: modePicks(snapshot.byLine.values(), query.data.mode, now().getTime()) };
+    const picks = modePicks(snapshot.byLine.values(), query.data.mode, now().getTime());
+    const reads = await deps.reads?.(query.data.platform, picks).catch(() => null) ?? null;
+    return { mode: query.data.mode, minChance: MODE_MIN_CHANCE,
+      picks: picks.map((pick) => ({ ...pick, reads: reads?.get(pick.lineId) ?? { gkr: null, gkrPlus: null } })) };
   });
 
   app.get('/v1/edge/board', async (request, reply) => {

@@ -1865,7 +1865,12 @@ export function buildServer(options: ServerOptions = {}) {
     const heldReason=(platform:string)=>edge.sideBiasFlagged(platform)
       ?'Most of this app\'s +EV picks lean the same way (More or Less), so CrownIQ isn\'t sure its prices are right. These look +EV, but play them on your own judgment.'
       :'This app\'s prices are new to CrownIQ and haven\'t passed its first checks yet. These look +EV, but play them on your own judgment.';
-    registerEdgeRoutes(app,{edge,feedNote,heldReason,held:(platform)=>edge.sideBiasFlagged(platform)||(heldPlatforms.has(platform)&&!edge.sideBiasCleared(platform)),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
+    registerEdgeRoutes(app,{edge,feedNote,heldReason,
+      // Streaks and Ladders (owner, 2026-10-13): GKR's and GKR+'s reads beside Edge's on every pick.
+      reads:async(platform,picks)=>{const gkrFor=await gkrSides(platform);
+        return new Map(picks.map((pick)=>{const gkr=gkrFor(pick),blended=blendPick(pick,gkr);
+          return [pick.lineId,{gkr:gkr?{side:gkr.direction,score:gkr.score}:null,
+            gkrPlus:{side:blended.side,probability:blended.probability}}] as const;}));},held:(platform)=>edge.sideBiasFlagged(platform)||(heldPlatforms.has(platform)&&!edge.sideBiasCleared(platform)),ledger:options.edge?.ledger??null,worker:edgeWorker,snapshots:options.edge?.snapshots??null,
       internalHistory:options.internalHistory??null,isOwner:(request)=>isOwner(request),now,
       health:async()=>({board:{fetchedAt:service.getBoard()?.board.fetchedAt??null},
         sharpApi:options.sharpProps?await options.sharpProps.status():null,
