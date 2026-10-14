@@ -1,4 +1,5 @@
 import { LineShopBoard } from './LineShop';
+import { TrustNote } from './TrustNote';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, View } from 'react-native';
@@ -114,6 +115,7 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
     <ModelBanner title="GKR Model Picks" text="CrownIQ's rating for each line, built from player history, matchups and the books. Tap a pick to see why." />
     <BoardPicker value="prizepicks" onChange={onApp} />
     {data && freshness !== 'DEMO' && <ModelPicker value={model} onChange={setModel} />}
+    {data && <TrustNote which={model === 'GKR' ? 'board' : model === 'GKR2' ? 'board-gkr2' : 'board-both'} />}
     {model !== 'GKR' && !gkr2Reads && data && <Text style={styles.note}>Loading GKR 2’s reads…</Text>}
     {data && <Text style={styles.builderNote}>Every line with where it scores. Open a player to add a pick to your Crown;
       build whole Crowns in the Crown tab.</Text>}

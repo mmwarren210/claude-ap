@@ -1,4 +1,5 @@
 import type { Analysis, RankingCard, SecondLookCard } from '@crowniq/contracts';
+import { TrustNote } from '../../components/TrustNote';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
@@ -211,6 +212,7 @@ export default function TopPicksScreen() {
       <UpdateStatus />
       <ChipRow>{topLists.map((item) => <FilterChip key={item.value} label={item.label} active={mode === item.value} chevron={false}
         onPress={() => setMode(item.value)} />)}</ChipRow>
+      <TrustNote which={mode === 'ALL' ? 'top-all' : mode === 'EV' ? 'top-ev' : mode === 'GKR' ? model === 'GKR2' ? 'top-gkr2' : 'top-gkr' : 'top-app'} />
       {mode === 'ALL' ? <AllPicks /> : mode !== 'GKR' && mode !== 'EV' ? <AllPicks key={mode} only={mode} /> : mode === 'EV' ? <>
         <FilterBar value={evFilter} onChange={setEvFilter} sports={[]} games={[]} stats={[]} placeholder="Filter: all apps"
           platformName={(key) => evApps[key as keyof typeof evApps] ?? key}

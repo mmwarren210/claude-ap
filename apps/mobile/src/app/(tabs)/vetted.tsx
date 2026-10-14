@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { TrustNote } from '../../components/TrustNote';
 import { useFocusEffect } from 'expo-router';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { Text } from '../../components/Text';
@@ -114,6 +115,7 @@ export default function VettedTab() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void load()} tintColor={colors.mint} />}>
       <AppHeader subtitle="Vetted" />
+      <TrustNote which="vetted" />
       <ModelBanner title="Crown Approved" text="Outside tips checked by the market, GKR and Edge. A pick makes this list when one of them rates it PLAY and none calls it a FADE." />
       {data?.scoreboard && <ScoreboardCard board={data.scoreboard} />}
       <View style={styles.submit}>

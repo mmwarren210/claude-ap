@@ -1,4 +1,5 @@
 import { useRecordText } from '../use-hit-rates';
+import { TrustNote } from './TrustNote';
 import { openCrownOn, useCrownLegs } from '../crown-legs';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
@@ -190,6 +191,7 @@ export function AppBoard({ app, onApp }: { app: Exclude<PickApp, 'prizepicks'>; 
   const header = <View style={styles.header}>
     <AppHeader subtitle={`${appNames[app]} board`} />
     <BoardPicker value={app} onChange={onApp} />
+    <TrustNote which="app-board" />
     {pickers}
     {filter.games.length > 0 && <View style={styles.best}>
       <Text style={styles.bestTitle}>BEST PICK {filter.games.length === 1 ? 'FOR THIS GAME' : 'PER GAME'}</Text>

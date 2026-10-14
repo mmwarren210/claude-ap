@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { TrustNote } from '../../components/TrustNote';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Text } from '../../components/Text';
 import { EdgeBoardView } from '../../components/EdgeBoardView';
@@ -67,7 +68,7 @@ export default function EdgeScreen() {
       style={[styles.segment, section === item.key && styles.segmentOn]}>
       <Text style={[styles.segmentText, section === item.key && styles.segmentTextOn]}>{item.label}</Text></Pressable>)}</View>
     {section === 'record' ? <EdgeRecord /> : section === 'board' ? <><EdgeSlipPanel entries={data?.entries ?? []} /><EdgeBoardView filter={filter} onFilter={setFilter} /></>
-      : section === 'gen' ? data ? <>{filters}<EdgeGenView entries={data.entries} filter={filter} nowMs={nowMs} starts={live.map((pick) => pick.eventStartTime)} /><EdgeSlipPanel entries={data.entries} /></>
+      : section === 'gen' ? data ? <>{filters}<TrustNote which="edge-gen" /><EdgeGenView entries={data.entries} filter={filter} nowMs={nowMs} starts={live.map((pick) => pick.eventStartTime)} /><EdgeSlipPanel entries={data.entries} /></>
         : <Notice title={status === 'loading' ? 'Pricing the board' : 'Edge pending'} detail={message || 'Reading the saved board.'} />
       : <>
     {platform === 'prizepicks' && <View style={styles.chips}>{views.map((item) => <Pressable key={item.key} accessibilityRole="button"
@@ -105,6 +106,7 @@ export default function EdgeScreen() {
         {data.slips.slice(0, 2).map((item) => <View key={item.entry.type + item.entry.size + item.legs.map((leg) => leg.lineId).join()} style={styles.card}>
           <SlipSummary slip={item} /></View>)}
       </View>}
+      {!searching && <TrustNote which={view === 'edges' ? 'edge-top' : 'edge-alts'} />}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{searching ? `SEARCH · ${picks.length} LINE${picks.length === 1 ? '' : 'S'}` : view === 'edges' ? book ? 'BETS WITH POSITIVE EV' : 'PICKS ABOVE BREAK-EVEN' : 'ALTERNATE LINES BY HIT PROBABILITY'}</Text>
         <Text style={styles.sectionDetail}>{searching ? 'Every upcoming line Edge read for that player on this platform, plays or not; the strongest edge first.' : view === 'edges'

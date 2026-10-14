@@ -1,4 +1,5 @@
 import { router, useFocusEffect } from 'expo-router';
+import { TrustNote } from '../../components/TrustNote';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Text } from '../../components/Text';
@@ -136,6 +137,7 @@ export default function ResultsScreen() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Results & Performance" />
+      <TrustNote which="results" />
       <BetaRecord />
       <Pressable accessibilityRole="button" style={styles.range} onPress={() => setRange(range === 7 ? 30 : range === 30 ? 0 : 7)}>
         <Icon name="calendar-blank-outline" size={18} color={colors.mint} /><Text style={styles.rangeText}>{rangeLabel}</Text>

@@ -1,4 +1,5 @@
 import { edgeBoardPageSchema } from '@crowniq/contracts';
+import { TrustNote } from './TrustNote';
 import type { EdgeBoardPage, EdgeBoardRow } from '@crowniq/contracts';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -60,6 +61,7 @@ export function EdgeBoardView({ filter, onFilter }: { filter: FilterValue; onFil
     <EdgeFilters value={filter} onChange={(next) => { onFilter(next); setLimit(PAGE); }} counts={current} />
     <Chips options={filters} value={show} onChange={(value) => { setShow(value); setLimit(PAGE); }} />
     <Chips options={sorts} value={sort} onChange={(value) => { setSort(value); setLimit(PAGE); }} />
+    <TrustNote which={show === 'no_read' ? 'edge-board-no-read' : `edge-board-${sort}`} />
     {!current ? <Notice title="Loading the Edge board" detail="Reading every line on the saved board." />
       : current.message ? <Notice title="Unavailable" detail={current.message} />
       : <>

@@ -1,4 +1,5 @@
 import type { EdgePick } from '@crowniq/contracts';
+import { TrustNote } from './TrustNote';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { Text } from './Text';
@@ -61,6 +62,7 @@ export function UnderdogModes({ inSlip }: { inSlip: ReadonlySet<string> }) {
       <Text style={[styles.chipText, mode === item && styles.chipTextOn]}>{item === 'streaks' ? 'Streaks' : 'Ladders'}</Text></Pressable>)}</View>
     {mode && <>
       <Text style={styles.about}>{ABOUT[mode]}</Text>
+      <TrustNote which={mode} />
       <Pressable accessibilityRole="switch" accessibilityState={{ checked: agreeOnly }} onPress={() => setAgreeOnly(!agreeOnly)}
         style={[styles.chip, styles.agree, agreeOnly && styles.chipOn]}>
         <Text style={[styles.chipText, agreeOnly && styles.chipTextOn]}>{agreeOnly ? '✓ ' : ''}{withPlus ? 'All agree: Edge, GKR, GKR 2 and GKR+' : 'All agree: Edge, GKR and GKR 2'}</Text></Pressable>

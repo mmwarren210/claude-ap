@@ -1,4 +1,5 @@
 import type { Analysis, PropLine } from '@crowniq/contracts';
+import { TrustNote } from '../../components/TrustNote';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Share, StyleSheet, View } from 'react-native';
@@ -197,6 +198,7 @@ export default function CrownScreen() {
   if (provider !== 'prizepicks') return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <AppHeader subtitle="Your Crown" />
+      <TrustNote which="crown" />
       <ModelBanner title="Crown Builder" text="Slips built from CrownIQ's picks, sized to the app's payouts." />
       {appPicker}
       {provider === 'underdog' || provider === 'pick6' || provider === 'dabble' ? <>
@@ -210,6 +212,7 @@ export default function CrownScreen() {
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
       <AppHeader subtitle="Your Crown" />
+      <TrustNote which="crown" />
       <ModelBanner title="Crown Builder" text="Slips built from CrownIQ's picks, sized to the app's payouts." />
       {appPicker}
       <Segmented label="Crown size" options={sizesFor(6)} value={size} onChange={setSize} />
