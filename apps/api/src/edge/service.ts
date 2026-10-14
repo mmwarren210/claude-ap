@@ -943,7 +943,7 @@ export type EdgeBoardSort = 'start' | 'edge' | 'probability' | 'rank';
 
 /** Every line on the board with Edge's read: priced picks (any rating) and the lines it could not read. */
 export function boardPage(snapshot: EdgeSnapshot, query: { sport?: string; market?: string; event?: string; q?: string;
-  filter: EdgeBoardFilter; sort: EdgeBoardSort; offset: number; limit: number; nowMs: number }): EdgeBoardPage {
+  filter: EdgeBoardFilter; sort: EdgeBoardSort; offset: number; limit: number; nowMs: number; perPlayer?: boolean }): EdgeBoardPage {
   const text = query.q?.trim().toLowerCase();
   const keep = (item: { sport: string; market: string; eventId: string; playerName: string; eventStartTime: string }) =>
     Date.parse(item.eventStartTime) > query.nowMs && inChoice(query.sport, item.sport) &&
@@ -960,10 +960,25 @@ export function boardPage(snapshot: EdgeSnapshot, query: { sport?: string; marke
   const name = (row: EdgeBoardRow) => row.kind === 'PICK' ? row.pick.playerName : row.line.playerName;
   const strength = (row: EdgeBoardRow) => row.kind === 'PICK'
     ? query.sort === 'probability' ? row.pick.probability : query.sort === 'rank' ? row.pick.rank ?? (row.pick.edge === null ? -1.5 : -1)
-      : row.pick.ev ?? row.pick.edge ?? -1 : -2;
-  const rows = [...picks, ...unread].sort(query.sort === 'start'
+      // Biggest edge counts only rated picks (owner, 2026-10-14: held "No edge" picks with a big raw gap sat on top).
+      : row.pick.rating === 'NONE' ? -1 : row.pick.ev ?? row.pick.edge ?? -1 : -2;
+  const sorted = [...picks, ...unread].sort(query.sort === 'start'
     ? (a, b) => start(a).localeCompare(start(b)) || name(a).localeCompare(name(b))
     : (a, b) => strength(b) - strength(a));
+  // One card per player (owner, 2026-10-14): the player's first line in this order, with how many more they have. A player
+  // search shows every line.
+  let rows = sorted;
+  if (query.perPlayer && !text) {
+    const playerKey = (row: EdgeBoardRow) => row.kind === 'PICK' ? `${row.pick.eventId}|${row.pick.playerId}` : `${row.line.eventId}|${row.line.playerId}`;
+    const counts = new Map<string, number>();
+    for (const row of sorted) counts.set(playerKey(row), (counts.get(playerKey(row)) ?? 0) + 1);
+    const seen = new Set<string>();
+    rows = sorted.flatMap((row) => { const key = playerKey(row);
+      if (seen.has(key)) return [];
+      seen.add(key);
+      const more = counts.get(key)! - 1;
+      return [more ? { ...row, more } : row]; });
+  }
   const sports = [...new Set([...snapshot.response.picks.map((pick) => pick.sport),
     ...snapshot.unpriced.map((item) => item.line.sport)])].sort();
   const marketCounts = new Map<string, number>(), gameCounts = new Map<string, { eventId: string; eventName: string; sport: string; startTime: string; picks: number }>();

@@ -80,6 +80,19 @@ test('Edge routes: every line read or No read, leave-one-out, Gen, slips and own
     assert.deepEqual(noRead.map((row) => row.kind === 'NO_READ' && row.line.lineId).sort(),
       ['lonely', 'sharpapi:pp:sa-game-c:foxtrot-center:player_rebounds:9.5']);
     assert.ok(noRead.every((row) => row.kind === 'NO_READ' && row.line.note.startsWith('No read: no sportsbook price')));
+    // One card per player (owner, 2026-10-14): each player's best line, with a count of the rest; a search shows them all.
+    const grouped = edgeBoardPageSchema.parse((await app.inject('/v1/edge/board?limit=50&perPlayer=true')).json());
+    const player = (row: (typeof grouped.rows)[number]) => row.kind === 'PICK' ? `${row.pick.eventId}|${row.pick.playerId}` : `${row.line.eventId}|${row.line.playerId}`;
+    assert.equal(new Set(grouped.rows.map(player)).size, grouped.rows.length, 'no player twice');
+    assert.equal(grouped.rows.reduce((sum, row) => sum + 1 + (row.more ?? 0), 0), page.total, 'every line is either shown or counted');
+    const folded = grouped.rows.find((row) => (row.more ?? 0) > 0)!;
+    const name = folded.kind === 'PICK' ? folded.pick.playerName : folded.line.playerName;
+    const searched = edgeBoardPageSchema.parse((await app.inject(`/v1/edge/board?limit=50&perPlayer=true&q=${encodeURIComponent(name)}`)).json());
+    assert.equal(searched.rows.length, 1 + folded.more!);
+    // Biggest edge lists rated picks before held "No edge" ones.
+    const byEdge = edgeBoardPageSchema.parse((await app.inject('/v1/edge/board?limit=50&sort=edge&filter=picks')).json());
+    const ratings = byEdge.rows.map((row) => row.kind === 'PICK' ? row.pick.rating : 'NONE');
+    assert.deepEqual(ratings, [...ratings.filter((rating) => rating !== 'NONE'), ...ratings.filter((rating) => rating === 'NONE')]);
 
     const genRaw = (await app.inject({ method: 'POST', url: '/v1/edge/gen',
       payload: { type: 'POWER', size: 2, count: 2 } })).json();

@@ -36,7 +36,8 @@ export function EdgeBoardView({ filter, onFilter }: { filter: FilterValue; onFil
   const key = JSON.stringify([platform, sport, market, event, show, sort, search.trim(), limit]);
   useEffect(() => {
     let active = true;
-    const params = new URLSearchParams({ platform, filter: show, sort, limit: String(Math.min(limit, 200)) });
+    // One card per player (owner, 2026-10-14); a player search shows all of that player's lines.
+    const params = new URLSearchParams({ platform, filter: show, sort, limit: String(Math.min(limit, 200)), perPlayer: 'true' });
     if (sport) params.set('sport', sport);
     if (market) params.set('market', market);
     if (event) params.set('event', event);
@@ -62,10 +63,11 @@ export function EdgeBoardView({ filter, onFilter }: { filter: FilterValue; onFil
     {!current ? <Notice title="Loading the Edge board" detail="Reading every line on the saved board." />
       : current.message ? <Notice title="Unavailable" detail={current.message} />
       : <>
-        <Text style={styles.meta}>{current.total} lines · Edge reads every line it has data for. Lines with no data are listed as No read.</Text>
+        <Text style={styles.meta}>{current.total} {search.trim() ? 'lines' : 'players'} · Edge reads every line it has data for. Lines with no data are listed as No read.{search.trim() ? '' : ' Each player shows their best line; tap “more lines” to see the rest.'}</Text>
         {current.rows.map((row) => row.kind === 'PICK'
-          ? <PickRow key={row.pick.key + row.pick.side} row={row} inSlip={inSlip.has(row.pick.lineId)} />
-          : <View key={row.line.lineId} style={[styles.row, styles.noRead]}>
+          ? <View key={row.pick.key + row.pick.side}><PickRow row={row} inSlip={inSlip.has(row.pick.lineId)} />
+            <MoreLines count={row.more} name={row.pick.playerName} onOpen={() => { setSearch(row.pick.playerName); setLimit(PAGE); }} /></View>
+          : <View key={row.line.lineId}><View style={[styles.row, styles.noRead]}>
             <View style={styles.rowMain}>
               <Text style={styles.name}>{row.line.playerName}</Text>
               <Text style={styles.line}>{platformShort(row.line.platform)} {formatLine(row.line.threshold)} {marketLabel(row.line.market)}{row.line.lineType !== 'REGULAR' ? ` · ${row.line.lineType === 'UNKNOWN_ALTERNATE' ? 'ALT' : row.line.lineType}` : ''}</Text>
@@ -73,7 +75,8 @@ export function EdgeBoardView({ filter, onFilter }: { filter: FilterValue; onFil
               <Text style={styles.muted}>{row.line.note}</Text>
             </View>
             <Text style={styles.noReadTag}>NO READ</Text>
-          </View>)}
+          </View>
+            <MoreLines count={row.more} name={row.line.playerName} onOpen={() => { setSearch(row.line.playerName); setLimit(PAGE); }} /></View>)}
         {current.rows.length < current.total && limit < 200 &&
           <Pressable accessibilityRole="button" onPress={() => setLimit((value) => value + PAGE)} style={styles.more}>
             <Text style={styles.link}>Show more ({current.total - current.rows.length} left)</Text></Pressable>}
@@ -81,6 +84,13 @@ export function EdgeBoardView({ filter, onFilter }: { filter: FilterValue; onFil
           <Text style={styles.muted}>Showing the first 200. Narrow by sport or search to see the rest.</Text>}
       </>}
   </View>;
+}
+
+/** "+3 more lines for Jaylen Brown": opens every line for the player (a player search). */
+function MoreLines({ count, name, onOpen }: { count: number | undefined; name: string; onOpen: () => void }) {
+  if (!count) return null;
+  return <Pressable accessibilityRole="button" onPress={onOpen} style={styles.moreLines}>
+    <Text style={styles.link}>+{count} more {count === 1 ? 'line' : 'lines'} for {name} · tap to see them all</Text></Pressable>;
 }
 
 function PickRow({ row, inSlip }: { row: Extract<EdgeBoardRow, { kind: 'PICK' }>; inSlip: boolean }) {
@@ -110,6 +120,7 @@ function Chips<T extends string>({ options, value, onChange }: { options: { key:
 }
 
 const styles = StyleSheet.create({
+  moreLines: { paddingHorizontal: 14, paddingTop: 6, paddingBottom: 2 },
   wrap: { gap: 10 },
   search: { backgroundColor: palette.card, borderColor: palette.border, borderWidth: 1, borderRadius: 14, color: palette.text,
     paddingHorizontal: 14, paddingVertical: 10, fontSize: 14 },

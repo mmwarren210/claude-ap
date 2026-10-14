@@ -457,9 +457,10 @@ export const edgeUnpricedLineSchema = z.object({
   reason: z.enum(['NO_DATA', 'NO_INDEPENDENT_READ', 'NO_MARKET_MAP']), note: z.string(),
 });
 // Every line on the board, read or not: Edge never hides a line it could not price.
+/** `more`: the player's other lines in this list, folded under their best one (owner, 2026-10-14: one card per player). */
 export const edgeBoardRowSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('PICK'), pick: edgePickSchema }),
-  z.object({ kind: z.literal('NO_READ'), line: edgeUnpricedLineSchema }),
+  z.object({ kind: z.literal('PICK'), pick: edgePickSchema, more: z.number().int().nonnegative().optional() }),
+  z.object({ kind: z.literal('NO_READ'), line: edgeUnpricedLineSchema, more: z.number().int().nonnegative().optional() }),
 ]);
 export const edgeBoardPageSchema = z.object({
   modelVersion: identifier, builtAt: timestamp, boardFetchedAt: timestamp,

@@ -206,7 +206,9 @@ export function registerEdgeRoutes(app: FastifyInstance, deps: EdgeRouteDeps): v
     const query = z.object({ platform: platformSchema, sport: choiceSchema, market: marketChoiceSchema, event: eventChoiceSchema,
       q: z.string().trim().max(60).optional(), filter: z.enum(['all', 'picks', 'no_read']).default('all'),
       sort: z.enum(['start', 'edge', 'probability', 'rank']).default('start'),
-      offset: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(200).default(100) })
+      offset: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(200).default(100),
+      /** One card per player, with a count of their other lines (owner, 2026-10-14). */
+      perPlayer: z.enum(['true', 'false']).default('false').transform((value) => value === 'true') })
       .strict().safeParse(request.query);
     if (!query.success) return reply.code(400).send({ code: 'INVALID_EDGE_QUERY' });
     const snapshot = await edge.snapshot(query.data.platform);
