@@ -69,7 +69,7 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
   const gkr2Reads = useGkr2Reads(model !== 'GKR');
   const data = useMemo(() => gkrData ? boardForModel(gkrData, model, gkr2Reads) : gkrData, [gkrData, model, gkr2Reads]);
   const gkrAnalyses = useMemo(() => new Map(gkrData?.analyses.map((item) => [item.lineId, item])), [gkrData]);
-  const { filters, setFilters, viewMode, ready } = useDraft();
+  const { filters, setFilters, viewMode, setViewMode, ready } = useDraft();
   // While the Board is on screen, reread the saved board every 5 minutes (free; picks up context refreshes).
   useFocusEffect(useCallback(() => {
     if (freshness === 'DEMO') return;
@@ -115,6 +115,11 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
     <ModelBanner title="GKR Model Picks" text="CrownIQ's rating for each line, built from player history, matchups and the books. Tap a pick to see why." />
     <BoardPicker value="prizepicks" onChange={onApp} />
     {data && freshness !== 'DEMO' && <ModelPicker value={model} onChange={setModel} />}
+    {data && <Pressable accessibilityRole="button" onPress={() => setViewMode(viewMode === 'LITE' ? 'FULL' : 'LITE')} style={styles.modeNote}>
+      <Text style={styles.modeText}>{viewMode === 'LITE'
+        ? <>You’re in <Text style={styles.modeStrong}>Lite mode</Text>: top picks only (80+). <Text style={styles.modeLink}>Switch to Full to see every play</Text></>
+        : <>You’re in <Text style={styles.modeStrong}>Full mode</Text>: every play on the board. <Text style={styles.modeLink}>Switch to Lite for top picks only</Text></>}</Text>
+    </Pressable>}
     {data && <TrustNote which={model === 'GKR' ? 'board' : model === 'GKR2' ? 'board-gkr2' : 'board-both'} />}
     {model !== 'GKR' && !gkr2Reads && data && <Text style={styles.note}>Loading GKR 2’s reads…</Text>}
     {data && <Text style={styles.builderNote}>Every line with where it scores. Open a player to add a pick to your Crown;
@@ -183,6 +188,11 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
 }
 
 const styles = StyleSheet.create({
+  // Which view the Board is in (owner, 2026-10-14: the app opens in Lite, so say so and offer Full).
+  modeNote: { borderWidth: 1, borderColor: colors.mint, borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 9 },
+  modeText: { color: colors.textMuted, fontSize: 13, lineHeight: 18 },
+  modeStrong: { color: colors.text, fontWeight: '800' },
+  modeLink: { color: colors.mint, fontWeight: '800' },
   builder: { gap: 8, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: radius.lg, padding: 12 },
   builderTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
   builderNote: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
