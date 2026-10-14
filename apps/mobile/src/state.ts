@@ -60,13 +60,13 @@ type PlayRead={pick:string;score:number|null;kind?:string};
  */
 export function withBooksPicks(ai:ReadonlyMap<string,PlayRead>|undefined,
   books:ReadonlyMap<string,{side:'MORE'|'LESS';fair:number}>|undefined,
-  history?:ReadonlyMap<string,{direction:string;score:number|null}>):Map<string,PlayRead>{
+  history?:ReadonlyMap<string,{direction:string;score:number|null;trend?:boolean}>):Map<string,PlayRead>{
   const merged=new Map<string,PlayRead>(ai??[]);
-  // Then the free History Read, ahead of the Books pick.
-  for(const [lineId,read] of history??[])if(read.direction!=='PASS'&&read.score!==null&&
+  // Then the free History Read. Trend reads (33% on 1,745 graded) and Books picks (37.5% on 80) lost money, so they're
+  // shown as info on the card, never counted as plays (owner, 2026-10-14).
+  for(const [lineId,read] of history??[])if(read.direction!=='PASS'&&read.score!==null&&!read.trend&&
     (!merged.has(lineId)||merged.get(lineId)!.kind==='second'))merged.set(lineId,{pick:read.direction,score:read.score,kind:'history'});
-  for(const [lineId,pick] of books??[])if(!merged.has(lineId)||merged.get(lineId)!.kind==='second')
-    merged.set(lineId,{pick:pick.side,score:Math.round(pick.fair*100),kind:'books'});
+  void books;
   return merged;
 }
 /**

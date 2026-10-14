@@ -81,7 +81,7 @@ function LineCard({ app, line, picked, onPick, asking, onAsk }: { app: PickApp; 
     </View>}
     {historySide(line) && <View style={styles.gkr}>
       <Text style={[styles.gkrScore, { color: line.history!.lean || line.history!.trend ? colors.amber : colors.royal }]}>
-        {line.history!.trend ? 'Trend' : 'History'} {line.history!.lean ? 'lean ' : ''}{Math.round(line.history!.score!)}</Text>
+        {line.history!.trend ? 'Trend (info only)' : 'History'} {line.history!.lean ? 'lean ' : ''}{Math.round(line.history!.score!)}</Text>
       <Text style={styles.gkrSide}>{sideLabel(app, historySide(line)!)} {formatLine(line.threshold)}</Text>
     </View>}
     {historySide(line) && <Text style={styles.reference}>{line.history!.text} · {line.history!.source}</Text>}

@@ -23,7 +23,9 @@ export function asGkr2(analysis: Analysis, read: Gkr2Read | undefined): Analysis
  * The board as the chosen model sees it. GKR: unchanged. GKR 2: every line's side and score are GKR 2's, ranked by GKR 2.
  * Both: GKR's plays, plus GKR 2's plays on lines GKR passes (those cards say they are GKR 2's).
  */
-export function boardForModel(data: BoardResponse, choice: ModelChoice, reads: ReadonlyMap<string, Gkr2Read> | null): BoardResponse {
+export function boardForModel(data: BoardResponse, choice: ModelChoice, reads: ReadonlyMap<string, Gkr2Read> | null,
+  edgeSides: ReadonlyMap<string, 'MORE' | 'LESS'> | null = null): BoardResponse {
+  if (choice !== 'GKR2' && reads) data = holdUnbackedLesses(data, reads, edgeSides);
   if (choice === 'GKR' || !reads) return data;
   const analyses = data.analyses.map((analysis) => {
     const read = reads.get(analysis.lineId);
@@ -77,3 +79,31 @@ export const allAgree = (pick: { side: Side; reads?: { gkr: { side: Side } | nul
   withPlus: boolean) =>
   !!pick.reads?.gkr && !!pick.reads.gkr2 && pick.reads.gkr.side === pick.side && pick.reads.gkr2.side === pick.side &&
   (!withPlus || (!!pick.reads.gkrPlus && pick.reads.gkrPlus.side === pick.side));
+
+/** Whether a GKR Less is backed: GKR 2 or Edge takes Less on the line too. */
+export const lessBacked = (lineId: string, reads: ReadonlyMap<string, Gkr2Read>, edgeSides: ReadonlyMap<string, 'MORE' | 'LESS'> | null) =>
+  reads.get(lineId)?.direction === 'LESS' || edgeSides?.get(lineId) === 'LESS';
+
+/**
+ * GKR's Less plays held back unless GKR 2 or Edge agrees (owner, 2026-10-14: GKR's Lesses hit 46% on 50 graded, under the
+ * break-even). Held ones read PASS on the Board and leave Top Picks; GKR's score itself is unchanged.
+ */
+export function holdUnbackedLesses(data: BoardResponse, reads: ReadonlyMap<string, Gkr2Read>,
+  edgeSides: ReadonlyMap<string, 'MORE' | 'LESS'> | null): BoardResponse {
+  let held = false;
+  const analyses = data.analyses.map((analysis) => {
+    if (analysis.direction !== 'LESS' || lessBacked(analysis.lineId, reads, edgeSides)) return analysis;
+    held = true;
+    return { ...analysis, direction: 'PASS' as const, score: null, scoreBand: 'PASS' as const, reasonCode: 'LESS_UNCONFIRMED' };
+  });
+  if (!held) return data;
+  const passing = new Set(analyses.filter((item) => item.direction === 'PASS').map((item) => item.lineId));
+  return { ...data, analyses, rankedLineIds: data.rankedLineIds.filter((id) => !passing.has(id)) };
+}
+
+/** The game-script line on a card: "agrees" when the script favors the pick's side, a caution when it leans the other way. */
+export function scriptNote(lean: 'MORE' | 'LESS' | undefined, side: 'MORE' | 'LESS' | null): { text: string; agrees: boolean } | null {
+  if (!lean || !side) return null;
+  return lean === side ? { text: '📈 Game script agrees: the spread and total point this way.', agrees: true }
+    : { text: '⚠ Game script leans the other way (spread and total).', agrees: false };
+}

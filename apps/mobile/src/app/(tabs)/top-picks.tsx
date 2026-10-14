@@ -41,8 +41,8 @@ import { useLeagueStatFilter } from '../../components/LeagueStatFilter';
 import { UpdateStatus } from '../../components/UpdateStatus';
 import { ModelBanner } from '../../components/ui/ModelBanner';
 import { ModelPicker } from '../../components/ModelPicker';
-import { boardForModel, gkr2Note, gkr2Rankings } from '../../gkr2';
-import { useGkr2Reads, useModelChoice } from '../../use-gkr2';
+import { boardForModel, gkr2Note, gkr2Rankings, lessBacked, scriptNote } from '../../gkr2';
+import { useGkr2Board, useModelChoice, useScriptLeans } from '../../use-gkr2';
 
 const cardStat = (card: { market: string }) => card.market;
 
@@ -64,10 +64,10 @@ function insight(card: Card, l10: ReturnType<typeof lineStats>, l5: ReturnType<t
     : evidenceDetail(analysis) };
 }
 
-function PickCard({ card, rank, accent, photoUrl, analysis, scout, betaLine = null, model = 'GKR', gkr2Line = null, onAdd }: { card: Card; rank: number | null;
+function PickCard({ card, rank, accent, photoUrl, analysis, scout, betaLine = null, model = 'GKR', gkr2Line = null, script = null, onAdd }: { card: Card; rank: number | null;
   accent: string; photoUrl: string | null | undefined; analysis: Analysis | undefined; scout?: AiRead; betaLine?: string | null;
   /** GKR 2's list shows its score labeled Beta; with both models, GKR 2's read sits under GKR's. */
-  model?: 'GKR' | 'GKR2'; gkr2Line?: string | null; onAdd: () => void }) {
+  model?: 'GKR' | 'GKR2'; gkr2Line?: string | null; script?: { text: string; agrees: boolean } | null; onAdd: () => void }) {
   const { log } = usePlayerGames(card);
   const l5 = lineStats(log, card.threshold, card.direction, 'L5');
   const l10 = lineStats(log, card.threshold, card.direction, 'L10');
@@ -112,6 +112,7 @@ function PickCard({ card, rank, accent, photoUrl, analysis, scout, betaLine = nu
     <BooksBadge view={books?.get(card.lineId)} side={card.direction} />
     {!!betaLine && <Text style={styles.betaLine}>{betaLine}</Text>}
     {!!gkr2Line && <Text style={[styles.betaLine, { color: colors.amber }]}>{gkr2Line}</Text>}
+    {script && <Text style={[styles.betaLine, { color: script.agrees ? colors.mint : colors.amber }]}>{script.text}</Text>}
     <ScoutVerdict read={scout} gkrDirection={card.direction} />
     </Pressable>
     <PrimaryButton label="Add to Crown" icon="plus" onPress={onAdd} />
@@ -191,12 +192,16 @@ export default function TopPicksScreen() {
     picked(pickedFilter.sports, card.league) && picked(pickedFilter.games, card.eventId) && picked(pickedFilter.stats, card.market);
   // The model the member chose (owner, 2026-10-13), shared with the Board: GKR's rankings, GKR 2's (Beta), or GKR's with GKR 2's read on each.
   const [model, setModel] = useModelChoice();
-  const gkr2Reads = useGkr2Reads(model !== 'GKR');
+  const gkr2Board = useGkr2Board();
+  const leans = useScriptLeans();
+  const gkr2Reads = gkr2Board?.reads ?? null;
   const gkr2Cards = useMemo(() => board && gkr2Reads ? gkr2Rankings(board, gkr2Reads, nowMs) : [], [board, gkr2Reads, nowMs]);
   const modelAnalyses = useMemo(() => new Map((board && model === 'GKR2' ? boardForModel(board, model, gkr2Reads) : board)?.analyses
     .map((item) => [item.lineId, item])), [board, model, gkr2Reads]);
-  const rankings = (model === 'GKR2' ? gkr2Cards : data?.rankings ?? []).filter(keep);
-  const watchlist = model === 'GKR2' ? [] : (data?.watchlist ?? []).filter(keep);
+  // GKR's Lesses need GKR 2 or Edge to agree (owner, 2026-10-14: they hit 46%).
+  const backedLess = (card: Card) => card.direction !== 'LESS' || !gkr2Reads || lessBacked(card.lineId, gkr2Reads, gkr2Board?.edgeSides ?? null);
+  const rankings = (model === 'GKR2' ? gkr2Cards : (data?.rankings ?? []).filter(backedLess)).filter(keep);
+  const watchlist = model === 'GKR2' ? [] : (data?.watchlist ?? []).filter(backedLess).filter(keep);
   const options: Record<keyof ListFilter, string[]> = {
     lineType: ['REGULAR', 'GOBLIN', 'DEMON'],
   };
@@ -245,6 +250,7 @@ export default function TopPicksScreen() {
           : rankings.slice(0, size).map((card, index) => <PickCard key={card.lineId} card={card} rank={card.rank} scout={scoutReads?.get(card.lineId)}
             betaLine={model === 'GKR2' ? null : betaNote(beta?.get(card.lineId))} model={model === 'GKR2' ? 'GKR2' : 'GKR'}
             gkr2Line={model === 'BOTH' ? gkr2Note(gkr2Reads?.get(card.lineId), 'GKR') : null}
+            script={scriptNote(leans?.get(card.lineId), card.direction)}
             accent={rankAccents[index % rankAccents.length]} analysis={modelAnalyses.get(card.lineId)}
             photoUrl={board?.playerMedia?.[card.playerId]?.photoUrl} onAdd={() => addCard(card)} />)}
       {data && rankings.length > size && <Text style={styles.more}>{rankings.length - size} more qualified

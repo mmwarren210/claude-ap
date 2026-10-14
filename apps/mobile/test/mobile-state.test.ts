@@ -189,14 +189,14 @@ test('a Scout second opinion is a verdict on the GKR pick, never a play by itsel
   assert.equal(isPlay(undefined,{...second,kind:'scout'}),true);
 });
 
-test('Books picks fill in only where Scout has no read, and count as plays at their no-vig chance',()=>{
+test('Books leans and Trend reads are info only, never plays (owner, 2026-10-14: they lost money)',()=>{
   const scout:{pick:string;score:number|null;kind?:string}={pick:'PASS',score:null,kind:'scout'};
-  const merged=withBooksPicks(new Map([['a',scout],['b',{pick:'LESS',score:66,kind:'second'}]]),
-    new Map([['a',{side:'MORE' as const,fair:0.6}],['b',{side:'MORE' as const,fair:0.58}],['c',{side:'LESS' as const,fair:0.57}]]));
+  const merged=withBooksPicks(new Map([['a',scout]]),
+    new Map([['a',{side:'MORE' as const,fair:0.6}],['c',{side:'LESS' as const,fair:0.57}]]),
+    new Map([['t',{direction:'MORE',score:70,trend:true}]]));
   assert.equal(merged.get('a'),scout,'Scout looked closer: its PASS stands');
-  assert.deepEqual(merged.get('b'),{pick:'MORE',score:58,kind:'books'},'a second opinion is not a pick');
-  assert.deepEqual(merged.get('c'),{pick:'LESS',score:57,kind:'books'});
-  assert.equal(isPlay(undefined,merged.get('c')),true);
+  assert.equal(merged.has('c'),false,'a Books lean is not a play');
+  assert.equal(merged.has('t'),false,'a Trend read is not a play');
 });
 
 test('GKR Beta shows beside GKR only where they differ, and says why it passes',()=>{
@@ -272,14 +272,14 @@ test('a Crown’s PrizePicks payout drops for Goblins: known multipliers first, 
   assert.deepEqual([known.factor, known.estimated, known.unknownDemons], [0.8, 0, 1]);
 });
 
-test('board plays where GKR can’t score: Scout first, then the History Read, then the Books pick', () => {
+test('board plays where GKR can’t score: Scout first, then the History Read (Books leans are info only)', () => {
   const ai = new Map([['a', { pick: 'MORE', score: 61, kind: 'scout' }], ['s', { pick: 'LESS', score: 60, kind: 'second' }]]);
   const books = new Map([['b', { side: 'MORE' as const, fair: 0.58 }], ['h', { side: 'LESS' as const, fair: 0.57 }]]);
   const history = new Map([['a', { direction: 'LESS', score: 70 }], ['h', { direction: 'MORE', score: 72 }],
     ['s', { direction: 'MORE', score: 66 }], ['p', { direction: 'PASS', score: null }]]);
   const plays = withBooksPicks(ai, books, history);
   assert.deepEqual([plays.get('a')?.kind, plays.get('h')?.kind, plays.get('s')?.kind, plays.get('b')?.kind, plays.has('p')],
-    ['scout', 'history', 'history', 'books', false]);
+    ['scout', 'history', 'history', undefined, false]);
 });
 
 test('auto-update: only a known, different server build counts as newer', async () => {

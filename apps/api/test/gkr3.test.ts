@@ -28,3 +28,10 @@ test('why GKR 2 differs from GKR, in plain words', () => {
   assert.match(whyDifferent(gkr, analysis({ direction: 'LESS', score: 75 }))!, /opposite sides/);
   assert.match(whyDifferent(analysis({ direction: 'PASS', score: null }), two)!, /GKR passes/);
 });
+
+test('GKR 3 v2 counts the game script: backing lifts the chance, opposing lowers it', () => {
+  const base = gkr3Read(analysis({}), edge({}))!.chance;
+  assert.ok(gkr3Read(analysis({}), edge({}), 'MORE')!.chance > base);
+  assert.ok(gkr3Read(analysis({}), edge({}), 'LESS')!.chance < base);
+  assert.match(gkr3Read(analysis({}), edge({}), 'MORE')!.reasons.join(' '), /Game script backs MORE/);
+});

@@ -32,8 +32,8 @@ import { ReportNudge } from './ReportNudge';
 import { UpdateStatus } from './UpdateStatus';
 import { ModelBanner } from './ui/ModelBanner';
 import { ModelPicker } from './ModelPicker';
-import { boardForModel, cardModel, gkr2Note } from '../gkr2';
-import { useGkr2Reads, useModelChoice } from '../use-gkr2';
+import { boardForModel, cardModel, gkr2Note, scriptNote } from '../gkr2';
+import { useGkr2Board, useModelChoice, useScriptLeans } from '../use-gkr2';
 
 export const windows: readonly { value: Window; label: string }[] = [
   { value: 'L5', label: 'L5' }, { value: 'L10', label: 'L10' }, { value: 'L15', label: 'L15' },
@@ -66,8 +66,11 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
   const { status, data: gkrData, message, freshness, refreshing, nowMs, reload, needsBootstrap, bootstrapPull } = useBoard();
   // The model the member chose (owner, 2026-10-13): GKR, GKR 2 (Beta) or both, shared with Top Picks.
   const [model, setModel] = useModelChoice();
-  const gkr2Reads = useGkr2Reads(model !== 'GKR');
-  const data = useMemo(() => gkrData ? boardForModel(gkrData, model, gkr2Reads) : gkrData, [gkrData, model, gkr2Reads]);
+  const gkr2Board = useGkr2Board();
+  const leans = useScriptLeans();
+  const gkr2Reads = gkr2Board?.reads ?? null;
+  const data = useMemo(() => gkrData ? boardForModel(gkrData, model, gkr2Reads, gkr2Board?.edgeSides ?? null) : gkrData,
+    [gkrData, model, gkr2Reads, gkr2Board]);
   const gkrAnalyses = useMemo(() => new Map(gkrData?.analyses.map((item) => [item.lineId, item])), [gkrData]);
   const { filters, setFilters, viewMode, setViewMode, ready } = useDraft();
   // While the Board is on screen, reread the saved board every 5 minutes (free; picks up context refreshes).
@@ -167,6 +170,7 @@ function PrizePicksBoard({ onApp }: { onApp: (app: BoardSource) => void }) {
         more={(counts.get(item.eventId + '|' + item.playerId) ?? 1) - 1}
         photoUrl={data?.playerMedia?.[item.playerId]?.photoUrl} accent={rankAccents[index % rankAccents.length]}
         window={window} model={cardModel(model, gkrAnalyses.get(item.id), gkr2Reads?.get(item.id))}
+        script={(() => { const shown = analyses.get(item.id)?.direction; return scriptNote(leans?.get(item.id), shown === 'MORE' || shown === 'LESS' ? shown : null); })()}
         gkr2Line={model === 'BOTH' ? gkr2Note(gkr2Reads?.get(item.id), cardModel(model, gkrAnalyses.get(item.id), gkr2Reads?.get(item.id))) : null}
         expired={(() => { const analysis = analyses.get(item.id);
           return analysis?.direction !== 'PASS' && evidenceExpired(analysis, nowMs); })()} onPress={() => open(item.id)} />}

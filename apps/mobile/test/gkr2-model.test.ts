@@ -13,8 +13,11 @@ const board = { board: { lines: [line('a'), line('b'), line('c')] }, analyses: [
 const reads = new Map<string, Gkr2Read>([['a', { direction: 'LESS', score: 81, why: 'They take opposite sides.' }],
   ['b', { direction: 'MORE', score: 90, why: 'GKR passes on this line.' }]]);
 
-test('GKR 2 mode puts GKR 2\'s sides and scores on the board and ranks by them; GKR mode is untouched', () => {
-  assert.equal(boardForModel(board, 'GKR', reads), board);
+test('GKR 2 mode puts GKR 2\'s sides and scores on the board and ranks by them; GKR mode holds only unbacked Lesses', () => {
+  const gkr = boardForModel(board, 'GKR', reads);
+  assert.deepEqual(gkr.analyses.map((item) => [item.direction, item.score]), [['MORE', 82], ['PASS', null], ['PASS', null]],
+    'GKR\'s Less on c has neither GKR 2 nor Edge behind it, so it is held');
+  assert.equal(boardForModel(board, 'GKR', reads, new Map([['c', 'LESS']])).analyses[2]!.direction, 'LESS', 'Edge agrees: kept');
   const two = boardForModel(board, 'GKR2', reads);
   assert.deepEqual(two.analyses.map((item) => [item.direction, item.score]), [['LESS', 81], ['MORE', 90], ['PASS', null]]);
   assert.deepEqual(two.rankedLineIds, ['b', 'a']);
@@ -23,7 +26,7 @@ test('GKR 2 mode puts GKR 2\'s sides and scores on the board and ranks by them; 
 
 test('Both keeps GKR\'s plays and fills lines GKR passes with GKR 2 (labeled), with why they differ', () => {
   const both = boardForModel(board, 'BOTH', reads);
-  assert.deepEqual(both.analyses.map((item) => [item.direction, item.score]), [['MORE', 82], ['MORE', 90], ['LESS', 75]]);
+  assert.deepEqual(both.analyses.map((item) => [item.direction, item.score]), [['MORE', 82], ['MORE', 90], ['PASS', null]]);
   assert.equal(cardModel('BOTH', board.analyses[0], reads.get('a')), 'GKR');
   assert.equal(cardModel('BOTH', board.analyses[1], reads.get('b')), 'GKR2');
   assert.match(gkr2Note(reads.get('a'), 'GKR')!, /GKR 2 \(Beta\) LESS 81\. They take opposite sides/);

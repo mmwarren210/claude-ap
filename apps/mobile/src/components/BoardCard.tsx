@@ -50,20 +50,25 @@ export function windowStats(stats: ReturnType<typeof lineStats>, l10: ReturnType
 }
 
 export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick, historyRead, betaLine = null, more = 0, photoUrl, accent, window, expired = false,
-  model = 'GKR', gkr2Line = null, onPress }: { line: PropLine; analysis: Analysis | undefined; ai?: AiRead; booksPick?: BooksPick; historyRead?: HistoryRead;
+  model = 'GKR', gkr2Line = null, script = null, onPress }: { line: PropLine; analysis: Analysis | undefined; ai?: AiRead; booksPick?: BooksPick; historyRead?: HistoryRead;
   betaLine?: string | null; more?: number; photoUrl: string | null | undefined;
   accent: string; window: Window; expired?: boolean;
   /** Whose score the ring shows: GKR's, or GKR 2's (labeled Beta). */
   model?: 'GKR' | 'GKR2';
   /** GKR 2's read beside GKR's when both models show, with why they differ. */
-  gkr2Line?: string | null; onPress: () => void }) {
+  gkr2Line?: string | null;
+  /** The game script's line: it agrees with the pick (82% on graded picks) or leans the other way (49%). */
+  script?: { text: string; agrees: boolean } | null; onPress: () => void }) {
   const gkrPass = !analysis || analysis.direction === 'PASS';
   // Where GKR can't score, the Scout read is the pick, labeled as such.
   const aiPick = gkrPass && aiPlay(ai) ? ai! : null;
   // Next, the free History Read: the player's recent results against this line (labeled History, never a GKR score).
-  const historyPick = gkrPass && !aiPick && (!ai || ai.kind === 'second') && historyPlay(historyRead) ? historyRead! : null;
-  // Then the side DraftKings and Hard Rock back (labeled Books, never a GKR score).
-  const booksSide = gkrPass && !aiPick && !historyPick && booksPick && (!ai || ai.kind === 'second') ? booksPick : null;
+  // Trend reads aren't picks any more (owner, 2026-10-14: 33% on 1,745 graded); they show as info only.
+  const historyPick = gkrPass && !aiPick && (!ai || ai.kind === 'second') && historyPlay(historyRead) && !historyRead!.trend ? historyRead! : null;
+  const trendInfo = gkrPass && !aiPick && !historyPick && historyPlay(historyRead) && historyRead!.trend ? historyRead! : null;
+  // The side DraftKings and Hard Rock lean is info only too (Books picks went 37.5% on 80 graded).
+  const booksSide = null as BooksPick | null;
+  const booksInfo = gkrPass && !aiPick && !historyPick && booksPick && (!ai || ai.kind === 'second') ? booksPick : null;
   const direction = aiPick ? aiPick.pick as 'MORE' | 'LESS' : historyPick ? historyPick.direction as 'MORE' | 'LESS'
     : booksSide ? booksSide.side
     : analysis?.direction === 'LESS' ? 'LESS' : 'MORE';
@@ -124,12 +129,15 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
         ⚠ {analysis.opposingFactors[0]}</Text>}
       {!!betaLine && <Text style={[styles.aiNote, { color: colors.gold }]}>{betaLine}</Text>}
       {!!gkr2Line && <Text style={[styles.aiNote, { color: colors.amber }]}>{gkr2Line}</Text>}
+      {!pass && script && <Text style={[styles.aiNote, { color: script.agrees ? colors.mint : colors.amber, fontWeight: '800' }]}>{script.text}</Text>}
       {!gkrPass && <ScoutVerdict read={ai} gkrDirection={analysis?.direction} />}
       {aiPick && <ScoutVerdict read={ai} gkrDirection={undefined} />}
       {booksSide && <Text style={styles.aiNote}>GKR can’t score this stat yet. DraftKings and Hard Rock give {booksSide.side}{' '}
         {Math.round(booksSide.fair * 100)}% with their cut removed; this is the books’ number, not a GKR score.</Text>}
       {historyPick && <Text style={styles.aiNote}>{historyPick.trend ? `Trend: ${historyPick.text}. From CrownIQ’s own graded lines, not this player’s history; not a GKR score.`
         : `History ${historyPick.lean ? 'lean' : 'read'}: ${historyPick.text}. From ${historyPick.source}; not a GKR score.`}</Text>}
+      {trendInfo && <Text style={styles.aiNote}>Info only, not a pick: a trend leans {trendInfo.direction === 'LESS' ? 'Less' : 'More'} ({trendInfo.text}). Trend leans have lost more than they’ve won.</Text>}
+      {booksInfo && <Text style={styles.aiNote}>Info only, not a pick: DraftKings and Hard Rock lean {booksInfo.side === 'LESS' ? 'Less' : 'More'} ({Math.round(booksInfo.fair * 100)}% with their cut removed). These leans haven’t won enough to play.</Text>}
       {!!record && <Text style={[styles.aiNote, { color: colors.gold }]}>Our record · {record}</Text>}
       {aiPick && <Text style={styles.aiNote}>GKR can’t score this stat yet. {SCOUT} researched it;
         this is {SCOUT}’s score, not a GKR score.</Text>}

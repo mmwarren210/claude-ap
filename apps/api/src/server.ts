@@ -76,7 +76,7 @@ import { bookFeedNote, sharpGameLines } from './context/sharp-props.js';
 import { booksPicks, bookViews, DEFAULT_BREAK_EVEN, evPicks } from './context/ev.js';
 import type { EvPick } from './context/ev.js';
 import { bookLadder, bookPicks, sportsbookNames, sportsbooks } from './book-picks.js';
-import { gameScriptFor, scriptEligible } from './shadow-record.js';
+import { gameScriptFor, scriptEligible, scriptLean } from './shadow-record.js';
 import { betaFor } from './scout-beta.js';
 import type { BetaRead } from './scout-beta.js';
 import type { HistoryArchive } from './history-archive.js';
@@ -453,12 +453,13 @@ export function buildServer(options: ServerOptions = {}) {
       if(read2&&read2.board===board){
         const live=new Map(board.analyses.map((analysis)=>[analysis.lineId,analysis]));
         const edgeLines=edge?(await edge.snapshot('prizepicks').catch(()=>null))?.byLine??null:null;
+        const leans=await scriptLeans().catch(()=>new Map<string,'MORE'|'LESS'>());
         for(const analysis of read2.analyses.values()){
           const line=lines.get(analysis.lineId),gkr=live.get(analysis.lineId);
           if(!line)continue;
           if(analysis.direction!=='PASS'&&analysis.score!==null)picks.push({kind:'gkr2',line,side:analysis.direction,strength:analysis.score});
           if(gkr&&gkr.direction!=='PASS'&&gkr.score!==null)picks.push({kind:'gkr1',line,side:gkr.direction,strength:gkr.score});
-          const gkr3=gkr3Read(analysis,edgeLines?.get(analysis.lineId));
+          const gkr3=gkr3Read(analysis,edgeLines?.get(analysis.lineId),leans.get(analysis.lineId)??null);
           if(gkr3)picks.push({kind:'gkr3',line,side:gkr3.side,strength:gkr3.strength});
         }
       }
@@ -1018,7 +1019,31 @@ export function buildServer(options: ServerOptions = {}) {
     if(!await gkr2Visible(request))return reply.code(404).send({code:'NOT_FOUND'});
     const read=await gkr2Board().catch(()=>null);
     if(!read)return reply.code(503).send({code:'BOARD_UNAVAILABLE'});
-    return {builtAt:read.board.builtAt,reads:gkr2Reads(new Map(read.board.analyses.map((item)=>[item.lineId,item])),[...read.analyses.values()])};
+    // Edge's side on each line GKR plays Less (owner, 2026-10-14: GKR's Lesses hit 46%, so the app holds one back unless GKR 2
+    // or Edge agrees).
+    const edgeLines=edge?(await edge.snapshot('prizepicks').catch(()=>null))?.byLine??null:null;
+    const edgeSides=Object.fromEntries(read.board.analyses.flatMap((item)=>{const pick=item.direction==='LESS'?edgeLines?.get(item.lineId):undefined;
+      return pick?[[item.lineId,pick.side]]:[];}));
+    return {builtAt:read.board.builtAt,reads:gkr2Reads(new Map(read.board.analyses.map((item)=>[item.lineId,item])),[...read.analyses.values()]),edgeSides};
+  });
+  // The side each line's game script favors (owner, 2026-10-14: "script agrees" badge; when the script backed GKR's side it
+  // hit 82%, against it 49%). Volume stats with a Pinnacle spread or total only; read once per board.
+  let leanCache:{builtAt:string;leans:Promise<Map<string,'MORE'|'LESS'>>}|null=null;
+  const scriptLeans=async():Promise<Map<string,'MORE'|'LESS'>>=>{
+    const board=service.getBoard();
+    if(!board||!options.gameLines)return new Map();
+    if(!leanCache||leanCache.builtAt!==board.builtAt){
+      const leans=options.gameLines().catch(()=>[]).then((games)=>new Map(board.board.lines.flatMap((line)=>{
+        if(!scriptEligible(line))return [];
+        const script=gameScriptFor(line,games),lean=script?scriptLean(line.sport,script):null;
+        return lean?[[line.id,lean] as const]:[];})));
+      leanCache={builtAt:board.builtAt,leans};
+    }
+    return leanCache.leans;
+  };
+  app.get('/v1/script-leans',async(request,reply)=>{
+    if(!await currentUser(request))return reply.code(401).send({code:'SIGN_IN_REQUIRED'});
+    return {leans:Object.fromEntries(await scriptLeans())};
   });
   // GKR 2's read on one line, beside GKR's (owner, 2026-10-11), with both models' graded records on the lines GKR 2 reads.
   app.get('/v1/gkr2/:lineId',async(request,reply)=>{

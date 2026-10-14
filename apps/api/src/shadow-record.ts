@@ -61,6 +61,17 @@ const sameTeam = (a: string | null | undefined, b: string) => !!a && (normalized
 /**
  * The expected script for a line's game, from Pinnacle (spread, total, win chance). Null when Pinnacle has no line for the game or the player's team can't be placed.
  */
+/**
+ * The side the game script favors on a volume stat, or null: a team favored by 7+ or a high total favors MORE; an underdog
+ * by 7+ or a low total favors LESS. On graded GKR picks the script backing GKR's side hit 82%, opposing it 49% (2026-10-14).
+ */
+export function scriptLean(sport: string, script: Pick<GameScript, 'teamMargin' | 'total'>): 'MORE' | 'LESS' | null {
+  const high = sport === 'NFL' || sport === 'NCAAFB' ? 50 : sport === 'NBA' ? 232 : 168, low = sport === 'NFL' ? 40
+    : sport === 'NCAAFB' ? 45 : sport === 'NBA' ? 218 : 156;
+  return (script.teamMargin !== null && script.teamMargin >= 7) || (script.total !== null && script.total >= high) ? 'MORE'
+    : (script.teamMargin !== null && script.teamMargin <= -7) || (script.total !== null && script.total <= low) ? 'LESS' : null;
+}
+
 export function gameScriptFor(line: PropLine, games: readonly GameLine[]): GameScript | null {
   const start = Date.parse(line.eventStartTime);
   const mine = games.filter((game) => Math.abs(Date.parse(game.startTime) - start) <= 6 * 3600_000 &&
@@ -212,11 +223,7 @@ export class ShadowRecord {
     // favors MORE on volume stats; an underdog by 7+ or a low total favors LESS.
     const scripts = all.filter((entry) => entry.kind === 'script' && entry.script);
     const backs = (entry: ShadowEntry) => {
-      const script = entry.script!, sport = entry.lineSnapshot.sport;
-      const high = sport === 'NFL' || sport === 'NCAAFB' ? 50 : sport === 'NBA' ? 232 : 168, low = sport === 'NFL' ? 40
-        : sport === 'NCAAFB' ? 45 : sport === 'NBA' ? 218 : 156;
-      const lean = (script.teamMargin !== null && script.teamMargin >= 7) || (script.total !== null && script.total >= high) ? 'MORE'
-        : (script.teamMargin !== null && script.teamMargin <= -7) || (script.total !== null && script.total <= low) ? 'LESS' : null;
+      const lean = scriptLean(entry.lineSnapshot.sport, entry.script!);
       return lean === null ? 'neutral' : lean === entry.side ? 'backs' : 'opposes';
     };
     return {

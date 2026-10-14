@@ -4,7 +4,8 @@ import type { Analysis, EdgePick } from '@crowniq/contracts';
 // GKR+ blends, with the player's history at the number and Edge's market chance. Shadow only: recorded and graded on its own
 // record beside GKR 2, never shown or scored on the app.
 
-export const GKR3_VERSION = 'gkr3-shadow-v1';
+/** v2 (owner, 2026-10-14): the game script's lean counts too. */
+export const GKR3_VERSION = 'gkr3-shadow-v2';
 /** GKR 3 plays a line when its blended chance on GKR 2's side is at least this. */
 export const GKR3_MIN_CHANCE = 0.55;
 
@@ -19,7 +20,7 @@ export interface Gkr3Read { readonly side: 'MORE' | 'LESS'; readonly chance: num
  * (when Edge reads the line) and the player's hit rate at the number (shrunk toward even, counting more with more games, as
  * GKR+ does), averaged as log-odds. Null when GKR 2 passes or the blend falls under GKR3_MIN_CHANCE.
  */
-export function gkr3Read(gkr2: Analysis | undefined, edge: EdgePick | undefined): Gkr3Read | null {
+export function gkr3Read(gkr2: Analysis | undefined, edge: EdgePick | undefined, script: 'MORE' | 'LESS' | null = null): Gkr3Read | null {
   if (!gkr2 || gkr2.direction === 'PASS' || gkr2.score === null) return null;
   const side = gkr2.direction as 'MORE' | 'LESS';
   const gkr2Chance = clamp(gkr2.score / 100, .5, .95);
@@ -36,6 +37,12 @@ export function gkr3Read(gkr2: Analysis | undefined, edge: EdgePick | undefined)
       parts.push({ logit: logit((hits + 1) / (games + 2)), weight });
       reasons.push(`History: ${hits} of ${games} at ${edge.threshold} on ${side}.`);
     }
+  }
+  // The game script (owner, 2026-10-14): on graded picks, the script backing the side hit 82% and opposing it 49%. Counted
+  // as half a vote, read at 75% when it backs the side and 45% when it opposes it.
+  if (script) {
+    parts.push({ logit: logit(script === side ? .75 : .45), weight: .5 });
+    reasons.push(`Game script ${script === side ? 'backs' : 'opposes'} ${side}.`);
   }
   const total = parts.reduce((sum, part) => sum + part.weight, 0);
   const chance = Math.round(sigmoid(parts.reduce((sum, part) => sum + part.logit * part.weight, 0) / total) * 1e4) / 1e4;
