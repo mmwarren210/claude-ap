@@ -47,6 +47,35 @@ export function ManualPick({ onAdded, read }: { onAdded: () => void; read?: { id
   const searching = wanted.length >= 2 && found?.query !== wanted;
   // The screenshot's matches show until a name is typed or they're closed.
   const fromShot = read && read.id !== dismissed && !wanted ? read.lines : null;
+  // Checks one pick; the screen's message is set by the caller.
+  const check = async (line: BoardLine, side: 'MORE' | 'LESS') => {
+    const response = await request('/v1/tips/manual', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ platform: line.platform, lineId: line.lineId, side }) });
+    const body = await response.json().catch(() => ({})) as { approved?: boolean; limit?: number };
+    if (response.ok) setAdded((current) => new Set([...current, line.lineId]));
+    return { ok: response.ok, status: response.status, approved: !!body.approved, limit: body.limit };
+  };
+  // "Check all as read" (owner, 2026-10-14): every pick with the side the slip shows goes to CrownIQ at once; the ones GKR+ or
+  // Edge back join Vetted, the rest stay off. A row whose side wasn't read is left for a tap.
+  const [checkingAll, setCheckingAll] = useState(false);
+  const checkAll = async (lines: ReadLine[]) => {
+    setCheckingAll(true); setMessage('');
+    let approved = 0, passed = 0, failed = 0, limit: number | undefined;
+    for (const line of lines) {
+      if (!line.side || added.has(line.lineId)) continue;
+      try {
+        const result = await check(line, line.side);
+        if (result.status === 429) { limit = result.limit ?? 20; break; }
+        if (!result.ok) failed++; else if (result.approved) approved++; else passed++;
+      } catch { failed++; }
+    }
+    const unread = lines.filter((line) => !line.side && !added.has(line.lineId)).length;
+    setMessage([`Checked ${approved + passed}: ${approved} approved and added to Vetted, ${passed} not backed by CrownIQ, kept off.`,
+      failed ? `${failed} couldn’t be checked (game started or line gone).` : '', unread ? `${unread} with no side read: tap More or Less on those.` : '',
+      limit ? `Daily limit of ${limit} reached; the rest can go tomorrow.` : ''].filter(Boolean).join(' '));
+    setCheckingAll(false);
+    onAdded();
+  };
   const add = async (line: BoardLine, side: 'MORE' | 'LESS') => {
     setSending(`${line.lineId}:${side}`); setMessage('');
     try {
@@ -76,9 +105,12 @@ export function ManualPick({ onAdded, read }: { onAdded: () => void; read?: { id
     {!!message && <Text style={styles.message}>{message}</Text>}
     {lines && !searching && !lines.length && <Text style={styles.muted}>No upcoming lines for that name.</Text>}
     {fromShot && <View style={styles.shotHead}>
-      <Text style={[styles.muted, styles.grow]}>From your screenshot: check each one, then tap the side to add it.</Text>
+      <Text style={[styles.muted, styles.grow]}>From your screenshot. The highlighted side is what your slip says, not CrownIQ’s pick. Check them all: the ones CrownIQ backs join Vetted, the rest stay off.</Text>
       <Pressable accessibilityRole="button" onPress={() => setDismissed(read!.id)}><Text style={styles.close}>Close</Text></Pressable>
     </View>}
+    {fromShot && fromShot.some((line) => line.side && !added.has(line.lineId)) && <Pressable accessibilityRole="button" disabled={checkingAll || !!sending}
+      onPress={() => void checkAll(fromShot)} style={[styles.checkAll, (checkingAll || !!sending) && styles.off]}>
+      {checkingAll ? <ActivityIndicator color={colors.mintInk} /> : <Text style={styles.checkAllText}>Check all as read</Text>}</Pressable>}
     {(fromShot ?? lines)?.map((line) => <LineRow key={`${line.platform}:${line.lineId}`} line={line} sending={sending} done={added.has(line.lineId)}
       marked={'side' in line ? (line as ReadLine).side : null} onPick={(side) => void add(line, side)} />)}
   </View>;
@@ -91,6 +123,7 @@ function LineRow({ line, sending, done, marked, onPick }: { line: BoardLine; sen
       <Text style={styles.name}>{line.playerName}</Text>
       <Text style={styles.detail}>{formatLine(line.line)} {marketLabel(line.market)}{TYPES[line.lineType] ? ` · ${TYPES[line.lineType]}` : ''}</Text>
       <Text style={styles.faint}>{APPS[line.platform] ?? line.platform} · {line.league ?? line.sport} · {time(line.start)}</Text>
+      {marked && <Text style={styles.slipSays}>Your slip says {marked === 'MORE' ? 'More' : 'Less'}</Text>}
     </View>
     {done ? <Text style={styles.sideText}>Added ✓</Text> : (['MORE', 'LESS'] as const).filter((side) => side === 'MORE' || !TYPES[line.lineType]).map((side) => {
       const key = `${line.lineId}:${side}`;
@@ -120,6 +153,9 @@ const styles = StyleSheet.create({
   off: { opacity: .4 },
   sideOn: { backgroundColor: colors.mint },
   sideTextOn: { color: colors.mintInk },
+  checkAll: { alignItems: 'center', backgroundColor: colors.mint, borderRadius: radius.md, paddingVertical: 12 },
+  checkAllText: { color: colors.mintInk, fontSize: 15, fontWeight: '800' },
+  slipSays: { color: colors.textMuted, fontSize: 11.5, fontWeight: '700' },
   shotHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   close: { color: colors.textMuted, fontSize: 13, fontWeight: '800' },
 });
