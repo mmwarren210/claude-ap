@@ -64,6 +64,7 @@ import { ProviderIdentityVerifier } from './provider-identity.js';
 import { SHARP_SOURCE, sharpPrizePicksScraped } from './scrapers/sharp-prizepicks.js';
 import type { BoardSourceReport } from './scrapers/scraped-prizepicks-provider.js';
 import { StatApiOwnerError, StatApiOwnerResearch } from './stat-api-owner-research.js';
+import type { StatApiArchive } from './stat-api-archive.js';
 import { OwnerResearchNotebook } from './owner-research-notebook.js';
 import { rankingCards, secondLookWatchlist } from './ranking-cards.js';
 import { auditPrizePicksLineTypes } from './prizepicks-line-types.js';
@@ -135,6 +136,7 @@ export interface ServerOptions {
   ownerNotebook?: OwnerResearchNotebook | null;
   internalHistory?: InternalHistoryStore | null;
   historyBackfill?: HistoryBackfillService | null;
+  statArchive?: StatApiArchive | null;
   clock?: () => Date;
   selections?: SelectionLedger | null;
   nflverseMappingFile?: string;
@@ -2903,6 +2905,17 @@ export function buildServer(options: ServerOptions = {}) {
       if(!options.ownerResearch)return reply.code(503).send({code:'STAT_API_UNCONFIGURED'});
       try{return await options.ownerResearch.columns(query.data.sport,query.data.table,query.data.player);}
       catch(error){return reply.code(502).send({code:error instanceof Error?error.message:'STAT_API_FAILED'});}
+    });
+    // Stat API ends 2026-10-20 (owner, 2026-10-15): save every table to the data volume before it goes.
+    admin.post('/stat-archive', async (_request, reply) => options.statArchive
+      ? reply.code(202).send({ started: options.statArchive.start(), ...await options.statArchive.status() })
+      : reply.code(503).send({ code: 'STAT_API_UNCONFIGURED' }));
+    admin.get('/stat-archive', async (_request, reply) => options.statArchive ? options.statArchive.status()
+      : reply.code(503).send({ code: 'STAT_API_UNCONFIGURED' }));
+    admin.get('/stat-archive/:file', async (request, reply) => {
+      const stream = await options.statArchive?.file((request.params as { file: string }).file);
+      if (!stream) return reply.code(404).send({ code: 'NOT_FOUND' });
+      return reply.type('application/x-ndjson').send(stream);
     });
     // What the Stat API returns for a player name (ids, names, team ids, and whether the scan was cut short).
     admin.get('/stat-search', async (request, reply) => {

@@ -59,6 +59,7 @@ import { DailyLookupBudget } from './context-refresh.js';
 import { OwnerPullJobStore } from './owner-pull-job.js';
 import { ProviderIdentityVerifier } from './provider-identity.js';
 import { StatApiOwnerResearch } from './stat-api-owner-research.js';
+import { StatApiArchive } from './stat-api-archive.js';
 import { StatApiGkrEvidence } from './stat-api-gkr-evidence.js';
 import { PublicNflGkrEvidence } from './public-nfl-gkr-evidence.js';
 import { OwnerResearchNotebook } from './owner-research-notebook.js';
@@ -299,6 +300,7 @@ const statDailyLimit=process.env.CROWNIQ_STAT_API_DAILY_RECORD_LIMIT
 const statSource=statApiKey ? new StatApiOwnerResearch(statApiKey,fetch,()=>new Date(),statDailyLimit,
   `${dataDir}/stat-api-usage.json`):null;
 const ownerResearch=statSource && ownerPublicId ? statSource:null;
+const statArchive=statApiKey?new StatApiArchive(statApiKey,`${dataDir}/stat-api-archive`):null;
 const historyBackfill=statSource?new HistoryBackfillService(statSource,internalHistory):null;
 const ownerNotebook=ownerResearch ? new OwnerResearchNotebook(
   process.env.CROWNIQ_OWNER_RESEARCH_FILE??`${dataDir}/owner-stat-research.json`,ownerResearch,
@@ -464,7 +466,7 @@ const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',dispersion:edgeDisp
   alertsFile:`${dataDir}/edge/alerts.json`,staleLogFile:`${dataDir}/edge/stale-events.jsonl`};
 
 const app = buildServer({ ufcHistory, soccerHistory, adminToken: process.env.ADMIN_TOKEN, playerHistory, espnHistory: espnEvidence, signupContact: process.env.CROWNIQ_SIGNUP_CONTACT?.trim() || null, guestPass, provider,
-  webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,
+  webResearch,product,ownerPublicId,ownerResearch,ownerNotebook,internalHistory,historyBackfill,statArchive,
   autoGradingEnabled:!!autoGrade,autoGradingStatus:()=>autoGrade?.status()??null,
   requireProfiles:true,identityVerifier,
   allowedWebOrigins:(process.env.CROWNIQ_ALLOWED_WEB_ORIGINS??'').split(',')
