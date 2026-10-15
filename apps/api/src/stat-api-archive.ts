@@ -22,7 +22,9 @@ export const PLAYER_TABLES: Readonly<Record<string, readonly string[]>> = {
 };
 const BASE = 'https://api.stat-api.com/api/v1';
 const LIMITS = [2500, 1000, 500, 200, 100];
-const WORKERS = 4;
+const WORKERS = 2;
+/** Rate-limit waits on one request before the archive stops for the day. */
+const RATE_WAITS = 12;
 
 type Unit = { readonly key: string; readonly sport: string; readonly table: string; readonly file: string;
   readonly params: Readonly<Record<string, string>> };
@@ -111,6 +113,7 @@ export class StatApiArchive {
   /** Pages one unit to its end. Returns a reason to stop the whole archive (quota, key), or null to go on. */
   private async unit(unit: Unit): Promise<string | null> {
     const entry = this.state[unit.key] ??= { fromId: 0, rows: 0, pages: 0, done: false, error: null, limit: LIMITS[0] };
+    let rateWaits = 0;
     for (;;) {
       const url = new URL(`${BASE}/${unit.sport.toLowerCase()}/${unit.table}`);
       for (const [name, value] of Object.entries(unit.params)) url.searchParams.set(name, value);
@@ -128,7 +131,13 @@ export class StatApiArchive {
       if (!response) { entry.error = 'UNREACHABLE'; return null; }
       const left = response.headers.get('x-quota-remaining');
       if (left !== null && /^\d+$/.test(left)) this.quotaRemaining = Number(left);
-      if (response.status === 429) return 'QUOTA_EXHAUSTED';
+      if (response.status === 429) {
+        // A per-minute rate limit, not the monthly quota: wait it out (Retry-After, else a minute) and try again.
+        if (this.quotaRemaining === 0 || (rateWaits += 1) > RATE_WAITS) return 'QUOTA_EXHAUSTED';
+        const after = Number(response.headers.get('retry-after'));
+        await this.pause(Number.isFinite(after) && after > 0 ? Math.min(after, 600) * 1000 : 60_000);
+        continue;
+      }
       if (response.status === 401 || response.status === 403) return 'KEY_REJECTED';
       if (response.status === 404) { entry.done = true; entry.error = 'NOT_FOUND'; return null; }
       if (response.status === 400 || response.status === 422) {

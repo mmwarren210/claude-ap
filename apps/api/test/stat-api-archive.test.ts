@@ -13,7 +13,7 @@ test('archive saves base tables, games by season and game logs by player, and re
   const seen: string[] = [];
   const fetchFn = (async (input: URL) => {
     calls++;
-    if (calls > quotaAfter) return new Response('{}', { status: 429 });
+    if (calls > quotaAfter) return new Response('{}', { status: 429, headers: { 'x-quota-remaining': '0' } });
     const table = input.pathname.split('/').slice(4).join('/'), from = Number(input.searchParams.get('from_id'));
     seen.push(`${table}?${input.searchParams}`);
     if (table.startsWith('game_player') || table === 'player_rounds') {
@@ -37,4 +37,19 @@ test('archive saves base tables, games by season and game logs by player, and re
   assert.equal(status.tables.MLB_game_player_pitching_stats.rows, 2);
   assert.equal(await archive.file('../etc'), null);
   assert.ok(await archive.file('NFL_game_player_stats.jsonl'));
+});
+
+test('archive waits out a per-minute rate limit instead of stopping', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'stat-archive-'));
+  let limited = 3, waits = 0;
+  const fetchFn = (async (input: URL) => {
+    if (limited-- > 0) return new Response('{}', { status: 429, headers: { 'retry-after': '1' } });
+    const table = input.pathname.split('/').pop()!;
+    if (table.startsWith('game_player') || table === 'player_rounds') return new Response(JSON.stringify({ [table]: [], next_from_id: null }));
+    return new Response(JSON.stringify({ [table]: table === 'seasons' ? [] : [{ id: 1 }], next_from_id: null }));
+  }) as unknown as typeof fetch;
+  const archive = new StatApiArchive('key', dir, fetchFn, async () => { waits++; });
+  archive.start(); await until(archive);
+  assert.equal((await archive.status()).stopReason, null);
+  assert.ok(waits >= 3);
 });
