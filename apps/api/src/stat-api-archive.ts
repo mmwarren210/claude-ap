@@ -6,17 +6,33 @@ import { join } from 'node:path';
 // sport into JSON-lines files on the data volume, one row per line, and remembers where each table stopped so a restart or
 // a quota stop carries on from there. Raw rows only: nothing here feeds GKR or the board.
 
-export const ARCHIVE_TABLES: Readonly<Record<string, readonly string[]>> = {
-  NFL: ['seasons', 'teams', 'players', 'games', 'game_player_stats', 'game_team_stats'],
-  NBA: ['seasons', 'teams', 'players', 'games', 'game_player_stats', 'game_team_stats'],
-  MLB: ['seasons', 'teams', 'players', 'games', 'game_player_batter_stats', 'game_player_pitching_stats', 'game_team_stats'],
-  PGA: ['seasons', 'players', 'tournaments', 'player_rounds', 'player_season_stats'],
+/** Tables read whole (paged with from_id). */
+export const BASE_TABLES: Readonly<Record<string, readonly string[]>> = {
+  NFL: ['seasons', 'teams', 'players'],
+  NBA: ['seasons', 'teams', 'players'],
+  MLB: ['seasons', 'teams', 'players'],
+  PGA: ['seasons', 'players', 'tournaments', 'player_season_stats'],
+};
+/** Tables read one player at a time (they refuse a request without player_id). */
+export const PLAYER_TABLES: Readonly<Record<string, readonly string[]>> = {
+  NFL: ['game_player_stats'],
+  NBA: ['game_player_stats'],
+  MLB: ['game_player_batter_stats', 'game_player_pitching_stats'],
+  PGA: ['player_rounds'],
 };
 const BASE = 'https://api.stat-api.com/api/v1';
-const LIMITS = [1000, 500, 200, 100];
+const LIMITS = [2500, 1000, 500, 200, 100];
+const WORKERS = 4;
 
-type TableState = { fromId: number | null; rows: number; pages: number; done: boolean; error: string | null; limit: number };
-type State = Record<string, TableState>;
+type Unit = { readonly key: string; readonly sport: string; readonly table: string; readonly file: string;
+  readonly params: Readonly<Record<string, string>> };
+type UnitState = { fromId: number; rows: number; pages: number; done: boolean; error: string | null; limit: number };
+type State = Record<string, UnitState>;
+const rowsOf = (body: unknown, table: string): unknown[] => {
+  if (Array.isArray(body)) return body;
+  const data = body as Record<string, unknown>;
+  return Array.isArray(data[table]) ? data[table] as unknown[] : Object.values(data).find(Array.isArray) as unknown[] | undefined ?? [];
+};
 
 export class StatApiArchive {
   private running = false;
@@ -25,11 +41,12 @@ export class StatApiArchive {
   private startedAt: string | null = null;
   private finishedAt: string | null = null;
   private stopReason: string | null = null;
+  private planned = 0;
 
   constructor(private readonly key: string, private readonly dir: string, private readonly fetchFn: typeof fetch = fetch,
     private readonly pause = (ms: number) => new Promise<void>((done) => setTimeout(done, ms))) {}
 
-  private get stateFile() { return join(this.dir, 'state.json'); }
+  private get stateFile() { return join(this.dir, 'state-v2.json'); }
   private async load() { try { this.state = JSON.parse(await readFile(this.stateFile, 'utf8')) as State; } catch { this.state = {}; } }
   private async save() { await writeFile(this.stateFile, JSON.stringify(this.state)); }
 
@@ -38,29 +55,67 @@ export class StatApiArchive {
     if (this.running) return false;
     this.running = true; this.startedAt = new Date().toISOString(); this.finishedAt = null; this.stopReason = null;
     void this.run().catch((error) => { this.stopReason = error instanceof Error ? error.message : 'FAILED'; })
-      .finally(() => { this.running = false; this.finishedAt = new Date().toISOString(); });
+      .finally(() => { this.running = false; this.finishedAt = new Date().toISOString(); void this.save(); });
     return true;
+  }
+
+  /** Ids saved in a table's file (players, seasons). */
+  private async ids(file: string, field: string): Promise<number[]> {
+    let text = '';
+    try { text = await readFile(join(this.dir, file), 'utf8'); } catch { return []; }
+    const ids = new Set<number>();
+    for (const line of text.split('\n')) {
+      if (!line) continue;
+      try { const id = Number((JSON.parse(line) as Record<string, unknown>)[field]); if (Number.isSafeInteger(id) && id > 0) ids.add(id); }
+      catch { /* skip a torn line */ }
+    }
+    return [...ids];
   }
 
   private async run() {
     await mkdir(this.dir, { recursive: true });
     await this.load();
-    for (const [sport, tables] of Object.entries(ARCHIVE_TABLES)) for (const table of tables) {
-      const name = `${sport}_${table}`;
-      const entry = this.state[name] ??= { fromId: null, rows: 0, pages: 0, done: false, error: null, limit: LIMITS[0] };
-      if (entry.done) continue;
-      const stop = await this.table(sport, table, name, entry);
-      await this.save();
-      if (stop) { this.stopReason = stop; return; }
+    const base: Unit[] = Object.entries(BASE_TABLES).flatMap(([sport, tables]) => tables.map((table) =>
+      ({ key: `${sport}_${table}`, sport, table, file: `${sport}_${table}.jsonl`, params: {} })));
+    if (await this.all(base)) return;
+    // Games, one season at a time (the games table holds a season per request).
+    const games: Unit[] = [];
+    for (const sport of ['NFL', 'NBA', 'MLB']) for (const year of await this.ids(`${sport}_seasons.jsonl`, 'start_year'))
+      games.push({ key: `${sport}_games_${year}`, sport, table: 'games', file: `${sport}_games.jsonl`, params: { season_id: String(year) } });
+    if (await this.all(games)) return;
+    const perPlayer: Unit[] = [];
+    for (const [sport, tables] of Object.entries(PLAYER_TABLES)) {
+      const players = await this.ids(`${sport}_players.jsonl`, 'id');
+      for (const table of tables) for (const id of players)
+        perPlayer.push({ key: `${sport}_${table}_${id}`, sport, table, file: `${sport}_${table}.jsonl`, params: { player_id: String(id) } });
     }
+    await this.all(perPlayer);
   }
 
-  /** Pages one table to its end. Returns a reason to stop the whole archive (quota, key), or null to go on. */
-  private async table(sport: string, table: string, name: string, entry: TableState): Promise<string | null> {
+  /** Runs units with a few workers. True when the whole archive must stop (quota, key). */
+  private async all(units: readonly Unit[]): Promise<boolean> {
+    this.planned = Math.max(this.planned, Object.keys(this.state).length + units.filter((unit) => !this.state[unit.key]).length);
+    const queue = units.filter((unit) => !this.state[unit.key]?.done);
+    let finished = 0;
+    await Promise.all(Array.from({ length: WORKERS }, async () => {
+      for (let unit = queue.shift(); unit && !this.stopReason; unit = queue.shift()) {
+        const stop = await this.unit(unit);
+        if (stop) this.stopReason = stop;
+        if (++finished % 25 === 0) await this.save();
+      }
+    }));
+    await this.save();
+    return this.stopReason !== null;
+  }
+
+  /** Pages one unit to its end. Returns a reason to stop the whole archive (quota, key), or null to go on. */
+  private async unit(unit: Unit): Promise<string | null> {
+    const entry = this.state[unit.key] ??= { fromId: 0, rows: 0, pages: 0, done: false, error: null, limit: LIMITS[0] };
     for (;;) {
-      const url = new URL(`${BASE}/${sport.toLowerCase()}/${table}`);
+      const url = new URL(`${BASE}/${unit.sport.toLowerCase()}/${unit.table}`);
+      for (const [name, value] of Object.entries(unit.params)) url.searchParams.set(name, value);
       url.searchParams.set('limit', String(entry.limit));
-      if (entry.fromId) url.searchParams.set('from_id', String(entry.fromId));
+      url.searchParams.set('from_id', String(entry.fromId));
       let response: Response | null = null;
       for (let attempt = 0; attempt < 4; attempt++) {
         try {
@@ -75,7 +130,7 @@ export class StatApiArchive {
       if (left !== null && /^\d+$/.test(left)) this.quotaRemaining = Number(left);
       if (response.status === 429) return 'QUOTA_EXHAUSTED';
       if (response.status === 401 || response.status === 403) return 'KEY_REJECTED';
-      if (response.status === 404) { entry.done = true; entry.error = 'NO_SUCH_TABLE'; return null; }
+      if (response.status === 404) { entry.done = true; entry.error = 'NOT_FOUND'; return null; }
       if (response.status === 400 || response.status === 422) {
         const smaller = LIMITS.find((limit) => limit < entry.limit);
         if (smaller) { entry.limit = smaller; continue; }
@@ -84,15 +139,12 @@ export class StatApiArchive {
       if (!response.ok) { entry.error = `HTTP_${response.status}`; return null; }
       let body: unknown;
       try { body = await response.json(); } catch { entry.error = 'BAD_JSON'; return null; }
-      const data = body as Record<string, unknown>;
-      const rows = Array.isArray(body) ? body : Array.isArray(data[table]) ? data[table] as unknown[]
-        : Object.values(data).find(Array.isArray) as unknown[] | undefined ?? [];
-      if (rows.length) await appendFile(join(this.dir, `${name}.jsonl`), rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+      const rows = rowsOf(body, unit.table);
+      if (rows.length) await appendFile(join(this.dir, unit.file), rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
       entry.rows += rows.length; entry.pages++; entry.error = null;
-      const next = Array.isArray(body) ? null : data.next_from_id;
-      entry.fromId = typeof next === 'number' && Number.isSafeInteger(next) && next > 0 ? next : null;
-      if (!entry.fromId || !rows.length) { entry.done = true; return null; }
-      if (entry.pages % 10 === 0) await this.save();
+      const next = Array.isArray(body) ? null : (body as Record<string, unknown>).next_from_id;
+      if (typeof next !== 'number' || !Number.isSafeInteger(next) || next <= entry.fromId || !rows.length) { entry.done = true; return null; }
+      entry.fromId = next;
     }
   }
 
@@ -103,11 +155,14 @@ export class StatApiArchive {
       files = await Promise.all((await readdir(this.dir)).filter((name) => name.endsWith('.jsonl'))
         .map(async (name) => ({ name, bytes: (await stat(join(this.dir, name))).size })));
     } catch { /* nothing saved yet */ }
-    const tables = Object.values(this.state);
+    const units = Object.entries(this.state), byTable: Record<string, { rows: number; requests: number; done: number; errors: number }> = {};
+    for (const [key, item] of units) {
+      const table = key.replace(/_\d+$/, ''), sum = byTable[table] ??= { rows: 0, requests: 0, done: 0, errors: 0 };
+      sum.rows += item.rows; sum.requests++; if (item.done) sum.done++; if (item.error) sum.errors++;
+    }
     return { running: this.running, startedAt: this.startedAt, finishedAt: this.finishedAt, stopReason: this.stopReason,
-      quotaRemaining: this.quotaRemaining, totalRows: tables.reduce((sum, item) => sum + item.rows, 0),
-      tablesDone: tables.filter((item) => item.done).length,
-      tablesTotal: Object.values(ARCHIVE_TABLES).reduce((sum, list) => sum + list.length, 0), tables: this.state, files };
+      quotaRemaining: this.quotaRemaining, totalRows: units.reduce((sum, [, item]) => sum + item.rows, 0),
+      unitsDone: units.filter(([, item]) => item.done).length, unitsPlanned: this.planned, tables: byTable, files };
   }
 
   /** A saved table file to download, or null. */

@@ -300,7 +300,7 @@ const statDailyLimit=process.env.CROWNIQ_STAT_API_DAILY_RECORD_LIMIT
 const statSource=statApiKey ? new StatApiOwnerResearch(statApiKey,fetch,()=>new Date(),statDailyLimit,
   `${dataDir}/stat-api-usage.json`):null;
 const ownerResearch=statSource && ownerPublicId ? statSource:null;
-const statArchive=statApiKey?new StatApiArchive(statApiKey,`${dataDir}/stat-api-archive`):null;
+const statArchive=statApiKey?new StatApiArchive(statApiKey,`${dataDir}/stat-api-archive/v2`):null;
 const historyBackfill=statSource?new HistoryBackfillService(statSource,internalHistory):null;
 const ownerNotebook=ownerResearch ? new OwnerResearchNotebook(
   process.env.CROWNIQ_OWNER_RESEARCH_FILE??`${dataDir}/owner-stat-research.json`,ownerResearch,
