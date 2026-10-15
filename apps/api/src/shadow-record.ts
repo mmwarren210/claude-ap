@@ -18,7 +18,7 @@ import { normalizedName } from './context/match.js';
 //   game-script proposal (docs/PROPOSAL_GAME_SCRIPT.md).
 // - gkr1 / gkr2: GKR's play and GKR 2's (owner, 2026-10-11) on the lines GKR 2 could read, graded side by side.
 
-export type ShadowKind = 'books' | 'book:draftkings' | 'book:hardrock' | 'book:pinnacle' | 'book:kalshi' | 'script' | 'gkr' | 'beta' | 'beta-pass' | 'history' | 'trend' | 'book-history' | 'book-value' | 'gkr1' | 'gkr2' | 'gkr3';
+export type ShadowKind = 'books' | 'book:draftkings' | 'book:hardrock' | 'book:pinnacle' | 'book:kalshi' | 'script' | 'gkr' | 'beta' | 'beta-pass' | 'history' | 'trend' | 'book-history' | 'book-value' | 'gkr1' | 'gkr2' | 'gkr3' | 'gkr4' | 'gkr4:underdog' | 'gkr4:pick6' | 'gkr4:dabble';
 export type ShadowGrade = 'PENDING' | 'WIN' | 'LOSS' | 'PUSH' | 'DNP' | 'VOID';
 
 /** The game's expected script when the pick was saved. */
@@ -41,12 +41,16 @@ export interface ShadowEntry {
   /** The pick's own number: the books' no-vig chance (books), GKR's score (book tabs, script). */
   readonly strength: number | null;
   readonly script?: GameScript;
+  /** GKR 4's reads (chances on its side) and raw blend, kept so it can learn its weights from graded picks. */
+  readonly parts?: Readonly<Record<string, number>>;
+  readonly raw?: number;
   readonly recordedAt: string;
   grade: ShadowGrade; actual: number | null;
 }
 
 export interface ShadowPick { readonly kind: ShadowKind; readonly line: PropLine; readonly side: PlayableDirection;
-  readonly strength: number | null; readonly script?: GameScript }
+  readonly strength: number | null; readonly script?: GameScript;
+  readonly parts?: Readonly<Record<string, number>>; readonly raw?: number }
 
 /** Stats game script should move (volume and scoring), for the shadow record. */
 const SCRIPT_SPORTS = new Set(['NFL', 'NCAAFB', 'NBA', 'WNBA']);
@@ -129,7 +133,8 @@ export class ShadowRecord {
       const id = this.key(pick.kind, pick.line);
       if (this.entries.has(id) || Date.parse(pick.line.eventStartTime) <= now.getTime()) continue;
       this.entries.set(id, { id, kind: pick.kind, side: pick.side, lineSnapshot: structuredClone(pick.line),
-        strength: pick.strength, ...pick.script ? { script: pick.script } : {}, recordedAt: now.toISOString(),
+        strength: pick.strength, ...pick.script ? { script: pick.script } : {},
+        ...pick.parts ? { parts: pick.parts } : {}, ...pick.raw !== undefined ? { raw: pick.raw } : {}, recordedAt: now.toISOString(),
         grade: 'PENDING', actual: null });
       added++;
     }
@@ -167,6 +172,14 @@ export class ShadowRecord {
     return [...this.entries.values()].filter((entry) => entry.kind === kind && entry.strength !== null &&
       (entry.grade === 'WIN' || entry.grade === 'LOSS'))
       .map((entry) => ({ probability: entry.strength! / 100, hit: entry.grade === 'WIN', sport: entry.lineSnapshot.sport }));
+  }
+
+  /** Graded picks of some kinds with their saved reads, for GKR 4's learning. */
+  async learningRows(kinds: readonly ShadowKind[]): Promise<{ sport: string; parts: Record<string, number>; raw: number; hit: boolean }[]> {
+    await this.load();
+    return [...this.entries.values()].filter((entry) => kinds.includes(entry.kind) && entry.parts && entry.raw !== undefined &&
+      (entry.grade === 'WIN' || entry.grade === 'LOSS'))
+      .map((entry) => ({ sport: entry.lineSnapshot.sport, parts: { ...entry.parts! }, raw: entry.raw!, hit: entry.grade === 'WIN' }));
   }
 
   /** Graded record of some kinds by score bucket and sport, for comparing two models on the same lines (GKR and GKR 2). */
@@ -218,7 +231,7 @@ export class ShadowRecord {
       const wins = done.filter((entry) => entry.grade === 'WIN').length;
       return { picks: group.length, graded: done.length, wins, hitRate: done.length ? Math.round(wins / done.length * 1000) / 1000 : null };
     };
-    const kinds: ShadowKind[] = ['books', 'book:draftkings', 'book:hardrock', 'book:pinnacle', 'book:kalshi', 'script', 'gkr', 'beta', 'beta-pass', 'history', 'trend', 'book-history', 'book-value', 'gkr1', 'gkr2', 'gkr3'];
+    const kinds: ShadowKind[] = ['books', 'book:draftkings', 'book:hardrock', 'book:pinnacle', 'book:kalshi', 'script', 'gkr', 'beta', 'beta-pass', 'history', 'trend', 'book-history', 'book-value', 'gkr1', 'gkr2', 'gkr3', 'gkr4', 'gkr4:underdog', 'gkr4:pick6', 'gkr4:dabble'];
     // Game script: how GKR's side did with the script for it or against it. A team favored by 7+ or a high total
     // favors MORE on volume stats; an underdog by 7+ or a low total favors LESS.
     const scripts = all.filter((entry) => entry.kind === 'script' && entry.script);

@@ -105,6 +105,8 @@ import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
 import type { Gkr2, OpponentReads } from './gkr2.js';
 import { gkr3Read } from './gkr3.js';
+import { gkr4Parts, gkr4Read, learnGkr4 } from './gkr4.js';
+import type { Gkr4Parts } from './gkr4.js';
 import { gkr2Reads, whyDifferent } from './gkr2-reads.js';
 import type { MlbGames } from './mlb-context.js';
 import type { PlayerStore } from './player-store.js';
@@ -456,6 +458,8 @@ export function buildServer(options: ServerOptions = {}) {
         const live=new Map(board.analyses.map((analysis)=>[analysis.lineId,analysis]));
         const edgeLines=edge?(await edge.snapshot('prizepicks').catch(()=>null))?.byLine??null:null;
         const leans=await scriptLeans().catch(()=>new Map<string,'MORE'|'LESS'>());
+        const learned4=learnGkr4((await shadow.learningRows(['gkr4','gkr4:underdog','gkr4:pick6','gkr4:dabble']))
+          .map((row)=>({...row,parts:row.parts as Gkr4Parts})));
         for(const analysis of read2.analyses.values()){
           const line=lines.get(analysis.lineId),gkr=live.get(analysis.lineId);
           if(!line)continue;
@@ -463,6 +467,17 @@ export function buildServer(options: ServerOptions = {}) {
           if(gkr&&gkr.direction!=='PASS'&&gkr.score!==null)picks.push({kind:'gkr1',line,side:gkr.direction,strength:gkr.score});
           const gkr3=gkr3Read(analysis,edgeLines?.get(analysis.lineId),leans.get(analysis.lineId)??null);
           if(gkr3)picks.push({kind:'gkr3',line,side:gkr3.side,strength:gkr3.strength});
+          // GKR 4 (owner, 2026-10-15, shadow only): GKR 3's reads plus books, form, opponent, role and the other apps'
+          // numbers, weighted from its own graded picks. Also read at Underdog, Pick6 and Dabble's own numbers.
+          const edgePick=edgeLines?.get(analysis.lineId),lean=leans.get(analysis.lineId)??null;
+          const gkr4=gkr4Read(gkr4Parts(analysis,edgePick,lean),line.sport,learned4);
+          if(gkr4)picks.push({kind:'gkr4',line,side:gkr4.side,strength:gkr4.strength,parts:gkr4.parts,raw:gkr4.raw});
+          for(const other of edgePick?.elsewhere??[]){
+            if(other.platform!=='underdog'&&other.platform!=='pick6'&&other.platform!=='dabble')continue;
+            const read=gkr4Read(gkr4Parts(analysis,edgePick,lean,other),line.sport,learned4);
+            if(read)picks.push({kind:`gkr4:${other.platform}`,line:{...line,threshold:other.threshold},side:read.side,
+              strength:read.strength,parts:read.parts,raw:read.raw});
+          }
         }
       }
       // Free History Reads on PrizePicks lines GKR doesn't play, graded in their own record.
@@ -2847,6 +2862,13 @@ export function buildServer(options: ServerOptions = {}) {
     // GKR 3 in shadow beside GKR 2 and GKR on the same lines (owner, 2026-10-13: a week's record, then a report).
     admin.get('/gkr3', async (_request, reply) => options.shadowRecord ? options.shadowRecord.compare(['gkr1','gkr2','gkr3'])
       : reply.code(503).send({ code: 'SHADOW_RECORD_UNCONFIGURED' }));
+    // GKR 4 beside the family, its per-app reads, and what it has learned so far.
+    admin.get('/gkr4', async (_request, reply) => {
+      if (!options.shadowRecord) return reply.code(503).send({ code: 'SHADOW_OFF' });
+      const learned = learnGkr4((await options.shadowRecord.learningRows(['gkr4','gkr4:underdog','gkr4:pick6','gkr4:dabble']))
+        .map((row) => ({ ...row, parts: row.parts as Gkr4Parts })));
+      return { ...await options.shadowRecord.compare(['gkr1','gkr2','gkr3','gkr4','gkr4:underdog','gkr4:pick6','gkr4:dabble']), learned };
+    });
     admin.get('/gkr2', async (_request, reply) => options.shadowRecord ? options.shadowRecord.compare(['gkr1','gkr2'])
       : reply.code(503).send({ code: 'SHADOW_UNCONFIGURED' }));
     admin.get('/shadow', async (_request, reply) => options.shadowRecord ? options.shadowRecord.status()
