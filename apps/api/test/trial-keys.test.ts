@@ -229,3 +229,38 @@ test('code check: a guest who paid for a month and then answers the survey keeps
   assert.equal(sub?.plan, 'MONTH');
   assert.equal(sub?.free, false);
 });
+
+test('a pass that ended while signed out: the device sees the survey and answers it without a code', async () => {
+  let now = new Date('2026-10-11T12:00:00Z');
+  const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'poll-device-')), 'ledger.json'), 'CROWN_STRONG', () => now);
+  const [key] = await ledger.issueTrialKeys(1);
+  const device = 'device-endedendedended1';
+  await ledger.trialLogin(key, device, signup(device));
+  assert.deepEqual(await ledger.trialDeviceStatus(device), { trial: true, ended: false, surveyOpen: false });
+  assert.deepEqual(await ledger.trialDeviceStatus('device-nobodynobodynob'), { trial: false, ended: false, surveyOpen: false });
+  now = new Date('2026-10-14T09:00:00Z');
+  assert.deepEqual(await ledger.trialDeviceStatus(device), { trial: true, ended: true, surveyOpen: true });
+  const renewed = await ledger.answerTrialPoll({ deviceId: device }, { recommend: 'YES', liked: ['Board'], improve: 'More sports please',
+    plan: 'NONE', price: null });
+  assert.ok(renewed.freeWeekUntil.startsWith('2026-10-21T09:00'));
+  assert.equal((await ledger.trialDeviceStatus(device)).surveyOpen, false);
+});
+
+test('the owner gives a trial its free week by hand, once, and the survey then earns no second week', async () => {
+  let now = new Date('2026-10-11T12:00:00Z');
+  const ledger = new ProductLedger(join(await mkdtemp(join(tmpdir(), 'owner-week-')), 'ledger.json'), 'CROWN_STRONG', () => now);
+  const [key] = await ledger.issueTrialKeys(1);
+  const device = 'device-ownerweekowner1';
+  const login = signup(device);
+  await ledger.trialLogin(key, device, login);
+  now = new Date('2026-10-15T12:00:00Z');
+  await assert.rejects(ledger.grantTrialWeek('nobody_here'), /TRIAL_NOT_FOUND/);
+  const given = await ledger.grantTrialWeek(login.username);
+  assert.ok(given.until.startsWith('2026-10-22T12:00'));
+  assert.equal((await ledger.login(login.email, login.password)).profile.plan !== undefined, true, 'she can sign in again');
+  await assert.rejects(ledger.grantTrialWeek(login.username), /WEEK_ALREADY_GIVEN/);
+  await assert.rejects(ledger.answerTrialPoll({ deviceId: device }, { recommend: 'YES', liked: ['Board'], improve: 'More sports please',
+    plan: 'NONE', price: null }), /POLL_ALREADY_ANSWERED/);
+  const row = (await ledger.trialUsers())[0]!;
+  assert.equal(row.extended, true);
+});

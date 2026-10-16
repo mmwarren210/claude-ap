@@ -21,6 +21,8 @@ function guestDeviceId():string{
   try{window.localStorage.setItem(key,id);}catch{ /* storage unavailable */ }
   return id;
 }
+/** This browser's saved trial device id, without making one (null when it never started a pass). */
+function savedDeviceId():string|null{try{return window.localStorage.getItem('crowniq.guestDevice');}catch{return null;}}
 const noSubscription=()=>()=>undefined;
 /** What to fix when a new trial's login can't be used (the form stays open). */
 const trialLoginMessages:Record<string,string>={EMAIL_TAKEN:'That email already has an account or trial. Sign in with it below instead.',
@@ -121,6 +123,20 @@ export function AuthProvider({children}:{children:ReactNode}){
   const guest=useMemo(()=>({signingIn:guestLink&&guestStarted&&!guestResult.done,waiting:guestLink&&!guestStarted&&!guestResult.done,
     start:(login:TrialLogin)=>{guestLogin.current=login;setGuestFormError('');setGuestStarted(true);},message:guestResult.message,
     expired:!!guestResult.expired,formError:guestFormError}),[guestLink,guestStarted,guestResult,guestFormError]);
+  // A pass that ended while signed out (owner, 2026-10-16: a tester was signed out at the end and never saw the survey, so
+  // she never got her free week): this device's trial is checked and, when its survey is still open, the survey shows.
+  useEffect(()=>{
+    const device=savedDeviceId();
+    if(!base||guestCode()||!device)return;
+    let active=true;
+    void fetch(`${base}/v1/auth/trial-status`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({deviceId:device})})
+      .then(async(response)=>{
+        if(!response.ok||!active)return;
+        const status=await response.json() as {surveyOpen?:boolean};
+        if(status.surveyOpen)setGuestResult((current)=>current.done?current:{done:true,message:guestMessages.GUEST_PASS_EXPIRED,expired:true});
+      }).catch(()=>undefined);
+    return ()=>{active=false;};
+  },[]);
   useEffect(()=>{
     const code=guestCode();
     if(!code||!base||!guestStarted)return;
@@ -154,7 +170,7 @@ export function AuthProvider({children}:{children:ReactNode}){
       const signedIn=!login&&!!session?.token, code=guestCode();
       const response=await fetch(`${base}${signedIn?'/v1/trial/poll':'/v1/auth/trial-poll'}`,{method:'POST',
         headers:{'content-type':'application/json',...(signedIn?{authorization:`Bearer ${session!.token}`}:{})},
-        body:JSON.stringify(signedIn?answers:login?{...login,answers}:{code,deviceId:guestDeviceId(),answers})});
+        body:JSON.stringify(signedIn?answers:login?{...login,answers}:code?{code,deviceId:guestDeviceId(),answers}:{deviceId:guestDeviceId(),answers})});
       if(!response.ok){const payload=await response.json().catch(()=>({})) as {code?:string};
         throw new Error(payload.code==='POLL_ALREADY_ANSWERED'?'You already answered the poll. Thanks!'
           :payload.code==='TRIAL_NOT_FOUND'?'This survey is for the 2-day trial passes.':payload.code==='INVALID_POLL'?'Answer every question to get your free week.'

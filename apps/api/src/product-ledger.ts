@@ -65,7 +65,9 @@ interface Account {
   /** A guest-pass account: no username or password, full access until `expiresAt`, kept afterwards for its picks. */
   guest?:{pass:string;deviceHash:string;expiresAt:string;
     /** The end-of-trial poll (owner, 2026-10-11): answering it once adds 7 free days. */
-    poll?:TrialPollAnswer&{at:string}}}
+    poll?:TrialPollAnswer&{at:string};
+    /** The owner gave this trial its free week by hand (owner, 2026-10-16), so the survey no longer earns another. */
+    ownerWeekAt?:string}}
 /** End-of-trial poll answers. */
 export interface TrialPollAnswer {recommend:'YES'|'MAYBE'|'NO';liked:string[];improve:string|null;
   /** The subscription length they'd pick, and the price range that feels fair for it (owner, 2026-10-11). */
@@ -524,22 +526,23 @@ export class ProductLedger {
     const trial=!!account?.guest&&(data.trialKeys??[]).some((key)=>key.hash===account.guest!.pass);
     if(!account?.guest||!trial)return {eligible:false,done:false,expiresAt:null,days:TRIAL_POLL_DAYS};
     const left=Date.parse(account.guest.expiresAt)-this.clock().getTime();
-    return {eligible:!account.guest.poll&&left<=POLL_WINDOW_MS,done:!!account.guest.poll,expiresAt:account.guest.expiresAt,days:TRIAL_POLL_DAYS};
+    return {eligible:!account.guest.poll&&!account.guest.ownerWeekAt&&left<=POLL_WINDOW_MS,done:!!account.guest.poll||!!account.guest.ownerWeekAt,expiresAt:account.guest.expiresAt,days:TRIAL_POLL_DAYS};
   }
   /**
    * Saves a trial's poll answers once and adds 7 days from the later of now and its end. Found by the signed-in account, or
    * (after the pass ended, when sign-in no longer works) by the trial key and the device that used it. Returns a new session.
    */
-  async answerTrialPoll(who:{accountId:string}|{code:string;deviceId:string}|{login:string;password:string},answers:TrialPollAnswer){return this.exclusive(async()=>{
+  async answerTrialPoll(who:{accountId:string}|{code:string;deviceId:string}|{deviceId:string}|{login:string;password:string},answers:TrialPollAnswer){return this.exclusive(async()=>{
     const data=await this.read(),keys=data.trialKeys??[],now=this.clock();
     // A trial with a login answers from any device once its pass ended (sign-in itself no longer works then).
     const byLogin='login' in who?await this.passwordAccount(data,who.login,who.password):undefined;
     const account='login' in who?byLogin:'accountId' in who?data.accounts.find((item)=>item.id===who.accountId)
+      :!('code' in who)?this.trialOnDevice(data,who.deviceId)
       :keys.some((key)=>key.hash===tokenHash(who.code.trim()))?data.accounts.find((item)=>!!item.guest&&keys.some((key)=>key.hash===item.guest!.pass)&&
         item.guest.deviceHash===tokenHash(`${item.guest.pass}:${who.deviceId}`)):undefined;
     if(!account?.guest||!keys.some((key)=>key.hash===account.guest!.pass))throw new Error('TRIAL_NOT_FOUND');
     if(account.status==='SUSPENDED')throw new Error('ACCOUNT_SUSPENDED');
-    if(account.guest.poll)throw new Error('POLL_ALREADY_ANSWERED');
+    if(account.guest.poll||account.guest.ownerWeekAt)throw new Error('POLL_ALREADY_ANSWERED');
     if(Date.parse(account.guest.expiresAt)-now.getTime()>POLL_WINDOW_MS)throw new Error('POLL_NOT_OPEN');
     account.guest.poll={...answers,liked:answers.liked.slice(0,6),improve:answers.improve?.slice(0,500)??null,
       plan:answers.plan??null,price:answers.price?.slice(0,40)??null,at:now.toISOString()};
@@ -554,6 +557,39 @@ export class ProductLedger {
     // The account's other sign-ins (capped at the pass's old end) last to the end of the free week.
     for(const session of data.sessions)if(session.accountId===account.id&&Date.parse(session.expiresAt)<Date.parse(until))session.expiresAt=until;
     const result=this.session(data,account);await this.write(data);return {...result,freeWeekUntil:until};
+  });}
+  /** The trial account this device started (by its device id), if any. */
+  private trialOnDevice(data:Data,deviceId:string){
+    const keys=new Set((data.trialKeys??[]).map((key)=>key.hash));
+    return data.accounts.find((item)=>!!item.guest&&keys.has(item.guest.pass)&&item.guest.deviceHash===tokenHash(`${item.guest.pass}:${deviceId}`));
+  }
+  /**
+   * Whether this device's trial has ended and its survey is still open (owner, 2026-10-16: a tester whose pass ran out was
+   * signed out with no survey, so she never got her free week). Lets the app show the survey without a sign-in.
+   */
+  async trialDeviceStatus(deviceId:string){
+    const data=await this.read(),account=this.trialOnDevice(data,deviceId);
+    if(!account?.guest||account.status==='SUSPENDED')return {trial:false,ended:false,surveyOpen:false};
+    const ended=guestExpired(account,this.clock());
+    return {trial:true,ended,surveyOpen:ended&&!account.guest.poll&&!account.guest.ownerWeekAt&&!account.paid};
+  }
+  /**
+   * The owner gives a trial its free week by hand (owner, 2026-10-16), as a finished survey would: a week from the later of
+   * now and the pass's end, shown as a free Week plan. Found by username. Returns the new end.
+   */
+  async grantTrialWeek(username:string){return this.exclusive(async()=>{
+    const data=await this.read(),now=this.clock(),keys=new Set((data.trialKeys??[]).map((key)=>key.hash));
+    const profile=data.profiles.find((item)=>normalizedName(item.displayName)===normalizedName(username));
+    const account=data.accounts.find((item)=>item.id===profile?.actorKey)??data.accounts.find((item)=>normalizedName(item.username)===normalizedName(username));
+    if(!account?.guest||!keys.has(account.guest.pass))throw new Error('TRIAL_NOT_FOUND');
+    if(account.guest.poll||account.guest.ownerWeekAt)throw new Error('WEEK_ALREADY_GIVEN');
+    const until=new Date(Math.max(now.getTime(),Date.parse(account.guest.expiresAt))+TRIAL_POLL_DAYS*24*60*60_000).toISOString();
+    const paidPlan=account.paid&&!account.paid.free&&(account.paid.until===null||Date.parse(account.paid.until)>now.getTime())?account.paid:null;
+    account.paid=paidPlan?{...paidPlan,until:paidPlan.until===null?null:until}:{plan:'WEEK',paidAt:now.toISOString(),until,free:true};
+    account.guest.expiresAt=until;account.guest.ownerWeekAt=now.toISOString();
+    for(const session of data.sessions)if(session.accountId===account.id&&Date.parse(session.expiresAt)<Date.parse(until))session.expiresAt=until;
+    this.authCache=null;
+    await this.write(data);return {username:account.username,until};
   });}
   /**
    * Every account that came from a trial key, newest first, whether still on its pass, ended or signed up: which key, when it
@@ -571,7 +607,7 @@ export class ProductLedger {
         keyNumber:keyIndex>=0?keyIndex+1:account.fromTrial?.keyNumber??null,startedAt:account.fromTrial?.startedAt??account.createdAt,
         expiresAt,status:account.fromTrial?'SIGNED_UP' as const:account.status==='SUSPENDED'?'REVOKED' as const
           :expiresAt&&Date.parse(expiresAt)<=now?'ENDED' as const:'ACTIVE' as const,
-        extended:!!poll,poll:poll?{recommend:poll.recommend,liked:poll.liked,improve:poll.improve,plan:poll.plan??null,price:poll.price??null}:null,
+        extended:!!poll||!!account.guest?.ownerWeekAt,poll:poll?{recommend:poll.recommend,liked:poll.liked,improve:poll.improve,plan:poll.plan??null,price:poll.price??null}:null,
         convertedAt:account.fromTrial?.convertedAt??null}];
     }).sort((a,b)=>b.startedAt.localeCompare(a.startedAt));
   }

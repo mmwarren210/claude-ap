@@ -726,12 +726,21 @@ export function buildServer(options: ServerOptions = {}) {
     if(limited(`guest:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
     // Or the trial's login, from any device (owner, 2026-10-12).
     const input=z.union([z.object({code:z.string().trim().min(1).max(100),deviceId:z.string().min(16).max(100),answers:pollAnswer}).strict(),
+      // Or just the device that started the pass (owner, 2026-10-16: the app reopened after the pass ended has no code).
+      z.object({deviceId:z.string().min(16).max(100),answers:pollAnswer}).strict(),
       z.object({login:z.string().trim().min(1).max(254),password:z.string().min(1).max(128),answers:pollAnswer}).strict()]).safeParse(request.body);
     if(!input.success||!options.product)return reply.code(400).send({code:'INVALID_POLL'});
     try{return await options.product.answerTrialPoll('login' in input.data?{login:input.data.login,password:input.data.password}
-      :{code:input.data.code,deviceId:input.data.deviceId},
+      :'code' in input.data?{code:input.data.code,deviceId:input.data.deviceId}:{deviceId:input.data.deviceId},
       {...input.data.answers,improve:input.data.answers.improve??null,plan:input.data.answers.plan??null,price:input.data.answers.price??null});}
     catch(error){return pollError(reply,error);}
+  });
+  // Whether this device's trial ended with its survey still open (owner, 2026-10-16), so the app can offer the survey.
+  app.post('/v1/auth/trial-status',async(request,reply)=>{
+    if(limited(`guest:${request.ip}`))return reply.code(429).send({code:'TOO_MANY_ATTEMPTS'});
+    const input=z.object({deviceId:z.string().min(16).max(100)}).strict().safeParse(request.body);
+    if(!input.success||!options.product)return reply.code(400).send({code:'INVALID_REQUEST'});
+    return options.product.trialDeviceStatus(input.data.deviceId);
   });
   // Sign-in header check (owner, 2026-10-12): whether the Authorization header arrived and signs in. Never echoes the token.
   app.get('/v1/auth/check',async(request)=>{
@@ -2823,6 +2832,16 @@ export function buildServer(options: ServerOptions = {}) {
       return { started: true }; });
     admin.get('/nightly-pull', async () => nightly);
     admin.get('/gkr-calibration', async (_request, reply) => options.product ? options.product.gkrCalibration() : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
+    // Trial accounts (no emails) and the owner's free-week button (owner, 2026-10-16).
+    admin.get('/trials', async (_request, reply) => options.product ? { trials: (await options.product.trialUsers())
+      .map(({ accountId: _id, ...row }) => ({ ...row, poll: row.poll ? { recommend: row.poll.recommend } : null })) }
+      : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
+    admin.post('/trials/free-week', async (request, reply) => {
+      const input = z.object({ username: z.string().trim().min(1).max(60) }).strict().safeParse(request.body ?? {});
+      if (!input.success || !options.product) return reply.code(400).send({ code: 'INVALID_REQUEST' });
+      try { return await options.product.grantTrialWeek(input.data.username); }
+      catch (error) { const code = (error as Error).message; return reply.code(code === 'TRIAL_NOT_FOUND' ? 404 : 409).send({ code }); }
+    });
     admin.get('/trial-poll', async (_request, reply) => options.product ? options.product.trialPollResults() : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
     admin.get('/tips-summary', async (_request, reply) => options.tips ? options.tips.store.summary() : reply.code(503).send({ code: 'TIPS_UNAVAILABLE' }));
     admin.get('/vetted', async (_request, reply) => {
