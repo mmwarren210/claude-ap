@@ -121,8 +121,8 @@ export class EdgeLedger {
     }
     return this.cache;
   }
-  private readonly saver = throttledSave(() => this.writeNow(), 60_000);
-  /** The ledger in memory is current at once; the ~100 MB file is saved at most once a minute. */
+  private readonly saver = throttledSave(() => this.writeNow(), 3 * 60_000);
+  /** The ledger in memory is current at once; the ~100 MB file is saved at most every 3 minutes. */
   private async write(data: LedgerData) {
     this.cache = data;
     if (!this.path) return;

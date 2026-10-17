@@ -68,7 +68,7 @@ export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000, fetchLimitM
   });
   let lastLog = 0, lastTick = Date.now();
   // Alerts (owner, 2026-10-17): three freezes of 15s+ within 10 minutes, or memory past the alert line.
-  const longLags: number[] = [], alertMb = Number(process.env.CROWNIQ_ALERT_MEMORY_MB ?? 3500);
+  const longLags: number[] = [], alertMb = Number(process.env.CROWNIQ_ALERT_MEMORY_MB ?? 12000);
   const timer = setInterval(() => {
     // A late tick means the event loop was blocked: every request waited that long. Logged with what was being served,
     // so the step that froze the app shows in the logs next to it.

@@ -69,8 +69,8 @@ export class ScrapedLineStore {
     return this.loading;
   }
 
-  private readonly saver = throttledSave(() => this.saveNow(), 60_000);
-  /** Saved at most once a minute (the push feed changes lines every few seconds). */
+  private readonly saver = throttledSave(() => this.saveNow(), 3 * 60_000);
+  /** Saved at most every 3 minutes (the push feed changes lines every few seconds). */
   private save() { return this.saver.save(); }
   private async saveNow() {
     if (!this.file) return;
