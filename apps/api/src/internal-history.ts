@@ -164,8 +164,37 @@ export class InternalHistoryStore {
       return value;
     }catch(error){this.cached=null;if((error as NodeJS.ErrnoException).code==='ENOENT')return blank();throw error;}
   }
+  // Rows by sport and player ID, and by sport and normalized name, newest first: a lookup reads one player's rows instead
+  // of normalizing and filtering the whole file every time (thousands of lookups a refresh; 2026-10-17 freezes).
+  private lookup:{data:HistoryData;count:number;byId:Map<string,InternalHistoryRow[]>;byName:Map<string,InternalHistoryRow[]>;
+    order:Map<InternalHistoryRow,number>}|null=null;
+  private indexed(data:HistoryData){
+    if(this.lookup?.data===data&&this.lookup.count===data.rows.length)return this.lookup;
+    // Newest first, ties in file order: the order rowsForTargets has always left the rows in.
+    data.rows.sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt));
+    const byId=new Map<string,InternalHistoryRow[]>(),byName=new Map<string,InternalHistoryRow[]>(),order=new Map<InternalHistoryRow,number>();
+    const put=(map:Map<string,InternalHistoryRow[]>,key:string,row:InternalHistoryRow)=>{const list=map.get(key);if(list)list.push(row);else map.set(key,[row]);};
+    data.rows.forEach((row,at)=>order.set(row,at));
+    for(const row of data.rows){put(byId,row.sport+'|'+row.playerId,row);put(byName,row.sport+'|'+norm(row.playerName),row);}
+    return this.lookup={data,count:data.rows.length,byId,byName,order};
+  }
+  /** The player's rows (matched by ID or by name) before the event, newest first, at most `limit`. */
+  private pick(data:HistoryData,target:ResearchTarget,limit:number):InternalHistoryRow[]{
+    const index=this.indexed(data),before=Date.parse(target.eventStartTime);
+    const byId=index.byId.get(target.sport+'|'+target.playerId)??[],byName=index.byName.get(target.sport+'|'+norm(target.playerName))??[];
+    // Both lists are already newest first: merge them, dropping a row both hold.
+    const out:InternalHistoryRow[]=[],seen=new Set<InternalHistoryRow>();
+    let i=0,j=0;
+    while(out.length<limit&&(i<byId.length||j<byName.length)){
+      const a=byId[i],b=byName[j];
+      const row=!b||(a&&(a.occurredAt>b.occurredAt||(a.occurredAt===b.occurredAt&&index.order.get(a)!<=index.order.get(b)!)))?(i++,a!):(j++,b!);
+      if(seen.has(row)||!(Date.parse(row.occurredAt)<before))continue;
+      seen.add(row);out.push(row);
+    }
+    return out;
+  }
   private async write(data:HistoryData){
-    this.cached=null;
+    this.cached=null;this.lookup=null;
     await mkdir(dirname(this.path),{recursive:true});
     const tmp=this.path+'.'+randomUUID()+'.tmp';
     try{await writeFile(tmp,JSON.stringify(data),{mode:0o600});await rename(tmp,this.path);
@@ -179,24 +208,18 @@ export class InternalHistoryStore {
     if(added)await this.write(data);return added;
   });}
   async rowsFor(target:ResearchTarget,limit=40):Promise<InternalHistoryRow[]>{return this.exclusive(async()=>{
-    const before=Date.parse(target.eventStartTime),wanted=norm(target.playerName);
-    return (await this.read()).rows.filter((row)=>row.sport===target.sport &&
-      (row.playerId===target.playerId||norm(row.playerName)===wanted) &&
-      Date.parse(row.occurredAt)<before).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt)).slice(0,limit);
+    return this.pick(await this.read(),target,limit);
   });}
   /** One consistent file read per research run, shared across player-market targets. */
   async rowsForTargets(targets:readonly ResearchTarget[],limit=40):Promise<Map<ResearchTarget,InternalHistoryRow[]>>{
     return this.exclusive(async()=>{
-      const rows=(await this.read()).rows.sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt));
+      const data=await this.read();
       const groups=new Map<string,InternalHistoryRow[]>(),result=new Map<ResearchTarget,InternalHistoryRow[]>();
       for(const target of targets){
-        const wanted=norm(target.playerName),before=Date.parse(target.eventStartTime);
-        const key=JSON.stringify([target.sport,target.playerId,wanted,target.eventStartTime]);
+        const key=JSON.stringify([target.sport,target.playerId,norm(target.playerName),target.eventStartTime]);
         let selected=groups.get(key);
         if(!selected){
-          selected=rows.filter((row)=>row.sport===target.sport &&
-            (row.playerId===target.playerId||norm(row.playerName)===wanted) &&
-            Date.parse(row.occurredAt)<before).slice(0,limit);
+          selected=this.pick(data,target,limit);
           groups.set(key,selected);
         }
         result.set(target,selected);

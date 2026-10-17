@@ -134,6 +134,19 @@ export function valuesFrom(games: readonly Game[], read: Read, before: number): 
   return (starts.length ? starts : played).flatMap((game) => { const value = gameValue(game.stats, read); return value === null ? [] : [value]; });
 }
 
+/**
+ * Gives the rest of the server a turn once work has run for `sliceMs` straight: call `await turn()` between steps of a
+ * long job so it never holds the server thread for long.
+ */
+export function turnTaker(sliceMs = 30): () => Promise<void> {
+  let since = Date.now();
+  return async () => {
+    if (Date.now() - since < sliceMs) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    since = Date.now();
+  };
+}
+
 export class PropLineHistory {
   private readonly cache = new Map<string, Entry>();
   private readonly loading = new Map<string, Promise<readonly Game[] | null>>();
@@ -160,47 +173,70 @@ export class PropLineHistory {
     return this.sportKeyForEvent(line.eventId) ?? SOCCER_KEYS[(line.league ?? '').toUpperCase()] ?? SPORT_KEYS[sportOf(line)] ?? null;
   }
 
-  private async load() {
-    if (this.loaded) return;
+  private loadOnce: Promise<void> | null = null;
+  private saving: Promise<void> | null = null;
+  /** Every caller waits on the same startup load. */
+  private load(): Promise<void> { return this.loadOnce ??= this.loadNow(); }
+
+  private async loadNow() {
     this.loaded = true;
-    const store = this.options.store;
+    const store = this.options.store, turn = turnTaker();
     let saved: [string, Entry][] = [];
     if (this.file && (!store || store.isEmpty())) {
       try { saved = JSON.parse(await readFile(this.file, 'utf8')) as [string, Entry][]; } catch { /* first run */ }
     }
     if (store) {
       // First start with the store: the JSON file's players move into it once.
-      for (const [key, entry] of saved) store.put(key, key.split('|')[0]!, { at: entry.at, ...(entry.keepMs ? { keepMs: entry.keepMs } : {}),
-        deep: entry.deep, teams: entry.teams, empty: !entry.games }, entry.games ?? [], this.clock());
+      for (const [key, entry] of saved) {
+        store.put(key, key.split('|')[0]!, { at: entry.at, ...(entry.keepMs ? { keepMs: entry.keepMs } : {}),
+          deep: entry.deep, teams: entry.teams, empty: !entry.games }, entry.games ?? [], this.clock());
+        await turn();
+      }
       // Players fetched in the last week are kept in memory (they feed the opponent reads); older ones are read from the store
       // when asked for (code check, 2026-10-13: every stored player's two seasons in memory risked running out of heap).
-      for (const [key, { fetch, games }] of store.all(this.clock() - MEMORY_MS))
-        this.cache.set(key, { at: fetch.at, games: fetch.empty || !games.length ? null : games, deep: fetch.deep, teams: fetch.teams,
-          ...(fetch.keepMs ? { keepMs: fetch.keepMs } : {}) });
+      // Read a page at a time with turns in between (2026-10-17 freezes). A player fetched while this runs keeps his newer entry.
+      const since = this.clock() - MEMORY_MS;
+      for (let page = store.recentPage(since, ''); page.length; page = store.recentPage(since, page[page.length - 1]!.key)) {
+        for (const { key, fetch, games } of page) if (!this.cache.has(key))
+          this.cache.set(key, { at: fetch.at, games: fetch.empty || !games.length ? null : games, deep: fetch.deep, teams: fetch.teams,
+            ...(fetch.keepMs ? { keepMs: fetch.keepMs } : {}) });
+        await turn();
+      }
       return;
     }
     const now = this.clock();
     for (const [key, entry] of saved) if (now - entry.at < (entry.keepMs ?? this.options.ttlMs ?? 6 * 3600_000)) this.cache.set(key, entry);
   }
 
-  async save(): Promise<void> {
-    if (!this.dirty) return;
-    this.dirty = false;
+  /** Saves changed players. A save still running is joined rather than started twice. */
+  save(): Promise<void> { return this.saving ??= this.saveNow().finally(() => { this.saving = null; }); }
+
+  private async saveNow(): Promise<void> {
     const now = this.clock(), store = this.options.store;
     if (store) {
-      // Only the players that changed are written, one small transaction each.
-      for (const key of [...this.changed]) {
-        this.changed.delete(key);
+      if (!this.changed.size && !this.dirty) return;
+      this.dirty = false;
+      // Only the players that changed are written, one small transaction each, with turns for the rest of the server in
+      // between: thousands of players written in one go held the server thread (2026-10-17 freezes). The list is taken
+      // up front so players fetched meanwhile wait for the next save; a player whose write fails stays queued.
+      const started = Date.now(), keys = [...this.changed], turn = turnTaker();
+      for (const key of keys) {
         const entry = this.cache.get(key);
         if (entry) store.put(key, key.split('|')[0]!, { at: entry.at, ...(entry.keepMs ? { keepMs: entry.keepMs } : {}), deep: entry.deep,
           teams: entry.teams, empty: !entry.games }, entry.games ?? [], now);
+        this.changed.delete(key);
+        await turn();
       }
       // Players not fetched in a week leave memory (the store keeps them); after 30 days they leave the store too (their
-      // season summaries stay).
+      // season summaries stay), a batch at a time.
       for (const [key, entry] of this.cache) if (entry.at < now - MEMORY_MS) this.cache.delete(key);
-      store.prune(now - 30 * 86_400_000);
+      let pruned = 0;
+      for (let gone = store.pruneSome(now - 30 * 86_400_000); gone; gone = store.pruneSome(now - 30 * 86_400_000)) { pruned += gone; await turn(); }
+      console.log(`[player-store] saved ${keys.length} players, pruned ${pruned} in ${Date.now() - started}ms`);
       return;
     }
+    if (!this.dirty) return;
+    this.dirty = false;
     if (!this.file) return;
     for (const [key, entry] of this.cache) if (now - entry.at > 2 * (entry.keepMs ?? this.options.ttlMs ?? 6 * 3600_000)) this.cache.delete(key);
     await mkdir(dirname(this.file), { recursive: true });

@@ -69,6 +69,15 @@ export class PlayerStore {
     return out;
   }
 
+  /**
+   * One page of the players fetched since `since`, after player key `after` in key order, each with his games (newest
+   * first). The history loads at startup page by page, so the server thread gets turns in between (2026-10-17 freezes).
+   */
+  recentPage(since: number, after: string, limit = 100): { key: string; fetch: FetchInfo; games: StoredGame[] }[] {
+    return (this.db.prepare('SELECT * FROM fetches WHERE at >= ? AND player > ? ORDER BY player LIMIT ?').all(since, after, limit) as
+      Record<string, unknown>[]).map((row) => ({ key: String(row.player), fetch: fetchOf(row), games: this.games(String(row.player)) }));
+  }
+
   /** One player's last fetch, or null when he was never fetched. */
   fetch(player: string): FetchInfo | null {
     const row = this.db.prepare('SELECT * FROM fetches WHERE player = ?').get(player) as Record<string, unknown> | undefined;
@@ -86,7 +95,8 @@ export class PlayerStore {
    */
   put(player: string, sportKey: string, fetch: FetchInfo, games: readonly StoredGame[], now = Date.now()): void {
     const upsertGame = this.db.prepare(`INSERT INTO games (player, at, opponent, home, away, stats) VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT (player, at) DO UPDATE SET opponent = excluded.opponent, home = excluded.home, away = excluded.away, stats = excluded.stats`);
+      ON CONFLICT (player, at) DO UPDATE SET opponent = excluded.opponent, home = excluded.home, away = excluded.away, stats = excluded.stats
+      WHERE opponent IS NOT excluded.opponent OR home IS NOT excluded.home OR away IS NOT excluded.away OR stats IS NOT excluded.stats`);
     this.db.exec('BEGIN');
     try {
       this.db.prepare(`INSERT INTO fetches (player, at, keepMs, deep, teams, empty) VALUES (?, ?, ?, ?, ?, ?)
@@ -104,7 +114,10 @@ export class PlayerStore {
     const old = (this.db.prepare('SELECT * FROM games WHERE player = ? AND at < ?').all(player, cutoff) as Record<string, unknown>[]).map(gameOf);
     if (!old.length) return;
     const bySeason = new Map<string, StoredGame[]>();
-    for (const game of old) { const season = seasonOf(sportKey, game.at); bySeason.set(season, [...bySeason.get(season) ?? [], game]); }
+    for (const game of old) {
+      const season = seasonOf(sportKey, game.at), list = bySeason.get(season);
+      if (list) list.push(game); else bySeason.set(season, [game]);
+    }
     for (const [season, list] of bySeason) {
       const existing = this.db.prepare('SELECT games, averages FROM seasons WHERE player = ? AND season = ?').get(player, season) as
         { games: number; averages: string } | undefined;
@@ -125,6 +138,23 @@ export class PlayerStore {
   seasons(player: string): SeasonSummary[] {
     return (this.db.prepare('SELECT season, games, averages FROM seasons WHERE player = ? ORDER BY season DESC').all(player) as
       { season: string; games: number; averages: string }[]).map((row) => ({ season: row.season, games: row.games, averages: JSON.parse(row.averages) }));
+  }
+
+  /**
+   * Drops up to `limit` players not asked for since `olderThan` (and their games) in one transaction; season summaries
+   * stay. Returns how many went, so a caller can repeat it with pauses until it returns 0.
+   */
+  pruneSome(olderThan: number, limit = 500): number {
+    const stale = (this.db.prepare('SELECT player FROM fetches WHERE at < ? ORDER BY player LIMIT ?').all(olderThan, limit) as
+      { player: string }[]).map((row) => row.player);
+    if (!stale.length) return 0;
+    const games = this.db.prepare('DELETE FROM games WHERE player = ?'), fetches = this.db.prepare('DELETE FROM fetches WHERE player = ?');
+    this.db.exec('BEGIN');
+    try {
+      for (const player of stale) { games.run(player); fetches.run(player); }
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    return stale.length;
   }
 
   /** Drops players not asked for in a long while (and their games); season summaries stay. */

@@ -277,10 +277,14 @@ export function gamePrices(rows: readonly unknown[]): GamePrice[] {
   return out;
 }
 
-/** P(N > line) for a Poisson count with mean `mean` (line is x.5). */
+/**
+ * P(N > line) for a Poisson count with mean `mean` (line is x.5). The means searched here stay under 20, where every term
+ * past 1,000 is zero, so the sum stops there: a corrupt total in the feed (billions) no longer runs the loop for minutes
+ * on the server thread (2026-10-17 freeze audit). Same answer for every real total.
+ */
 function poissonOver(mean: number, line: number): number {
   let term = Math.exp(-mean), cdf = term;
-  for (let k = 1; k <= Math.floor(line); k++) { term *= mean / k; cdf += term; }
+  for (let k = 1, last = Math.min(Math.floor(line), 1000); k <= last; k++) { term *= mean / k; cdf += term; }
   return 1 - cdf;
 }
 
