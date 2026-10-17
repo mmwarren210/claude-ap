@@ -1362,6 +1362,7 @@ export const es: Readonly<Record<string, string>> = {
   "Open Board": "Abrir Tablero",
   "Pick the app at the top: PrizePicks, Underdog, Pick6, Dabble, DraftKings, Hard Rock, Pinnacle, Kalshi or Line Shop.": "Elige la app arriba: PrizePicks, Underdog, Pick6, Dabble, DraftKings, Hard Rock, Pinnacle, Kalshi o Line Shop.",
   "PrizePicks shows each player’s best play with its GKR score (0–100). Search any player or tap one for all their stats.": "PrizePicks muestra la mejor jugada de cada jugador con su puntaje GKR (0–100). Busca cualquier jugador o toca uno para ver todas sus estadísticas.",
+  "Each player’s position (QB, WR, PG, SP and so on) shows next to their name on every card, when it’s known.": "La posición de cada jugador (QB, WR, PG, SP, etc.) aparece junto a su nombre en cada tarjeta, cuando se conoce.",
   "A player’s page shows how often picks like this one have hit, and the player’s season averages (home and away).": "La página de un jugador muestra cuántas veces han acertado picks como este y los promedios de la temporada del jugador (en casa y de visita).",
   "Underdog, Pick6 and Dabble show every line at that app’s number. Tap More or Less to build a slip.": "Underdog, Pick6 y Dabble muestran cada línea al número de esa app. Toca More o Less para armar una jugada.",
   "Line Shop shows the same player and stat on every app, so you can take the best number.": "Line Shop muestra el mismo jugador y estadística en cada app, para que tomes el mejor número.",

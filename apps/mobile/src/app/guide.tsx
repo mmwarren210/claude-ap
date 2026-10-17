@@ -20,6 +20,7 @@ const topics: readonly Topic[] = [
   { key: 'board', icon: 'view-grid-outline', title: 'Board', when: 'Look up a player or browse one app', open: '/(tabs)', openLabel: 'Open Board',
     points: ['Pick the app at the top: PrizePicks, Underdog, Pick6, Dabble, DraftKings, Hard Rock, Pinnacle, Kalshi or Line Shop.',
       'PrizePicks shows each player’s best play with its GKR score (0–100). Search any player or tap one for all their stats.',
+      'Each player’s position (QB, WR, PG, SP and so on) shows next to their name on every card, when it’s known.',
       'Model: GKR, GKR 2 or Both. GKR 2 is in Beta (still calibrating), so use its picks at your own risk. Both shows GKR 2’s read under GKR’s and says why they differ.',
       'A player’s page shows how often picks like this one have hit, and the player’s season averages (home and away).',
       'Underdog, Pick6 and Dabble show every line at that app’s number. Tap More or Less to build a slip.',
