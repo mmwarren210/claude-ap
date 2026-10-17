@@ -1,6 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import type { PropLine } from '@crowniq/contracts';
 import { normalizedName } from './context/match.js';
 import { canonicalMarket } from './edge/market-map.js';
@@ -139,8 +138,6 @@ export class PropLineHistory {
   private readonly cache = new Map<string, Entry>();
   private readonly loading = new Map<string, Promise<readonly Game[] | null>>();
   private loaded = false;
-  private loadingStore: Promise<void> | null = null;
-  private saving: Promise<void> | null = null;
   private dirty = false;
   /** Players changed since the last save (the player store writes only these). */
   private readonly changed = new Set<string>();
@@ -163,13 +160,9 @@ export class PropLineHistory {
     return this.sportKeyForEvent(line.eventId) ?? SOCCER_KEYS[(line.league ?? '').toUpperCase()] ?? SPORT_KEYS[sportOf(line)] ?? null;
   }
 
-  private load(): Promise<void> {
-    if (this.loaded) return Promise.resolve();
-    this.loadingStore ??= this.loadNow().then(() => { this.loaded = true; }).finally(() => { this.loadingStore = null; });
-    return this.loadingStore;
-  }
-
-  private async loadNow() {
+  private async load() {
+    if (this.loaded) return;
+    this.loaded = true;
     const store = this.options.store;
     let saved: [string, Entry][] = [];
     if (this.file && (!store || store.isEmpty())) {
@@ -177,54 +170,35 @@ export class PropLineHistory {
     }
     if (store) {
       // First start with the store: the JSON file's players move into it once.
-      for (let index = 0; index < saved.length; index++) {
-        const [key, entry] = saved[index]!;
-        store.put(key, key.split('|')[0]!, { at: entry.at, ...(entry.keepMs ? { keepMs: entry.keepMs } : {}),
-          deep: entry.deep, teams: entry.teams, empty: !entry.games }, entry.games ?? [], this.clock());
-        if (index % 16 === 15) await yieldToLoop();
-      }
+      for (const [key, entry] of saved) store.put(key, key.split('|')[0]!, { at: entry.at, ...(entry.keepMs ? { keepMs: entry.keepMs } : {}),
+        deep: entry.deep, teams: entry.teams, empty: !entry.games }, entry.games ?? [], this.clock());
       // Players fetched in the last week are kept in memory (they feed the opponent reads); older ones are read from the store
       // when asked for (code check, 2026-10-13: every stored player's two seasons in memory risked running out of heap).
-      await store.loadRecent(this.clock() - MEMORY_MS, (key, fetch, games) => {
+      for (const [key, { fetch, games }] of store.all(this.clock() - MEMORY_MS))
         this.cache.set(key, { at: fetch.at, games: fetch.empty || !games.length ? null : games, deep: fetch.deep, teams: fetch.teams,
           ...(fetch.keepMs ? { keepMs: fetch.keepMs } : {}) });
-      });
       return;
     }
     const now = this.clock();
     for (const [key, entry] of saved) if (now - entry.at < (entry.keepMs ?? this.options.ttlMs ?? 6 * 3600_000)) this.cache.set(key, entry);
   }
 
-  save(): Promise<void> {
-    this.saving ??= this.saveNow().finally(() => { this.saving = null; });
-    return this.saving;
-  }
-
-  private async saveNow(): Promise<void> {
+  async save(): Promise<void> {
     if (!this.dirty) return;
     this.dirty = false;
     const now = this.clock(), store = this.options.store;
     if (store) {
-      const started = performance.now(), keys = [...this.changed];
-      console.info(`[player-store] saving ${keys.length} changed players (chunked)`);
-      let written = 0;
-      try {
-        // Snapshot the work: incoming fetches cannot keep this pass running forever. Yield after 16 players, leaving
-        // each player's atomic merge/fold unchanged. A failed write stays dirty for the next pass.
-        for (const key of keys) {
-          const entry = this.cache.get(key);
-          if (entry) store.put(key, key.split('|')[0]!, { at: entry.at, ...(entry.keepMs ? { keepMs: entry.keepMs } : {}), deep: entry.deep,
-            teams: entry.teams, empty: !entry.games }, entry.games ?? [], now);
-          this.changed.delete(key);
-          if (++written % 16 === 0) await yieldToLoop();
-        }
-        for (const [key, entry] of this.cache) if (entry.at < now - MEMORY_MS) this.cache.delete(key);
-        const pruned = await store.pruneInChunks(now - 30 * 86_400_000);
-        console.info(`[player-store] saved ${written} players, pruned ${pruned}, ${Math.round(performance.now() - started)}ms (yielded)`);
-      } catch (error) {
-        this.dirty = true;
-        throw error;
+      // Only the players that changed are written, one small transaction each.
+      for (const key of [...this.changed]) {
+        this.changed.delete(key);
+        const entry = this.cache.get(key);
+        if (entry) store.put(key, key.split('|')[0]!, { at: entry.at, ...(entry.keepMs ? { keepMs: entry.keepMs } : {}), deep: entry.deep,
+          teams: entry.teams, empty: !entry.games }, entry.games ?? [], now);
       }
+      // Players not fetched in a week leave memory (the store keeps them); after 30 days they leave the store too (their
+      // season summaries stay).
+      for (const [key, entry] of this.cache) if (entry.at < now - MEMORY_MS) this.cache.delete(key);
+      store.prune(now - 30 * 86_400_000);
       return;
     }
     if (!this.file) return;

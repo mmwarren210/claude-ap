@@ -288,9 +288,7 @@ function poissonOver(mean: number, line: number): number {
 export function expectedGoals(games: readonly GamePrice[]): Map<string, number> {
   const sides = new Map<string, { over?: number; under?: number; line: number; event: string }>();
   for (const game of games) {
-    // Count the same Poisson terms for real totals. A corrupt number must not drive fifty billion-step loops on the
-    // server thread. This matches Edge's existing 5,000-term count bound; out-of-range data gives no read.
-    if (game.market !== 'total' || game.line === null || !Number.isFinite(game.line) || game.line < 0 || game.line > 5000) continue;
+    if (game.market !== 'total' || game.line === null) continue;
     const key = `${game.book}|${game.eventId}|${game.line}`;
     const entry = sides.get(key) ?? { line: game.line, event: game.eventId };
     entry[game.side as 'over' | 'under'] = game.probability; sides.set(key, entry);

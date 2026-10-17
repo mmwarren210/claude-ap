@@ -504,12 +504,11 @@ export class BoardService {
     const merged=mergeEvidence(evidence,researched.evidence);
     const audits:Record<string,SecondLookAudit>={};
     const byId=new Map(initial.analyses.map((item)=>[item.lineId,item]));
-    const byEvent=evidenceByEvent(researched.evidence);
     for(const line of lines){
       const first=byId.get(line.id)!;
       audits[line.id]={initialReasonCode:first.reasonCode,
         initialDataConfidence:first.dataConfidence??null,
-        evidenceAdded:(byEvent.get(line.eventId)??[]).filter((item)=>evidenceMatchesLine(item,line)).length,
+        evidenceAdded:researched.evidence.filter((item)=>evidenceMatchesLine(item,line)).length,
         performedAt:now.toISOString()};
     }
     return {evidence:merged,audits,status:researched.status,health:researched.health};

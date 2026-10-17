@@ -1,7 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { setImmediate as yieldToLoop } from 'node:timers/promises';
 
 // The player store (owner, 2026-10-12: "a history database for each player… a permanent profile for each player"). One
 // SQLite file on the data disk (Node's built-in node:sqlite, like Edge's price history):
@@ -43,7 +42,6 @@ export class PlayerStore {
     this.db.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = NORMAL;
-      PRAGMA busy_timeout = 1000;
       CREATE TABLE IF NOT EXISTS games (player TEXT NOT NULL, at TEXT NOT NULL, opponent TEXT, home TEXT, away TEXT,
         stats TEXT NOT NULL, PRIMARY KEY (player, at)) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS fetches (player TEXT PRIMARY KEY, at INTEGER NOT NULL, keepMs INTEGER, deep INTEGER,
@@ -69,19 +67,6 @@ export class PlayerStore {
       if (entry) entry.games.push(gameOf(row));
     }
     return out;
-  }
-
-  /** Startup walks small pages instead of materializing and parsing every stored game twice before any timer can run. */
-  async loadRecent(since: number, accept: (key: string, fetch: FetchInfo, games: StoredGame[]) => void): Promise<void> {
-    const page = this.db.prepare('SELECT * FROM fetches WHERE at >= ? AND player > ? ORDER BY player LIMIT 64');
-    let after = '';
-    for (;;) {
-      const rows = page.all(since, after) as Record<string, unknown>[];
-      if (!rows.length) return;
-      for (const row of rows) { const key = String(row.player); accept(key, fetchOf(row), this.games(key)); }
-      after = String(rows[rows.length - 1]!.player);
-      await yieldToLoop();
-    }
   }
 
   /** One player's last fetch, or null when he was never fetched. */
@@ -119,8 +104,7 @@ export class PlayerStore {
     const old = (this.db.prepare('SELECT * FROM games WHERE player = ? AND at < ?').all(player, cutoff) as Record<string, unknown>[]).map(gameOf);
     if (!old.length) return;
     const bySeason = new Map<string, StoredGame[]>();
-    for (const game of old) { const season = seasonOf(sportKey, game.at), list = bySeason.get(season) ?? [];
-      list.push(game); bySeason.set(season, list); }
+    for (const game of old) { const season = seasonOf(sportKey, game.at); bySeason.set(season, [...bySeason.get(season) ?? [], game]); }
     for (const [season, list] of bySeason) {
       const existing = this.db.prepare('SELECT games, averages FROM seasons WHERE player = ? AND season = ?').get(player, season) as
         { games: number; averages: string } | undefined;
@@ -148,24 +132,6 @@ export class PlayerStore {
     const stale = (this.db.prepare('SELECT player FROM fetches WHERE at < ?').all(olderThan) as { player: string }[]).map((row) => row.player);
     for (const player of stale) { this.db.prepare('DELETE FROM games WHERE player = ?').run(player); this.db.prepare('DELETE FROM fetches WHERE player = ?').run(player); }
     return stale.length;
-  }
-
-  /** Each batch has one commit, rather than two autocommits per stale player. No transaction is held across a yield. */
-  async pruneInChunks(olderThan: number): Promise<number> {
-    const page = this.db.prepare('SELECT player FROM fetches WHERE at < ? ORDER BY player LIMIT 128');
-    const games = this.db.prepare('DELETE FROM games WHERE player = ?'), fetches = this.db.prepare('DELETE FROM fetches WHERE player = ?');
-    let count = 0;
-    for (;;) {
-      const stale = page.all(olderThan) as { player: string }[];
-      if (!stale.length) return count;
-      this.db.exec('BEGIN');
-      try {
-        for (const { player } of stale) { games.run(player); fetches.run(player); }
-        this.db.exec('COMMIT');
-      } catch (error) { this.db.exec('ROLLBACK'); throw error; }
-      count += stale.length;
-      await yieldToLoop();
-    }
   }
 
   /** Writes a profile only when something in it changed; returns whether it did. */
