@@ -118,9 +118,18 @@ export function conditionalOver(dist: Distribution, threshold: number): number {
 export function median(dist: Distribution): number {
   if (!dist.discrete) return dist.mean;
   const sd = Math.sqrt(dist.variance);
-  let k = Math.max(0, Math.floor(dist.mean - 6 * sd));
-  while (cdf(dist, k) < .5 && k < dist.mean + 12 * sd + 50) k++;
-  return k;
+  let low = Math.max(0, Math.floor(dist.mean - 6 * sd));
+  const bound = dist.mean + 12 * sd + 50;
+  // The old k++ search never advanced above 2^53 (and took millions of steps well below it). Search the same integer
+  // interval for the first CDF >= .5; valid distributions return the same integer, with at most 53 CDF calls.
+  let high = Math.ceil(bound);
+  if (!Number.isSafeInteger(low) || !Number.isSafeInteger(high)) throw new Error('INVALID_MEDIAN_RANGE');
+  if (!(cdf(dist, low) < .5) || low >= bound) return low;
+  while (high - low > 1) {
+    const mid = low + Math.floor((high - low) / 2);
+    if (cdf(dist, mid) < .5) low = mid; else high = mid;
+  }
+  return high;
 }
 
 /** Find the mean μ such that P(over line | no push) = target under the variance model.
