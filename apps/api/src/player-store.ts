@@ -178,6 +178,12 @@ export class PlayerStore {
     return true;
   }
 
+  /** Every stored position, as [sport, name key, position] (the app shows it beside each player). */
+  positions(): [string, string, string][] {
+    return (this.db.prepare('SELECT sport, nameKey, position FROM profiles WHERE position IS NOT NULL').all() as
+      { sport: string; nameKey: string; position: string }[]).map((row) => [row.sport, row.nameKey, row.position]);
+  }
+
   profile(sport: string, nameKey: string): PlayerProfile | null {
     const row = this.db.prepare('SELECT * FROM profiles WHERE sport = ? AND nameKey = ?').get(sport, nameKey) as Record<string, unknown> | undefined;
     if (!row) return null;

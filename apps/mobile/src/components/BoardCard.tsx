@@ -21,6 +21,7 @@ import { GlowCard } from './ui/GlowCard';
 import { Icon } from './ui/Icon';
 import { LineBadge } from './ui/LineBadge';
 import { PlayerAvatar } from './ui/PlayerAvatar';
+import { PlayerName } from './ui/PlayerName';
 import { ScoreRing } from './ui/ScoreRing';
 import type { Stat } from './ui/StatStrip';
 import { rateTone, StatStrip } from './ui/StatStrip';
@@ -85,7 +86,7 @@ export const BoardCard = memo(function BoardCard({ line, analysis, ai, booksPick
         <PlayerAvatar name={line.playerName} photoUrl={photoUrl} ring={accent} size={72} />
         <View style={styles.identity}>
           <View style={styles.nameRow}>
-            <Text style={styles.name} numberOfLines={1}>{line.playerName}</Text>
+            <PlayerName style={styles.name} numberOfLines={1} name={line.playerName} sport={line.sport} />
             <Icon name="file-document-outline" size={16} color={colors.textMuted} />
           </View>
           <Text style={styles.meta} numberOfLines={1}>

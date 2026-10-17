@@ -67,6 +67,19 @@ export class PlayerProfiles {
   }
 
   profile(sport: string, name: string): PlayerProfile | null { return this.store.profile(sport, normalizedName(name)); }
+
+  private positionsCache: { at: number; value: Record<string, Record<string, string>> } | null = null;
+  /**
+   * Every known position by sport and normalized name (owner, 2026-10-17: positions app wide). Kept an hour: the rosters
+   * refresh nightly. Display only.
+   */
+  positions(): Record<string, Record<string, string>> {
+    if (this.positionsCache && this.clock().getTime() - this.positionsCache.at < 3600_000) return this.positionsCache.value;
+    const value: Record<string, Record<string, string>> = {};
+    for (const [sport, key, position] of this.store.positions()) (value[sport] ??= {})[key] = position;
+    this.positionsCache = { at: this.clock().getTime(), value };
+    return value;
+  }
 }
 
 /**

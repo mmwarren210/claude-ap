@@ -469,8 +469,11 @@ export function buildServer(options: ServerOptions = {}) {
         const live=new Map(board.analyses.map((analysis)=>[analysis.lineId,analysis]));
         const edgeLines=edge?(await edge.snapshot('prizepicks').catch(()=>null))?.byLine??null:null;
         const leans=await scriptLeans().catch(()=>new Map<string,'MORE'|'LESS'>());
-        const learned4=learnGkr4((await shadow.learningRows(['gkr4','gkr4:underdog','gkr4:pick6','gkr4:dabble']))
-          .map((row)=>({...row,parts:row.parts as Gkr4Parts})));
+        // GKR 4 is paused (owner, 2026-10-17: "remove GKR 4 for now" while the server freezes are worked on, and until GKR
+        // vs GKR 2 is settled). Its record and code stay; CROWNIQ_GKR4=on turns its shadow reads back on.
+        const gkr4On=process.env.CROWNIQ_GKR4==='on';
+        const learned4=gkr4On?learnGkr4((await shadow.learningRows(['gkr4','gkr4:underdog','gkr4:pick6','gkr4:dabble']))
+          .map((row)=>({...row,parts:row.parts as Gkr4Parts}))):null;
         for(const analysis of read2.analyses.values()){
           const line=lines.get(analysis.lineId),gkr=live.get(analysis.lineId);
           if(!line)continue;
@@ -480,6 +483,7 @@ export function buildServer(options: ServerOptions = {}) {
           if(gkr3)picks.push({kind:'gkr3',line,side:gkr3.side,strength:gkr3.strength});
           // GKR 4 (owner, 2026-10-15, shadow only): GKR 3's reads plus books, form, opponent, role and the other apps'
           // numbers, weighted from its own graded picks. Also read at Underdog, Pick6 and Dabble's own numbers.
+          if(!gkr4On)continue;
           const edgePick=edgeLines?.get(analysis.lineId),lean=leans.get(analysis.lineId)??null;
           const gkr4=gkr4Read(gkr4Parts(analysis,edgePick,lean),line.sport,learned4);
           if(gkr4)picks.push({kind:'gkr4',line,side:gkr4.side,strength:gkr4.strength,parts:gkr4.parts,raw:gkr4.raw});
@@ -2401,6 +2405,11 @@ export function buildServer(options: ServerOptions = {}) {
     for(const [lineId,trend] of Object.entries(historyCache?.trends??{}))
       if(!merged[lineId]||merged[lineId].direction==='PASS')merged[lineId]=trend;
     return {reads:merged};
+  });
+  // Player positions by sport and normalized name, from the nightly ESPN rosters (owner, 2026-10-17: positions app wide).
+  app.get('/v1/positions', async (_request, reply) => {
+    reply.header('Cache-Control', 'public, max-age=3600');
+    return { positions: options.playerProfiles?.positions() ?? {} };
   });
   app.get('/v1/books', async (_request, reply) => {
     const board=service.getBoard();

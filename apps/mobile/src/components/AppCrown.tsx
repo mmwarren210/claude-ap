@@ -21,6 +21,7 @@ import { chosenDay, gameDays, onDay } from '../game-days';
 import { GlowCard } from './ui/GlowCard';
 import { Icon } from './ui/Icon';
 import { PlayerAvatar } from './ui/PlayerAvatar';
+import { PlayerName } from './ui/PlayerName';
 import { ScoreRing } from './ui/ScoreRing';
 
 // The Crown generator on Underdog and Pick6 (owner, 2026-10-05): built from that app's own lines and numbers, laid
@@ -39,7 +40,7 @@ function LegCard({ app, leg, accent, onRemove }: { app: 'underdog' | 'pick6' | '
   return <View style={[styles.leg, { borderColor: alpha(accent, 0.55) }]}>
     <PlayerAvatar name={leg.line.playerName} photoUrl={leg.line.playerImageUrl} ring={accent} size={58} />
     <View style={styles.grow}>
-      <Text style={styles.legName} numberOfLines={1}>{leg.line.playerName}</Text>
+      <PlayerName style={styles.legName} numberOfLines={1} name={leg.line.playerName} sport={leg.line.sport} />
       <Text style={styles.meta} numberOfLines={1}>{leg.line.team ?? leg.line.league}{leg.line.opponent ? ` · vs ${leg.line.opponent}` : ''} ·{' '}
         {gameTime(leg.line.eventStartTime)}</Text>
       <View style={styles.legPick}><Text style={styles.legMarket} numberOfLines={1}>{leg.line.stat}</Text>

@@ -107,3 +107,21 @@ test('history lookups by ID or name return the same rows, order and limits as a 
   await store.add([{ ...rows[1]!, id: 'newest', occurredAt: '2030-06-30T00:00:00Z' }]);
   assert.equal((await store.rowsFor(target, 1))[0]!.id, 'newest');
 });
+
+test('positions come back by sport and the same name key the app uses', async () => {
+  const { PlayerProfiles } = await import('../src/player-profiles.js');
+  const { positionKey } = await import('../../mobile/src/position-key.js');
+  const { normalizedName } = await import('../src/context/match.js');
+  const store = new PlayerStore(null);
+  try {
+    store.putProfile(normalizedName('Kenneth Walker III'), { sport: 'NFL', name: 'Kenneth Walker III', team: 'Seattle Seahawks', position: 'RB',
+      bats: null, throws: null, status: 'Active', jersey: '9', espnId: '1', updatedAt: '2030-10-12T00:00:00Z' });
+    store.putProfile(normalizedName('José Ramírez'), { sport: 'MLB', name: 'José Ramírez', team: 'Cleveland Guardians', position: '3B',
+      bats: 'S', throws: 'R', status: 'Active', jersey: '11', espnId: '2', updatedAt: '2030-10-12T00:00:00Z' });
+    const positions = new PlayerProfiles(store).positions();
+    assert.equal(positions.NFL?.[positionKey('Kenneth Walker')], 'RB');
+    assert.equal(positions.MLB?.[positionKey('Jose Ramirez')], '3B');
+    for (const name of ["D'Andre Swift", 'A.J. Brown', 'Michael Pittman Jr.', 'Luka Dončić'])
+      assert.equal(positionKey(name), normalizedName(name));
+  } finally { store.close(); }
+});

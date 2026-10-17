@@ -7,6 +7,7 @@ import { edgeSlip } from '../edge-slip';
 import { palette } from '../theme';
 import { GlowCard } from './ui/GlowCard';
 import { PlayerAvatar } from './ui/PlayerAvatar';
+import { PlayerName } from './ui/PlayerName';
 
 /** One Edge or GKR+ pick. With an accent it wears the Board's glow card in that color (the lists rotate them like the Board). */
 export function EdgePickCard({ pick, rank, inSlip, accent }: { pick: EdgePick; rank?: number; inSlip: boolean; accent?: string }) {
@@ -25,7 +26,7 @@ export function EdgePickCard({ pick, rank, inSlip, accent }: { pick: EdgePick; r
     <View style={styles.row}>
       <PlayerAvatar name={pick.playerName} photoUrl={pick.playerImageUrl} ring={accent ?? color} size={52} />
       <View style={styles.main}>
-        <Text style={styles.name}>{pick.playerName}</Text>
+        <PlayerName style={styles.name} name={pick.playerName} sport={pick.sport} />
         <Text style={styles.line}>{headline(pick)}</Text>
         <Text style={styles.detail}>{pick.eventName} · {start.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</Text>
       </View>

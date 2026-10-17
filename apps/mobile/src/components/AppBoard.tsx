@@ -22,6 +22,7 @@ import { AppHeader } from './ui/AppHeader';
 import { ChipRow, FilterChip, PrimaryButton, Segmented } from './ui/Controls';
 import { useLeagueStatFilter } from './LeagueStatFilter';
 import { PlayerAvatar } from './ui/PlayerAvatar';
+import { PlayerName } from './ui/PlayerName';
 import { backedSide, historySide, scoutSide, sideLabel } from '../app-lines';
 import type { AppLine, Side } from '../app-lines';
 
@@ -60,7 +61,7 @@ function LineCard({ app, line, picked, onPick, asking, onAsk }: { app: PickApp; 
     <View style={styles.cardHead}>
       <PlayerAvatar name={line.playerName} photoUrl={line.playerImageUrl} size={48} ring={picked ? colors.mint : colors.borderStrong} />
       <View style={styles.grow}>
-        <Text style={styles.name} numberOfLines={1}>{line.playerName}</Text>
+        <PlayerName style={styles.name} numberOfLines={1} name={line.playerName} sport={line.sport} />
         <Text style={styles.meta} numberOfLines={1}>{line.league} · {line.team ?? line.eventName}
           {line.opponent ? ` vs ${line.opponent}` : ''}</Text>
         <Text style={styles.meta}>{gameTime(line.eventStartTime)}</Text>
