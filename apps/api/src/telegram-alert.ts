@@ -23,5 +23,19 @@ export async function alertOwner(kind: string, text: string, now = Date.now(), e
   } catch { return false; }
 }
 
+/**
+ * The chat that last messaged the bot (the owner pressed Start), for setting TELEGRAM_CHAT_ID. Null when none or no token.
+ */
+export async function findOwnerChat(env = process.env): Promise<string | null> {
+  const token = env.TELEGRAM_BOT_TOKEN?.trim();
+  if (!token) return null;
+  try {
+    const response = await (send ?? fetch)(`https://api.telegram.org/bot${token}/getUpdates`, { signal: AbortSignal.timeout(10_000) });
+    const body = await response.json() as { result?: { message?: { chat?: { id?: number } } }[] };
+    const id = [...(body.result ?? [])].reverse().map((update) => update.message?.chat?.id).find((value) => value !== undefined);
+    return id === undefined ? null : String(id);
+  } catch { return null; }
+}
+
 /** Test hook: forget the cooldowns. */
 export function resetAlerts() { last.clear(); }

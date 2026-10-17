@@ -105,6 +105,7 @@ import { MovementTracker } from './edge/movement.js';
 import { bookRows, pickemRows, scrapedRows } from './edge/snapshot-feed.js';
 import type { Gkr2, OpponentReads } from './gkr2.js';
 import { gkr3Read } from './gkr3.js';
+import { alertOwner, findOwnerChat, resetAlerts } from './telegram-alert.js';
 import { gkr4Parts, gkr4Read, learnGkr4 } from './gkr4.js';
 import type { Gkr4Parts } from './gkr4.js';
 import { gkr2Reads, whyDifferent } from './gkr2-reads.js';
@@ -2851,6 +2852,15 @@ export function buildServer(options: ServerOptions = {}) {
       if (!input.success || !options.product) return reply.code(400).send({ code: 'INVALID_REQUEST' });
       try { return await options.product.grantTrialWeek(input.data.username); }
       catch (error) { const code = (error as Error).message; return reply.code(code === 'TRIAL_NOT_FOUND' ? 404 : 409).send({ code }); }
+    });
+    // Telegram alerts (owner, 2026-10-17): finds the owner's chat and sends a test message.
+    admin.post('/alerts/test', async () => {
+      const chat = process.env.TELEGRAM_CHAT_ID?.trim() || await findOwnerChat();
+      if (!chat) return { configured: !!process.env.TELEGRAM_BOT_TOKEN, chat: null, sent: false };
+      resetAlerts();
+      const sent = await alertOwner('test', 'alerts are set up. You will hear here about high memory, freezes and restarts.', Date.now(),
+        { ...process.env, TELEGRAM_CHAT_ID: chat });
+      return { configured: true, chat, sent };
     });
     admin.get('/trial-poll', async (_request, reply) => options.product ? options.product.trialPollResults() : reply.code(503).send({ code: 'PROFILES_UNCONFIGURED' }));
     admin.get('/tips-summary', async (_request, reply) => options.tips ? options.tips.store.summary() : reply.code(503).send({ code: 'TIPS_UNAVAILABLE' }));

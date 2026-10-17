@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { throttledSave } from '../throttled-save.js';
 import { dirname } from 'node:path';
 import type { EdgePick, PropLine } from '@crowniq/contracts';
 import { evaluate, forecastReport, profileFor } from '@crowniq/edge';
@@ -120,9 +121,16 @@ export class EdgeLedger {
     }
     return this.cache;
   }
+  private readonly saver = throttledSave(() => this.writeNow(), 60_000);
+  /** The ledger in memory is current at once; the ~100 MB file is saved at most once a minute. */
   private async write(data: LedgerData) {
     this.cache = data;
     if (!this.path) return;
+    await this.saver.save();
+  }
+  private async writeNow() {
+    const data = this.cache;
+    if (!this.path || !data) return;
     await mkdir(dirname(this.path), { recursive: true });
     const temporary = `${this.path}.${randomUUID()}.tmp`;
     try { await writeFile(temporary, JSON.stringify(data), { mode: 0o600 }); await rename(temporary, this.path); }

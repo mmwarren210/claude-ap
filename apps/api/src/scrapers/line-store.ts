@@ -1,6 +1,7 @@
 import type { HistoryArchive } from '../history-archive.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { throttledSave } from '../throttled-save.js';
 import { dirname } from 'node:path';
 import { sameLineKey } from './markets.js';
 import type { DfsApp, ScrapedLine } from './scraped-line.js';
@@ -68,7 +69,10 @@ export class ScrapedLineStore {
     return this.loading;
   }
 
-  private async save() {
+  private readonly saver = throttledSave(() => this.saveNow(), 60_000);
+  /** Saved at most once a minute (the push feed changes lines every few seconds). */
+  private save() { return this.saver.save(); }
+  private async saveNow() {
     if (!this.file) return;
     await mkdir(dirname(this.file), { recursive: true });
     const temporary = `${this.file}.${randomUUID()}.tmp`;
