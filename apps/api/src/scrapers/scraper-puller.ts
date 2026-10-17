@@ -1,3 +1,4 @@
+import { throttledSave } from '../throttled-save.js';
 import type { ApifyClient } from './apify-client.js';
 import type { IngestReport, ScrapedLineStore } from './line-store.js';
 import type { DfsApp, ScraperSource } from './scraped-line.js';
@@ -34,6 +35,8 @@ export interface PullerOptions {
   readonly maxRunUsd: number;
   /** Saved record of scheduled slots already run, so restarts and overlapping deployments never repeat one. */
   readonly slots?: SlotLedger;
+  /** Shortest gap between board rebuilds after line changes (default 5 minutes). */
+  readonly rebuildEveryMs?: number;
 }
 
 const easternHour = (date: Date) => Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York',
@@ -60,7 +63,12 @@ export class ScraperPuller {
   private readonly slots: SlotLedger;
 
   /** What to do after a pull changes lines: the server rebuilds the board from the store (free). */
-  whenLinesChange(callback: () => unknown): void { this.onLinesChanged = callback; }
+  // At most one board rebuild every 5 minutes (owner, 2026-10-17): PropLine pushes a line move every few seconds, and each full
+  // rebuild of the ~40,000-line board froze the server for 20-80 seconds. Moves in between are picked up by the next rebuild.
+  whenLinesChange(callback: () => unknown): void {
+    const saver = throttledSave(async () => { await callback(); }, this.options.rebuildEveryMs ?? 5 * 60_000);
+    this.onLinesChanged = () => saver.save();
+  }
 
   /** Pulls every scheduled source now and marks each one's next scheduled run as done, so it is skipped. */
   async refreshAllSkipNext(): Promise<{ reports: PullReport[]; skipped: string[] }> {

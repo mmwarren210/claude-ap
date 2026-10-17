@@ -127,7 +127,7 @@ test('the puller runs each source on its schedule, within one daily spend cap, a
     const budget = new DailySpendBudget(join(folder, 'spend.json'), 4.5, () => now);
     const capped = { ...actorSource, rowCap: 2 };
     const puller = new ScraperPuller(apify, new ScrapedLineStore(join(folder, 'lines.json'), () => now), budget,
-      [{ source: capped, hoursEt: [16] }, { source: otherSource, hoursEt: [] }], { maxRunUsd: 1.5 }, () => now);
+      [{ source: capped, hoursEt: [16] }, { source: otherSource, hoursEt: [] }], { maxRunUsd: 1.5, rebuildEveryMs: 0 }, () => now);
     puller.whenLinesChange(() => { rebuilds++; });
     const first = await puller.pull('test-actor');
     assert.deepEqual([first.status, first.rows, first.truncated, first.costUsd, first.ingest?.added], ['SUCCEEDED', 2, true, 1.4, 2]);
