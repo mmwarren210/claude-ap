@@ -12,7 +12,7 @@ import { DatabaseSync } from 'node:sqlite';
 // earlier one) at a fraction of the size.
 // Retention (the data volume is 500 MB; 1.3 days of rows filled 208 MB on 2026-10-07 and every save then failed):
 // - full resolution for a day, then one row per key per hour;
-// - games that started more than 8 days ago dropped (stale replay looks back 7 days);
+// - games that started more than 7 days ago dropped (stale replay looks back 7 days);
 // - at most 100,000 rows (~75 MB), oldest first, always keeping each key's newest row.
 
 export type SnapshotSource = 'sharpapi' | 'scraper' | 'odds-api';
@@ -46,7 +46,14 @@ const valueOf = (row: SnapshotRow) => JSON.stringify([row.price ?? null, row.pro
 
 export class SnapshotStore {
   private db: DatabaseSync;
-  constructor(private readonly file: string | null, private readonly clock: () => Date = () => new Date()) {
+  private statusMemo: { at: number; value: ReturnType<SnapshotStore['countStatus']> } | null = null;
+  /**
+   * `statusEveryMs`: how long status() keeps its counts (full-table counts over ~1M rows took seconds of the server thread,
+   * 2026-10-17). `seenEveryMs`: an unchanged price's lastSeenAt is refreshed at most this often, so a poll writes only the
+   * rows that changed or went stale instead of every row (closing() allows a 90-minute gap, so 15 minutes loses nothing).
+   */
+  constructor(private readonly file: string | null, private readonly clock: () => Date = () => new Date(),
+    private readonly statusEveryMs = 0, private readonly seenEveryMs = 0) {
     if (file) mkdirSync(dirname(file), { recursive: true });
     this.db = SnapshotStore.open(file);
   }
@@ -70,7 +77,7 @@ export class SnapshotStore {
   /** Records one poll's rows; returns how many changed (were appended). Rows for games already started are ignored. */
   record(rows: readonly SnapshotRow[]): number {
     const now = this.clock().getTime();
-    const latest = this.db.prepare('SELECT value FROM latest WHERE key = ?');
+    const latest = this.db.prepare('SELECT value, lastSeenAt FROM latest WHERE key = ?');
     const upsert = this.db.prepare(`INSERT INTO latest (key, value, lastSeenAt, startTime) VALUES (?, ?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, lastSeenAt = excluded.lastSeenAt`);
     const insert = this.db.prepare(`INSERT INTO snapshots (observedAt, source, platform, eventKey, playerKey, market, number,
@@ -81,7 +88,8 @@ export class SnapshotStore {
       for (const row of rows) {
         if (!(Date.parse(row.startTime) > now)) continue;
         const key = keyOf(row), value = valueOf(row);
-        const previous = latest.get(key) as { value: string } | undefined;
+        const previous = latest.get(key) as { value: string; lastSeenAt: string } | undefined;
+        if (previous?.value === value && Date.parse(row.observedAt) - Date.parse(previous.lastSeenAt) < this.seenEveryMs) continue;
         if (previous?.value !== value) {
           insert.run(row.observedAt, row.source, row.platform, row.eventKey, row.playerKey, row.market, row.number, row.side,
             row.lineType ?? null, row.price ?? null, row.probability ?? null, row.multiplier ?? null, row.startTime,
@@ -150,7 +158,7 @@ export class SnapshotStore {
    * reuses deleted pages but never shrinks the file, so a store with over 20 MB free is rewritten compactly.
    */
   prune(options: { fullHours?: number; keepDays?: number; maxRows?: number } = {}): { deleted: number; compacted: boolean } {
-    const now = this.clock().getTime(), { fullHours = 24, keepDays = 8, maxRows = 100_000 } = options;
+    const now = this.clock().getTime(), { fullHours = 24, keepDays = 7, maxRows = 100_000 } = options;
     const iso = (ms: number) => new Date(now - ms).toISOString();
     let deleted = 0;
     const run = (sql: string, ...args: (string | number)[]) => { deleted += Number(this.db.prepare(sql).run(...args).changes); };
@@ -181,6 +189,14 @@ export class SnapshotStore {
 
   /** Rows in total, written in the last hour and day, and per source in the last day (owner diagnostics). */
   status() {
+    const at = this.clock().getTime();
+    if (this.statusMemo && at - this.statusMemo.at < this.statusEveryMs) return this.statusMemo.value;
+    const value = this.countStatus();
+    if (this.statusEveryMs > 0) this.statusMemo = { at, value };
+    return value;
+  }
+
+  private countStatus() {
     const at = this.clock().getTime();
     const count = (since: number) => Number((this.db.prepare('SELECT COUNT(*) AS n FROM snapshots WHERE observedAt >= ?')
       .get(new Date(at - since).toISOString()) as { n: number }).n);

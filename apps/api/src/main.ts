@@ -443,7 +443,7 @@ const edgeAlternateFactors=Object.fromEntries(([['GOBLIN',edgeFactor('EDGE_GOBLI
 const edgeSnapshots=process.env.EDGE_ENGINE==='false'?null:(()=>{
   // v2 keys series by a short hash; the v1 file (full-text keys, 172 MB on 2026-10-07) is removed.
   for(const suffix of ['','-wal','-shm','.compact'])rmSync(`${dataDir}/edge/snapshots.sqlite${suffix}`,{force:true});
-  try{return new SnapshotStore(process.env.CROWNIQ_EDGE_SNAPSHOTS_FILE ?? `${dataDir}/edge/snapshots-v2.sqlite`);}
+  try{return new SnapshotStore(process.env.CROWNIQ_EDGE_SNAPSHOTS_FILE ?? `${dataDir}/edge/snapshots-v2.sqlite`,undefined,3600_000,15*60_000);}
   catch(error){console.error('[edge-snapshots] unavailable',error instanceof Error?error.message:error);return null;}
 })();
 const edgeDispersion=new DispersionStore(`${dataDir}/edge/edge-dispersion-v1.json`);
@@ -459,8 +459,8 @@ if(bookAccuracy){
 }
 await edgeBookWeights.load();
 const edgeOptions={enabled:process.env.EDGE_ENGINE!=='false',dispersion:edgeDispersion,bookWeights:edgeBookWeights,
-  ledger:new EdgeLedger(process.env.CROWNIQ_EDGE_LEDGER_FILE ?? `${dataDir}/edge/ledger.json`),
-  gkrPlusLedger:new EdgeLedger(`${dataDir}/edge/gkr-plus-ledger.json`),
+  ledger:new EdgeLedger(process.env.CROWNIQ_EDGE_LEDGER_FILE ?? `${dataDir}/edge/ledger.json`,undefined,undefined,3600_000),
+  gkrPlusLedger:new EdgeLedger(`${dataDir}/edge/gkr-plus-ledger.json`,undefined,undefined,3600_000),
   snapshots:edgeSnapshots,alternateFactors:edgeAlternateFactors,alternateCurve:edgeAlternateCurve,
   boxScores:new BoxScoreResults(fetch,undefined,historyArchive),
   valuesCacheFile:`${dataDir}/edge/history-values.json`,

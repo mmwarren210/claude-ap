@@ -42,13 +42,86 @@ function runAssessment(module: ModelModule, line: PropLine, evidence: readonly E
   return result;
 }
 
+/** FNV-1a over a string, as 13 base-36 digits (a cache key, not a security hash). */
+function fingerprint(text: string): string {
+  let low = 0x811c9dc5, high = 0x01000193;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    low = Math.imul(low ^ code, 0x01000193) >>> 0;
+    high = Math.imul(high ^ code, 0x0100019d) >>> 0;
+  }
+  return high.toString(36) + '.' + low.toString(36);
+}
+
+/**
+ * Reuses a line's analysis while the line, its model and its current evidence are all unchanged. A model reads only the
+ * line and the evidence (never the clock), so the reused analysis is exactly what scoring again would return; it only
+ * saves the work. Re-scoring every line of a ~40,000-line board on each rebuild held the one server thread for seconds
+ * (2026-10-17 freezes). Holds at most two generations of `maxEntries`.
+ */
+export class AnalysisCache {
+  private current = new Map<string, Analysis>();
+  private previous = new Map<string, Analysis>();
+  private readonly evidenceKeys = new WeakMap<Evidence, string>();
+  private readonly moduleKeys = new WeakMap<ModelModule, number>();
+  private modules = 0;
+  constructor(private readonly maxEntries = 60_000) {}
+
+  key(line: PropLine, module: ModelModule | null, evidence: readonly Evidence[]): string {
+    let moduleKey = 0;
+    if (module) {
+      moduleKey = this.moduleKeys.get(module) ?? ++this.modules;
+      this.moduleKeys.set(module, moduleKey);
+    }
+    const items = evidence.map((item) => {
+      let value = this.evidenceKeys.get(item);
+      if (value === undefined) { value = fingerprint(JSON.stringify(item)); this.evidenceKeys.set(item, value); }
+      return value;
+    });
+    return `${moduleKey}|${items.join(',')}|${JSON.stringify(line)}`;
+  }
+
+  get(key: string): Analysis | undefined {
+    const kept = this.current.get(key);
+    if (kept) return kept;
+    const older = this.previous.get(key);
+    if (older) this.set(key, older);
+    return older;
+  }
+
+  set(key: string, analysis: Analysis): void {
+    if (this.current.size >= this.maxEntries) { this.previous = this.current; this.current = new Map(); }
+    this.current.set(key, analysis);
+  }
+}
+
+/** Evidence grouped by event, so each line looks only at its own event's items (same items, same order). */
+export function evidenceByEvent(evidence: readonly Evidence[]): Map<string, Evidence[]> {
+  const out = new Map<string, Evidence[]>();
+  for (const item of evidence) {
+    const list = out.get(item.eventId);
+    if (list) list.push(item); else out.set(item.eventId, [item]);
+  }
+  return out;
+}
+
 export function evaluateLine(line: PropLine, evidence: readonly Evidence[], registry: ModelRegistry,
-  now: Date): Analysis {
+  now: Date, cache: AnalysisCache | null = null): Analysis {
   const module = registry.resolve(line);
   if (Date.parse(line.eventStartTime) <= now.getTime()) {
     return pass(line, 'EVENT_ALREADY_STARTED', module?.version ?? null);
   }
   const current = freshEvidenceFor(line, evidence, now);
+  if (!cache) return scoreWithEvidence(line, current, module);
+  const key = cache.key(line, module, current);
+  const kept = cache.get(key);
+  if (kept) return kept;
+  const analysis = scoreWithEvidence(line, current, module);
+  cache.set(key, analysis);
+  return analysis;
+}
+
+function scoreWithEvidence(line: PropLine, current: readonly Evidence[], module: ModelModule | null): Analysis {
   // Web findings are AI-structured context for people to read. No model scores them, so
   // they must not lower evidence quality or shorten the analysis's evidence expiry.
   // Identity findings (team, photo) describe who the player is, not how they will perform.
@@ -193,12 +266,13 @@ export function chooseSecondLookWatchlist(lines: readonly PropLine[],
 }
 
 export function evaluateBoard(board: Board, evidence: readonly Evidence[], registry: ModelRegistry,
-  now: Date): { analyses: Analysis[]; rankedLineIds: string[] } {
+  now: Date, cache: AnalysisCache | null = null): { analyses: Analysis[]; rankedLineIds: string[] } {
   const parsed = boardSchema.parse(board);
   if (new Set(parsed.lines.map((line) => line.id)).size !== parsed.lines.length) {
     throw new Error('Duplicate normalized line ID');
   }
   // All lines are assessed before any ladder winner or ranking is chosen.
-  const analyses = parsed.lines.map((line) => evaluateLine(line, evidence, registry, now));
+  const byEvent = evidenceByEvent(evidence);
+  const analyses = parsed.lines.map((line) => evaluateLine(line, byEvent.get(line.eventId) ?? [], registry, now, cache));
   return { analyses, rankedLineIds: chooseLadderWinners(parsed.lines, analyses) };
 }

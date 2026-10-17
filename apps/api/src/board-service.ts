@@ -1,7 +1,7 @@
 import { lineSaysRoleChanged, roleChange } from './history-read.js';
 import { boardSchema, propLineSchema } from '@crowniq/contracts';
 import type { Analysis, Board, BoardResponse, Evidence, PlayerMedia, PropLine, SecondLookAudit } from '@crowniq/contracts';
-import { collectResearch, effectiveEvidenceExpiry, evaluateBoard, evaluateLine, ModelRegistry, researchTargetsFor } from '@crowniq/engine';
+import { AnalysisCache, collectResearch, effectiveEvidenceExpiry, evaluateBoard, evaluateLine, evidenceByEvent, ModelRegistry, researchTargetsFor } from '@crowniq/engine';
 import type { OddsProvider, ResearchAdapter, ResearchHealth } from '@crowniq/engine';
 import { classifyPrizePicksLineTypes, normalizeCachedPrizePicksLines } from './prizepicks-line-types.js';
 import type { BoardCache } from './board-cache.js';
@@ -48,6 +48,10 @@ export class BoardService {
   private secondLookAudits: Record<string,SecondLookAudit> = {};
   private playerMedia: Record<string,PlayerMedia> = {};
   private nextDeadline = Infinity;
+  // Scores kept while a line and its evidence are unchanged, so a rebuild scores only what moved (2026-10-17 freezes).
+  private readonly boardScores = new AnalysisCache();
+  private readonly secondLookScores = new AnalysisCache();
+  private readonly lineScores = new AnalysisCache();
   private startupRecovery = {status:'NOT_NEEDED' as 'NOT_NEEDED'|'UNCONFIGURED'|'RUNNING'|'SUCCEEDED'|'PARTIAL'|'FAILED',
     evidenceAdded:0,oddsCreditsUsed:0 as const,error:null as string|null};
   private mutation:Promise<unknown>=Promise.resolve();
@@ -202,8 +206,8 @@ export class BoardService {
   getEvidence(): readonly Evidence[] { this.getBoard(); return this.evidence; }
   /** The approved models on lines outside the board (the Underdog/Pick6 shadow run), with the board's current research. */
   scoreLines(lines: readonly PropLine[]): Analysis[] {
-    const now=this.clock(),evidence=this.getEvidence();
-    return lines.map((line)=>evaluateLine(line,evidence,this.models,now));
+    const now=this.clock(),byEvent=evidenceByEvent(this.getEvidence());
+    return lines.map((line)=>evaluateLine(line,byEvent.get(line.eventId)??[],this.models,now,this.lineScores));
   }
 
   /**
@@ -239,7 +243,7 @@ export class BoardService {
 
   private publish(source: Board, evidence: readonly Evidence[], now: Date): BoardResponse {
     const board = this.withIdentity(source, evidence, now);
-    const result = evaluateBoard(board, evidence, this.models, now);
+    const result = evaluateBoard(board, evidence, this.models, now, this.boardScores);
     const lineFor=new Map(board.lines.map((line)=>[line.id,line]));
     const blocked=new Set<string>();
     const analyses=result.analyses.map((scored)=>{
@@ -483,7 +487,7 @@ export class BoardService {
     status:'UNCONFIGURED'|'OK'|'PARTIAL'|'FAILED'|null;health:ResearchHealth|null;
   }>{
     if(!this.secondLookResearch)return {evidence:[...evidence],audits:{},status:null,health:null};
-    const initial=evaluateBoard(board,evidence,this.models,now);
+    const initial=evaluateBoard(board,evidence,this.models,now,this.secondLookScores);
     const eligible=new Set(initial.analyses.filter(secondLookEligible).map((item)=>item.lineId));
     if(!eligible.size)return {evidence:[...evidence],audits:{},status:null,health:null};
     const eligibleKeys=new Set(board.lines.filter((line)=>eligible.has(line.id))

@@ -103,7 +103,18 @@ export class EdgeLedger {
   private chain: Promise<unknown> = Promise.resolve();
   private cache: LedgerData | null = null;
   constructor(private readonly path: string | null, private readonly clock: () => Date = () => new Date(),
-    private readonly maxPerRecord = 2000) {}
+    private readonly maxPerRecord = 2000, private readonly mathEveryMs = 0) {}
+  // The track-record math (bootstrap intervals, calibration buckets over every graded pick) took seconds of the one server
+  // thread each time the record screen opened or Edge refreshed (2026-10-17 freezes), so its results are kept for
+  // `mathEveryMs` (an hour in production). Counts, pending picks and recent results stay live.
+  private readonly memo = new Map<string, { at: number; value: unknown }>();
+  private memoized<T>(name: string, compute: () => T): T {
+    const at = this.clock().getTime(), kept = this.memo.get(name);
+    if (kept && at - kept.at < this.mathEveryMs) return kept.value as T;
+    const value = compute();
+    if (this.mathEveryMs > 0) this.memo.set(name, { at, value });
+    return value;
+  }
 
   private exclusive<T>(task: () => Promise<T>): Promise<T> {
     const result = this.chain.then(task); this.chain = result.catch(() => undefined); return result;
@@ -317,10 +328,7 @@ export class EdgeLedger {
         [...new Set(decided.map(select))].sort().map((key) => [key, graded(decided.filter((pick) => select(pick) === key))]));
       const standard = decided.filter((pick) => pick.edge !== null);
       const standardHits = standard.filter((pick) => pick.outcome === 'WIN').length;
-      return {
-        tracked: picks.length,
-        pending: picks.filter((pick) => pick.outcome === 'PENDING').length,
-        voided: picks.filter((pick) => pick.outcome === 'VOID' || pick.outcome === 'PUSH').length,
+      const math = this.memoized('report', () => ({
         overall: forecastReport(rows(decided)),
         evaluation: graded(standard),
         standardLines: { graded: standard.length, hitRate: standard.length ? standardHits / standard.length : null,
@@ -331,8 +339,14 @@ export class EdgeLedger {
         bySport: groupBy((pick) => pick.sport),
         // Each Edge version's own record (owner, 2026-10-13: 1.2 is compared with 1.1).
         byVersion: groupBy((pick) => pick.modelVersion ?? 'unknown'),
-        gradingCoverage: gradingCoverage(picks, this.clock().getTime()),
         closingLine: closingLineReport(picks),
+      }));
+      return {
+        tracked: picks.length,
+        pending: picks.filter((pick) => pick.outcome === 'PENDING').length,
+        voided: picks.filter((pick) => pick.outcome === 'VOID' || pick.outcome === 'PUSH').length,
+        ...math,
+        gradingCoverage: gradingCoverage(picks, this.clock().getTime()),
         recent: picks.filter((pick) => pick.outcome !== 'PENDING')
           .sort((a, b) => b.eventStartTime.localeCompare(a.eventStartTime)).slice(0, 50),
       };
@@ -345,19 +359,24 @@ export class EdgeLedger {
    */
   async weakTiers(minimum = 300): Promise<Set<string>> {
     return this.exclusive(async () => {
-      const decided = (await this.read()).picks.filter((pick) => (pick.outcome === 'WIN' || pick.outcome === 'LOSS') && pick.edge !== null);
-      const groups = new Map<string, TrackedEdgePick[]>();
-      for (const pick of decided) for (const key of [pick.stale ? 'STALE' : pick.tier, `${pick.platform}:${pick.tier}`])
-        { const list = groups.get(key); if (list) list.push(pick); else groups.set(key, [pick]); }
-      const weak = new Set<string>();
-      for (const [key, list] of groups) {
-        if (list.length < minimum) continue;
-        const clv = evaluate(list.map((pick) => ({ hit: pick.outcome === 'WIN', firstProbability: pick.firstProbability,
-          closeProbability: pick.probability, breakEven: pick.firstBreakEven ?? pick.breakEven,
-          ...(pick.firstDecimal ? { decimal: pick.firstDecimal } : {}) }))).clv;
-        if (clv && clv.value <= 0) weak.add(key);
-      }
-      return weak;
+      const picks = (await this.read()).picks;
+      return this.memoized(`weakTiers:${minimum}`, () => this.findWeakTiers(picks, minimum));
     });
+  }
+
+  private findWeakTiers(picks: readonly TrackedEdgePick[], minimum: number): Set<string> {
+    const decided = picks.filter((pick) => (pick.outcome === 'WIN' || pick.outcome === 'LOSS') && pick.edge !== null);
+    const groups = new Map<string, TrackedEdgePick[]>();
+    for (const pick of decided) for (const key of [pick.stale ? 'STALE' : pick.tier, `${pick.platform}:${pick.tier}`])
+      { const list = groups.get(key); if (list) list.push(pick); else groups.set(key, [pick]); }
+    const weak = new Set<string>();
+    for (const [key, list] of groups) {
+      if (list.length < minimum) continue;
+      const clv = evaluate(list.map((pick) => ({ hit: pick.outcome === 'WIN', firstProbability: pick.firstProbability,
+        closeProbability: pick.probability, breakEven: pick.firstBreakEven ?? pick.breakEven,
+        ...(pick.firstDecimal ? { decimal: pick.firstDecimal } : {}) }))).clv;
+      if (clv && clv.value <= 0) weak.add(key);
+    }
+    return weak;
   }
 }

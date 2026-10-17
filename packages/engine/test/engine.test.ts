@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Evidence } from '@crowniq/contracts';
 import { boardSchema, evidenceSchema } from '@crowniq/contracts';
-import { auditCrown, buildAutoCrown, chooseSecondLookWatchlist, collectResearch, evaluateBoard,
+import { AnalysisCache, auditCrown, buildAutoCrown, chooseSecondLookWatchlist, collectResearch, evaluateBoard,
   ModelRegistry } from '../src/index.js';
 import type { ModelModule } from '../src/index.js';
 import { fixtureAnalysis, fixtureAssessment, fixtureLine, now } from './fixtures.js';
@@ -177,4 +177,32 @@ test('conservative correlation policy limits one game and same-team QB stacks', 
     pick('a', 'player_reception_yds', 'BUF', 'LESS')]), []);
   assert.deepEqual(conservativeCorrelationPolicy([pick('a', 'passing_yards', 'BUF', 'MORE'),
     pick('a', 'player_reception_yds', 'MIA', 'MORE')]), []);
+});
+
+test('the analysis cache re-scores only lines whose line or evidence changed, with identical results', () => {
+  let runs = 0;
+  const model = registryWith(({ phase, line }) => { runs++; return fixtureAssessment(phase, 'MORE', line.threshold > 250 ? 70 : 84); },
+    ['injury_status']);
+  const first = fixtureLine({ id: 'first', sourceLineId: 'first-source', playerId: 'first-player' });
+  const second = fixtureLine({ id: 'second', sourceLineId: 'second-source', playerId: 'second-player' });
+  const finding = (line: typeof first, text: string): Evidence => evidenceSchema.parse({ id: `finding-${line.id}`, entityType: 'PLAYER',
+    entityId: line.playerId, eventId: line.eventId, market: line.market, kind: 'injury_status', finding: text,
+    sourceName: 'Fixture feed', sourceUrl: null, sourceType: 'OFFICIAL', retrievedAt: '2030-09-24T10:00:00.000Z',
+    expiresAt: '2030-09-24T13:00:00.000Z', quality: 'HIGH', confidence: 0.9 });
+  const evidence = [finding(first, 'Available.'), finding(second, 'Available.')];
+  const cache = new AnalysisCache();
+  const plain = evaluateBoard(board([first, second]), evidence, model, now);
+  runs = 0;
+  assert.deepEqual(evaluateBoard(board([first, second]), evidence, model, now, cache), plain);
+  assert.equal(runs, 6);
+  // Nothing changed (new but equal objects): nothing is scored again.
+  runs = 0;
+  assert.deepEqual(evaluateBoard(board([{ ...first }, { ...second }]), evidence.map((item) => ({ ...item })), model, now, cache), plain);
+  assert.equal(runs, 0);
+  // A moved line and a changed finding each score again; the result matches scoring without the cache.
+  const moved = { ...first, threshold: 260.5 }, note = [evidence[0]!, finding(second, 'Questionable.')];
+  runs = 0;
+  const cached = evaluateBoard(board([moved, second]), note, model, now, cache);
+  assert.equal(runs, 6);
+  assert.deepEqual(cached, evaluateBoard(board([moved, second]), note, model, now));
 });
