@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import { syncBuiltinESMExports } from 'node:module';
 import { capped } from './context/sharp-props.js';
+import { alertOwner, captureAlertFetch } from './telegram-alert.js';
 // Memory watch: the container is killed without a trace when memory passes its cap, so past 3 GB this logs the
 // process's memory every few seconds with the requests in flight (host and path) to show which job is growing.
 const BIG = 20 * 1_048_576, REFUSE = 200 * 1_048_576;
@@ -13,6 +14,7 @@ let nextId = 0;
 /** Wraps the global fetch so the memory log can name the requests in flight. */
 export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000, fetchLimitMs = 90_000): NodeJS.Timeout {
   const original = globalThis.fetch;
+  captureAlertFetch(original);
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const id = nextId++;
     let what = 'request';
@@ -65,14 +67,22 @@ export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000, fetchLimitM
     request.once('close', () => incoming.delete(request));
   });
   let lastLog = 0, lastTick = Date.now();
+  // Alerts (owner, 2026-10-17): three freezes of 15s+ within 10 minutes, or memory past the alert line.
+  const longLags: number[] = [], alertMb = Number(process.env.CROWNIQ_ALERT_MEMORY_MB ?? 3500);
   const timer = setInterval(() => {
     // A late tick means the event loop was blocked: every request waited that long. Logged with what was being served,
     // so the step that froze the app shows in the logs next to it.
     const late = Date.now() - lastTick - everyMs;
     lastTick = Date.now();
+    if (late >= 15_000) {
+      longLags.push(Date.now());
+      while (longLags.length && longLags[0]! < Date.now() - 10 * 60_000) longLags.shift();
+      if (longLags.length >= 3) void alertOwner('lag', `server froze ${longLags.length} times for 15s+ in 10 minutes (last ${(late / 1000).toFixed(0)}s). The app is slow for members; a restart usually clears it.`);
+    }
     if (late > 2000) console.warn(`[lag] event loop blocked ${(late / 1000).toFixed(1)}s | serving ${JSON.stringify(
       [...incoming.values()].map((item) => `${item.what} ${Math.round((Date.now() - item.since) / 1000)}s`).slice(0, 6))}`);
     const memory = process.memoryUsage(), mb = (bytes: number) => Math.round(bytes / 1_048_576);
+    if (mb(memory.rss) >= alertMb) void alertOwner('memory', `memory at ${mb(memory.rss)} MB (alert line ${alertMb} MB). It may slow down or crash; a restart clears it.`);
     if (mb(memory.rss) < thresholdMb || Date.now() - lastLog < 4000) return;
     lastLog = Date.now();
     const requests = [...inFlight.values()].map((item) => `${item.what} ${Math.round((Date.now() - item.since) / 1000)}s`).slice(0, 4);

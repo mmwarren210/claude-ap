@@ -74,8 +74,11 @@ import { SoccerHistory } from './soccer-history.js';
 import { SecretUnlocks } from './secrets.js';
 import { ActivityLog } from './activity.js';
 import { startMemoryWatch } from './memory-watch.js';
+import { alertOwner } from './telegram-alert.js';
 
 startMemoryWatch();
+// A start the owner didn't ask for is usually a crash: say so (a deploy also starts it, which is fine to see).
+void alertOwner('restart', 'server started (a deploy or a crash restart). It should answer again within a minute.');
 
 // Where the server keeps its data files. On a host, point this at a permanent disk.
 const dataDir=(process.env.CROWNIQ_DATA_DIR ?? 'tmp').replace(/\/$/,'');
