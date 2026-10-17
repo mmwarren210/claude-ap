@@ -74,13 +74,19 @@ export class PlayerProfiles {
    */
   notePosition(sport: string, name: string, team: string | null, position: string): void {
     if (PROFILE_LEAGUES[sport]) return;
-    const key = normalizedName(name), current = this.store.profile(sport, key);
+    const key = normalizedName(name), seen = `${sport}|${key}`;
+    // The same rosters are read every few minutes: a position already noted needs no database read.
+    if (this.noted.get(seen) === position) return;
+    if (this.noted.size >= 100_000) this.noted.clear();
+    this.noted.set(seen, position);
+    const current = this.store.profile(sport, key);
     if (current?.position === position) return;
     this.store.putProfile(key, { sport, name, team: team ?? current?.team ?? null, position, bats: null, throws: null,
       status: current?.status ?? null, jersey: current?.jersey ?? null, espnId: current?.espnId ?? null, updatedAt: this.clock().toISOString() });
     if (this.positionsCache) (this.positionsCache.value[sport] ??= {})[key] = position;
   }
 
+  private readonly noted = new Map<string, string>();
   private positionsCache: { at: number; value: Record<string, Record<string, string>> } | null = null;
   /**
    * Every known position by sport and normalized name (owner, 2026-10-17: positions app wide). Kept an hour: the rosters

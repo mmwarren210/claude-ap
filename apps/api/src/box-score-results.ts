@@ -32,8 +32,20 @@ type Json = Record<string, unknown>;
 const obj = (value: unknown): Json | null => value && typeof value === 'object' && !Array.isArray(value) ? value as Json : null;
 const arr = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
 const str = (value: unknown) => typeof value === 'string' ? value : '';
-export const normalizedPlayer = (value: string) => value.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+const cleanName = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
   .replace(/[.'’]/g, '').replace(/\b(jr|sr|ii|iii|iv|v)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+// Grading compares every pending pick's names against every game's and every box score row's, thousands of times a pass
+// (a college football Saturday froze the server ~24s every 10 minutes, 2026-10-17), so each cleaned name is kept.
+const cleaned = new Map<string, string>();
+export const normalizedPlayer = (value: string) => {
+  let name = cleaned.get(value);
+  if (name === undefined) {
+    if (cleaned.size >= 200_000) cleaned.clear();
+    name = cleanName(value);
+    cleaned.set(value, name);
+  }
+  return name;
+};
 
 const stat = (key: string): Read => (stats) => stats[key] ?? null;
 /** A total of stats where a missing part is zero (the player is in the box score, just not in that category). */
@@ -288,6 +300,8 @@ export class BoxScoreResults {
       ready.push({ target, read });
     }
     const schedules = new Map<string, Promise<Game[]>>(), summaries = new Map<string, Promise<Row[]>>();
+    // Many picks share a game: its match is found once per schedule, teams and start time.
+    const matched = new Map<string, Game | null>();
     const once = <T>(cache: Map<string, Promise<T>>, key: string, load: () => Promise<T>) => {
       if (!cache.has(key)) cache.set(key, load());
       return cache.get(key)!;
@@ -298,7 +312,9 @@ export class BoxScoreResults {
         const days = [...new Set([easternDate(start), new Date(start).toISOString().slice(0, 10)])];
         const games = (await Promise.all(days.map((day) => once(schedules, `${line.sport}|${day}`,
           () => line.sport === 'MLB' ? this.mlbGames(day) : this.espnGames(espnPaths[line.sport]!, day))))).flat();
-        const game = matchGame(line, [...new Map(games.map((item) => [item.id, item])).values()]);
+        const matchKey = JSON.stringify([line.sport, days, line.eventStartTime, line.homeTeam, line.awayTeam, line.team, line.opponent]);
+        if (!matched.has(matchKey)) matched.set(matchKey, matchGame(line, [...new Map(games.map((item) => [item.id, item])).values()]));
+        const game = matched.get(matchKey)!;
         if (!game?.final) { waiting++; continue; }
         const source = line.sport === 'MLB'
           ? { name: 'MLB Stats API box score', url: `${MLB}/game/${game.id}/boxscore` }
