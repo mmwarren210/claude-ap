@@ -4,6 +4,7 @@ import type { IncomingMessage } from 'node:http';
 import { syncBuiltinESMExports } from 'node:module';
 import { capped } from './context/sharp-props.js';
 import { alertOwner, captureAlertFetch } from './telegram-alert.js';
+import { startFreezeProfiler } from './freeze-profiler.js';
 // Memory watch: the container is killed without a trace when memory passes its cap, so past 3 GB this logs the
 // process's memory every few seconds with the requests in flight (host and path) to show which job is growing.
 const BIG = 20 * 1_048_576, REFUSE = 200 * 1_048_576;
@@ -68,12 +69,15 @@ export function startMemoryWatch(thresholdMb = 3072, everyMs = 1000, fetchLimitM
   });
   let lastLog = 0, lastTick = Date.now();
   // Alerts (owner, 2026-10-17): three freezes of 15s+ within 10 minutes, or memory past the alert line.
+  let longestLag = 0;
+  void startFreezeProfiler(() => { const value = longestLag; longestLag = 0; return value; }).catch(() => undefined);
   const longLags: number[] = [], alertMb = Number(process.env.CROWNIQ_ALERT_MEMORY_MB ?? 12000);
   const timer = setInterval(() => {
     // A late tick means the event loop was blocked: every request waited that long. Logged with what was being served,
     // so the step that froze the app shows in the logs next to it.
     const late = Date.now() - lastTick - everyMs;
     lastTick = Date.now();
+    if (late > longestLag) longestLag = late;
     if (late >= 15_000) {
       longLags.push(Date.now());
       while (longLags.length && longLags[0]! < Date.now() - 10 * 60_000) longLags.shift();
