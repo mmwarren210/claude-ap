@@ -3,8 +3,20 @@ import type { GameLine, InjuryNote } from './feeds.js';
 
 // Matches display-only context to one board line. Matching is conservative: when it is unclear, nothing is attached.
 
-export const normalizedName = (value: string) => value.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+const cleanName = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
   .replace(/[.'’]/g, '').replace(/\b(jr|sr|ii|iii|iv)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+// Every board, Edge and grading pass cleans the same few thousand names over and over (6–12s of the server thread in a
+// busy minute, 2026-10-17), so each cleaned name is kept. Bounded: the cache starts over past 200,000 names.
+const cleaned = new Map<string, string>();
+export const normalizedName = (value: string) => {
+  let name = cleaned.get(value);
+  if (name === undefined) {
+    if (cleaned.size >= 200_000) cleaned.clear();
+    name = cleanName(value);
+    cleaned.set(value, name);
+  }
+  return name;
+};
 
 const leagueAliases: Readonly<Record<string, string>> = { CFB: 'NCAAF', NCAAFB: 'NCAAF' };
 const leagueOf = (value: string) => leagueAliases[value.toUpperCase()] ?? value.toUpperCase();
