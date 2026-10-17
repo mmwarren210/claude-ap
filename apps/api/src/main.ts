@@ -75,8 +75,11 @@ import { SecretUnlocks } from './secrets.js';
 import { ActivityLog } from './activity.js';
 import { startMemoryWatch } from './memory-watch.js';
 import { alertOwner } from './telegram-alert.js';
+import { startWatchdog } from './watchdog.js';
 
 startMemoryWatch();
+// Started before the stores load, so a lockup while loading them restarts the server too.
+const stopWatchdog=process.env.CROWNIQ_WATCHDOG==='off'?null:startWatchdog();
 // A start the owner didn't ask for is usually a crash: say so (a deploy also starts it, which is fine to see).
 void alertOwner('restart', 'server started (a deploy or a crash restart). It should answer again within a minute.');
 
@@ -95,7 +98,8 @@ setInterval(()=>{try{for(const name of readdirSync(dataDir,{recursive:true}) as 
 const historyArchive=new HistoryArchive(`${dataDir}/archive`);
 // Minutes on the app per member; saved every few minutes and on shutdown (a deploy sends SIGTERM first).
 const activityLog=new ActivityLog(`${dataDir}/activity.json`);
-process.once('SIGTERM',()=>{void activityLog.flush().catch(()=>undefined).finally(()=>process.exit(0));});
+process.once('SIGTERM',()=>{void activityLog.flush().catch(()=>undefined).then(()=>stopWatchdog?.()).catch(()=>undefined)
+  .finally(()=>process.exit(0));});
 // Lines come from the stored scraper board (PropLine and the free PrizePicks partner feed); `none` serves no board.
 const providerMode = process.env.ODDS_PROVIDER ?? 'scrapers';
 if (!['auto', 'none', 'scrapers'].includes(providerMode)) throw new Error('Unknown ODDS_PROVIDER');

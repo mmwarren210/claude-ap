@@ -106,7 +106,12 @@ export class PropLineResults {
     await this.load();
     if (!this.client) return [];
     const byGame = new Map<string, typeof picks[number][]>();
-    for (const pick of picks) { const game = proplineGameId(pick.eventId); if (game && this.data.sports[game]) byGame.set(game, [...byGame.get(game) ?? [], pick]); }
+    for (const pick of picks) {
+      const game = proplineGameId(pick.eventId);
+      if (!game || !this.data.sports[game]) continue;
+      const list = byGame.get(game);
+      if (list) list.push(pick); else byGame.set(game, [pick]);
+    }
     const out: { id: string; openingPoint?: number; closingPoint?: number; closingDecimal?: number }[] = [];
     for (const [game, list] of [...byGame].slice(0, limit)) {
       const sportKey = this.data.sports[game]!, keys = await marketsFor(sportKey);
@@ -122,8 +127,10 @@ export class PropLineResults {
             if (!outcome.description || typeof outcome.point !== 'number') continue;
             const side = /^(over|yes)$/i.test(outcome.name ?? '') ? 'MORE' : 'LESS';
             const key = `${book.key}|${normalizedName(outcome.description)}|${canonicalMarket(sport, proplineMarketKey(sport, market.key))}|${side}`;
-            found.set(key, [...found.get(key) ?? [], { point: outcome.point, price: typeof outcome.price === 'number' ? outcome.price : null,
-              open: typeof outcome.opening_point === 'number' ? outcome.opening_point : null }]);
+            const row = { point: outcome.point, price: typeof outcome.price === 'number' ? outcome.price : null,
+              open: typeof outcome.opening_point === 'number' ? outcome.opening_point : null };
+            const list = found.get(key);
+            if (list) list.push(row); else found.set(key, [row]);
           }
         } catch { ok = false; }
       }

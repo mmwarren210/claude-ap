@@ -107,7 +107,10 @@ export class ScrapedLineStore {
     const changed: { line: ScrapedLine; previousLine: number | null }[] = [];
     // Lines other sources already hold, to confirm across sources.
     const bySame = new Map<string, StoredLine[]>();
-    for (const line of this.lines.values()) bySame.set(sameLine(line), [...bySame.get(sameLine(line)) ?? [], line]);
+    for (const line of this.lines.values()) {
+      const same = sameLine(line), list = bySame.get(same);
+      if (list) list.push(line); else bySame.set(same, [line]);
+    }
     for (const line of lines) {
       const id = key(line); seen.add(id);
       const existing = this.lines.get(id);

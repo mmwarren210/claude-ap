@@ -115,11 +115,34 @@ export function conditionalOver(dist: Distribution, threshold: number): number {
   return decided > 0 ? result.over / decided : .5;
 }
 
+/**
+ * The smallest integer k (from mean − 6 sd, never below 0, and at most mean + 12 sd + 50) with P(X ≤ k) ≥ ½. Found
+ * without stepping one integer at a time: that walk called cdf() at every step (each a fresh sum up to k), and at a huge
+ * mean k + 1 rounds back to k, so it never ended (2026-10-17 freeze audit). Same answer as the walk for every real line.
+ */
 export function median(dist: Distribution): number {
   if (!dist.discrete) return dist.mean;
   const sd = Math.sqrt(dist.variance);
-  let k = Math.max(0, Math.floor(dist.mean - 6 * sd));
-  while (cdf(dist, k) < .5 && k < dist.mean + 12 * sd + 50) k++;
+  const start = Math.max(0, Math.floor(dist.mean - 6 * sd)), stop = Math.ceil(dist.mean + 12 * sd + 50);
+  if (!(stop > start)) return start;
+  const reached = (k: number) => cdf(dist, k) >= .5;
+  let from = start;
+  if (dist.family !== 'NORMAL' && start <= MAX_COUNT_TERMS) {
+    // One pass over the mass up to the term cap, summed in the same order cdf() sums it.
+    const last = Math.min(stop, MAX_COUNT_TERMS), pmf = countPmf(dist, last);
+    let total = 0;
+    for (let k = 0; k <= last; k++) {
+      total += pmf[k]!;
+      if (k >= start && Math.min(1, total) >= .5) return k;
+    }
+    if (last === stop) return stop;
+    from = MAX_COUNT_TERMS + 1;
+  }
+  // The normal curve (and counts past the term cap, which cdf() also reads off it) crosses ½ at k = mean − ½. A few
+  // steps settle the rounding of the approximation at the crossing.
+  let k = Math.min(stop, Math.max(from, Math.ceil(dist.mean - .5)));
+  for (let step = 0; step < 4 && k < stop && !reached(k); step++) k++;
+  for (let step = 0; step < 4 && k > from && reached(k - 1); step++) k--;
   return k;
 }
 
