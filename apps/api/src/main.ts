@@ -353,6 +353,7 @@ const gkrResearch=primaryEvidenceAdapters.length===0?null:primaryEvidenceAdapter
   ? primaryEvidenceAdapters[0]:new CompositeResearchAdapter(primaryEvidenceAdapters);
 // NHL, soccer and college football history from ESPN's public game logs (free), for their approved models.
 const espnEvidence=process.env.GKR_ESPN_EVIDENCE==='false'?null:new EspnGkrEvidence(fetch,{allowedKeys:approvedModelKeys,archive:historyArchive,
+  onPosition:playerProfiles?(sport,name,team,position)=>playerProfiles.notePosition(sport,name,team,position):undefined,
   maxPlayers:process.env.GKR_ESPN_MAX_PLAYERS?Number(process.env.GKR_ESPN_MAX_PLAYERS):undefined});
 const freeHistoryEvidence=playerHistory?new FreeHistoryEvidence(playerHistory,approvedModelKeys):null;
 // PropLine's box scores for every approved model's stat (owner, 2026-10-09), after the sources GKR already had.

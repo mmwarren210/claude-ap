@@ -187,6 +187,9 @@ export interface EspnGkrEvidenceOptions {
   readonly recentSamples?: number;
   /** Every game log fetched goes to CrownIQ's own archive (display and verification only). */
   readonly archive?: HistoryArchive | null;
+  /** Each rostered player's position as the rosters are read (display only: positions in the app for college football,
+   *  soccer and the rest the nightly roster pull doesn't cover). */
+  readonly onPosition?: (sport: string, name: string, team: string | null, position: string) => void;
 }
 
 export class EspnGkrEvidence implements ResearchAdapter {
@@ -270,7 +273,8 @@ export class EspnGkrEvidence implements ResearchAdapter {
       for (const entry of arr(roster?.athletes).flatMap((item) => Array.isArray(obj(item)?.items) ? arr(obj(item)!.items) : [item])) {
         const athlete = obj(entry), id = str(athlete?.id), name = str(athlete?.fullName) || str(athlete?.displayName);
         if (!id || !name) continue;
-        const status = str(obj(athlete?.status)?.type).toLowerCase();
+        const status = str(obj(athlete?.status)?.type).toLowerCase(), position = str(obj(athlete?.position)?.abbreviation);
+        if (position) this.options.onPosition?.(first.sport, name, game.sides[index]?.[0] ?? null, position);
         athletes.push({ id, name, team: game.sides[index] ?? [], available: (status === '' || status === 'active') && arr(athlete?.injuries).length === 0,
           starter: starters.size ? starters.get(id) ?? false : null });
       }

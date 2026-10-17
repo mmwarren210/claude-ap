@@ -125,3 +125,18 @@ test('positions come back by sport and the same name key the app uses', async ()
       assert.equal(positionKey(name), normalizedName(name));
   } finally { store.close(); }
 });
+
+test('roster positions fill in sports the nightly pull skips, without touching its profiles', async () => {
+  const { PlayerProfiles } = await import('../src/player-profiles.js');
+  const store = new PlayerStore(null);
+  try {
+    const profiles = new PlayerProfiles(store);
+    profiles.notePosition('NCAAFB', 'Daune Morris', 'Volunteers', 'RB');
+    profiles.notePosition('NFL', 'Josh Allen', 'Bills', 'WR');
+    assert.equal(profiles.positions().NCAAFB?.['daune morris'], 'RB');
+    assert.equal(profiles.positions().NFL, undefined);
+    profiles.notePosition('NCAAFB', 'Daune Morris', null, 'WR');
+    assert.equal(profiles.positions().NCAAFB?.['daune morris'], 'WR');
+    assert.equal(profiles.profile('NCAAFB', 'Daune Morris')?.team, 'Volunteers');
+  } finally { store.close(); }
+});

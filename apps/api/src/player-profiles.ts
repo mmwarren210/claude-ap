@@ -68,6 +68,19 @@ export class PlayerProfiles {
 
   profile(sport: string, name: string): PlayerProfile | null { return this.store.profile(sport, normalizedName(name)); }
 
+  /**
+   * A position seen on a roster GKR read for its evidence (college football, soccer, …). Stored for sports the nightly
+   * pull doesn't cover, and only when it is new or changed, so a profile from the nightly pull is never overwritten.
+   */
+  notePosition(sport: string, name: string, team: string | null, position: string): void {
+    if (PROFILE_LEAGUES[sport]) return;
+    const key = normalizedName(name), current = this.store.profile(sport, key);
+    if (current?.position === position) return;
+    this.store.putProfile(key, { sport, name, team: team ?? current?.team ?? null, position, bats: null, throws: null,
+      status: current?.status ?? null, jersey: current?.jersey ?? null, espnId: current?.espnId ?? null, updatedAt: this.clock().toISOString() });
+    if (this.positionsCache) (this.positionsCache.value[sport] ??= {})[key] = position;
+  }
+
   private positionsCache: { at: number; value: Record<string, Record<string, string>> } | null = null;
   /**
    * Every known position by sport and normalized name (owner, 2026-10-17: positions app wide). Kept an hour: the rosters

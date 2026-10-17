@@ -15,6 +15,7 @@ import { ChipRow, FilterChip, PrimaryButton, Segmented } from '../../components/
 import { Icon } from '../../components/ui/Icon';
 import { LineBadge } from '../../components/ui/LineBadge';
 import { PlayerAvatar } from '../../components/ui/PlayerAvatar';
+import { PlayerName } from '../../components/ui/PlayerName';
 import { ScoreRing } from '../../components/ui/ScoreRing';
 import { rateTone, StatStrip } from '../../components/ui/StatStrip';
 import { formatLine, gameTime, lineStats, marketLabel, percent } from '../../insights';
@@ -81,7 +82,7 @@ function PickCard({ card, rank, accent, photoUrl, analysis, scout, betaLine = nu
       <Text style={[styles.rank, { color: accent }]}>{rank === null ? '2nd' : `#${rank}`}</Text>
       <PlayerAvatar name={card.playerName} photoUrl={photoUrl} ring={accent} size={64} />
       <View style={styles.identity}>
-        <Text style={styles.name} numberOfLines={1}>{card.playerName}</Text>
+        <PlayerName style={styles.name} numberOfLines={1} name={card.playerName} sport={card.sport} />
         <Text style={styles.meta} numberOfLines={1}><Text style={styles.strong}>{card.league}</Text>
           {card.team ? `   ${card.team}` : ''}</Text>
         <Text style={styles.meta} numberOfLines={1}>{matchup(card)} ·{' '}
