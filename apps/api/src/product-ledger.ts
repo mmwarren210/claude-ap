@@ -151,6 +151,11 @@ const selectedEvidence=(analysis:Analysis,evidence:EvidenceLookup)=>
     .sort((a,b)=>a.id.localeCompare(b.id));
 /** From this moment GKR's record counts one pick per player, stat, game and side (owner approved 2026-10-12). */
 export const ONE_PICK_PER_GAME_FROM='2026-10-12T14:15:00.000Z';
+/**
+ * From this moment GKR's record counts a Less only when GKR 2 or Edge also says Less (owner approved 2026-10-17: GKR's
+ * Lesses hit 43% after Oct 13 while the app already held the unbacked ones back, so the record now matches what's shown).
+ */
+export const LESS_BACKED_FROM='2026-10-17T01:00:00.000Z';
 export const decisionKeyOf=(value:{eventId:string;playerId:string;market:string;exactLine:number;
   direction:string;lineType:string;modelVersion:string})=>createHash('sha256').update(JSON.stringify([
   value.eventId,value.playerId,value.market,value.exactLine,value.direction,value.lineType,value.modelVersion]))
@@ -1078,7 +1083,7 @@ export class ProductLedger {
     if(!crown)throw new Error('CROWN_NOT_FOUND');
     crown.removedAt=this.clock().toISOString();await this.write(data);
   });}
-  async track(board:BoardResponse,evidence:readonly Evidence[]):Promise<number>{
+  async track(board:BoardResponse,evidence:readonly Evidence[],lessBacked:((lineId:string)=>boolean)|null=null):Promise<number>{
     return this.exclusive(async()=>{
       const data=await this.read(),before=data.decisions.length;
       const analyses=new Map(board.analyses.map((item)=>[item.lineId,item]));
@@ -1100,6 +1105,7 @@ export class ProductLedger {
         const next=snapshot(line,analysis,findings,ranks.get(line.id)??null,this.clock());
         const existing=byKey.get(next.decisionKey!);
         if(!existing){
+          if(lessBacked&&next.direction==='LESS'&&next.createdAt>=LESS_BACKED_FROM&&!lessBacked(line.id))continue;
           if(next.createdAt>=ONE_PICK_PER_GAME_FROM){if(counted.has(sameBet(next)))continue;counted.add(sameBet(next));}
           byKey.set(next.decisionKey!,next);data.decisions.push(next);continue;
         }

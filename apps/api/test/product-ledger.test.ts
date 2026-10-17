@@ -495,3 +495,17 @@ test('one counted pick per player, stat, game and side: the standard line wins o
     assert.equal(kept!.exactLine,24.5);
   }finally{await rm(folder,{recursive:true,force:true});}
 });
+
+test('GKR record: a Less counts only when GKR 2 or Edge also says Less; a Less with no read available still counts',async()=>{
+  const folder=await mkdtemp(join(tmpdir(),'crowniq-less-backed-'));
+  try{
+    const ledger=new ProductLedger(join(folder,'data.json'),'CROWN_STRONG',()=>now);
+    const less=(event:string)=>{const board=build(event,'alpha',24.5);return {...board,board:{...board.board,lines:[{...board.board.lines[0]!,availableDirections:['MORE','LESS'] as ('MORE'|'LESS')[]}]},
+      analyses:[{...board.analyses[0]!,direction:'LESS' as const}]};};
+    const unbacked=less('u'),backed=less('b'),noRead=less('n'),more=build('m','alpha',24.5);
+    assert.equal(await ledger.track(unbacked,[],()=>false),0,'an unbacked Less is held out of the record');
+    assert.equal(await ledger.track(backed,[],(id)=>id===backed.board.lines[0]!.id),1);
+    assert.equal(await ledger.track(noRead,[],null),1,'no read to check: counted as before');
+    assert.equal(await ledger.track(more,[],()=>false),1,'Mores are never held');
+  }finally{await rm(folder,{recursive:true,force:true});}
+});

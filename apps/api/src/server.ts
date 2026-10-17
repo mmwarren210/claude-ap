@@ -272,6 +272,16 @@ export function buildServer(options: ServerOptions = {}) {
     }
     return {board,analyses:new Map((await gkr2Cache.analyses).map((item)=>[item.lineId,item]))};
   };
+  /**
+   * Whether GKR 2 or Edge also says Less on a line (owner, 2026-10-17): GKR's record counts a Less only then, the same rule
+   * the app uses to show one. Null when neither model can be read right now, so nothing is held back on a missing read.
+   */
+  const lessBackers=async():Promise<((lineId:string)=>boolean)|null>=>{
+    const read=await gkr2Board().catch(()=>null);
+    const edgeLines=edge?(await edge.snapshot('prizepicks').catch(()=>null))?.byLine??null:null;
+    if(!read&&!edgeLines)return null;
+    return (lineId)=>read?.analyses.get(lineId)?.direction==='LESS'||edgeLines?.get(lineId)?.side==='LESS';
+  };
   const marketKey=(sport:string,player:string,market:string,line:number)=>`${normalizedName(player)}|${canonicalMarket(sport,market)}|${line}`;
   /** GKR 2's side and score for a pick on any app: by line on PrizePicks, else by player, stat and number. */
   const gkr2Sides=async():Promise<(pick:Pick<EdgePick,'lineId'|'sport'|'playerName'|'market'|'threshold'>&{platform?:string})=>GkrSide|null>=>{
@@ -389,7 +399,7 @@ export function buildServer(options: ServerOptions = {}) {
   });
   const webBuild = options.webResearch ? new ResearchBuild(service, options.webResearch,
     options.clock,options.product ? async()=>{const board=service.getBoard();
-      if(board){await service.persist();await options.product!.track(board,service.getEvidence());}} :
+      if(board){await service.persist();await options.product!.track(board,service.getEvidence(),await lessBackers());}} :
       async()=>service.persist()) : null;
   const contextScheduler=options.contextRefresh?new ContextRefreshScheduler(service,options.contextRefresh):null;
   // Shadow only: app plays are recorded and graded under shadow versions, never shown or added to GKR's record.
@@ -564,7 +574,7 @@ export function buildServer(options: ServerOptions = {}) {
       try{
         const snapshot=await service.refresh();
         let trackingStatus:OwnerPullJob['trackingStatus']=options.product?'OK':'UNCONFIGURED',tracked=0;
-        if(options.product){try{tracked=await options.product.track(snapshot,service.getEvidence());}
+        if(options.product){try{tracked=await options.product.track(snapshot,service.getEvidence(),await lessBackers());}
           catch{trackingStatus='FAILED';}}
         // Web research has its own cost (OpenAI searches), so a pull never starts it.
         const webResearchJob=null;
